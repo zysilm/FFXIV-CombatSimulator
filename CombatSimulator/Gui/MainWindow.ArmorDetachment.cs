@@ -18,7 +18,7 @@ public partial class MainWindow
         { "Stay until reset", "Fade after 2 s", "Fade after 10 s", "Fade after 30 s" };
     private static readonly float[] ArmorDetachmentLifetimeSeconds = { 0f, 2f, 10f, 30f };
     private static readonly string[] ArmorDetachmentGarmentLabels =
-        { "Drop when the body settles", "Stay on the body" };
+        { "Drop when the body settles", "Half off, hanging on the body" };
     private static readonly int[] ArmorDetachmentGarmentPresets = { 1, 5 };
 
     private void DrawArmorDetachmentEntrySection()
@@ -84,20 +84,8 @@ public partial class MainWindow
         }
         HelpMarker("Drop when the body settles: the garment stays on until the body comes to rest, then falls off\n" +
                    "and goes limp and flat wherever it is no longer around the body.\n" +
-                   "Stay on the body: it loosens and slides a little but never comes off. Some clipping is possible.");
-
-        if (ArmorDetachmentGarmentPresets[garment] == 5)
-        {
-            ImGui.Indent();
-            ArmorDetachmentSlider("Top slide##armordetach", () => config.KoStripTopSlideDistance,
-                v => config.KoStripTopSlideDistance = v, 0.1f);
-            HelpMarker("How far the top slides down from where it is worn. It never moves more than 8 cm.");
-            ArmorDetachmentSlider("Lower slide##armordetach", () => config.KoStripLowerSlideDistance,
-                v => config.KoStripLowerSlideDistance = v, 0.5f);
-            HelpMarker("How far trousers or a skirt slide down from the waist. It never moves more than about\n" +
-                       "two thirds of the thigh, and the waistband stays on when the legs are spread.");
-            ImGui.Unindent();
-        }
+                   "Half off, hanging on the body: the top is pulled down and hangs from the waist; trousers or a skirt\n" +
+                   "are pulled down and hang from the shins. The loose part folds, lies flat and swings with the body.");
 
         ArmorDetachmentCheckbox("Still-attached pieces follow the body",
             () => config.KoStripGarmentFollowsBody, v => config.KoStripGarmentFollowsBody = v);
@@ -114,17 +102,6 @@ public partial class MainWindow
         ImGui.SameLine();
         if (ImGui.Button("Reset to Defaults##armordetach"))
             config.ResetArmorDetachmentDefaults();
-    }
-
-    private void ArmorDetachmentSlider(string label, Func<float> get, Action<float> set, float max)
-    {
-        var v = get();
-        ImGui.SetNextItemWidth(200f);
-        if (ImGui.SliderFloat(label, ref v, 0f, max, "%.2f m"))
-        {
-            set(Math.Clamp(v, 0f, max));
-            config.Save();
-        }
     }
 
     private void ArmorDetachmentCheckbox(string label, Func<bool> get, Action<bool> set)

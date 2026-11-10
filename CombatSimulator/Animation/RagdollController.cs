@@ -857,6 +857,34 @@ public unsafe partial class RagdollController : IDisposable
             out linearVelocity, out angularVelocity);
     }
 
+    /// <summary>
+    /// Carry one rig body to a pose (a garment segment that stays on the body). It remains a dynamic body
+    /// and is simply re-placed every frame, with the velocity that takes it there.
+    /// </summary>
+    public bool TrySetExternalRigBodyPose(ExternalRigHandle? handle, int bodyIndex,
+        Vector3 position, Quaternion orientation, Vector3 linearVelocity, Vector3 angularVelocity)
+    {
+        if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration ||
+            simulation == null || bodyIndex < 0 || bodyIndex >= handle.Bodies.Count ||
+            !float.IsFinite(position.LengthSquared()) || !float.IsFinite(orientation.LengthSquared()))
+            return false;
+
+        try
+        {
+            var body = simulation.Bodies.GetBodyReference(handle.Bodies[bodyIndex].Body);
+            body.Pose.Position = position;
+            body.Pose.Orientation = Quaternion.Normalize(orientation);
+            body.Velocity.Linear = linearVelocity;
+            body.Velocity.Angular = angularVelocity;
+            body.Awake = true;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     /// <summary>Let one rig body start (or stop) colliding with the ragdoll's own bodies.</summary>
     public bool SetExternalRigBodyRagdollContact(ExternalRigHandle? handle, int bodyIndex, bool collide)
     {

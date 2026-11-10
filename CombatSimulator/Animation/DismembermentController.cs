@@ -79,6 +79,7 @@ public unsafe partial class DismembermentController : IDisposable
     // 5 Visual only (enhanced), which never arms and is handled by the real-attachment path. Any other
     // value behaves as Natural. All frame counts are 60fps-equivalent.
     private const int ClothHoldPresetVisualEnhanced = 5;
+    private const bool StayOnBodyUsesTether = true;
     private const int ClothHoldMinFrames = 18;             // always attach at least ~0.3s
     private const float ClothHoldRestSpeed = 0.15f;        // anchor speed (m/s) below which the body is "settled"
     private const int MdlStringTableHeaderSize = 8;
@@ -255,6 +256,7 @@ public unsafe partial class DismembermentController : IDisposable
         public float GearBindSlip;                            // auto hold: accumulated garment slide-down (m), monotonic
         public bool GearRealAttachmentRequested;
         public RealAttachmentState? RealAttachment;
+        public bool GearTethered;                             // half off: some rig segments stay on the body
         public float GearGroundSampleX;                       // last horizontal position the ground was sampled at
         public float GearGroundSampleZ;
         public bool GearGroundHasSample;
@@ -312,6 +314,7 @@ public unsafe partial class DismembermentController : IDisposable
         public bool IsLocal;
         // Per body: collapse progress (0 worn volume .. 1 flat panel) and whether the collision box has
         // already been swapped for the flat one. See GarmentFlatten.
+        public bool TetherLost;        // the body the pinned segments follow is gone; let them fall
         public float[] Flatten = Array.Empty<float>();
         public bool[] FlattenShapeApplied = Array.Empty<bool>();
     }
@@ -344,6 +347,7 @@ public unsafe partial class DismembermentController : IDisposable
         public float SegmentHalfLength;
         public Vector3 HalfExtents;
         public float Mass;
+        public bool Pinned;            // half off: this segment is carried by the body instead of falling
         public Vector3 DepthAxisLocal; // body-local front/back direction: the one a collapsing segment loses
     }
 
@@ -413,6 +417,7 @@ public unsafe partial class DismembermentController : IDisposable
         public bool GearHideSkin;
         public string? GearHiddenOppositeRootBone;
         public bool GearRealAttachmentRequested;
+        public bool GearTethered;
     }
 
     private readonly List<Clone> clones = new();
@@ -614,8 +619,13 @@ public unsafe partial class DismembermentController : IDisposable
             Delay = 0f,
             GlamourBase64 = glamourBase64,
             GearKeepModelSlot = keepModelSlot,
-            GearRealAttachmentRequested = keepModelSlot is 1 or 3 && config.KoStripPhysicsDropClothing &&
-                config.KoStripClothHoldPreset == ClothHoldPresetVisualEnhanced,
+            // Preset 5 is "half off, hanging on the body": the limp rig with some segments left on the body
+            // (GarmentTether). The earlier whole-garment slide (RealAttachment) is kept but not selected
+            // while the tethered version is being evaluated in game.
+            GearRealAttachmentRequested = !StayOnBodyUsesTether && keepModelSlot is 1 or 3 &&
+                config.KoStripPhysicsDropClothing && config.KoStripClothHoldPreset == ClothHoldPresetVisualEnhanced,
+            GearTethered = StayOnBodyUsesTether && keepModelSlot is 1 or 3 && hiddenOppositeRootBone == null &&
+                config.KoStripPhysicsDropClothing && config.KoStripClothHoldPreset == ClothHoldPresetVisualEnhanced,
             // CharacterSetup.CopyFromCharacter copies the actor's game-side setup, not necessarily
             // the model currently rendered by Glamourer. Remember the live rendered garment so the
             // clone cannot arm against that bootstrap appearance while a race/customize redraw is
@@ -902,6 +912,7 @@ public unsafe partial class DismembermentController : IDisposable
             ExpectedSkeletonSignature = p.SourceSkeletonSignature,
             GearKeepModelSlot = p.GearKeepModelSlot,
             GearRealAttachmentRequested = p.GearRealAttachmentRequested,
+            GearTethered = p.GearTethered,
             GearExpectedAppearanceSignature = p.GearExpectedAppearanceSignature,
             GearHideSkin = p.GearHideSkin,
             GearHiddenOppositeRootBone = p.GearHiddenOppositeRootBone,
@@ -1467,7 +1478,7 @@ public unsafe partial class DismembermentController : IDisposable
             return false;
 
         if (!ragdoll.TryCreateExternalRig(bodySpecs, joints, out var handle,
-                collideWithRagdoll: c.GearKeepModelSlot != 1))
+                collideWithRagdoll: c.GearKeepModelSlot != 1 && !c.GearTethered))
             return false;
 
         c.GearRagdollRig = handle;
@@ -1600,6 +1611,9 @@ public unsafe partial class DismembermentController : IDisposable
                 BodyGarmentInitialSwingFactor, BodyGarmentPoseGuideArmForce);
         }
 
+        if (c.GearTethered)
+            ApplyGarmentTether(skel, c, rig, bodySpecs, joints, skelPos, skelRot);
+
         // Cloth has no joint stiffness to speak of. The stiff rig default resists several times the torque
         // a garment segment's own weight produces, which made the whole chain land as one rigid board.
         // Scale it to a fraction of that weight instead, so segments fold and flop under gravity.
@@ -1617,6 +1631,103 @@ public unsafe partial class DismembermentController : IDisposable
         }
 
         return bodySpecs.Count >= 3 && joints.Count > 0;
+    }
+
+    // Half off: keep the pinned segments on the body, give every other segment the pull that folds it
+    // down over them, and open the joints fully with no worn-shape hold. Falls back to a plain drop when
+    // the rig has nothing to pin.
+    private void ApplyGarmentTether(SkeletonAccess skel, Clone c, GarmentRig rig,
+        List<RagdollController.ExternalRigBodySpec> bodySpecs,
+        List<RagdollController.ExternalRigJointSpec> joints, Vector3 skelPos, Quaternion skelRot)
+    {
+        var pinCenter = Vector3.Zero;
+        var pinned = 0;
+        for (var i = 0; i < rig.Bodies.Count; i++)
+        {
+            var rb = rig.Bodies[i];
+            if (!GarmentTether.IsPinned(c.GearKeepModelSlot, rb.BoneName)) continue;
+            rb.Pinned = true;
+            rig.Bodies[i] = rb;
+            pinCenter += bodySpecs[i].Position;
+            pinned++;
+        }
+
+        if (pinned == 0 || pinned == rig.Bodies.Count)
+        {
+            c.GearTethered = false;
+            return;
+        }
+
+        pinCenter /= pinned;
+        var towardFeet = ResolveGarmentSlipDirection(skel, skelPos, skelRot, c.GearKeepModelSlot);
+        var lift = GarmentTether.LiftDirection(towardFeet, ResolveGarmentLateral(skel, c, skelPos, skelRot),
+            Vector3.Transform(Vector3.UnitZ, skelRot));
+        for (var i = 0; i < rig.Bodies.Count; i++)
+        {
+            if (rig.Bodies[i].Pinned) continue;
+            var spec = bodySpecs[i];
+            bodySpecs[i] = new RagdollController.ExternalRigBodySpec(spec.Name, spec.Parts, spec.Mass,
+                spec.Position, spec.Orientation,
+                spec.LinearVelocity + GarmentTether.PullVelocity(towardFeet, lift, Vector3.Distance(spec.Position, pinCenter)),
+                spec.AngularVelocity);
+        }
+
+        for (var i = 0; i < joints.Count; i++)
+        {
+            var joint = joints[i];
+            if (joint.Kind != RagdollController.ExternalRigJointKind.BallSocketSwing) continue;
+            joints[i] = new RagdollController.ExternalRigJointSpec(joint.ParentIndex, joint.ChildIndex, joint.AnchorWorld,
+                MathF.Max(joint.SwingLimit, GarmentTether.FoldSwingLimit), initialSwingFactor: 1f);
+        }
+    }
+
+    // Carry the pinned segments to the live body bones they sit on.
+    private void DriveGarmentTetherPins(Clone c, GarmentRig rig)
+    {
+        if (!c.GearTethered || rig.TetherLost)
+            return;
+
+        var sourceN = objectTable.LocalPlayer is { } player && player.Address == c.SourceAddress
+            ? boneService.TryGetSkeleton(c.SourceAddress)
+            : null;
+        if (sourceN == null || !TryGetSkeletonWorldTransform(sourceN.Value, out var sourcePos, out var sourceRot))
+        {
+            rig.TetherLost = true;
+            return;
+        }
+
+        var source = sourceN.Value;
+        foreach (var rb in rig.Bodies)
+        {
+            if (!rb.Pinned || rb.BoneIndex < 0 || rb.BoneIndex >= source.BoneCount) continue;
+            if (!TryGetGarmentRigBodyPose(c, rb, out var currentPos, out var currentRot, out _, out _)) continue;
+
+            ref var bone = ref source.Pose->ModelPose.Data[rb.BoneIndex];
+            var boneWorldPos = ModelToWorld(new Vector3(bone.Translation.X, bone.Translation.Y, bone.Translation.Z), sourcePos, sourceRot);
+            var boneWorldRot = Quaternion.Normalize(sourceRot * new Quaternion(bone.Rotation.X, bone.Rotation.Y, bone.Rotation.Z, bone.Rotation.W));
+            var (position, rotation) = GarmentTether.PinnedBodyPose(boneWorldPos, boneWorldRot, rb.BodyToBoneRotation, rb.BodyToBoneOffsetLocal);
+            if (!float.IsFinite(position.LengthSquared()) || !float.IsFinite(rotation.LengthSquared())) continue;
+
+            var linear = GarmentTether.FollowVelocity(currentPos, position, frameDt);
+            var angular = GarmentTether.FollowAngularVelocity(Quaternion.Normalize(currentRot), rotation, frameDt);
+            if (c.GearRagdollRig != null)
+            {
+                PlayerRagdollController?.TrySetExternalRigBodyPose(c.GearRagdollRig, rb.ExternalIndex, position, rotation, linear, angular);
+            }
+            else if (rb.LocalBody.HasValue && simulation != null)
+            {
+                try
+                {
+                    var body = simulation.Bodies.GetBodyReference(rb.LocalBody.Value);
+                    body.Pose.Position = position;
+                    body.Pose.Orientation = rotation;
+                    body.Velocity.Linear = linear;
+                    body.Velocity.Angular = angular;
+                    body.Awake = true;
+                }
+                catch { }
+            }
+        }
     }
 
     // Joint friction of a garment segment, as a fraction of the torque its own weight exerts on the joint.
@@ -3050,7 +3161,7 @@ public unsafe partial class DismembermentController : IDisposable
         // into a zone change and hit the same unsafe-write crash class the rest of this cleanup path
         // already exists to avoid — despawning it proactively, well before that, is the whole point.
         // Ported from RagdollSystem (https://github.com/zysilm/RagdollSystem), off by default here.
-        if (c.Armed && config.KoStripCloneAutoExpireEnabled)
+        if (c.Armed && !c.GearTethered && config.KoStripCloneAutoExpireEnabled)
         {
             c.GearAutoExpireElapsed += frameDt;
             var duration = MathF.Max(1f, config.KoStripCloneAutoExpireSeconds);
@@ -3318,6 +3429,8 @@ public unsafe partial class DismembermentController : IDisposable
         if (rig == null || rig.Bodies.Count == 0)
             return true;
 
+        DriveGarmentTetherPins(c, rig);
+
         var posSum = Vector3.Zero;
         var linearSum = Vector3.Zero;
         var angularSum = Vector3.Zero;
@@ -3368,7 +3481,7 @@ public unsafe partial class DismembermentController : IDisposable
         var relaxUntilFrame = GarmentSwingHoldFrameCount(c) + GarmentSwingRelaxFrameCount(c);
         if (c.GearArmedFrames <= relaxUntilFrame + substepsThisFrame)
         {
-            var swingFactor = MathF.Max(GarmentSwingFactor(c), GarmentLimpness(rig));
+            var swingFactor = c.GearTethered ? 1f : MathF.Max(GarmentSwingFactor(c), GarmentLimpness(rig));
             if (rig.IsLocal)
                 RelaxLocalGarmentRigSwings(rig, swingFactor);
             else
@@ -3377,13 +3490,14 @@ public unsafe partial class DismembermentController : IDisposable
         var poseGuideUntilFrame = GarmentPoseGuideFrameCount(c);
         if (poseGuideUntilFrame > 0 && c.GearArmedFrames <= poseGuideUntilFrame + substepsThisFrame)
         {
-            var poseGuideStrength = GarmentPoseGuideStrength(c) * (1f - GarmentLimpness(rig));
+            var poseGuideStrength = c.GearTethered ? 0f : GarmentPoseGuideStrength(c) * (1f - GarmentLimpness(rig));
             if (rig.IsLocal)
                 ApplyLocalGarmentRigPoseGuidance(rig, poseGuideStrength);
             else
                 PlayerRagdollController?.ApplyExternalRigPoseGuidance(c.GearRagdollRig, poseGuideStrength);
         }
-        ApplyGarmentHandoffDrag(c, avgPos, avgLinear);
+        if (!c.GearTethered) // the handoff drag pulls the whole rig back toward the body; a half-off garment is being pulled away
+            ApplyGarmentHandoffDrag(c, avgPos, avgLinear);
         MaybeResampleGearGround(c, avgPos);
 
         if (TryEstimateGarmentRigGroundStats(c, rig, out var averageGroundHeight, out var lowestGroundHeight))
@@ -3465,7 +3579,7 @@ public unsafe partial class DismembermentController : IDisposable
                 continue;
 
             bodyRot = Quaternion.Normalize(bodyRot);
-            if (!rig.FlattenShapeApplied[b])
+            if (!rig.FlattenShapeApplied[b] && !(rb.Pinned && !rig.TetherLost))
             {
                 var off = GarmentFlatten.IsOffBody(bodyPos, bodySegments[..bodySegmentCount],
                     MathF.Max(rb.HalfExtents.X, rb.HalfExtents.Z));
@@ -3482,7 +3596,7 @@ public unsafe partial class DismembermentController : IDisposable
                         GarmentFlatten.CollapsedHalfExtents(rb.HalfExtents, depthAxis));
                     // The top is created without corpse contacts because it is born around the torso. A
                     // segment that has left the body and gone flat can rest on the corpse like cloth.
-                    if (rig.FlattenShapeApplied[b] && c.GearKeepModelSlot == 1 && c.GearRagdollRig != null)
+                    if (rig.FlattenShapeApplied[b] && (c.GearKeepModelSlot == 1 || c.GearTethered) && c.GearRagdollRig != null)
                         PlayerRagdollController?.SetExternalRigBodyRagdollContact(c.GearRagdollRig, rb.ExternalIndex, true);
                 }
             }
@@ -3905,7 +4019,7 @@ public unsafe partial class DismembermentController : IDisposable
             c.GearVisualBindHasLastPose = false;
         }
 
-        var slipMax = c.GearKeepModelSlot == 1 ? GearBodyVisualBindSlip : GearLegsVisualBindSlip;
+        var slipMax = c.GearTethered ? 0f : c.GearKeepModelSlot == 1 ? GearBodyVisualBindSlip : GearLegsVisualBindSlip;
 
         // Release on an event (body settled, or garment slid to the floor), not a timer.
         if (!ApplyGarmentBindPose(skel, c, ComputeAutoBindSlip(c, slipMax)))

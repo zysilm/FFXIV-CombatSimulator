@@ -64,6 +64,43 @@ var cases = new (string, Action)[]
         Check(WholeGarmentSlide.Drive(-Vector3.UnitY) == 1 && WholeGarmentSlide.Drive(Vector3.UnitX) == WholeGarmentSlide.RestingDrive, "drive range");
         Check(WholeGarmentSlide.Drive(new Vector3(0, float.NaN, 0)) == WholeGarmentSlide.RestingDrive, "NaN drive");
     }),
+    ("half off: the top stays on at the waist, a lower garment at both shins", () => {
+        Check(GarmentTether.IsPinned(1, "j_kosi") && !GarmentTether.IsPinned(1, "j_sebo_a") && !GarmentTether.IsPinned(1, "j_ude_a_l"), "top pins");
+        Check(GarmentTether.IsPinned(3, "j_asi_b_l") && GarmentTether.IsPinned(3, "j_asi_b_r") && !GarmentTether.IsPinned(3, "j_kosi") && !GarmentTether.IsPinned(3, "j_asi_a_l"), "lower pins");
+        Check(!GarmentTether.IsPinned(2, "j_te_l") && !GarmentTether.IsPinned(4, "j_asi_b_l"), "gloves or boots pinned");
+    }),
+    ("a pinned segment puts its bone exactly on the live body bone", () => {
+        var bodyToBone = Quaternion.CreateFromYawPitchRoll(.4f, -.7f, 1.2f); var offset = new Vector3(0, -.11f, 0);
+        var bonePos = new Vector3(3, 1.2f, -2); var boneRot = Quaternion.CreateFromYawPitchRoll(-1.1f, .3f, .5f);
+        var (pos, rot) = GarmentTether.PinnedBodyPose(bonePos, boneRot, bodyToBone, offset);
+        // The rig maps a box back to its bone as: boneRot = bodyRot * bodyToBone, bonePos = bodyPos + bodyRot * offset.
+        var backRot = Quaternion.Normalize(rot * bodyToBone); var backPos = pos + Vector3.Transform(offset, rot);
+        Check(Vector3.Distance(backPos, bonePos) < 1e-5f, "pinned bone position drifted");
+        Check(MathF.Abs(Quaternion.Dot(backRot, boneRot)) > .99999f, "pinned bone rotation drifted");
+    }),
+    ("the loose part is lifted off whichever side of the body faces up", () => {
+        var lateral = Vector3.UnitX;
+        var supine = GarmentTether.LiftDirection(Vector3.UnitZ, lateral, Vector3.UnitZ);   // lying, feet toward +Z
+        var prone = GarmentTether.LiftDirection(-Vector3.UnitZ, lateral, Vector3.UnitZ);
+        Check(supine.Y > .99f && prone.Y > .99f, "lift points into the ground for a lying body");
+        var upright = GarmentTether.LiftDirection(-Vector3.UnitY, lateral, Vector3.UnitZ); // standing, facing +Z
+        Check(MathF.Abs(upright.Y) < 1e-5f && upright.Z > .99f, "upright body not lifted toward its front");
+        var near = GarmentTether.PullVelocity(-Vector3.UnitY, upright, .05f); var far = GarmentTether.PullVelocity(-Vector3.UnitY, upright, 2f);
+        Check(far.Length() > near.Length() && far.Length() <= 1.5f * MathF.Sqrt(GarmentTether.PullSpeed * GarmentTether.PullSpeed + GarmentTether.LiftSpeed * GarmentTether.LiftSpeed) + 1e-4f, "pull not bounded");
+        Check(near.Y < 0 && near.Z > 0, "pull not toward the feet and off the body");
+        Check(float.IsFinite(GarmentTether.PullVelocity(-Vector3.UnitY, upright, float.NaN).Length()), "NaN distance leaked");
+    }),
+    ("a pinned segment follows the body but is never launched by a teleport", () => {
+        var v = GarmentTether.FollowVelocity(Vector3.Zero, new Vector3(.02f, 0, 0), 1f / 60);
+        Check(MathF.Abs(v.X - 1.2f) < 1e-4f, "follow velocity wrong");
+        Check(GarmentTether.FollowVelocity(Vector3.Zero, new Vector3(0, -9999, 0), 1f / 60) == Vector3.Zero, "teleport became velocity");
+        Check(GarmentTether.FollowVelocity(Vector3.Zero, Vector3.One, 0) == Vector3.Zero, "zero dt");
+        var from = Quaternion.Identity; var to = Quaternion.CreateFromAxisAngle(Vector3.UnitY, .05f);
+        var w = GarmentTether.FollowAngularVelocity(from, to, 1f / 60);
+        Check(MathF.Abs(w.Y - 3f) < 1e-3f && MathF.Abs(w.X) < 1e-5f, $"angular follow wrong {w}");
+        Check(GarmentTether.FollowAngularVelocity(from, new Quaternion(-to.X, -to.Y, -to.Z, -to.W), 1f / 60).Y > 2.9f, "quaternion sign changed the result");
+        Check(GarmentTether.FollowAngularVelocity(from, Quaternion.CreateFromAxisAngle(Vector3.UnitY, 3f), 1f / 60) == Vector3.Zero, "snap became spin");
+    }),
     ("a segment still around the body keeps its worn volume", () => {
         var torso = new[] { new GarmentFlatten.Segment(Vector3.Zero, new Vector3(0, .5f, 0)) };
         var progress = 0f;

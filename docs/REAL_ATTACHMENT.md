@@ -1,40 +1,44 @@
-# Visual only (enhanced)
+# Half off, hanging on the body
 
-Shown in the UI as **Body / Legs: Stay on the body** (stored as cloth hold preset 5). Body and Legs only.
+Effects tab → **Armor Detachment** → **Body / Legs** → **Half off, hanging on the body** (stored as
+cloth hold preset 5; formerly "Stay on the body" / "Visual only (enhanced)"). Body and Legs only.
 
 ## Runtime
 
-Source: `Animation/DismembermentController.RealAttachment.cs`, `Animation/Attachment/WholeGarmentSlide.cs`,
-`Animation/Attachment/WaistRetentionMotion.cs`.
+Source: `Animation/Attachment/GarmentTether.cs` and `ApplyGarmentTether` / `DriveGarmentTetherPins`
+in `Animation/DismembermentController.cs`.
 
-- The gear clone is never armed or released to physics. Every frame it copies the live source model
-  pose and partial skeletons onto itself; native animation/body posing still applies.
-- `WholeGarmentSlide` adds one root translation along the garment slip direction. Travel is capped at
-  0.08 m (× scale) for tops and 65% of the shortest hip→knee length for lower garments. Direction
-  changes and reductions of the distance setting converge continuously, without snapping.
-- `WaistRetentionMotion` cancels the slide at the pelvis as the thighs separate (blends in between
-  roughly 28° and 109°). Bone weights: `j_kosi` 1, thigh 0.8, knee 0.25, ankle and below 0;
-  `j_sk_*` chains take 0.65 of their parent. Closed stances keep the full slide.
-- The clone is retired when the source stops being the local player or its skeleton signature changes.
+The garment is the same limp box chain as **Drop when the body settles** (see `GarmentFlatten`), with
+three differences:
+
+- **Pinned segments stay on the body.** A top keeps its waist segment (`j_kosi`); a lower garment
+  keeps both shin segments (`j_asi_b_l/r`). Each frame those boxes are re-placed on the live body bone
+  with the velocity that carries them there (bounded, so a teleport cannot launch them).
+- **The rest is pulled down.** When the rig is created every free segment gets a velocity toward the
+  feet plus a lift off the body, on whichever side of the body faces up, scaled by its distance from the
+  pinned part. The joints open fully (2.9 rad) with no worn-shape hold, so the free part folds back over
+  the pinned part: chest, shoulders and sleeves over the hips; waist and thighs past the knees.
+- **No pre-slide, no handoff drag, no auto-recycle.** The pinned part must not jump at handoff, the
+  free part is being pulled away from the body, and a garment hanging on the body is not a dropped piece.
+
+Free segments start without corpse contacts and gain them once they have left the body and collapsed
+flat, exactly as a dropped top does. If the rig has nothing to pin, the piece behaves as a plain drop.
 
 ## Limits
 
-No collision correction, cloth simulation, attachment joint or mesh-based waistband fit: the garment
-always stays on the body and large travel can clip or stretch the crotch. Visual-only clones are never
-auto-recycled; they remain until reset or zone change.
+Segments still around a body segment keep their worn volume and do not collide with the corpse, so a
+free part that comes to rest around the pelvis or the shins stays tubular and can overlap the body.
+The pull speeds (`PullSpeed`, `LiftSpeed`) are untuned in game.
 
-## Controls
+## Previous implementation
 
-Effects tab → **Armor Detachment** → **Body / Legs** → **Stay on the body**, then **Top slide**
-(0–0.1 m, default 0.09) and **Lower slide** (0–0.5 m, default 0.13). Both apply live and remain subject
-to the anatomical caps above. Speed limit 0.6 m/s, resistance 0.45 and damping 1.5 are fixed in `DismembermentController.RealAttachment.cs`.
+The whole-garment slide (`DismembermentController.RealAttachment.cs`, `WholeGarmentSlide`,
+`WaistRetentionMotion`, config `KoStripTopSlideDistance` / `KoStripLowerSlideDistance`) is still in
+the source but not selected (`StayOnBodyUsesTether`). Remove it once the tethered version is accepted.
 
 ## Verification
 
-`dotnet run --project Tests/RetainedGarments -c Release` covers waist retention (wide/closed stance,
-no snapping across 30–300 FPS), whole-garment slide continuity and live distance reduction. `Tests/GearDropLifecycle` covers the
-separate preparation/commit detachment lifecycle.
-
-In-game check after reload: detach standing, fall onto each side, remain still, then stand again;
-check waist retention and thigh clipping. Numerical tests do not certify native skeleton
-compatibility or visible mesh clearance.
+`dotnet run --project Tests/RetainedGarments -c Release` covers the pin set, the pinned pose round
+trip, the lift direction for lying and upright bodies, pull bounds, and follow velocities, together
+with the collapse (`GarmentFlatten`) and legacy slide cases. `Tests/GearDropLifecycle` covers the
+preparation/commit detachment lifecycle. None of this certifies the in-game result.
