@@ -114,6 +114,10 @@ public unsafe partial class DismembermentController : IDisposable
     // collide with the corpse proxies/ground while its own directly-jointed segments do not explode.
     private readonly HashSet<int> gearRigDynamicBodyHandles = new();
     private readonly HashSet<(int, int)> gearRigConnectedPairs = new();
+    // Local-sim bodies that must not touch the body-collision proxies: single dropped pieces (they fall
+    // straight to the ground by design) and garment rig segments that are still around the body. A
+    // segment leaves this set once it has come off the body and collapsed flat.
+    private readonly HashSet<int> gearNoBodyContactHandles = new();
     private readonly List<NpcCollisionState> pcNpcCollisionStates = new();
     private readonly HashSet<nint> pcNpcCollisionAddresses = new();
     private TypedIndex limbShapeIndex;
@@ -1972,6 +1976,8 @@ public unsafe partial class DismembermentController : IDisposable
                 rig.Bodies[i] = rb;
                 rig.Shapes.AddRange(shapeList);
                 gearRigDynamicBodyHandles.Add(handle.Value);
+                if (c.GearKeepModelSlot is 1 or 3 && !IsPairedGearPiece(c))
+                    gearNoBodyContactHandles.Add(handle.Value);
             }
 
             foreach (var joint in joints)
@@ -2230,6 +2236,7 @@ public unsafe partial class DismembermentController : IDisposable
             if (!rb.LocalBody.HasValue)
                 continue;
             gearRigDynamicBodyHandles.Remove(rb.LocalBody.Value.Value);
+            gearNoBodyContactHandles.Remove(rb.LocalBody.Value.Value);
             RemoveConstraintsOnBody(rb.LocalBody.Value);
             try { simulation.Bodies.Remove(rb.LocalBody.Value); } catch { }
         }
@@ -2444,13 +2451,19 @@ public unsafe partial class DismembermentController : IDisposable
 
     private void UpdatePcNpcCollisionStatics()
     {
-        if (!EnablePcDismemberNpcCollision || simulation == null || pcCollisionBodyHandles.Count == 0)
+        // Severed limbs collide with the player and nearby NPCs. A garment rig living in this simulation
+        // (the player's ragdoll was not running when it was created) needs the player's body too, or the
+        // loose part of the garment passes straight through it.
+        var limbsNeedBodies = EnablePcDismemberNpcCollision && pcCollisionBodyHandles.Count > 0;
+        if (simulation == null || (!limbsNeedBodies && !HasLocalGarmentRig()))
         {
             ClearPcNpcCollisionStatics();
             return;
         }
 
-        var addresses = PcDismemberNpcCollisionProvider?.Invoke() ?? Array.Empty<nint>();
+        var addresses = limbsNeedBodies
+            ? PcDismemberNpcCollisionProvider?.Invoke() ?? Array.Empty<nint>()
+            : Array.Empty<nint>();
         var nextAddresses = new HashSet<nint>();
         var playerAddress = Core.Services.ObjectTable.LocalPlayer?.Address ?? nint.Zero;
         if (playerAddress != nint.Zero)
@@ -2500,6 +2513,14 @@ public unsafe partial class DismembermentController : IDisposable
             pcNpcCollisionStates[i] = UpdatePcNpcCollisionState(pcNpcCollisionStates[i]);
 
         WakePcCollisionBodies();
+    }
+
+    private bool HasLocalGarmentRig()
+    {
+        foreach (var c in clones)
+            if (c.GearGarmentRig is { IsLocal: true } && c.GearKeepModelSlot is 1 or 3 && !IsPairedGearPiece(c))
+                return true;
+        return false;
     }
 
     private void BuildPcNpcCollision(nint address)
@@ -3302,6 +3323,7 @@ public unsafe partial class DismembermentController : IDisposable
                         new CollidableDescription(shape, 0.04f),
                         new BodyActivityDescription(0.01f)));
                     gearDynamicBodyHandles.Add(c.Body.Value.Value);
+                    gearNoBodyContactHandles.Add(c.Body.Value.Value);
                     SeedGearBodyVelocity(c.Body.Value, c);
                     (c.GroundTile, c.GroundShape) = CreateTerrainPatch(spawnPos.X, spawnPos.Z, spawnPos.Y);
                     RegisterPcCollisionBodies(c);
@@ -3601,6 +3623,8 @@ public unsafe partial class DismembermentController : IDisposable
                     // segment that has left the body and gone flat can rest on the corpse like cloth.
                     if (rig.FlattenShapeApplied[b] && (c.GearKeepModelSlot == 1 || c.GearTethered) && c.GearRagdollRig != null)
                         PlayerRagdollController?.SetExternalRigBodyRagdollContact(c.GearRagdollRig, rb.ExternalIndex, true);
+                    else if (rig.FlattenShapeApplied[b] && rb.LocalBody.HasValue)
+                        gearNoBodyContactHandles.Remove(rb.LocalBody.Value.Value);
                 }
             }
 
@@ -7288,6 +7312,7 @@ public unsafe partial class DismembermentController : IDisposable
                 if (c.Body.HasValue)
                 {
                     gearDynamicBodyHandles.Remove(c.Body.Value.Value);
+                    gearNoBodyContactHandles.Remove(c.Body.Value.Value);
                     RemoveConstraintsOnBody(c.Body.Value);
                     simulation.Bodies.Remove(c.Body.Value);
                 }
@@ -7566,6 +7591,7 @@ public unsafe partial class DismembermentController : IDisposable
                 ConnectedPairs = connectedPairs,
                 ExternalDynamicBodies = gearDynamicBodyHandles,
                 ExternalRigDynamicBodies = gearRigDynamicBodyHandles,
+                ExternalRigNoRagdollContactBodies = gearNoBodyContactHandles,
                 ExternalRigConnectedPairs = gearRigConnectedPairs,
                 Friction = RagdollTuning.Friction,
                 Config = config,
@@ -7591,6 +7617,7 @@ public unsafe partial class DismembermentController : IDisposable
         pcCollisionBodyHandles.Clear();
         gearDynamicBodyHandles.Clear();
         gearRigDynamicBodyHandles.Clear();
+        gearNoBodyContactHandles.Clear();
         gearRigConnectedPairs.Clear();
         pcNpcCollisionStates.Clear();
         pcNpcCollisionAddresses.Clear();
