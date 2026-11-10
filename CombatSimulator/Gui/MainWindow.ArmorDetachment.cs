@@ -18,8 +18,8 @@ public partial class MainWindow
         { "Stay until reset", "Fade after 2 s", "Fade after 10 s", "Fade after 30 s" };
     private static readonly float[] ArmorDetachmentLifetimeSeconds = { 0f, 2f, 10f, 30f };
     private static readonly string[] ArmorDetachmentGarmentLabels =
-        { "Drop when the body settles", "Slide to the floor, then drop", "Stay on the body" };
-    private static readonly int[] ArmorDetachmentGarmentPresets = { 1, 3, 5 };
+        { "Drop when the body settles", "Stay on the body" };
+    private static readonly int[] ArmorDetachmentGarmentPresets = { 1, 5 };
 
     private void DrawArmorDetachmentEntrySection()
     {
@@ -82,8 +82,8 @@ public partial class MainWindow
             config.KoStripClothHoldPreset = ArmorDetachmentGarmentPresets[garment];
             config.Save();
         }
-        HelpMarker("Drop when the body settles: the garment stays on until the body comes to rest, then falls off.\n" +
-                   "Slide to the floor, then drop: it slides down the body and drops when it reaches the ground.\n" +
+        HelpMarker("Drop when the body settles: the garment stays on until the body comes to rest, then falls off\n" +
+                   "and goes limp and flat wherever it is no longer around the body.\n" +
                    "Stay on the body: it loosens and slides a little but never comes off. Some clipping is possible.");
 
         if (ArmorDetachmentGarmentPresets[garment] == 5)

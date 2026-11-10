@@ -855,6 +855,17 @@ public unsafe partial class RagdollController : IDisposable
             out linearVelocity, out angularVelocity);
     }
 
+    /// <summary>Replace one rig body's collision shape (a garment segment collapsing flat).</summary>
+    public bool TrySetExternalRigBodyShape(ExternalRigHandle? handle, int bodyIndex,
+        IReadOnlyList<ExternalShapePart> parts, float mass)
+    {
+        if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration ||
+            simulation == null || bodyIndex < 0 || bodyIndex >= handle.Bodies.Count)
+            return false;
+
+        return TrySetExternalBodyShape(handle.Bodies[bodyIndex], parts, mass);
+    }
+
     public bool TryApplyExternalRigVelocityDelta(ExternalRigHandle? handle, Vector3 velocityDelta)
     {
         if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration || simulation == null)

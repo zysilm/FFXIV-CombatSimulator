@@ -211,7 +211,7 @@ public partial class Configuration : IPluginConfiguration
     public bool KoStripGarmentFollowsBody { get; set; } = true;
 
     // Body/Legs garment behaviour. Stored values keep their historic numbering:
-    // 1 drop when the body settles, 3 slide to the floor then drop, 5 Visual only (enhanced).
+    // 1 drop when the body settles, 5 Visual only (enhanced).
     public const int KoStripClothHoldPresetDefault = 1;
     public int KoStripClothHoldPreset { get; set; } = KoStripClothHoldPresetDefault;
 
@@ -770,13 +770,13 @@ public partial class Configuration : IPluginConfiguration
         pluginInterface?.SavePluginConfig(this);
     }
 
-    // Only three garment behaviours remain. Quick and Clingy differed from Natural only in how long the
-    // body had to rest; the old Visual only became Visual only (enhanced).
+    // Only two garment behaviours remain. Quick and Clingy differed from Natural only in how long the
+    // body had to rest, Slide to floor was dropped, and the old Visual only became Visual only (enhanced).
     private void MigrateKoStripClothHoldPreset()
     {
         var preset = KoStripClothHoldPreset switch
         {
-            1 or 3 or 5 => KoStripClothHoldPreset,
+            1 or 5 => KoStripClothHoldPreset,
             4 => 5,
             _ => KoStripClothHoldPresetDefault,
         };

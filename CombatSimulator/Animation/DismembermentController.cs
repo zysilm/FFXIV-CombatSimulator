@@ -8,6 +8,7 @@ using System.Numerics;
 using System.Text;
 using BepuPhysics;
 using BepuPhysics.Collidables;
+using CombatSimulator.Animation.Attachment;
 using BepuPhysics.Constraints;
 using BepuUtilities.Memory;
 using CombatSimulator.Integration;
@@ -74,18 +75,12 @@ public unsafe partial class DismembermentController : IDisposable
     private const float GearLegsHandoffSlip = 0.06f;
     private const float GearBodyVisualBindSlip = 0.12f;
     private const float GearLegsVisualBindSlip = 0.07f;
-    // Cloth hold (event-driven release). Stored preset ints: 1 Natural (release once the body settles),
-    // 3 Slide to floor (slide down until the garment reaches the ground), 5 Visual only (enhanced),
-    // which never arms and is handled by the real-attachment path. Any other value behaves as Natural.
-    // All frame counts are 60fps-equivalent.
-    private const int ClothHoldPresetSlideToFloor = 3;
+    // Cloth hold (event-driven release). Stored preset ints: 1 Natural (release once the body settles) and
+    // 5 Visual only (enhanced), which never arms and is handled by the real-attachment path. Any other
+    // value behaves as Natural. All frame counts are 60fps-equivalent.
     private const int ClothHoldPresetVisualEnhanced = 5;
     private const int ClothHoldMinFrames = 18;             // always attach at least ~0.3s
     private const float ClothHoldRestSpeed = 0.15f;        // anchor speed (m/s) below which the body is "settled"
-    private const float ClothHoldSlideSpeed = 0.20f;       // slide-to-floor descent speed (m/s)
-    private const float ClothHoldSlideEaseFrames = 60f;    // ease in to full slide speed over ~1s
-    private const float ClothHoldSlideMaxDrop = 0.8f;      // slide-to-floor: release after this far even without a floor hit
-    private const float ClothHoldFloorMargin = 0.02f;
     private const int MdlStringTableHeaderSize = 8;
     private const int MdlModelHeaderSize = 56;
     private const int MdlElementIdSize = 32;
@@ -260,12 +255,6 @@ public unsafe partial class DismembermentController : IDisposable
         public float GearBindSlip;                            // auto hold: accumulated garment slide-down (m), monotonic
         public bool GearRealAttachmentRequested;
         public RealAttachmentState? RealAttachment;
-        public float GearBindGroundY = float.NegativeInfinity;// auto hold (slide-to-floor): ground under the anchor
-        public Vector3 GearBindHalf;                          // auto hold (slide-to-floor): garment half-extents for the floor test
-        public Vector3 GearBindAnchorWorld;                   // auto hold: current (slipped) anchor world pos, for the floor test
-        public float GearBindGroundSampleX;
-        public float GearBindGroundSampleZ;
-        public bool GearBindGroundHasSample;
         public float GearGroundSampleX;                       // last horizontal position the ground was sampled at
         public float GearGroundSampleZ;
         public bool GearGroundHasSample;
@@ -321,6 +310,10 @@ public unsafe partial class DismembermentController : IDisposable
         public readonly List<GarmentSwingConstraint> SwingConstraints = new();
         public readonly List<GarmentPoseGuideConstraint> PoseGuideConstraints = new();
         public bool IsLocal;
+        // Per body: collapse progress (0 worn volume .. 1 flat panel) and whether the collision box has
+        // already been swapped for the flat one. See GarmentFlatten.
+        public float[] Flatten = Array.Empty<float>();
+        public bool[] FlattenShapeApplied = Array.Empty<bool>();
     }
 
     private struct GarmentSwingConstraint
@@ -350,6 +343,8 @@ public unsafe partial class DismembermentController : IDisposable
         public Vector3 BodyToBoneOffsetLocal;
         public float SegmentHalfLength;
         public Vector3 HalfExtents;
+        public float Mass;
+        public Vector3 DepthAxisLocal; // body-local front/back direction: the one a collapsing segment loses
     }
 
     private struct LimbBody
@@ -2204,6 +2199,11 @@ public unsafe partial class DismembermentController : IDisposable
             BodyToBoneOffsetLocal = new Vector3(0f, -segmentHalf, 0f),
             SegmentHalfLength = segmentHalf,
             HalfExtents = half,
+            Mass = MathF.Max(0.05f, mass),
+            DepthAxisLocal = Vector3.Transform(
+                GarmentFlatten.DepthAxis(Vector3.Transform(Vector3.UnitY, bodyRot),
+                    ResolveGarmentLateral(skel, c, skelPos, skelRot)),
+                Quaternion.Inverse(bodyRot)),
         });
         rig.BoneIndices.Add(idx);
         rig.MaxHalfExtent = MathF.Max(rig.MaxHalfExtent, MathF.Max(half.X, MathF.Max(half.Y, half.Z)));
@@ -3371,7 +3371,182 @@ public unsafe partial class DismembermentController : IDisposable
         DriveGarmentRigBones(skel, c, rig, skelPos, skelRot);
         if (c.GearKeepModelSlot == 1)
             DriveSkirtHang(skel, c);
+        if (c.GearKeepModelSlot is 1 or 3 && !IsPairedGearPiece(c))
+            ApplyGarmentFlatten(skel, c, rig, skelPos, skelRot);
         return true;
+    }
+
+    // The body's left-right direction at the moment the rig is built, from the shoulders (top) or hips
+    // (lower garment). Bone-local axes are not a reliable front/side reference, joint positions are.
+    private Vector3 ResolveGarmentLateral(SkeletonAccess skel, Clone c, Vector3 skelPos, Quaternion skelRot)
+    {
+        var (left, right) = c.GearKeepModelSlot is 3 or 4 ? ("j_asi_a_l", "j_asi_a_r") : ("j_ude_a_l", "j_ude_a_r");
+        if (TryGetBoneWorldPosition(skel, skelPos, skelRot, left, out var l) &&
+            TryGetBoneWorldPosition(skel, skelPos, skelRot, right, out var r) &&
+            (r - l).LengthSquared() > 1e-4f)
+            return Vector3.Normalize(r - l);
+        return Vector3.Transform(Vector3.UnitX, skelRot);
+    }
+
+    // Collapse every rig segment that no longer has the body inside it: the bone it drives (and the
+    // bones hanging off that one) lose their front/back depth, and once fully flat the segment's
+    // collision box is swapped for a thin one so it can lie flat and stack. Segments still wrapping the
+    // body keep their worn volume.
+    private void ApplyGarmentFlatten(SkeletonAccess skel, Clone c, GarmentRig rig, Vector3 skelPos, Quaternion skelRot)
+    {
+        var count = rig.Bodies.Count;
+        if (rig.Flatten.Length != count)
+        {
+            rig.Flatten = new float[count];
+            rig.FlattenShapeApplied = new bool[count];
+        }
+
+        Span<GarmentFlatten.Segment> bodySegments = stackalloc GarmentFlatten.Segment[count];
+        var bodySegmentCount = CollectSourceBodySegments(c, rig, bodySegments);
+
+        var skelRotInv = Quaternion.Inverse(skelRot);
+        Span<int> ownerOfBone = skel.BoneCount <= 512 ? stackalloc int[skel.BoneCount] : new int[skel.BoneCount];
+        ownerOfBone.Fill(-1);
+        Span<Vector3> depthModel = stackalloc Vector3[count];
+        Span<float> scale = stackalloc float[count];
+        var anyFlat = false;
+
+        for (var b = 0; b < count; b++)
+        {
+            var rb = rig.Bodies[b];
+            scale[b] = 1f;
+            if (!TryGetGarmentRigBodyPose(c, rb, out var bodyPos, out var bodyRot, out _, out _))
+                continue;
+
+            bodyRot = Quaternion.Normalize(bodyRot);
+            if (!rig.FlattenShapeApplied[b])
+            {
+                var off = GarmentFlatten.IsOffBody(bodyPos, bodySegments[..bodySegmentCount],
+                    MathF.Max(rb.HalfExtents.X, rb.HalfExtents.Z));
+                rig.Flatten[b] = GarmentFlatten.Advance(rig.Flatten[b], off, frameDt);
+                if (rig.Flatten[b] >= 1f)
+                    rig.FlattenShapeApplied[b] = TrySetGarmentRigBodyShape(c, rig, rb,
+                        GarmentFlatten.CollapsedHalfExtents(rb.HalfExtents,
+                            MathF.Abs(rb.DepthAxisLocal.X) > MathF.Abs(rb.DepthAxisLocal.Z) ? 0 : 2));
+            }
+
+            scale[b] = GarmentFlatten.ThicknessScale(rig.Flatten[b]);
+            if (scale[b] >= 0.999f || rb.BoneIndex < 0 || rb.BoneIndex >= skel.BoneCount)
+            {
+                scale[b] = 1f;
+                continue;
+            }
+
+            depthModel[b] = Vector3.Transform(Vector3.Transform(rb.DepthAxisLocal, bodyRot), skelRotInv);
+            ownerOfBone[rb.BoneIndex] = b;
+            anyFlat = true;
+        }
+
+        if (!anyFlat)
+            return;
+
+        // Bones the rig does not drive follow the nearest driven ancestor (parents precede children).
+        var boneCount = Math.Min(skel.BoneCount, skel.ParentCount);
+        for (var i = 0; i < boneCount; i++)
+        {
+            var owner = ownerOfBone[i];
+            if (owner < 0 && !rig.BoneIndices.Contains(i))
+            {
+                var parent = skel.HavokSkeleton->ParentIndices[i];
+                if (parent >= 0 && parent < i) owner = ownerOfBone[parent];
+                ownerOfBone[i] = owner;
+            }
+            if (owner < 0 || scale[owner] >= 1f)
+                continue;
+
+            var rigBone = rig.Bodies[owner].BoneIndex;
+            ref var m = ref skel.Pose->ModelPose.Data[i];
+            if (i != rigBone)
+            {
+                ref var root = ref skel.Pose->ModelPose.Data[rigBone];
+                var moved = GarmentFlatten.FlattenPoint(
+                    new Vector3(m.Translation.X, m.Translation.Y, m.Translation.Z),
+                    new Vector3(root.Translation.X, root.Translation.Y, root.Translation.Z),
+                    depthModel[owner], scale[owner]);
+                m.Translation.X = moved.X; m.Translation.Y = moved.Y; m.Translation.Z = moved.Z;
+            }
+
+            var rotation = Quaternion.Normalize(new Quaternion(m.Rotation.X, m.Rotation.Y, m.Rotation.Z, m.Rotation.W));
+            switch (GarmentFlatten.NearestLocalAxis(rotation, depthModel[owner]))
+            {
+                case 0: m.Scale.X *= scale[owner]; break;
+                case 1: m.Scale.Y *= scale[owner]; break;
+                default: m.Scale.Z *= scale[owner]; break;
+            }
+        }
+    }
+
+    // Where the body's own segments are, for the off-body test: the ragdoll's bone capsules when the rig
+    // lives in the ragdoll (its pose is the physical one), otherwise the live source skeleton.
+    private int CollectSourceBodySegments(Clone c, GarmentRig rig, Span<GarmentFlatten.Segment> segments)
+    {
+        var n = 0;
+        var ragdoll = PlayerRagdollController;
+        if (c.GearRagdollRig != null && ragdoll != null)
+        {
+            foreach (var rb in rig.Bodies)
+            {
+                if (n >= segments.Length || !ragdoll.TryGetBoneCapsule(rb.BoneName, out var capsule)) continue;
+                var axis = Vector3.Transform(Vector3.UnitY, capsule.Orientation) * capsule.HalfLength;
+                segments[n++] = new GarmentFlatten.Segment(capsule.Center - axis, capsule.Center + axis);
+            }
+            if (n > 0) return n;
+        }
+
+        if (objectTable.LocalPlayer is not { } player || player.Address != c.SourceAddress) return 0;
+        var sourceN = boneService.TryGetSkeleton(c.SourceAddress);
+        if (sourceN == null || !TryGetSkeletonWorldTransform(sourceN.Value, out var sourcePos, out var sourceRot)) return 0;
+        var source = sourceN.Value;
+        var boneCount = Math.Min(source.BoneCount, source.ParentCount);
+        foreach (var rb in rig.Bodies)
+        {
+            if (n >= segments.Length || rb.BoneIndex < 0 || rb.BoneIndex >= boneCount) continue;
+            ref var bone = ref source.Pose->ModelPose.Data[rb.BoneIndex];
+            var a = ModelToWorld(new Vector3(bone.Translation.X, bone.Translation.Y, bone.Translation.Z), sourcePos, sourceRot);
+            var b = a;
+            if (rb.SegmentHalfLength > 0f)
+            {
+                // The garment segment's own axis on the live bone: where this piece sat when worn.
+                var rotation = Quaternion.Normalize(sourceRot * new Quaternion(bone.Rotation.X, bone.Rotation.Y, bone.Rotation.Z, bone.Rotation.W));
+                var along = Vector3.Transform(Vector3.UnitY, Quaternion.Normalize(rotation * Quaternion.Inverse(rb.BodyToBoneRotation)));
+                b = a + along * (rb.SegmentHalfLength * 2f);
+            }
+            segments[n++] = new GarmentFlatten.Segment(a, b);
+        }
+        return n;
+    }
+
+    private bool TrySetGarmentRigBodyShape(Clone c, GarmentRig rig, GarmentRigBody rb, Vector3 half)
+    {
+        if (c.GearRagdollRig != null)
+            return PlayerRagdollController?.TrySetExternalRigBodyShape(c.GearRagdollRig, rb.ExternalIndex,
+                new[] { new RagdollController.ExternalShapePart(half, Vector3.Zero, Quaternion.Identity) }, rb.Mass) == true;
+
+        if (!rb.LocalBody.HasValue || simulation == null)
+            return false;
+
+        try
+        {
+            var box = new Box(half.X * 2f, half.Y * 2f, half.Z * 2f);
+            var inertia = box.ComputeInertia(rb.Mass);
+            var shape = simulation.Shapes.Add(box);
+            simulation.Bodies.SetShape(rb.LocalBody.Value, shape);
+            simulation.Bodies.SetLocalInertia(rb.LocalBody.Value, in inertia);
+            var flattened = simulation.Bodies.GetBodyReference(rb.LocalBody.Value);
+            flattened.Awake = true;
+            rig.Shapes.Add(shape); // the replaced shape stays listed too; both are released with the rig
+            return true;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "GearDrop: failed to flatten a garment rig body");
+            return true; // do not retry every frame
+        }
     }
 
     private Quaternion ResolveGarmentRigRootRotation(SkeletonAccess skel, Clone c, GarmentRig rig)
@@ -3669,9 +3844,6 @@ public unsafe partial class DismembermentController : IDisposable
             c.GearBindElapsedFrames = 0;
             c.GearBindRestFrames = 0;
             c.GearBindSlip = 0f;
-            c.GearBindGroundY = float.NegativeInfinity;
-            c.GearBindHalf = Vector3.Zero;
-            c.GearBindGroundHasSample = false;
             c.GearHandoffHasPrevAnchor = false;
             c.GearVisualBindHasLastPose = false;
         }
@@ -3712,18 +3884,10 @@ public unsafe partial class DismembermentController : IDisposable
         return true;
     }
 
-    // Slip (garment slide-down, metres). Natural slides the full slipMax over the dwell window (monotonic,
-    // only once the body is settling); slide-to-floor accumulates unbounded at a steady descent speed so
-    // the garment keeps sliding until it reaches the ground.
+    // Slip (garment slide-down, metres): the full slipMax over the dwell window, monotonic, and only once
+    // the body is settling.
     private float ComputeAutoBindSlip(Clone c, float slipMax)
     {
-        if (config.KoStripClothHoldPreset == ClothHoldPresetSlideToFloor)
-        {
-            var ease = Math.Clamp(c.GearBindElapsedFrames / ClothHoldSlideEaseFrames, 0f, 1f);
-            c.GearBindSlip += ClothHoldSlideSpeed * ease * frameDt;
-            return c.GearBindSlip;
-        }
-
         var dwell = ClothHoldRestDwellFrames;
         var restProgress = Math.Clamp(c.GearBindRestFrames / (float)dwell, 0f, 1f);
         var target = slipMax * restProgress * restProgress;
@@ -3736,49 +3900,12 @@ public unsafe partial class DismembermentController : IDisposable
         if (c.GearBindElapsedFrames < ClothHoldMinFrames)
             return false;
 
-        if (config.KoStripClothHoldPreset == ClothHoldPresetSlideToFloor)
-            return c.GearBindElapsedFrames >= ClothHoldSlideCapFrames ||
-                   c.GearBindSlip >= ClothHoldSlideMaxDrop || GarmentBindReachedFloor(c);
-
         return c.GearBindElapsedFrames >= ClothHoldNaturalCapFrames ||
                c.GearBindRestFrames >= ClothHoldRestDwellFrames;
     }
 
-    // Slide-to-floor release test: the garment's lowest point has reached the ground under the anchor.
-    // Re-sample when the corpse is dragged far enough horizontally so the target floor follows slopes.
-    private bool GarmentBindReachedFloor(Clone c)
-    {
-        var p = c.GearBindAnchorWorld;
-        var needsSample = !c.GearBindGroundHasSample || float.IsNegativeInfinity(c.GearBindGroundY);
-        if (!needsSample)
-        {
-            var dx = p.X - c.GearBindGroundSampleX;
-            var dz = p.Z - c.GearBindGroundSampleZ;
-            needsSample = dx * dx + dz * dz >= 0.25f * 0.25f;
-        }
-
-        if (needsSample)
-        {
-            c.GearBindGroundY = BGCollisionModule.RaycastMaterialFilter(
-                new Vector3(p.X, p.Y + 5f, p.Z), new Vector3(0, -1, 0), out var hit, 80f)
-                ? hit.Point.Y : float.NaN;
-            c.GearBindGroundSampleX = p.X;
-            c.GearBindGroundSampleZ = p.Z;
-            c.GearBindGroundHasSample = true;
-            var scale = c.SourceScale.X > 0f ? c.SourceScale.X : 1f;
-            c.GearBindHalf = ComputeGearShapeHalf(BuildGearShapeParts(c.GearKeepModelSlot).Parts) * scale;
-        }
-
-        if (float.IsNaN(c.GearBindGroundY))
-            return false; // no ground found -> rely on the slide-max / cap fallbacks
-
-        var halfY = WorldVerticalHalfExtent(c.GearVisualBindLastRootRot, c.GearBindHalf);
-        return c.GearBindAnchorWorld.Y - halfY <= c.GearBindGroundY + ClothHoldFloorMargin;
-    }
-
     private const int ClothHoldRestDwellFrames = 24;   // Natural: ~0.4s of rest before release
     private const int ClothHoldNaturalCapFrames = 600; // Natural: release after 10s regardless
-    private const int ClothHoldSlideCapFrames = 3600;  // Slide to floor: release after 60s regardless
 
     private void ApplyLastGarmentVisualBindPose(Clone c)
     {
@@ -3902,7 +4029,6 @@ public unsafe partial class DismembermentController : IDisposable
         c.GearHandoffHasPrevAnchor = true;
 
         var slippedAnchor = anchorWorld + slipDir * MathF.Max(0f, slip);
-        c.GearBindAnchorWorld = slippedAnchor;
 
         if (liveMirrorRoot)
         {
