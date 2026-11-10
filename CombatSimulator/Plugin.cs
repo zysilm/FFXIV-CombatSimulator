@@ -504,7 +504,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             npcSpawner.RegenerateAll();
         };
 
-        // Weapon drop is co-triggered with ragdoll (same delay), so writes survive while animation is frozen
         combatEngine.OnNpcDeathRagdoll = OnNpcDeathRagdoll;
         combatEngine.OnPlayerDamagedByNpc = () =>
         {
@@ -515,7 +514,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.OnPlayerDeath = addr =>
         {
             OnPrivateEffectsKo();
-            weaponDropController.SpawnFor(addr, config.RagdollActivationDelay);
+            weaponDropController.SpawnFor(addr); // at the moment of death, not after the ragdoll delay
             armorDetachmentController.StripOnKo(addr);
             if (config.EnableDismemberRollaway && config.DismemberPocBones is { Count: > 0 })
             {
@@ -1051,8 +1050,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         if (address == nint.Zero || !config.EnableRagdoll || !config.EnableNpcDeathRagdoll)
             return;
 
-        // Weapon drop is part of ragdoll — same activation delay.
-        weaponDropController.SpawnFor(address, Animation.RagdollTuning.NpcActivationDelay);
+        // The weapon is released at once; only the body waits for the ragdoll activation delay.
+        weaponDropController.SpawnFor(address);
 
         if (HasLiveNpcRagdoll(address)) return;
 
@@ -1193,8 +1192,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     {
         if (!config.EnableRagdoll || !config.PartyCompanionDeathRagdoll) return;
 
-        // Weapon drop is part of ragdoll — same activation delay.
-        weaponDropController.SpawnFor(address, config.RagdollActivationDelay);
+        // The weapon is released at once; only the body waits for the ragdoll activation delay.
+        weaponDropController.SpawnFor(address);
 
         if (npcRagdolls.ContainsKey(address)) return;
 

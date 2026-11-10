@@ -23,9 +23,11 @@ namespace CombatSimulator.Animation;
 
 /// <summary>
 /// Plugin-scoped weapon drop physics. Independent BepuPhysics2 simulation with its own
-/// configurable parameters. Spawn is co-triggered with ragdoll using the matching activation
-/// delay, so when ragdoll freezes the character's animation the weapon-bone writes survive
-/// and the weapon mesh visibly tracks the falling rigid body.
+/// parameters. A weapon is released the moment its owner dies, not when the ragdoll takes over:
+/// the weapon's own skeleton root is rewritten every render frame after the game has attached it
+/// to the hand, so it follows its rigid body whether or not the death animation is still playing.
+/// Waiting for the ragdoll left the weapon in the hand through the whole death motion, and motions
+/// that end with the hand on the ground buried it there, where it then shook violently on release.
 /// </summary>
 public unsafe class WeaponDropController : IDisposable
 {
@@ -78,12 +80,8 @@ public unsafe class WeaponDropController : IDisposable
     }
     private readonly Dictionary<nint, Entry> entries = new();
 
-    private class Pending
-    {
-        public nint CharacterAddress;
-        public long ReleaseAt;
-    }
-    private readonly List<Pending> pending = new();
+    // Characters whose weapons are released on the next render frame.
+    private readonly List<nint> pending = new();
 
     private const int BodyCollisionMaxSegments = 18;
     private const float BodyCollisionMinSegmentLength = 0.08f;
@@ -117,29 +115,21 @@ public unsafe class WeaponDropController : IDisposable
 
     public bool HasEntry(nint characterAddress) => entries.ContainsKey(characterAddress);
 
-    /// <summary>
-    /// Schedule a weapon drop for the given character. Bodies are created after <paramref name="delay"/>
-    /// seconds (matching the ragdoll activation delay so weapon physics start exactly when ragdoll
-    /// freezes animation). delay=0 spawns on the next render frame.
-    /// </summary>
-    public void SpawnFor(nint characterAddress, float delay = 0f)
+    /// <summary>Release the given character's weapons on the next render frame.</summary>
+    public void SpawnFor(nint characterAddress)
     {
         if (characterAddress == nint.Zero) return;
         if (externalOwners.Contains(characterAddress)) return;
         if (entries.ContainsKey(characterAddress)) return;
-        if (pending.Exists(p => p.CharacterAddress == characterAddress)) return;
+        if (pending.Contains(characterAddress)) return;
 
-        pending.Add(new Pending
-        {
-            CharacterAddress = characterAddress,
-            ReleaseAt = Stopwatch.GetTimestamp() + (long)((float.IsFinite(delay) ? MathF.Max(0f, delay) : 0f) * Stopwatch.Frequency),
-        });
+        pending.Add(characterAddress);
     }
 
     /// <summary>Remove weapon bodies for a character so the weapon mesh returns to default hand parenting.</summary>
     public void RemoveFor(nint characterAddress)
     {
-        pending.RemoveAll(p => p.CharacterAddress == characterAddress);
+        pending.Remove(characterAddress);
         if (!entries.TryGetValue(characterAddress, out var entry)) return;
         DisposeEntry(entry);
         entries.Remove(characterAddress);
@@ -203,18 +193,10 @@ public unsafe class WeaponDropController : IDisposable
                 else { simulation.Solver.SubstepCount = 1; simulation.Timestep(1f / 60f); }
             }
 
-            // Tick pending spawns
             if (pending.Count > 0)
             {
-                for (int i = pending.Count - 1; i >= 0; i--)
-                {
-                    var p = pending[i];
-                    if (Stopwatch.GetTimestamp() >= p.ReleaseAt)
-                    {
-                        pending.RemoveAt(i);
-                        TrySpawn(p);
-                    }
-                }
+                foreach (var address in pending) TrySpawn(address);
+                pending.Clear();
             }
 
             if (entries.Count == 0 || simulation == null) return;
@@ -239,9 +221,8 @@ public unsafe class WeaponDropController : IDisposable
         }
     }
 
-    private void TrySpawn(Pending pendingSpawn)
+    private void TrySpawn(nint characterAddress)
     {
-        var characterAddress = pendingSpawn.CharacterAddress;
         if (entries.ContainsKey(characterAddress)) return;
         var skelN = boneService.TryGetSkeleton(characterAddress);
         if (skelN == null) { log.Warning($"WeaponDropController: skeleton unavailable for 0x{characterAddress:X}"); return; }
