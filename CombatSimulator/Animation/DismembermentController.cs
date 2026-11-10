@@ -1600,7 +1600,36 @@ public unsafe partial class DismembermentController : IDisposable
                 BodyGarmentInitialSwingFactor, BodyGarmentPoseGuideArmForce);
         }
 
+        // Cloth has no joint stiffness to speak of. The stiff rig default resists several times the torque
+        // a garment segment's own weight produces, which made the whole chain land as one rigid board.
+        // Scale it to a fraction of that weight instead, so segments fold and flop under gravity.
+        for (var i = 0; i < joints.Count; i++)
+        {
+            var joint = joints[i];
+            if (joint.Kind != RagdollController.ExternalRigJointKind.BallSocketSwing ||
+                joint.ChildIndex < 0 || joint.ChildIndex >= bodySpecs.Count)
+                continue;
+            var lever = MathF.Max(0.04f, rig.Bodies[joint.ChildIndex].SegmentHalfLength);
+            joints[i] = joint with
+            {
+                JointFriction = MathF.Max(0.004f, GarmentJointFrictionFraction * bodySpecs[joint.ChildIndex].Mass * 9.81f * lever),
+            };
+        }
+
         return bodySpecs.Count >= 3 && joints.Count > 0;
+    }
+
+    // Joint friction of a garment segment, as a fraction of the torque its own weight exerts on the joint.
+    private const float GarmentJointFrictionFraction = 0.3f;
+
+    // How much of the garment has come off the body (0 all worn .. 1 all collapsed). Limp segments drop
+    // their worn-shape hold right away instead of waiting out the handoff timers.
+    private static float GarmentLimpness(GarmentRig rig)
+    {
+        if (rig.Flatten.Length == 0) return 0f;
+        var sum = 0f;
+        foreach (var value in rig.Flatten) sum += value;
+        return Math.Clamp(sum / rig.Flatten.Length, 0f, 1f);
     }
 
     /// <summary>Copy the relevant side of the existing body/legs garment chains. A glove is the arm chain
@@ -1921,7 +1950,7 @@ public unsafe partial class DismembermentController : IDisposable
         simulation.Solver.Add(child.LocalBody.Value, parent.LocalBody.Value, new AngularMotor
         {
             TargetVelocityLocalA = Vector3.Zero,
-            Settings = new MotorSettings(0.65f, 0.45f),
+            Settings = new MotorSettings(joint.JointFriction > 0f ? joint.JointFriction : 0.65f, 0.45f),
         });
 
         if (joint.PoseGuideMaxForce > 0f)
@@ -2201,7 +2230,10 @@ public unsafe partial class DismembermentController : IDisposable
             HalfExtents = half,
             Mass = MathF.Max(0.05f, mass),
             DepthAxisLocal = Vector3.Transform(
-                GarmentFlatten.DepthAxis(Vector3.Transform(Vector3.UnitY, bodyRot),
+                GarmentFlatten.DepthAxis(
+                    segmentHalf > 0f
+                        ? Vector3.Transform(Vector3.UnitY, bodyRot)
+                        : ResolveGarmentAlong(skel, c, skelPos, skelRot),
                     ResolveGarmentLateral(skel, c, skelPos, skelRot)),
                 Quaternion.Inverse(bodyRot)),
         });
@@ -3336,7 +3368,7 @@ public unsafe partial class DismembermentController : IDisposable
         var relaxUntilFrame = GarmentSwingHoldFrameCount(c) + GarmentSwingRelaxFrameCount(c);
         if (c.GearArmedFrames <= relaxUntilFrame + substepsThisFrame)
         {
-            var swingFactor = GarmentSwingFactor(c);
+            var swingFactor = MathF.Max(GarmentSwingFactor(c), GarmentLimpness(rig));
             if (rig.IsLocal)
                 RelaxLocalGarmentRigSwings(rig, swingFactor);
             else
@@ -3345,7 +3377,7 @@ public unsafe partial class DismembermentController : IDisposable
         var poseGuideUntilFrame = GarmentPoseGuideFrameCount(c);
         if (poseGuideUntilFrame > 0 && c.GearArmedFrames <= poseGuideUntilFrame + substepsThisFrame)
         {
-            var poseGuideStrength = GarmentPoseGuideStrength(c);
+            var poseGuideStrength = GarmentPoseGuideStrength(c) * (1f - GarmentLimpness(rig));
             if (rig.IsLocal)
                 ApplyLocalGarmentRigPoseGuidance(rig, poseGuideStrength);
             else
@@ -3388,6 +3420,20 @@ public unsafe partial class DismembermentController : IDisposable
         return Vector3.Transform(Vector3.UnitX, skelRot);
     }
 
+    // Head-to-foot direction of the garment for a body that has no segment of its own (the waist of a
+    // lower garment sits on a bare bone, whose own axes say nothing reliable about the body).
+    private Vector3 ResolveGarmentAlong(SkeletonAccess skel, Clone c, Vector3 skelPos, Quaternion skelRot)
+    {
+        if (TryGetBoneWorldPosition(skel, skelPos, skelRot, "j_kosi", out var waist))
+        {
+            var sum = Vector3.Zero;
+            foreach (var name in c.GearKeepModelSlot is 3 or 4 ? new[] { "j_asi_b_l", "j_asi_b_r" } : new[] { "j_sebo_c" })
+                if (TryGetBoneWorldPosition(skel, skelPos, skelRot, name, out var p)) sum += p - waist;
+            if (sum.LengthSquared() > 1e-4f) return Vector3.Normalize(sum);
+        }
+        return Vector3.Transform(Vector3.UnitY, skelRot);
+    }
+
     // Collapse every rig segment that no longer has the body inside it: the bone it drives (and the
     // bones hanging off that one) lose their front/back depth, and once fully flat the segment's
     // collision box is swapped for a thin one so it can lie flat and stack. Segments still wrapping the
@@ -3425,9 +3471,20 @@ public unsafe partial class DismembermentController : IDisposable
                     MathF.Max(rb.HalfExtents.X, rb.HalfExtents.Z));
                 rig.Flatten[b] = GarmentFlatten.Advance(rig.Flatten[b], off, frameDt);
                 if (rig.Flatten[b] >= 1f)
+                {
+                    // A box built along a limb/spine segment has its length on Y; one sitting on a bare
+                    // bone (the waist of a lower garment) may have its depth on any axis.
+                    var depth = rb.DepthAxisLocal;
+                    var depthAxis = MathF.Abs(depth.X) > MathF.Abs(depth.Z) ? 0 : 2;
+                    if (rb.SegmentHalfLength <= 0f && MathF.Abs(depth.Y) > MathF.Max(MathF.Abs(depth.X), MathF.Abs(depth.Z)))
+                        depthAxis = 1;
                     rig.FlattenShapeApplied[b] = TrySetGarmentRigBodyShape(c, rig, rb,
-                        GarmentFlatten.CollapsedHalfExtents(rb.HalfExtents,
-                            MathF.Abs(rb.DepthAxisLocal.X) > MathF.Abs(rb.DepthAxisLocal.Z) ? 0 : 2));
+                        GarmentFlatten.CollapsedHalfExtents(rb.HalfExtents, depthAxis));
+                    // The top is created without corpse contacts because it is born around the torso. A
+                    // segment that has left the body and gone flat can rest on the corpse like cloth.
+                    if (rig.FlattenShapeApplied[b] && c.GearKeepModelSlot == 1 && c.GearRagdollRig != null)
+                        PlayerRagdollController?.SetExternalRigBodyRagdollContact(c.GearRagdollRig, rb.ExternalIndex, true);
+                }
             }
 
             scale[b] = GarmentFlatten.ThicknessScale(rig.Flatten[b]);

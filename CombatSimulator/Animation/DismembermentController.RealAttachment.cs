@@ -24,7 +24,13 @@ public unsafe partial class DismembermentController
         public int SkeletonSignature;
         public float Scale, TravelLimit;
         public Vector3 Offset;
+        // Top only: which way the garment sits askew once it has slipped, and the bones that define it.
+        public float TiltSign;
+        public int TiltPivot = -1, LeftShoulder = -1, RightShoulder = -1;
     }
+
+    // A slipped top does not sit square: it rolls a few degrees about the body's front/back axis.
+    private const float TopTiltRadians = 4f * MathF.PI / 180f;
 
     private bool UpdateRealAttachment(SkeletonAccess target, Clone c)
     {
@@ -58,6 +64,13 @@ public unsafe partial class DismembermentController
                 if (!float.IsFinite(limit) || limit == float.MaxValue) limit = .15f * scale;
             }
             c.RealAttachment = new RealAttachmentState { SkeletonSignature = signature, Scale = scale, TravelLimit = limit };
+            if (c.GearKeepModelSlot == 1)
+            {
+                c.RealAttachment.TiltSign = Random.Shared.Next(2) == 0 ? -1f : 1f;
+                c.RealAttachment.TiltPivot = FindBoneIndexByName(source, "j_sebo_b");
+                c.RealAttachment.LeftShoulder = FindBoneIndexByName(source, "j_ude_a_l");
+                c.RealAttachment.RightShoulder = FindBoneIndexByName(source, "j_ude_a_r");
+            }
             if (c.GearKeepModelSlot == 3)
             {
                 var created = c.RealAttachment;
@@ -78,9 +91,10 @@ public unsafe partial class DismembermentController
         var state = c.RealAttachment;
         var direction = ResolveGarmentSlipDirection(source, origin, rotation, c.GearKeepModelSlot);
         var localDirection = Vector3.Transform(direction, Quaternion.Inverse(rotation));
-        state.Motion.Advance(attachmentFrameDt, localDirection, MathF.Max(0, -direction.Y),
-            MathF.Min(Math.Clamp(c.GearKeepModelSlot == 3 ? config.KoStripLowerSlideDistance : config.KoStripTopSlideDistance, 0f, 3f)
-                * state.Scale, state.TravelLimit),
+        var travelLimit = MathF.Min(
+            Math.Clamp(c.GearKeepModelSlot == 3 ? config.KoStripLowerSlideDistance : config.KoStripTopSlideDistance, 0f, 3f)
+                * state.Scale, state.TravelLimit);
+        state.Motion.Advance(attachmentFrameDt, localDirection, WholeGarmentSlide.Drive(direction), travelLimit,
             GarmentSlideSpeedLimit * state.Scale, GarmentSlideBodyFriction, GarmentSlideDamping);
         state.Offset = Vector3.Transform(state.Motion.Offset, rotation);
         if (c.GearKeepModelSlot == 3)
@@ -140,7 +154,28 @@ public unsafe partial class DismembermentController
             }
             dst->SyncLocalSpace();
         }
-        SetCloneBaseTransform(c, origin + state.Offset, rotation);
+        var rootPosition = origin + state.Offset;
+        var rootRotation = rotation;
+        if (state.TiltPivot >= 0 && state.LeftShoulder >= 0 && state.RightShoulder >= 0 && travelLimit > 1e-4f &&
+            state.TiltPivot < source.BoneCount && state.LeftShoulder < source.BoneCount && state.RightShoulder < source.BoneCount)
+        {
+            ref var pivotBone = ref source.Pose->ModelPose.Data[state.TiltPivot];
+            ref var left = ref source.Pose->ModelPose.Data[state.LeftShoulder];
+            ref var right = ref source.Pose->ModelPose.Data[state.RightShoulder];
+            var lateral = Vector3.Transform(new Vector3(right.Translation.X - left.Translation.X,
+                right.Translation.Y - left.Translation.Y, right.Translation.Z - left.Translation.Z), rotation);
+            var forward = Vector3.Cross(lateral, direction);
+            if (forward.LengthSquared() > 1e-6f)
+            {
+                var amount = Math.Clamp(state.Motion.Offset.Length() / travelLimit, 0f, 1f);
+                var tilt = Quaternion.CreateFromAxisAngle(Vector3.Normalize(forward), state.TiltSign * TopTiltRadians * amount);
+                var pivot = origin + Vector3.Transform(
+                    new Vector3(pivotBone.Translation.X, pivotBone.Translation.Y, pivotBone.Translation.Z), rotation);
+                rootRotation = Quaternion.Normalize(tilt * rotation);
+                rootPosition = pivot + Vector3.Transform(origin - pivot, tilt) + state.Offset;
+            }
+        }
+        SetCloneBaseTransform(c, rootPosition, rootRotation);
         return true;
     }
 

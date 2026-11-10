@@ -49,6 +49,21 @@ var cases = new (string, Action)[]
         for(var i=0;i<600;i++)motion.Advance(1f/60,-Vector3.UnitY,1,0,.4f,0,1);
         Check(motion.Offset.Length()<.0001f,"zero distance did not return to worn pose");
     }),
+    ("a garment on a body lying flat still slides its full distance, slower than when upright", () => {
+        float TimeToReach(Vector3 direction) {
+            var motion = new WholeGarmentSlide();
+            for (var i = 1; i <= 60 * 30; i++) {
+                motion.Advance(1f / 60, direction, WholeGarmentSlide.Drive(direction), .13f, .6f, .45f, 1.5f);
+                if (motion.Offset.Length() >= .129f) return i / 60f;
+            }
+            return float.PositiveInfinity;
+        }
+        var upright = TimeToReach(-Vector3.UnitY); var lying = TimeToReach(Vector3.UnitX); var inverted = TimeToReach(Vector3.UnitY);
+        Check(float.IsFinite(lying) && float.IsFinite(inverted), "no slide without gravity along the body");
+        Check(lying > upright && lying < 6f, $"lying slide time {lying}s vs upright {upright}s");
+        Check(WholeGarmentSlide.Drive(-Vector3.UnitY) == 1 && WholeGarmentSlide.Drive(Vector3.UnitX) == WholeGarmentSlide.RestingDrive, "drive range");
+        Check(WholeGarmentSlide.Drive(new Vector3(0, float.NaN, 0)) == WholeGarmentSlide.RestingDrive, "NaN drive");
+    }),
     ("a segment still around the body keeps its worn volume", () => {
         var torso = new[] { new GarmentFlatten.Segment(Vector3.Zero, new Vector3(0, .5f, 0)) };
         var progress = 0f;

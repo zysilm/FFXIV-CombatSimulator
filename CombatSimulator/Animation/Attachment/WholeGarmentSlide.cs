@@ -9,6 +9,15 @@ public sealed class WholeGarmentSlide
     private float travel, speed;
     public Vector3 Offset { get; private set; }
 
+    /// <summary>
+    /// How strongly the garment is driven along its slide direction (0..1). Gravity drives it fully when
+    /// the direction points down. A loosened garment still works its way along a body lying flat, where
+    /// gravity has no component along it, so the drive never drops below <see cref="RestingDrive"/>.
+    /// </summary>
+    public const float RestingDrive = 0.4f;
+    public static float Drive(Vector3 direction)
+        => float.IsFinite(direction.Y) ? Math.Clamp(MathF.Max(RestingDrive, -direction.Y), 0f, 1f) : RestingDrive;
+
     public void Advance(float dt, Vector3 direction, float gravityAlong, float limit,
         float speedLimit, float friction, float damping)
     {

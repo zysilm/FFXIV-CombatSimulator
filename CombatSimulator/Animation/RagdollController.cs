@@ -404,6 +404,8 @@ public unsafe partial class RagdollController : IDisposable
         public readonly float MaxDistance;
         public readonly float DistanceFrequency;
         public readonly float DistanceDamping;
+        /// <summary>Torque the joint resists bending with. 0 keeps the stiff rig default (0.65).</summary>
+        public float JointFriction { get; init; }
 
         public ExternalRigJointSpec(int parentIndex, int childIndex, Vector3 anchorWorld, float swingLimit,
             float initialSwingFactor = 0.28f, float poseGuideMaxForce = 0f, float poseGuideFrequency = 5f)
@@ -706,7 +708,7 @@ public unsafe partial class RagdollController : IDisposable
         rig.Constraints.Add(simulation.Solver.Add(child.Body, parent.Body, new AngularMotor
         {
             TargetVelocityLocalA = Vector3.Zero,
-            Settings = new MotorSettings(0.65f, 0.45f),
+            Settings = new MotorSettings(joint.JointFriction > 0f ? joint.JointFriction : 0.65f, 0.45f),
         }));
 
         if (joint.PoseGuideMaxForce > 0f)
@@ -853,6 +855,19 @@ public unsafe partial class RagdollController : IDisposable
 
         return TryGetExternalBodyPose(handle.Bodies[bodyIndex], out position, out orientation,
             out linearVelocity, out angularVelocity);
+    }
+
+    /// <summary>Let one rig body start (or stop) colliding with the ragdoll's own bodies.</summary>
+    public bool SetExternalRigBodyRagdollContact(ExternalRigHandle? handle, int bodyIndex, bool collide)
+    {
+        if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration ||
+            simulation == null || bodyIndex < 0 || bodyIndex >= handle.Bodies.Count)
+            return false;
+
+        var body = handle.Bodies[bodyIndex].Body.Value;
+        if (collide) externalRigNoRagdollContactBodyHandles.Remove(body);
+        else externalRigNoRagdollContactBodyHandles.Add(body);
+        return true;
     }
 
     /// <summary>Replace one rig body's collision shape (a garment segment collapsing flat).</summary>
