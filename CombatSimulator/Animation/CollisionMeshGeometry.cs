@@ -28,6 +28,21 @@ public static class CollisionMeshGeometry
 
     public static bool IsWater(ulong material) => (material & WaterMaterial) == WaterMaterial;
 
+    /// <summary>
+    /// How large a ground patch must be for a body of a given reach (the farthest any part of it gets
+    /// from its centre). The ground must extend at least twice that reach past the body's centre at all
+    /// times, so the patch is that margin wide again and a new one is laid before the margin is used up.
+    /// </summary>
+    public static (float Radius, float RefreshDistance, float Step) PatchFor(float bodyReach)
+    {
+        const float minimumRadius = 6f, maximumRadius = 30f, minimumMargin = 2f;
+        var margin = MathF.Max(minimumMargin, 2f * (float.IsFinite(bodyReach) ? MathF.Max(0f, bodyReach) : 0f));
+        var radius = Math.Clamp(2f * margin, minimumRadius, maximumRadius);
+        margin = MathF.Min(margin, radius * 0.5f);
+        // The sampled grid keeps a 1 m spacing for ordinary bodies and at most 25 samples a side for giants.
+        return (radius, radius - margin, MathF.Max(1f, radius / 12f));
+    }
+
     /// <summary>Local point to world through a 4x3 matrix given as its rows (three axes, then translation).</summary>
     public static Vector3 Transform(Vector3 local, Vector3 row0, Vector3 row1, Vector3 row2, Vector3 row3)
         => row0 * local.X + row1 * local.Y + row2 * local.Z + row3;

@@ -220,11 +220,13 @@ public unsafe partial class RagdollController : IDisposable
     // catches runaway energy, not ordinary falls or cinematic drags.
     private const float HumanMaxLinearVelocity = 18f;
     private const float HumanMaxAngularVelocity = 14f;
-    private const float TerrainPatchRadius = 6.0f;
-    private const float TerrainPatchStep = 1.0f;
+    // Ground patch size. Set per ragdoll from how far its body reaches (CollisionMeshGeometry.PatchFor):
+    // 6 m / 1 m samples for a human, larger for a large monster.
+    private float terrainPatchRadius = 6.0f;
+    private float terrainPatchStep = 1.0f;
+    private float terrainPatchRefreshDistance = 4.0f;
     private const float TerrainRaycastStartYOffset = 10.0f;
     private const float TerrainRaycastDistance = 80.0f;
-    private const float TerrainPatchRefreshDistance = 4.5f;
     private const int MaxTerrainPatches = 32;
     private const float SafetyGroundDrop = 0.75f;
 
@@ -4231,6 +4233,17 @@ public unsafe partial class RagdollController : IDisposable
         // lay a patch under each nearby enemy (their positions don't move during the
         // grab), bounded by distance + count so a large spawn wave doesn't fire tens
         // of thousands of raycasts in one frame.
+        // Size the patches to this body: the ground must reach at least twice as far as the body does.
+        var bodyReach = 0f;
+        var reachBones = Math.Min(skel.BoneCount, skel.ParentCount);
+        for (var i = 0; i < reachBones; i++)
+        {
+            ref var bone = ref skel.Pose->ModelPose.Data[i];
+            var offset = new Vector3(bone.Translation.X, bone.Translation.Y, bone.Translation.Z) * skelWorldScale;
+            if (float.IsFinite(offset.LengthSquared())) bodyReach = MathF.Max(bodyReach, offset.Length());
+        }
+        (terrainPatchRadius, terrainPatchRefreshDistance, terrainPatchStep) = CollisionMeshGeometry.PatchFor(bodyReach);
+
         int enemyPatches = 0;
         AddTerrainPatch(skelWorldPos.X, skelWorldPos.Z, groundY);
         if (npcSelector != null && config.ExtendTerrainDetection)
@@ -5476,9 +5489,12 @@ public unsafe partial class RagdollController : IDisposable
         if (simulation == null || bufferPool == null) return false;
 
         exactGroundScratch.Clear();
-        var min = new Vector3(centerX - TerrainPatchRadius, patchGroundY - ExactGroundVerticalReach, centerZ - TerrainPatchRadius);
-        var max = new Vector3(centerX + TerrainPatchRadius, patchGroundY + ExactGroundVerticalReach, centerZ + TerrainPatchRadius);
-        if (!WorldCollisionMesh.TryCollectGround(min, max, exactGroundScratch, ExactGroundMaxTriangles) ||
+        var min = new Vector3(centerX - terrainPatchRadius, patchGroundY - ExactGroundVerticalReach, centerZ - terrainPatchRadius);
+        var max = new Vector3(centerX + terrainPatchRadius, patchGroundY + ExactGroundVerticalReach, centerZ + terrainPatchRadius);
+        // A larger patch may hold proportionally more triangles, up to four times the base budget.
+        var budget = (int)MathF.Min(ExactGroundMaxTriangles * 4f,
+            ExactGroundMaxTriangles * (terrainPatchRadius / 6f) * (terrainPatchRadius / 6f));
+        if (!WorldCollisionMesh.TryCollectGround(min, max, exactGroundScratch, budget) ||
             exactGroundScratch.Count < 3)
         {
             log.Info("RagdollController: exact ground unavailable for this patch; using the sampled grid");
@@ -5507,7 +5523,7 @@ public unsafe partial class RagdollController : IDisposable
 
         var mesh = new BepuPhysics.Collidables.Mesh(triangles.Slice(written), Vector3.One, bufferPool);
         simulation.Statics.Add(new StaticDescription(Vector3.Zero, Quaternion.Identity, simulation.Shapes.Add(mesh)));
-        log.Info($"RagdollController: exact ground patch with {written / 2} triangles");
+        log.Info($"RagdollController: exact ground patch with {written / 2} triangles, radius {terrainPatchRadius:F1} m");
         return true;
     }
 
@@ -5531,7 +5547,7 @@ public unsafe partial class RagdollController : IDisposable
         if (terrainPatchCenters.Count >= MaxTerrainPatches)
             return;
 
-        int gridSize = (int)(TerrainPatchRadius * 2 / TerrainPatchStep) + 1;
+        int gridSize = (int)(terrainPatchRadius * 2 / terrainPatchStep) + 1;
 
         // Ground estimate at the patch center — used as the ray origin height and the
         // miss fallback, so a patch under an enemy on different ground still works.
@@ -5550,13 +5566,13 @@ public unsafe partial class RagdollController : IDisposable
             : 0f;
 
         var heights = new float[gridSize, gridSize];
-        var ox = centerX - TerrainPatchRadius;
-        var oz = centerZ - TerrainPatchRadius;
+        var ox = centerX - terrainPatchRadius;
+        var oz = centerZ - terrainPatchRadius;
         for (int gz = 0; gz < gridSize; gz++)
         for (int gx = 0; gx < gridSize; gx++)
         {
-            var wx = ox + gx * TerrainPatchStep;
-            var wz = oz + gz * TerrainPatchStep;
+            var wx = ox + gx * terrainPatchStep;
+            var wz = oz + gz * terrainPatchStep;
             if (BGCollisionModule.RaycastMaterialFilter(
                     new Vector3(wx, patchGroundY + TerrainRaycastStartYOffset, wz),
                     new Vector3(0, -1, 0), out var gridHit, TerrainRaycastDistance))
@@ -5571,10 +5587,10 @@ public unsafe partial class RagdollController : IDisposable
         for (int gz = 0; gz < gridSize - 1; gz++)
         for (int gx = 0; gx < gridSize - 1; gx++)
         {
-            var x0 = ox + gx * TerrainPatchStep;
-            var x1 = x0 + TerrainPatchStep;
-            var z0 = oz + gz * TerrainPatchStep;
-            var z1 = z0 + TerrainPatchStep;
+            var x0 = ox + gx * terrainPatchStep;
+            var x1 = x0 + terrainPatchStep;
+            var z0 = oz + gz * terrainPatchStep;
+            var z1 = z0 + terrainPatchStep;
             var v00 = new Vector3(x0, heights[gx, gz], z0);
             var v10 = new Vector3(x1, heights[gx + 1, gz], z0);
             var v01 = new Vector3(x0, heights[gx, gz + 1], z1);
@@ -5643,7 +5659,7 @@ public unsafe partial class RagdollController : IDisposable
 
         var sample2 = new Vector2(sample.X, sample.Z);
         foreach (var center in terrainPatchCenters)
-            if (Vector2.DistanceSquared(center, sample2) <= TerrainPatchRefreshDistance * TerrainPatchRefreshDistance)
+            if (Vector2.DistanceSquared(center, sample2) <= terrainPatchRefreshDistance * terrainPatchRefreshDistance)
                 return;
 
         AddTerrainPatch(sample.X, sample.Z, realGroundY);

@@ -154,6 +154,27 @@ var cases = new (string, Action)[]
                 Check(MathF.Abs(Vector3.Dot(local, Vector3.Normalize(row0))) <= 2.001f && MathF.Abs(Vector3.Dot(local, Vector3.Normalize(row1))) <= .501f && MathF.Abs(Vector3.Dot(local, Vector3.Normalize(row2))) <= 3.001f, "vertex outside the collider");
             }
     }),
+    ("ground: a patch always reaches at least twice as far as the body does, past the body's centre", () => {
+        // The body's centre may wander up to RefreshDistance from a patch centre before a new patch is laid,
+        // so the ground left beyond the centre is Radius - RefreshDistance.
+        foreach (var reach in new[] { 0f, .4f, 1f, 1.6f, 3f, 5f, 7.5f })
+        {
+            var (radius, refresh, step) = CollisionMeshGeometry.PatchFor(reach);
+            Check(radius - refresh >= 2f * reach - 1e-4f, $"reach {reach}: only {radius - refresh:F1} m of ground past the centre");
+            Check(radius - refresh >= 2f, "less than 2 m of ground past the centre");
+            Check(refresh > 0 && refresh <= radius * .75f, "patches would never, or constantly, be re-laid");
+            Check(step >= 1f && (int)(radius * 2 / step) + 1 <= 26, $"reach {reach}: {(int)(radius * 2 / step) + 1} samples a side");
+        }
+        var human = CollisionMeshGeometry.PatchFor(1f);
+        Check(human.Radius == 6f && human.RefreshDistance == 4f && human.Step == 1f, $"human patch {human}");
+        var dragon = CollisionMeshGeometry.PatchFor(5f);
+        Check(dragon.Radius == 20f && dragon.RefreshDistance == 10f, $"large monster patch {dragon}");
+        // Beyond the cap the patch stops growing but still keeps half of itself as margin.
+        var giant = CollisionMeshGeometry.PatchFor(40f);
+        Check(giant.Radius == 30f && giant.RefreshDistance == 15f, $"giant patch {giant}");
+        Check(CollisionMeshGeometry.PatchFor(float.NaN) == CollisionMeshGeometry.PatchFor(0f) && CollisionMeshGeometry.PatchFor(-3f).Radius == 6f, "bad reach");
+        Console.WriteLine($"      human: radius {human.Radius} m, new patch after {human.RefreshDistance} m; reach 5 m: radius {dragon.Radius} m, new patch after {dragon.RefreshDistance} m");
+    }),
     ("ground: only triangles reaching into the patch are taken", () => {
         var min = new Vector3(-6, -8, -6); var max = new Vector3(6, 8, 6);
         Check(CollisionMeshGeometry.Overlaps(new Vector3(5, 0, 5), new Vector3(9, 0, 5), new Vector3(5, 0, 9), min, max), "triangle crossing the edge dropped");

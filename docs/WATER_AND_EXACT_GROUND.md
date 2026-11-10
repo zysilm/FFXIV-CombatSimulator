@@ -38,6 +38,12 @@ colliders tessellated, with the same gates a ground raycast applies (collider ac
 effective material has `0x4000`). Both windings of every triangle are added. The sampled grid stays as a
 safety net 0.25 m lower. More than 20 000 triangles, or an unreadable scene, falls back to the grid.
 
+Patch size follows the body (`CollisionMeshGeometry.PatchFor`): the ground always extends at least
+twice the body's reach past its centre, and never less than 2 m. A human gets a 6 m radius and a new
+patch once its centre is 4 m from every existing one; a monster reaching 5 m gets 20 m and 10 m; the
+radius is capped at 30 m. The triangle budget grows with the patch area, up to 80 000, and the sampled
+grid coarsens so it never exceeds 25 samples a side.
+
 The scene is walked under the same shared lock the game's raycasts take. Not used together with
 Rendered Mesh Body Collision. Weapon and gear drops still use their own sampled ground.
 
