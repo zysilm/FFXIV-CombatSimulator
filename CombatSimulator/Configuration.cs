@@ -161,7 +161,7 @@ public partial class Configuration : IPluginConfiguration
     // NPC Defaults
     // How strong enemies are: index into CombatBudgetModel.StrengthChoices. 0 reads it from the enemy's
     // own data (ordinary, notorious, boss); 1-5 force Weak, Normal, Strong, Elite, Boss.
-    // Applies to spawned, map-sensed and auto-selected enemies.
+    // Applies to every enemy: spawned, map-sensed, auto-selected and those a recipe starts with.
     public int EnemyStrength { get; set; }
     // Enemy level, 1-100; 0 follows the player's level. Only the difference to the player matters.
     public int EnemyLevel { get; set; }
@@ -271,9 +271,6 @@ public partial class Configuration : IPluginConfiguration
     public bool ShowFastCombatToolbar { get; set; } = false;
     public bool ShowDefeatRevivePopup { get; set; } = true;
     public string FastCombatRecipeName { get; set; } = "";
-    // Strength and level of the enemies a recipe starts with (same scales as EnemyStrength, EnemyLevel).
-    public int RecipeEnemyStrength { get; set; }
-    public int RecipeEnemyLevel { get; set; }
 
     // Target Formation
     public bool EnableNpcTargetPlayer { get; set; } = true;
@@ -704,6 +701,7 @@ public partial class Configuration : IPluginConfiguration
         "KoStripTopHangFrom", "KoStripLowerHangFrom",
         // Enemy numbers reworked 2026-11: levels now follow the player by default, strength is detected.
         "DefaultNpcLevel", "FastCombatLevel", "DefaultEnemyTier", "FastCombatEnemyTier", "DefaultNpcHpMultiplier",
+        "RecipeEnemyStrength", "RecipeEnemyLevel",
         // Glamourer presets on death / reset, removed 2026-11.
         "ApplyGlamourerOnDeath", "DeathGlamourerDesignId", "ApplyGlamourerOnReset", "ResetGlamourerDesignId",
         "KoStripDelay", "KoStripDelaySeconds", "KoStripLHand", "KoStripRHand", "KoStripLFoot", "KoStripRFoot",

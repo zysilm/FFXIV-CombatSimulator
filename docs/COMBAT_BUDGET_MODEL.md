@@ -59,7 +59,7 @@ Each enemy has a **tier**, which is a contract:
 
 - `CombatStatProvider`, `NpcHpCalculator` and every attribute on `SimulatedEntityState` are gone.
 - Options `DefaultNpcLevel`, `FastCombatLevel`, `DefaultNpcHpMultiplier` → `EnemyStrength`, `EnemyLevel`,
-  `RecipeEnemyStrength`, `RecipeEnemyLevel` (all default 0: Auto, my level).
+  (default 0: Auto, my level); they apply to every enemy, a recipe's included.
 
 ## Verification
 

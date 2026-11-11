@@ -450,15 +450,6 @@ public partial class MainWindow : IDisposable
 
         if (!compact)
         {
-            var recipeStrength = config.RecipeEnemyStrength;
-            var recipeLevel = config.RecipeEnemyLevel;
-            if (DrawEnemyStrengthAndLevel("recipe", "Recipe enemy strength", "Recipe enemy level", ref recipeStrength, ref recipeLevel))
-            {
-                config.RecipeEnemyStrength = recipeStrength;
-                config.RecipeEnemyLevel = recipeLevel;
-                config.Save();
-            }
-
             var actionMode = config.ActionMode;
             if (ImGui.Checkbox("Action Mode", ref actionMode))
             {
@@ -831,8 +822,8 @@ public partial class MainWindow : IDisposable
                     BNpcNameId = entry.BNpcNameId,
                     ENpcBaseId = entry.Source == NpcCatalogSource.ENpcBase ? entry.Id : 0,
                     ModelCharaId = entry.Source == NpcCatalogSource.ModelChara ? entry.ModelCharaId : 0,
-                    Tier = CombatBudgetModel.TierForChoice(config.RecipeEnemyStrength),
-                    Level = config.RecipeEnemyLevel,
+                    Tier = CombatBudgetModel.TierForChoice(config.EnemyStrength),
+                    Level = config.EnemyLevel,
                 });
                 queuedEnemies++;
             }
@@ -856,8 +847,8 @@ public partial class MainWindow : IDisposable
                 IncludePlayers = group.IncludePlayers,
                 MaxCount = Math.Max(0, group.MaxCount),
                 SenseRange = Math.Max(0.1f, group.SenseRange),
-                Tier = CombatBudgetModel.TierForChoice(config.RecipeEnemyStrength),
-                Level = config.RecipeEnemyLevel,
+                Tier = CombatBudgetModel.TierForChoice(config.EnemyStrength),
+                Level = config.EnemyLevel,
             };
         }
 
@@ -1230,7 +1221,7 @@ public partial class MainWindow : IDisposable
             ? "Enemies spawn in front of your character (real in-game facing)."
             : "Enemies surround your character in loose layers; the nearest stands at this distance.");
 
-        // Strength + level. These apply to every enemy: spawned, map-sensed and auto-selected.
+        // Strength + level. These apply to every enemy: spawned, map-sensed, auto-selected and a recipe's.
         var enemyStrength = config.EnemyStrength;
         var enemyLevel = config.EnemyLevel;
         if (DrawEnemyStrengthAndLevel("virtualEnemies", "Enemy strength", "Enemy level", ref enemyStrength, ref enemyLevel))
