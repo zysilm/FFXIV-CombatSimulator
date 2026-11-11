@@ -98,13 +98,6 @@ public unsafe partial class EnemyControlController : IDisposable
     public NpcCorpseFootIkSolver? FootIkSolver { get; set; }
     private bool lastLoggedLegIkHandlesCorpse;
 
-    // Free flight may take the creature down into the ground. This keeps it on top of it: feet on
-    // the ground and legs folding, then down on its front (see GroundConformPoser).
-    public GroundConformPoser? GroundPoser { get; set; }
-    // The floor under the flying creature, as last found from above it. Looked for from the higher
-    // of the creature and this, so it is still found once the creature is under it.
-    private float flightFloorY = float.NaN;
-
     private const string GrabAttackLoopKey = "normal/aettouch_loop";
     private ushort grabAttackLoopTimeline;
     // Which config.EnemyControlGrabEmoteId the cached timeline above was resolved for; re-resolve
@@ -290,7 +283,7 @@ public unsafe partial class EnemyControlController : IDisposable
 
         var spawnPos = player.Position;
         yaw = player.Rotation;
-        posX = spawnPos.X; posY = spawnPos.Y; posZ = spawnPos.Z; flightFloorY = float.NaN;
+        posX = spawnPos.X; posY = spawnPos.Y; posZ = spawnPos.Z;
         obj->Position = spawnPos;
         obj->Rotation = yaw;
 
@@ -343,7 +336,7 @@ public unsafe partial class EnemyControlController : IDisposable
         EnemyControlEntityId = obj->EntityId;
         pendingDraw = false; // already drawn
         var pos = new Vector3(obj->Position.X, obj->Position.Y, obj->Position.Z);
-        posX = pos.X; posY = pos.Y; posZ = pos.Z; flightFloorY = float.NaN;
+        posX = pos.X; posY = pos.Y; posZ = pos.Z;
         yaw = obj->Rotation;
         character->SetMode(CharacterModes.Normal, 0);
         BeginControl(pos, yaw);
@@ -353,7 +346,7 @@ public unsafe partial class EnemyControlController : IDisposable
 
     private void BeginControl(Vector3 pos, float rot)
     {
-        posX = pos.X; posY = pos.Y; posZ = pos.Z; yaw = rot; flightFloorY = float.NaN;
+        posX = pos.X; posY = pos.Y; posZ = pos.Z; yaw = rot;
         corpseTraversalSupportActive = false;
         // Block the game from moving the actor so our writes win.
         movementBlock.AddApproachNpc(controlledAddress);
@@ -583,21 +576,7 @@ public unsafe partial class EnemyControlController : IDisposable
             if (gamepad.Raw(GamepadButtons.R2) != 0) up += 1f; // R2 ascend
             if (gamepad.Raw(GamepadButtons.L2) != 0) up -= 1f; // L2 descend
             posY += up * config.EnemyControlVerticalSpeed * dt;
-
-            // Below the floor the creature does not sink out of sight: it is held on the ground by
-            // how far it has been pushed under it, and no further than leaves it lying flat.
-            var above = float.IsNaN(flightFloorY) ? posY : MathF.Max(posY, flightFloorY);
-            var floorY = SnapToFloor(posX, above, posZ);
-            if (floorY <= above + 2f)
-            {
-                flightFloorY = floorY;
-                if (GroundPoser != null)
-                {
-                    var deepest = GroundPoser.DeepestUseful(controlledAddress) ?? 6f;
-                    posY = MathF.Max(posY, floorY - deepest);
-                    GroundPoser.Track(controlledAddress, floorY - posY, dt);
-                }
-            }
+            // No ground clamp — the creature may sink below the floor (unlimited), by request.
         }
 
         if (!ExternalControlActive && FightingLane is { IsLaneActive: true })
