@@ -46,6 +46,8 @@ public unsafe partial class RagdollController : IDisposable
     private readonly IPluginLog log;
     // Physics simulation
     private BufferPool? bufferPool;
+    // What each pair of the ragdoll's own bodies overlapped by when it started (see the class).
+    private StartOverlapAllowance? startOverlap;
     private BepuSimulation? simulation;
     private int externalBodyGeneration;
 
@@ -60,6 +62,10 @@ public unsafe partial class RagdollController : IDisposable
     private bool followWasActive;           // tracks toggle-off to restore position
     private float elapsed;
     private float activationDelay;
+    // Decides the moment physics takes over from the death animation (see RagdollTrigger).
+    private RagdollTrigger? trigger;
+    private float triggerStagger;
+    private float triggeredAt = -1f;
     private bool physicsStarted;
 
     // Animation→physics handoff velocity sampling. During the activation-delay countdown the
@@ -318,6 +324,10 @@ public unsafe partial class RagdollController : IDisposable
 
 
     public bool IsActive => isActive;
+    /// <summary>True once physics has taken the body over from the death animation.</summary>
+    public bool PhysicsStarted => physicsStarted;
+    /// <summary>True when physics starts at a moment found from the animation or the motion, not after a known delay.</summary>
+    public bool StartsOnItsOwn => trigger is { Automatic: true };
     public bool IsSimulationReady => isActive && simulation != null;
     public nint TargetCharacterAddress => targetCharacterAddress;
     public uint TargetEntityId => targetEntityId;
@@ -331,6 +341,8 @@ public unsafe partial class RagdollController : IDisposable
         public float HalfLength;      // half of the segment length (capsule extends along Y)
         public RagdollColliderShape ColliderShape;
         public Vector3 BoxHalfExtents;
+        /// <summary>Edges of the fitted hull the body really collides with (pairs of points in its frame), if any.</summary>
+        public Vector3[]? HullEdges;
         public string Name;
         public JointType Joint;
         public float SwingLimit;
@@ -524,6 +536,7 @@ public unsafe partial class RagdollController : IDisposable
                 HalfLength = rb.CapsuleHalfLength,
                 ColliderShape = rb.ColliderShape,
                 BoxHalfExtents = rb.BoxHalfExtents,
+                HullEdges = rb.HullEdges,
                 Name = rb.Name,
                 Joint = boneDef.Joint,
                 SwingLimit = boneDef.SwingLimit,
@@ -1808,6 +1821,10 @@ public unsafe partial class RagdollController : IDisposable
         // body's COM pose back to the anatomical bone origin used by skeleton write-back. Collision
         // and surface queries stay at the body's real center. Zero for bone-centered shapes.
         public Vector3 ShapeCenterOffset;
+        // Set when the body collides with a fitted hull rather than with its box or capsule
+        // envelope: the hull's corners, and its edges as pairs of points, in the body's frame.
+        public Vector3[]? HullCorners;
+        public Vector3[]? HullEdges;
         public BodyMeshGeometry? MeshGeometry;
         public MeshCollisionLodResult? MeshLod;
         // The mass this body was actually built with, so the joint above it can size its friction
@@ -2690,17 +2707,29 @@ public unsafe partial class RagdollController : IDisposable
         catch { }
     }
 
+    /// <summary>Arms the ragdoll the way the options say: their delay, and their choice of when physics starts.</summary>
     public void Activate(nint characterAddress)
     {
-        Activate(characterAddress, config.RagdollActivationDelay);
+        Activate(characterAddress, config.RagdollActivationDelay, RagdollTrigger.ClampMode(config.RagdollTriggerMode));
     }
 
+    /// <summary>Arms the ragdoll to start physics a fixed time from now.</summary>
     public void Activate(nint characterAddress, float delayOverride)
+    {
+        Activate(characterAddress, delayOverride, RagdollTriggerMode.FixedDelay);
+    }
+
+    /// <param name="delay">Seconds to wait in <see cref="RagdollTriggerMode.FixedDelay"/>; the fallback in the other modes.</param>
+    /// <param name="stagger">Extra seconds after the moment is reached, to spread out ragdolls that start together.</param>
+    public void Activate(nint characterAddress, float delay, RagdollTriggerMode mode, float stagger = 0f)
     {
         if (isActive) Deactivate();
 
         targetCharacterAddress = characterAddress;
-        activationDelay = delayOverride;
+        activationDelay = delay;
+        trigger = new RagdollTrigger(mode, delay);
+        triggerStagger = MathF.Max(0f, stagger);
+        triggeredAt = -1f;
         elapsed = 0f;
         physicsStarted = false;
         animationFrozen = false;
@@ -2724,9 +2753,11 @@ public unsafe partial class RagdollController : IDisposable
         // — soft tissue coverage and solver budget — and those are settled at InitializePhysics.
         targetIsLocalPlayer = go->ObjectIndex == 0;
 
+        // Fit the collision hulls now, on a worker, so they are ready when physics starts.
+        PrewarmStructuralMeshFits();
         ArmConfiguredGuidedCollapse();
 
-        log.Info($"RagdollController: Activated for 0x{characterAddress:X} (delay={activationDelay:F1}s)");
+        log.Info($"RagdollController: Activated for 0x{characterAddress:X} (start: {RagdollTrigger.Labels[(int)mode]}, delay={activationDelay:F1}s)");
     }
 
     public void Deactivate()
@@ -2836,7 +2867,7 @@ public unsafe partial class RagdollController : IDisposable
             // Wait for activation delay (death animation plays first)
             if (!physicsStarted)
             {
-                if (elapsed < activationDelay)
+                if (!ShouldStartPhysics(dt))
                 {
                     OnAnimatedHairFrame();
                     // Keep sampling the animated pose so the last frame before handoff carries
@@ -2923,6 +2954,66 @@ public unsafe partial class RagdollController : IDisposable
     // Snapshot the current animated bone poses (model space) + skeleton transform so the next
     // call to InitializePhysics can derive handoff velocities. Called each frame while the
     // activation-delay death animation plays.
+    private bool ShouldStartPhysics(float dt)
+    {
+        if (trigger == null)
+            return elapsed >= activationDelay;
+        if (triggeredAt < 0f)
+        {
+            RagdollAnimationSample? animation = null;
+            float? middleHeight = null;
+            if (trigger.Automatic)
+                ReadTriggerInputs(out animation, out middleHeight);
+            if (!trigger.Update(dt, elapsed, animation, middleHeight))
+                return false;
+            triggeredAt = elapsed;
+            if (trigger.Automatic)
+                log.Info($"RagdollController: physics starts {elapsed:F2}s after death.");
+        }
+        return elapsed >= triggeredAt + triggerStagger;
+    }
+
+    /// <summary>What the death animation is doing right now: the dominant animation and the height of the pelvis.</summary>
+    private void ReadTriggerInputs(out RagdollAnimationSample? animation, out float? middleHeight)
+    {
+        animation = null;
+        middleHeight = null;
+        try
+        {
+            var skelNullable = boneService.TryGetSkeleton(targetCharacterAddress);
+            if (skelNullable == null) return;
+            var skel = skelNullable.Value;
+
+            var pelvis = boneService.ResolveBoneIndex(skel, "j_kosi");
+            if (pelvis >= 0 && pelvis < skel.BoneCount && skel.Pose != null)
+                middleHeight = skel.Pose->ModelPose.Data[pelvis].Translation.Y * GetCharacterScale(targetCharacterAddress, skel).Y;
+
+            var skeleton = skel.CharBase->Skeleton;
+            if (skeleton == null || skeleton->PartialSkeletonCount < 1 || skeleton->PartialSkeletons == null) return;
+            var animated = skeleton->PartialSkeletons[0].GetHavokAnimatedSkeleton(0);
+            if (animated == null) return;
+
+            // The animation with the most weight is the one the pose mostly comes from.
+            var bestWeight = 0f;
+            for (var i = 0; i < animated->AnimationControls.Length; i++)
+            {
+                var control = animated->AnimationControls[i].Value;
+                if (control == null) continue;
+                var binding = control->hkaAnimationControl.Binding.ptr;
+                if (binding == null || binding->Animation.ptr == null) continue;
+                var weight = control->hkaAnimationControl.Weight;
+                var duration = binding->Animation.ptr->Duration;
+                if (!(weight > bestWeight) || !(duration > 0f)) continue;
+                bestWeight = weight;
+                animation = new RagdollAnimationSample((nint)binding->Animation.ptr, control->hkaAnimationControl.LocalTime, duration);
+            }
+        }
+        catch
+        {
+            // Unreadable this frame; the trigger falls back on the clock if it stays that way.
+        }
+    }
+
     private void SampleHandoffPose(float dt)
     {
         if (dt <= 1e-5f) return;
@@ -3104,26 +3195,10 @@ public unsafe partial class RagdollController : IDisposable
         return Quaternion.CreateFromAxisAngle(axis, angle);
     }
 
+    // One definition, shared with the mesh fit: what is measured in this frame in the reference
+    // pose must be in the same frame when the body is built in the death pose.
     private static Quaternion CreateCapsuleRotation(Vector3 segmentDir, Quaternion boneWorldRot)
-    {
-        var y = NormalizeOrFallback(segmentDir, Vector3.UnitY);
-        var z = ProjectOntoPlane(Vector3.Transform(Vector3.UnitZ, boneWorldRot), y);
-        if (z.LengthSquared() < 1e-5f)
-            z = ProjectOntoPlane(Vector3.Transform(Vector3.UnitX, boneWorldRot), y);
-        if (z.LengthSquared() < 1e-5f)
-            z = ProjectOntoPlane(MathF.Abs(Vector3.Dot(y, Vector3.UnitY)) > 0.9f ? Vector3.UnitZ : Vector3.UnitY, y);
-
-        z = NormalizeOrFallback(z, Vector3.UnitZ);
-        var x = NormalizeOrFallback(Vector3.Cross(y, z), Vector3.UnitX);
-        z = NormalizeOrFallback(Vector3.Cross(x, y), z);
-
-        var m = new Matrix4x4(
-            x.X, x.Y, x.Z, 0,
-            y.X, y.Y, y.Z, 0,
-            z.X, z.Y, z.Z, 0,
-            0, 0, 0, 1);
-        return Quaternion.Normalize(Quaternion.CreateFromRotationMatrix(m));
-    }
+        => StructuralMeshFitter.SectionRotation(segmentDir, boneWorldRot);
 
     /// <summary>
     /// Build a quaternion encoding an orthonormal basis for TwistLimit.
@@ -3989,6 +4064,13 @@ public unsafe partial class RagdollController : IDisposable
     {
         if (bone.MeshGeometry != null)
             return bone.MeshGeometry.Bottom(body.Pose.Position, body.Pose.Orientation);
+        if (bone.HullCorners != null)
+        {
+            var lowest = float.MaxValue;
+            foreach (var corner in bone.HullCorners)
+                lowest = MathF.Min(lowest, Vector3.Transform(corner, body.Pose.Orientation).Y);
+            return body.Pose.Position.Y + lowest;
+        }
         if (bone.ColliderShape == RagdollColliderShape.Box)
         {
             var x = Vector3.Transform(Vector3.UnitX, body.Pose.Orientation);
@@ -4185,6 +4267,7 @@ public unsafe partial class RagdollController : IDisposable
             new RagdollNarrowPhaseCallbacks
             {
                 ConnectedPairs = connectedPairs,
+                StartOverlap = startOverlap = new StartOverlapAllowance(),
                 ExternalDynamicBodies = externalDynamicBodyHandles,
                 ExternalRigDynamicBodies = externalRigDynamicBodyHandles,
                 ExternalRigNoRagdollContactBodies = externalRigNoRagdollContactBodyHandles,
@@ -4333,8 +4416,8 @@ public unsafe partial class RagdollController : IDisposable
         if (!config.RagdollMeshVolumes) MeshGeometryStatus = "Rendered mesh collision disabled";
         var structuralMeshFits = !genericSkeleton &&
                                  ReadCharacterSurfaceIdentity().IsHumanoid
-            ? BuildStructuralMeshThicknessFits(skel, defByName, nameToIndex)
-            : new Dictionary<string, StructuralMeshThicknessFit>(StringComparer.Ordinal);
+            ? ResolveStructuralMeshFits(skel)
+            : new Dictionary<string, StructuralMeshFitter.Fit>(StringComparer.Ordinal);
 
         // Knee/ankle hinge frames from the bind pose (see BuildBindPoseHingeFrames). Always on
         // for humanoids — unlike structural mesh geometry, this is not an Advanced Filter; it
@@ -4373,9 +4456,9 @@ public unsafe partial class RagdollController : IDisposable
             Quaternion capsuleWorldRot;
             var fittedShapeCenterOffset = Vector3.Zero;
             var preserveAnatomicalLength = def.Joint == JointType.Hinge;
-            var useStructuralMeshFit = structuralMeshFits.TryGetValue(def.Name, out var structuralMeshFit);
+            var useStructuralMeshFit = structuralMeshFits.TryGetValue(def.Name, out var structuralMeshFit) && structuralMeshFit != null;
 
-            if (useStructuralMeshFit)
+            if (useStructuralMeshFit && structuralMeshFit != null)
             {
                 var worldAxis = NormalizeOrFallback(Vector3.Transform(
                     structuralMeshFit.AxisBoneLocal, boneWorldRot), Vector3.UnitY);
@@ -4386,7 +4469,7 @@ public unsafe partial class RagdollController : IDisposable
                 {
                     // Reapply the fit-time PCA roll correction on top of the fresh bone-roll frame
                     // (composed the same way it was measured: base rotation, then roll around its
-                    // own local long axis) — see TryFitStructuralMeshThickness.
+                    // own local long axis) — see StructuralMeshFitter.TryFit.
                     capsuleWorldRot = Quaternion.Normalize(capsuleWorldRot *
                         Quaternion.CreateFromAxisAngle(Vector3.UnitY, structuralMeshFit.RollRadians));
                 }
@@ -4525,7 +4608,7 @@ public unsafe partial class RagdollController : IDisposable
             var capsuleToBoneOffset = Quaternion.Normalize(
                 Quaternion.Inverse(capsuleWorldRot) * boneWorldRot);
 
-            var meshGeometry = structuralMeshFit;
+            var meshGeometry = structuralMeshFit ?? new StructuralMeshFitter.Fit();
             var useStructuralMeshGeometry = useStructuralMeshFit;
             var runtimeColliderShape = def.ColliderShape;
             float shapeRadius;
@@ -4586,6 +4669,36 @@ public unsafe partial class RagdollController : IDisposable
                 shapeBoxHalfExtents = envelope;
             }
 
+            // The torso and thighs collide with a hull fitted to the character's own surface. The
+            // box or capsule measured above stays as the body's envelope for everything that asks
+            // about its rough size; contact, centre of mass and inertia come from the hull.
+            Vector3[]? hullCorners = null;
+            Vector3[]? hullEdges = null;
+            if (meshVolume == null && useStructuralMeshGeometry && meshGeometry.HullPoints != null &&
+                TryCreateStructuralHull(meshGeometry.HullPoints, ragdollShapeScale, out var hull, out var hullCenter,
+                    out var createdCorners, out var createdEdges))
+            {
+                hullCorners = createdCorners;
+                hullEdges = createdEdges;
+                shapeIndex = simulation.Shapes.Add(hull);
+                bodyInertia = hull.ComputeInertia(effectiveMass);
+                capsuleCenter = boneWorldPos + Vector3.Transform(hullCenter, capsuleWorldRot);
+                segmentHalfLength = 0f;
+                fittedShapeCenterOffset = hullCenter;
+                if (runtimeColliderShape == RagdollColliderShape.Box)
+                {
+                    Vector3 minCorner = new(float.MaxValue), maxCorner = new(float.MinValue);
+                    foreach (var corner in hullCorners)
+                    {
+                        minCorner = Vector3.Min(minCorner, corner);
+                        maxCorner = Vector3.Max(maxCorner, corner);
+                    }
+                    shapeBoxHalfExtents = (maxCorner - minCorner) * 0.5f;
+                    shapeRadius = MathF.Min(shapeBoxHalfExtents.X, shapeBoxHalfExtents.Z);
+                    shapeHalfLength = shapeBoxHalfExtents.Y;
+                }
+            }
+
             // Clamp body center above ground so bodies don't start underground.
             // Underground capsules cause explosive ground-collision forces in the first
             // frames. Lift just enough so the capsule bottom (center - extent - radius)
@@ -4602,6 +4715,12 @@ public unsafe partial class RagdollController : IDisposable
                     initialMeshPenetration = penetration;
                     initialMeshPenetrationBone = def.Name;
                 }
+            }
+            else if (hullCorners != null)
+            {
+                bodyBottomExtent = 0f;
+                foreach (var corner in hullCorners)
+                    bodyBottomExtent = MathF.Max(bodyBottomExtent, -Vector3.Transform(corner, capsuleWorldRot).Y);
             }
             else if (runtimeColliderShape == RagdollColliderShape.Box)
             {
@@ -4633,9 +4752,9 @@ public unsafe partial class RagdollController : IDisposable
             // Kept alongside the body so callers can ask for the volume the physics is actually
             // using (see TryGetBoneCapsule) rather than re-deriving it from the defs.
             var shapeCenterOffset = fittedShapeCenterOffset;
-            if (meshVolume != null)
+            if (meshVolume != null || hullCorners != null)
             {
-                // Shape and surface inertia were constructed/recentered together above.
+                // Shape and inertia were constructed and recentred together above.
             }
             else if (runtimeColliderShape == RagdollColliderShape.Box)
             {
@@ -4721,6 +4840,8 @@ public unsafe partial class RagdollController : IDisposable
                 ColliderShape = runtimeColliderShape,
                 BoxHalfExtents = shapeBoxHalfExtents,
                 ShapeCenterOffset = shapeCenterOffset,
+                HullCorners = hullCorners,
+                HullEdges = hullEdges,
                 MeshGeometry = meshVolume,
                 MeshLod = meshLod,
                 Mass = effectiveMass,
@@ -4734,7 +4855,7 @@ public unsafe partial class RagdollController : IDisposable
                 log.Info($"[Ragdoll Init] '{def.Name}' idx={boneIdx} " +
                          $"bonePos=({boneWorldPos.X:F3},{boneWorldPos.Y:F3},{boneWorldPos.Z:F3}) " +
                          $"capsuleCenter=({capsuleCenter.X:F3},{capsuleCenter.Y:F3},{capsuleCenter.Z:F3}) " +
-                         $"shape={runtimeColliderShape} meshGeometry={useStructuralMeshGeometry} " +
+                         $"shape={runtimeColliderShape} meshGeometry={useStructuralMeshGeometry} hull={(hullCorners?.Length ?? 0)} " +
                          $"radius={shapeRadius:F3} segHalf={segmentHalfLength:F3} bodyHalfY={shapeHalfLength:F3} " +
                          $"capsuleY=({logCapsuleY.X:F3},{logCapsuleY.Y:F3},{logCapsuleY.Z:F3})");
             }
@@ -12502,6 +12623,8 @@ partial struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     // Connected body pairs that should NOT collide (parent-child joints).
     // All other body-body pairs DO collide (arms vs torso, etc.).
     public HashSet<(int, int)>? ConnectedPairs;
+    // Overlap the ragdoll's own bodies started with; a contact only resists going deeper than that.
+    public StartOverlapAllowance? StartOverlap;
     public HashSet<int>? ExternalDynamicBodies;
     public HashSet<int>? ExternalRigDynamicBodies;
     public HashSet<int>? ExternalRigNoRagdollContactBodies;
@@ -12727,6 +12850,7 @@ partial struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
         {
             pairMaterial.MaximumRecoveryVelocity = 0.2f;
             pairMaterial.SpringSettings = new SpringSettings(20, 2);
+            StartOverlap?.Apply(pair.A.BodyHandle.Value, pair.B.BodyHandle.Value, ref manifold);
         }
         else if (IsSoftKinematicContact(pair))
         {

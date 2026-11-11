@@ -760,6 +760,15 @@ public unsafe partial class DismembermentController : IDisposable
                 var p = pending[i];
                 var dt = frameDt;
                 TryRefreshHandoff(p, dt);
+                // A ragdoll that picks its own moment has no delay known in advance: the severed
+                // part waits for it, and goes the instant physics takes the body over.
+                if (PlayerRagdollController is { IsActive: true, StartsOnItsOwn: true } ragdoll &&
+                    ragdoll.TargetCharacterAddress == p.SourceAddress)
+                {
+                    if (!ragdoll.PhysicsStarted)
+                        continue;
+                    p.Delay = 0f;
+                }
                 p.Delay -= dt;
                 if (p.Delay <= 0f)
                 {

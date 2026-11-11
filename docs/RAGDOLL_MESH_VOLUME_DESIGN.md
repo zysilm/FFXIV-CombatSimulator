@@ -16,7 +16,7 @@
 | 代码位置 | 行为与限制 |
 | --- | --- |
 | `Animation/RagdollController.cs:4401` | 人形结构 mesh 拟合受 `RagdollCharacterSurfaceProfiles` 开关控制；默认开启，但关闭、通用骨架和不支持身份会回退。 |
-| `Animation/RagdollController.StructuralMeshThickness.cs:118` | 遍历当前 `CharBase->Models`，取资源路径加载 MDL，然后按骨骼权重收集顶点。 |
+| `Animation/RagdollController.StructuralMeshThickness.cs:118`（2026-11 起由 `StructuralMeshFitter` 取代，见 `RAGDOLL_FITTED_HULLS.md`；下面三行描述的是旧实现） | 遍历当前 `CharBase->Models`，取资源路径加载 MDL，然后按骨骼权重收集顶点。 |
 | 同文件 `:261`、`:430` | 收集的是原始 bind-position，用参考骨架测量；没有在该路径应用完整实时蒙皮、可见三角索引、shape 或种族变形。 |
 | 同文件 `:328` | 用加权分位数测横截面，以中位数确定横向中心；四肢收敛到圆截面，躯干到盒子。PCA 修正盒子的 roll，并没有保留表面形状。 |
 | 同文件 `:591`、`:712` | 人体尺寸和左右对称检查可以拒绝拟合。合法但体型特殊的 mod 也可能回退，需要从日志确认，不能把正常人体比例当成几何正确性的充分条件。 |

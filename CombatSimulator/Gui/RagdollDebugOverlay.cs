@@ -81,6 +81,23 @@ public class RagdollDebugOverlay
                 continue;
             }
 
+            if (cap.HullEdges != null)
+            {
+                // The fitted hull is the contact geometry; its box or capsule envelope is not drawn.
+                for (var edge = 0; edge + 1 < cap.HullEdges.Length; edge += 2)
+                {
+                    if (gameGui.WorldToScreen(cap.Position + Vector3.Transform(cap.HullEdges[edge], cap.Orientation), out var from) &&
+                        gameGui.WorldToScreen(cap.Position + Vector3.Transform(cap.HullEdges[edge + 1], cap.Orientation), out var to))
+                        drawList.AddLine(from, to, colorCapsule, thickness);
+                }
+                if (gameGui.WorldToScreen(cap.Position, out var hullLabelPos))
+                {
+                    var textSize = ImGui.CalcTextSize(cap.Name);
+                    drawList.AddText(hullLabelPos - textSize * 0.5f, colorLabel, cap.Name);
+                }
+                continue;
+            }
+
             if (cap.ColliderShape == RagdollController.RagdollColliderShape.Box)
             {
                 DrawBox3D(drawList, cap.Position, xAxis, yAxis, zAxis, cap.BoxHalfExtents, colorCapsule, thickness);

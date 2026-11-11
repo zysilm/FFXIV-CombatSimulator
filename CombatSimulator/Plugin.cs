@@ -1203,7 +1203,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         controller.SetDismemberedBones(Array.Empty<string>());
         // Shares the enemy stagger budget — a wipe drops companions alongside enemies, and they are
         // the same kind of load. See ActivateNpcDeathRagdoll.
-        controller.Activate(address, config.RagdollActivationDelay + npcRagdollStaggerBudget);
+        controller.Activate(address, config.RagdollActivationDelay,
+            Animation.RagdollTrigger.ClampMode(config.RagdollTriggerMode), npcRagdollStaggerBudget);
         npcRagdollStaggerBudget = MathF.Min(
             npcRagdollStaggerBudget + NpcRagdollActivationStagger, NpcRagdollMaxStagger);
         npcRagdolls[address] = controller;

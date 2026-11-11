@@ -323,6 +323,9 @@ public partial class Configuration : IPluginConfiguration
     // Ragdoll physics (Experimental)
     public bool EnableRagdoll { get; set; } = false;
     public float RagdollActivationDelay { get; set; } = 1.0f;
+    // When physics takes over from the death animation: index into RagdollTrigger.Labels. 0 waits
+    // RagdollActivationDelay seconds; the others find the moment from the animation or the fall.
+    public int RagdollTriggerMode { get; set; }
     // Extend terrain detection: also build ground collision patches under nearby
     // enemies (not just the death spot) so a victory-sequence grab that drags the
     // body onto an enemy doesn't fall through the floor on release. Costs extra

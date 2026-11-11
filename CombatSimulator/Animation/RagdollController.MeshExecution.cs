@@ -27,6 +27,7 @@ public unsafe partial class RagdollController
     private void StepPhysicsSimulation(float timestep)
     {
         if (simulation == null) return;
+        startOverlap?.BeginStep();
         SyncWeaponContactProxies();
         if (!activeRagdollMeshVolumes || activeRagdollIsGeneric)
         {

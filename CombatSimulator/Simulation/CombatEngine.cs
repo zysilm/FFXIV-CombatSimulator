@@ -1534,9 +1534,11 @@ public partial class CombatEngine : IDisposable
                         // ragdoll) when ragdoll is enabled.
                         if (config.EnableRagdoll)
                         {
-                            var ragdollDelay = instantRagdollOverride ? 0f : config.RagdollActivationDelay;
                             ragdollController.SetDismemberedBones(config.DismemberPocBones);
-                            ragdollController.Activate(player.Address, ragdollDelay);
+                            if (instantRagdollOverride)
+                                ragdollController.Activate(player.Address, 0f);
+                            else
+                                ragdollController.Activate(player.Address);
                             OnPlayerDeath?.Invoke(player.Address);
                         }
                     }

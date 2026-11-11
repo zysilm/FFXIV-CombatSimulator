@@ -2693,12 +2693,13 @@ public partial class MainWindow : IDisposable
         if (guided.Enabled && !config.EnableRagdoll)
             ImGui.TextColored(new Vector4(1f, 0.75f, 0.25f, 1f), "Enable Ragdoll above; the knee buckle only arms during ragdoll activation.");
 
-        if (guided.Enabled && config.RagdollActivationDelay > 0.001f)
+        if (guided.Enabled && (config.RagdollActivationDelay > 0.001f || config.RagdollTriggerMode != (int)RagdollTriggerMode.FixedDelay))
         {
-            ImGui.TextColored(new Vector4(1f, 0.75f, 0.25f, 1f), "Activation Delay is not zero; the buckle starts from the delayed death-animation pose.");
+            ImGui.TextColored(new Vector4(1f, 0.75f, 0.25f, 1f), "The ragdoll does not start at once; the buckle starts from the death-animation pose it starts in.");
             ImGui.SameLine();
-            if (ImGui.SmallButton("Set 0##guidedcollapseDelay"))
+            if (ImGui.SmallButton("Start at once##guidedcollapseDelay"))
             {
+                config.RagdollTriggerMode = (int)RagdollTriggerMode.FixedDelay;
                 config.RagdollActivationDelay = 0f;
                 config.Save();
             }
@@ -2740,13 +2741,32 @@ public partial class MainWindow : IDisposable
 
                 ImGui.Separator();
 
-                var delay = config.RagdollActivationDelay;
-                if (ImGui.SliderFloat("Activation Delay (s)##ragdoll", ref delay, 0.0f, 20.0f, "%.1f"))
+                var triggerMode = (int)RagdollTrigger.ClampMode(config.RagdollTriggerMode);
+                ImGui.SetNextItemWidth(360);
+                if (ImGui.Combo("Ragdoll starts##ragdoll", ref triggerMode, RagdollTrigger.Labels, RagdollTrigger.Labels.Length))
                 {
-                    config.RagdollActivationDelay = delay;
+                    config.RagdollTriggerMode = triggerMode;
                     config.Save();
                 }
-                HelpMarker("Seconds after death before ragdoll physics take over.");
+                HelpMarker("When physics takes the body over from the death animation.\n" +
+                           "After a fixed delay: the number of seconds below.\n" +
+                           "One frame before the death animation ends: the animation plays out, and physics catches its last frame.\n" +
+                           "At 90% of the death animation: a little earlier, while the body still has some motion.\n" +
+                           "When the body falls fastest: as soon as the body's middle drops fast, or at the fastest point of a slower fall.\n" +
+                           "When the body has landed: once it has come down and stopped falling.\n" +
+                           "The last four also start when the death animation runs out, and never later than 30 seconds.");
+
+                if (triggerMode == (int)RagdollTriggerMode.FixedDelay)
+                {
+                    var delay = config.RagdollActivationDelay;
+                    ImGui.SetNextItemWidth(360);
+                    if (ImGui.SliderFloat("Activation Delay (s)##ragdoll", ref delay, 0.0f, RagdollTrigger.MaximumWait, "%.1f"))
+                    {
+                        config.RagdollActivationDelay = delay;
+                        config.Save();
+                    }
+                    HelpMarker("Seconds after death before ragdoll physics take over.");
+                }
 
                 ImGui.Unindent();
             }
