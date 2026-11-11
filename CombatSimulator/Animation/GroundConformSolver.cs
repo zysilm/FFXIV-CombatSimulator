@@ -13,22 +13,22 @@ namespace CombatSimulator.Animation;
 /// Fits a posed skeleton into the space left above the ground when its owner is pushed down into it.
 ///
 /// The skeleton is taken as it is animated, in its own space (Y up, origin at the owner's feet), and
-/// the ground is a horizontal plane that has risen through it. Nothing may be below that plane, and
-/// nothing may rise above where the pose's highest point was: the body is squeezed between a floor
-/// that comes up and a ceiling that stays.
+/// the ground is a horizontal plane that has risen through it. Nothing may be below that plane; and
+/// a body with no legs to go down on may not rise above where the pose's highest point was either.
 ///
 /// A skeleton is read by its shape alone; no bone is looked up by name. Its core is everything
 /// between the bones that branch (a pelvis that carries legs and a spine, a chest that carries arms
 /// and a neck) and it moves as one piece. Its limbs are the chains that hang from the core. As the
 /// ground rises:
 ///   - the core stays where the animation holds it, so it comes down with its owner; limbs that
-///     stand on the ground keep their ends where they stand, and fold;
-///   - when the core itself reaches the ground it rests there, and tips forward as far as it must
-///     to stay under the ceiling, until it lies flat;
-///   - limbs that only hang (arms, a neck, a tail) follow the core and are laid along the floor
-///     or the ceiling where one is in their way.
-/// So a biped crouches, then goes down on its front; a quadruped folds its legs and settles on its
-/// belly. Bones keep their lengths exactly.
+///     stand on the ground keep their ends where they stand, and fold: it crouches;
+///   - pushed past what its legs allow, it goes down on all fours: the core tips forward until
+///     it is level, the legs turn under it until it kneels on them, and the limbs that hang down
+///     from it (arms) keep hanging down, so they meet the ground and hold it up in front;
+///   - pushed further still it comes down low over the ground, knees sliding back and arms
+///     folding, but not flat: it stays on its limbs, so that whatever moves them still shows.
+/// So a biped crouches, goes on all fours, then lies low; a creature whose body is level already
+/// only folds its legs. Bones keep their lengths exactly.
 /// </summary>
 public sealed class GroundConformSolver
 {
@@ -47,6 +47,11 @@ public sealed class GroundConformSolver
     private const float BranchShare = 0.20f;
     // A bone shorter than this share of its limb is not a joint of its own.
     private const float ShortBoneShare = 0.12f;
+    // Past the crouch's limit, a push of this share of the pose's height takes the body down on all
+    // fours, and as much again brings it low over the ground.
+    private const float StageShare = 0.20f;
+    // How far back its thighs lean when it is as low as it goes, radians: kneeling they hang down.
+    private const float LowestLean = MathF.PI / 3f;
     // Marks a joint that keeps its angle.
     private const float Locked = -1f;
 
@@ -64,6 +69,7 @@ public sealed class GroundConformSolver
     private Quaternion[] turned = Array.Empty<Quaternion>();
     private readonly List<int[]> limbs = new();        // each: its bones outward; the first is fixed to the core
     private readonly List<Vector3[]?> folded = new();  // per limb: how it folds under the crouching body, or null if it only hangs
+    private readonly List<float> closedUp = new();     // per limb: how far apart its ends still are when it is closed up; 0 if it only hangs
     private int pivotBone = -1;
     private float poseHeight = 1f;
     private float risen;                               // how far the ground has come up, this solve
@@ -79,6 +85,15 @@ public sealed class GroundConformSolver
     public float LastLift { get; private set; }
     public float LastCrouch { get; private set; }
     public float LastResting { get; private set; }
+
+    /// <summary>How far down the body is after the last <see cref="Solve"/>: 0 crouching, 1 on all fours, 2 as low as it goes.</summary>
+    public float LastStage { get; private set; }
+
+    /// <summary>
+    /// The ground height at which the body is as low as it goes, as of the last <see cref="Solve"/>;
+    /// pushing its owner deeper changes nothing. Not a number for a body that only crouches.
+    /// </summary>
+    public float LastDeepest { get; private set; } = float.NaN;
 
     /// <summary>The limbs, after <see cref="Solve"/>: each its bones outward from the core.</summary>
     public IReadOnlyList<int[]> Limbs => limbs;
@@ -199,7 +214,7 @@ public sealed class GroundConformSolver
         var flattestAt = 0f;
         for (var step = 0; step <= 45; step++)
         {
-            Lift(positions, pivot, axis, MathF.PI / 2f * step / 45, false, out var tippedTop);
+            Lift(positions, pivot, axis, MathF.PI / 2f * step / 45, out var tippedTop);
             if (tippedTop >= flattest - 1e-5f) continue;
             flattest = tippedTop;
             flattestAt = MathF.PI / 2f * step / 45;
@@ -215,40 +230,70 @@ public sealed class GroundConformSolver
 
         // The legs carry it too. Folded as far as they go, they hold the upright core at that height.
         folded.Clear();
-        var upright = CrouchLift(positions, forward, Lift(positions, pivot, axis, 0f, false, out _), groundHeight);
+        var upright = CrouchLift(positions, forward, Lift(positions, pivot, axis, 0f, out _), groundHeight, out var past);
 
         // How each limb the body stands on is folded under the crouching body.
         folded.Clear();
         Span<Vector3> chain = stackalloc Vector3[64];
-        foreach (var limb in limbs)
+        for (var l = 0; l < limbs.Count; l++)
         {
+            var limb = limbs[l];
             var bones = Leg(limb, positions);
             if (bones == 0) { folded.Add(null); continue; }
             for (var k = 0; k < bones; k++)
                 chain[k] = positions[limb[k]] + new Vector3(0f, upright, 0f);
             var end = limb[bones - 1];
-            FitChain(chain[..bones], limb, Planted(end, positions), forward);
+            FitChain(chain[..bones], limb, Planted(limb[0], end, chain[0], closedUp[l], positions), forward);
             LayClear(chain[..bones], limb, forward);
             folded.Add(chain[..bones].ToArray());
         }
 
-        // It comes down further only by going down on its front, and it goes down on its front as
-        // far as it is pushed past what its legs allow: not at all at the crouch's limit, flat when
-        // its owner is down to where the body lies. On the way the legs turn from folded under it
-        // to lying behind it; while they do, the knees are on the ground and hold the hips up.
+        // It comes down further only by going down on its front, and how far is how far it is
+        // pushed past what its legs allow. First on all fours: the core tips until it is level, and
+        // the legs turn from folded under it to kneeling. Then low: the knees slide back.
         var angle = 0f;
-        var resting = Lift(positions, pivot, axis, 0f, false, out var standingTop);
+        var kneeling = 0f;  // how far it is from crouching on its feet (0) to kneeling (1)
+        var lean = 0f;      // how far back its thighs then lean, radians
+        var stage = 0f;
+        var deepest = float.NaN;
+        var resting = Lift(positions, pivot, axis, 0f, out var standingTop);
         if (upright > resting + 1e-5f)
         {
-            var held = positions[pivotBone].Y + upright - groundHeight;   // the pelvis over the ground, crouching
-            // ... and with the upright core resting on the ground itself.
-            var lowestPart = float.MaxValue;
+            // How far the core has to tip to be level: by how steeply it stands over the bone it
+            // is held by. A core that is level as it stands (four legs under a belly) does not
+            // tip, and its legs do not turn.
+            var middle = Vector3.Zero;
             for (var i = 0; i < count; i++)
-                if (core[i] || (structural[i] && core[parents[i]]))
-                    lowestPart = MathF.Min(lowestPart, positions[i].Y - clearance[i]);
-            var lyingAt = positions[pivotBone].Y - lowestPart;
-            // (A creature that crouches almost to the ground still takes a fair push to lay flat.)
-            angle = MathF.PI / 2f * Math.Clamp((upright - resting) / MathF.Max(0.15f * poseHeight, held - lyingAt), 0f, 1f);
+                if (core[i]) middle += positions[i] - pivot;
+            var level = Math.Clamp(MathF.Atan2(middle.Y, Vector3.Dot(middle, forward)), 0f, MathF.PI / 2f);
+            if (middle.LengthSquared() < 1e-10f) level = 0f;
+            var share = level / (MathF.PI / 2f);
+
+            stage = Math.Clamp(past / (StageShare * poseHeight), 0f, 2f);
+            deepest = groundHeight - past + 2f * StageShare * poseHeight;
+            var down = Smooth(MathF.Min(stage, 1f));
+            var lower = Smooth(MathF.Max(stage - 1f, 0f));
+            angle = level * down;
+            kneeling = share * down;
+            lean = share * LowestLean * lower;
+
+            // As low as it goes, it goes no lower: pushed deeper it is as it was there, and the
+            // ground carries it.
+            if (share > 0f && groundHeight > deepest + 1e-4f)
+            {
+                var carried = groundHeight - deepest;
+                var fitted = Solve(parentIndices, positions, rotations, deepest, forward);
+                for (var i = 0; fitted && i < count; i++)
+                    if (anchor[i] >= 0) positions[i].Y += carried;
+                LastDeepest = deepest;
+                return fitted;
+            }
+            if (share <= 0f) deepest = float.NaN;
+            // A body that goes down on its limbs is not squeezed under where its top was: on all
+            // fours its hips and shoulders are where its limbs hold them.
+            if (share > 0f && stage > 0f)
+                for (var i = 0; i < count; i++)
+                    if (structural[i]) roof[i] = float.MaxValue;
         }
         // A core that stands tall without legs under it (or taller than they let it lie) goes down
         // on its front as the ground carries it up past where its top was: not at all while it is
@@ -256,7 +301,18 @@ public sealed class GroundConformSolver
         if (standingTop > poseTop + 1e-5f && standingTop > flattest + 1e-4f)
             angle = MathF.Max(angle, flattestAt * Math.Clamp((standingTop - poseTop) / (standingTop - flattest), 0f, 1f));
         var tipped = Quaternion.CreateFromAxisAngle(axis, angle);
-        var raise = new Vector3(0f, Lift(positions, pivot, axis, angle, true, out _), 0f);
+        // The core rests on the ground, or on its legs: folded under it while it crouches, and on
+        // its knees as it goes down on them.
+        var held = upright > resting + 1e-5f ? upright : float.MinValue;
+        if (kneeling > 0f)
+        {
+            var onKnees = KneelLift(positions, pivot, tipped, axis, kneeling, lean);
+            // (Never lower than its knees let it: they are not pushed into the ground and out again.)
+            if (onKnees > float.MinValue) held = MathF.Max(onKnees, upright + (onKnees - upright) * kneeling);
+        }
+        var raise = new Vector3(0f, MathF.Max(Lift(positions, pivot, axis, angle, out _), held), 0f);
+        LastStage = stage;
+        LastDeepest = deepest;
         LastTip = angle;
         LastLift = raise.Y;
         LastCrouch = upright;
@@ -277,7 +333,7 @@ public sealed class GroundConformSolver
                 // The leg, down to where it stands; what is beyond that (a foot, toes) stays as it
                 // stands on the ground, and goes where the leg's end goes.
                 var leg = folded[l]!.Length;
-                StandingLimb(l, positions, pivot, tipped, Quaternion.CreateFromAxisAngle(axis, MathF.PI / 2f), angle, chain[..leg]);
+                StandingLimb(l, positions, pivot, tipped, axis, kneeling, lean, chain[..leg]);
                 for (var k = 0; k < leg; k++)
                     chain[k] += raise;
                 LayClear(chain[..leg], limb, forward);
@@ -288,10 +344,34 @@ public sealed class GroundConformSolver
             }
             else
             {
-                // A hanging limb goes where the core takes it, as it is; whatever of it is then
-                // under the floor or over the ceiling is laid along it.
-                for (var k = 0; k < bones; k++)
-                    chain[k] = solved[limb[k]];
+                // A limb that is held up (a neck, a raised arm) goes where the core takes it, as it
+                // is. One that hangs down (an arm at rest, a tail, cloth) hangs down still when the
+                // core tips: it keeps the way it points, from where the core now holds it. So the
+                // arms of a body going down on its front meet the ground under its shoulders.
+                // Whatever of either is then under the floor or over the ceiling is laid along it.
+                var reach = positions[limb[bones - 1]] - positions[limb[0]];
+                var hangs = reach.LengthSquared() > 1e-10f ? 1f - Smooth(Math.Clamp(reach.Y / reach.Length() / 0.5f, 0f, 1f)) : 0f;
+                var own = Quaternion.CreateFromAxisAngle(axis, angle * (1f - hangs));
+                chain[0] = solved[limb[0]];
+                for (var k = 1; k < bones; k++)
+                    chain[k] = chain[k - 1] + Vector3.Transform(positions[limb[k]] - positions[limb[k - 1]], own);
+                // A limb that points down at the ground and can fold (an arm under a shoulder) is
+                // stood on it, and folds as a leg does; and as a leg does, it reaches less far out
+                // from under where it is held the lower that is. The steeper it points, the more
+                // it is stood; one that trails (a tail) is laid instead.
+                var last = limb[bones - 1];
+                var under = floor[last] - chain[bones - 1].Y;
+                var along = chain[bones - 1] - chain[0];
+                if (bones >= 3 && under > 0f && along.LengthSquared() > 1e-10f)
+                {
+                    var steep = Smooth((-along.Y / along.Length() - 0.5f) / 0.3f);
+                    if (steep > 0f)
+                    {
+                        var share = Math.Clamp((chain[0].Y - floor[last]) / -along.Y, 0f, 1f);
+                        var stood = new Vector3(chain[0].X + along.X * share, floor[last], chain[0].Z + along.Z * share);
+                        FitChain(chain[..bones], limb, Vector3.Lerp(chain[bones - 1], stood, steep), forward);
+                    }
+                }
                 LayClear(chain[..bones], limb, forward);
             }
             hanging[limb[0]] = !stands;
@@ -332,11 +412,11 @@ public sealed class GroundConformSolver
         }
     }
 
-    /// <summary>How far down on its front the body is, for the given tip: 0 upright, 1 flat.</summary>
-    private static float Lying(float angle)
+    /// <summary>Eases a share in and out: 0 at 0, 1 at 1, level at both.</summary>
+    private static float Smooth(float share)
     {
-        var lying = Math.Clamp(angle / (MathF.PI / 2f), 0f, 1f);
-        return lying * lying * (3f - 2f * lying);
+        share = Math.Clamp(share, 0f, 1f);
+        return share * share * (3f - 2f * share);
     }
 
     /// <summary>
@@ -362,14 +442,17 @@ public sealed class GroundConformSolver
 
     /// <summary>
     /// A limb the body stands on, for the given tip of the core, before any lift: every bone points
-    /// part of the way from where the crouch has it to where the lying body carries it. Upright it is
-    /// the crouch; flat, the leg lies behind the body; between, it passes through kneeling.
+    /// part of the way from where the crouch has it to where it is when the body kneels. Kneeling,
+    /// the thigh points the way it is animated (it hangs from the hip, and swings as it is moved),
+    /// leant back by the given angle, and the rest of the leg lies back along the ground.
     /// </summary>
-    private void StandingLimb(int index, ReadOnlySpan<Vector3> positions, Vector3 pivot, Quaternion tipped, Quaternion flat, float angle, Span<Vector3> into)
+    private void StandingLimb(int index, ReadOnlySpan<Vector3> positions, Vector3 pivot, Quaternion tipped, Vector3 axis, float kneeling, float lean, Span<Vector3> into)
     {
         var limb = limbs[index];
         var crouched = folded[index]!;
-        var lying = Lying(angle);
+        var knee = Knee(limb, into.Length, positions);
+        var leant = Quaternion.CreateFromAxisAngle(axis, lean);
+        var laid = Quaternion.CreateFromAxisAngle(axis, MathF.PI / 2f);
         into[0] = pivot + Vector3.Transform(positions[limb[0]] - pivot, tipped);
         for (var k = 1; k < into.Length; k++)
         {
@@ -382,30 +465,39 @@ public sealed class GroundConformSolver
                 continue;
             }
             from = Vector3.Normalize(from);
-            // Where the bone lies when the body is flat, whatever the tip is now: the leg does not
-            // straighten out under a body half way down, it turns under it, knee on the ground.
-            var carried = Vector3.Transform(bone / length, flat);
-            // It turns the way that takes it down past the ground side, never up over the body:
-            // a thigh goes from pointing forward to pointing back by way of pointing down.
-            var hinge = Vector3.Cross(from, carried);
-            var turn = MathF.Atan2(hinge.Length(), Vector3.Dot(from, carried));
-            hinge = hinge.LengthSquared() > 1e-10f ? Vector3.Normalize(hinge) : Vector3.Cross(Vector3.UnitY, carried);
-            if (hinge.LengthSquared() < 1e-10f) hinge = Vector3.UnitX;
-            var half = Vector3.Transform(from, Quaternion.CreateFromAxisAngle(hinge, turn * 0.5f));
-            if (half.Y > MathF.Max(from.Y, carried.Y) + 0.05f)
+            var kneels = Vector3.Transform(bone / length, k <= knee ? leant : laid);
+            var hinge = Vector3.Cross(from, kneels);
+            var turn = MathF.Atan2(hinge.Length(), Vector3.Dot(from, kneels));
+            hinge = hinge.LengthSquared() > 1e-10f ? Vector3.Normalize(hinge) : axis;
+            // A bone that has far to turn turns the way the body tips: from pointing forward to
+            // pointing back by way of pointing down, never up over the body. (So a bone that has
+            // half a turn to make does not go one way now and the other a moment later.)
+            if (turn >= MathF.PI / 2f && Vector3.Dot(hinge, axis) < 0f)
             {
                 hinge = -hinge;
                 turn = 2f * MathF.PI - turn;
             }
-            into[k] = into[k - 1] + Vector3.Transform(from, Quaternion.CreateFromAxisAngle(hinge, turn * lying)) * length;
+            into[k] = into[k - 1] + Vector3.Transform(from, Quaternion.CreateFromAxisAngle(hinge, turn * kneeling)) * length;
         }
+    }
+
+    /// <summary>Which joint of a leg is its knee: its first, not counting a very short bone at the hip.</summary>
+    private static int Knee(int[] limb, int bones, ReadOnlySpan<Vector3> positions)
+    {
+        var length = 0f;
+        for (var k = 1; k < bones; k++)
+            length += Vector3.Distance(positions[limb[k]], positions[limb[k - 1]]);
+        var knee = 1;
+        while (knee < bones - 1 && Vector3.Distance(positions[limb[knee]], positions[limb[0]]) < ShortBoneShare * length)
+            knee++;
+        return knee;
     }
 
     /// <summary>
     /// How far the ground lifts the core when it is tipped by the given angle, and where its top
-    /// then is. The core rests on the ground or on the limbs it stands on, whichever holds it higher.
+    /// then is.
     /// </summary>
-    private float Lift(ReadOnlySpan<Vector3> positions, Vector3 pivot, Vector3 axis, float angle, bool onLimbs, out float coreTop)
+    private float Lift(ReadOnlySpan<Vector3> positions, Vector3 pivot, Vector3 axis, float angle, out float coreTop)
     {
         var tip = Quaternion.CreateFromAxisAngle(axis, angle);
         var lift = 0f;
@@ -418,17 +510,33 @@ public sealed class GroundConformSolver
             lift = MathF.Max(lift, floor[i] - y);
             if (core[i]) coreTop = MathF.Max(coreTop, y + radius[i]);
         }
+        coreTop += lift;
+        return lift;
+    }
+
+    /// <summary>
+    /// The lift at which the core, tipped so, has the knee of every leg it stands on on the ground
+    /// or over it.
+    /// </summary>
+    private float KneelLift(ReadOnlySpan<Vector3> positions, Vector3 pivot, Quaternion tipped, Vector3 axis, float kneeling, float lean)
+    {
+        var lift = float.MinValue;
         Span<Vector3> chain = stackalloc Vector3[64];
-        for (var l = 0; onLimbs && l < folded.Count; l++)
+        for (var l = 0; l < folded.Count; l++)
         {
             if (folded[l] == null) continue;
             var limb = limbs[l];
             var bones = folded[l]!.Length;
-            StandingLimb(l, positions, pivot, tip, Quaternion.CreateFromAxisAngle(axis, MathF.PI / 2f), angle, chain[..bones]);
+            StandingLimb(l, positions, pivot, tipped, axis, kneeling, lean, chain[..bones]);
+            // (A knee made of two bones a few centimetres apart is on the ground with both.)
+            var knee = Knee(limb, bones, positions);
+            var length = 0f;
             for (var k = 1; k < bones; k++)
-                lift = MathF.Max(lift, floor[limb[k]] - chain[k].Y);
+                length += Vector3.Distance(positions[limb[k]], positions[limb[k - 1]]);
+            for (var k = 1; k < bones - 1; k++)
+                if (k <= knee || Vector3.Distance(positions[limb[k]], positions[limb[knee]]) < ShortBoneShare * length)
+                    lift = MathF.Max(lift, floor[limb[k]] - chain[k].Y);
         }
-        coreTop += lift;
         return lift;
     }
 
@@ -436,15 +544,19 @@ public sealed class GroundConformSolver
     /// How low a creature can crouch: the least lift of the upright core at which every leg it
     /// stands on still fits between its hip and where it stands. A leg folds only so far; closed
     /// up, its two ends are still some distance apart, and the hip cannot come nearer the foot than
-    /// that. The push beyond it is what the legs hold the body up by.
+    /// that, nor so the ground it stands on. The push beyond it is what the legs hold the body up by.
     /// </summary>
-    private float CrouchLift(ReadOnlySpan<Vector3> positions, Vector3 forward, float least, float most)
+    /// <param name="past">How far the ground has risen past where the legs were closed up; negative before, least when there are no legs.</param>
+    private float CrouchLift(ReadOnlySpan<Vector3> positions, Vector3 forward, float least, float most, out float past)
     {
         var lift = least;
+        past = float.MinValue;
+        closedUp.Clear();
         Span<Vector3> chain = stackalloc Vector3[64];
         foreach (var limb in limbs)
         {
             var bones = Leg(limb, positions);
+            closedUp.Add(0f);
             if (bones == 0) continue;
             for (var k = 0; k < bones; k++)
                 chain[k] = positions[limb[k]];
@@ -453,46 +565,32 @@ public sealed class GroundConformSolver
             var closed = Vector3.Distance(chain[bones - 1], chain[0]) * 1.05f;
 
             var root = positions[limb[0]];
-            var planted = Planted(limb[bones - 1], positions);
-            var across = new Vector2(planted.X - root.X, planted.Z - root.Z).Length();
-            var above = MathF.Sqrt(MathF.Max(0f, closed * closed - across * across));
-            lift = MathF.Max(lift, planted.Y + above - root.Y);
+            // (Counted from a leg standing under its hip: a foot lifted or swung in a step does not
+            // make the body any less far down.)
+            closedUp[^1] = closed;
+            var over = risen + clearance[limb[bones - 1]] + closed - root.Y;
+            lift = MathF.Max(lift, over);
+            past = MathF.Max(past, over);
         }
         return MathF.Min(lift, MathF.Max(least, most));
     }
 
     /// <summary>
-    /// Where the end of a limb the body stands on belongs: where the animation has it, as high
-    /// above the risen ground as it was above the ground it stood on. (An ankle is not the sole of
-    /// a foot: it stands a hand's breadth up, and still does.)
+    /// Where the end of a limb the body stands on belongs: as high above the risen ground as the
+    /// animation has it above the ground it stood on (an ankle is not the sole of a foot: it stands
+    /// a hand's breadth up, and still does), and as far out from under its hip as the animation has
+    /// it, for the height the hip is now at: a body that is lower takes shorter steps, its legs
+    /// swinging as far as they did. Nor does it lift a foot nearer its hip than the leg closes up.
     /// </summary>
-    private Vector3 Planted(int end, ReadOnlySpan<Vector3> positions)
-        => positions[end] + new Vector3(0f, risen, 0f);
-
-    private bool CanStand(ReadOnlySpan<Vector3> positions, Vector3 forward, float lift)
+    private Vector3 Planted(int hip, int end, Vector3 hipNow, float closed, ReadOnlySpan<Vector3> positions)
     {
-        Span<Vector3> chain = stackalloc Vector3[64];
-        foreach (var limb in limbs)
-        {
-            var bones = Leg(limb, positions);
-            if (bones == 0) continue;
-            var length = 0f;
-            for (var k = 0; k < bones; k++)
-            {
-                chain[k] = positions[limb[k]] + new Vector3(0f, lift, 0f);
-                if (k > 0) length += Vector3.Distance(positions[limb[k]], positions[limb[k - 1]]);
-            }
-            var end = limb[bones - 1];
-            var planted = Planted(end, positions);
-            FitChain(chain[..bones], limb, planted, forward);
-            LayClear(chain[..bones], limb, forward);
-            // It stands while its end is still about where it was planted. A foot shifting a
-            // little as its joints settle on the ground is standing; a limb folded as far as it
-            // goes, its end pushed well out from under the body, is not.
-            if (Vector3.Distance(chain[bones - 1], planted) > 0.08f * length)
-                return false;
-        }
-        return true;
+        var height = MathF.Max(MathF.Min(positions[end].Y + risen, hipNow.Y - closed), risen + clearance[end]);
+        var stood = positions[hip].Y - positions[end].Y;
+        var share = stood > 1e-5f ? Math.Clamp((hipNow.Y - height) / stood, 0f, 1f) : 1f;
+        return new Vector3(
+            hipNow.X + (positions[end].X - positions[hip].X) * share,
+            height,
+            hipNow.Z + (positions[end].Z - positions[hip].Z) * share);
     }
 
     /// <summary>

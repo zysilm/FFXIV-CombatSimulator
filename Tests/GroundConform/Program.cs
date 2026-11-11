@@ -36,8 +36,30 @@ foreach (var (label, skeleton, human) in skeletons)
     var count = skeleton.Names.Length;
     var animated = skeleton.Model.Select(m => m.Translation).ToArray();
     var rotations = skeleton.Model.Select(m => Matrix4x4.Decompose(m, out _, out var r, out _) ? r : Quaternion.Identity).ToArray();
+    if (human)
+    {
+        // The reference pose holds the arms out sideways; nobody stands like that. Let them hang.
+        foreach (var side in new[] { "l", "r" })
+        {
+            int shoulder = skeleton.Index($"j_ude_a_{side}"), hand = skeleton.Index($"j_te_{side}");
+            if (shoulder < 0 || hand < 0) continue;
+            var from = Vector3.Normalize(animated[hand] - animated[shoulder]);
+            var to = Vector3.Normalize(new Vector3(0f, -1f, 0.08f));
+            var down = Quaternion.CreateFromAxisAngle(Vector3.Normalize(Vector3.Cross(from, to)), MathF.Acos(Math.Clamp(Vector3.Dot(from, to), -1f, 1f)));
+            var centre = animated[shoulder];
+            for (var i = shoulder; i < count; i++)
+            {
+                var under = false;
+                for (var p = i; p >= 0 && !under; p = skeleton.Parents[p]) under = p == shoulder;
+                if (!under) continue;
+                animated[i] = centre + Vector3.Transform(animated[i] - centre, down);
+                rotations[i] = Quaternion.Normalize(down * rotations[i]);
+            }
+        }
+    }
     var height = animated.Max(p => p.Y) - animated.Min(p => p.Y);
     if (height < 0.05f) continue;
+    var onAllFours = false;
     var solver = new GroundConformSolver();
     // A reference pose that dips below its owner's feet (a hanging tail) stands on its own lowest point.
     var dip = MathF.Min(0f, animated.Min(p => p.Y));
@@ -58,6 +80,7 @@ foreach (var (label, skeleton, human) in skeletons)
         if (!changed) { previous = positions; continue; }
 
         var structural = solver.Structural;
+        if (args.Contains("--trace") && label.EndsWith(args[^1])) { Console.WriteLine($"      trace {ground / height:P0}: stage {solver.LastStage:F2} tip {solver.LastTip * 57.3f:F0} lift {solver.LastLift:F2} crouch {solver.LastCrouch:F2} rest {solver.LastResting:F2} deepest {solver.LastDeepest:F2}"); if (step == 40) for (var l = 0; l < solver.Limbs.Count; l++) Console.WriteLine($"      limb {(solver.StandsOn(l) ? "STANDS" : "hangs ")}: {string.Join(" ", solver.Limbs[l].Select(i => $"{skeleton.Names[i]}@{animated[i].Y:F2},{animated[i].Z:F2}"))}"); }
         for (var i = 0; i < count; i++)
         {
             if (!structural[i]) continue;
@@ -89,8 +112,8 @@ if (MathF.Abs(after - before) > worstLength && args.Contains("--diag")) Console.
             Vector3 At(string name) => positions[skeleton.Index(name)];
             Vector3 Was(string name) => animated[skeleton.Index(name)];
             var leg = Was("j_asi_a_l").Y - Was("j_asi_d_l").Y;
-            if (step is 8 or 16 or 28 or 40 or 52 or 64 or 80)
-                notes.Add($"      ground {ground / height,4:P0} of height: pelvis y={At("j_kosi").Y - ground:F2} z={At("j_kosi").Z:+0.00;-0.00}  knee y={At("j_asi_c_l").Y - ground:F2} z={At("j_asi_c_l").Z:+0.00;-0.00}  foot y={At("j_asi_d_l").Y - ground:F2} z={At("j_asi_d_l").Z:+0.00;-0.00}  chest y={At("j_sebo_c").Y - ground:F2} z={At("j_sebo_c").Z:+0.00;-0.00}  head y={At("j_kao").Y - ground:F2} z={At("j_kao").Z:+0.00;-0.00}");
+            if (step % 6 == 0 || step == steps)
+                notes.Add($"      ground {ground / height,4:P0} of height: pelvis y={At("j_kosi").Y - ground:F2} z={At("j_kosi").Z:+0.00;-0.00}  knee y={At("j_asi_c_l").Y - ground:F2} z={At("j_asi_c_l").Z:+0.00;-0.00}  foot y={At("j_asi_d_l").Y - ground:F2} z={At("j_asi_d_l").Z:+0.00;-0.00}  chest y={At("j_sebo_c").Y - ground:F2} z={At("j_sebo_c").Z:+0.00;-0.00}  hand y={At("j_te_l").Y - ground:F2} z={At("j_te_l").Z:+0.00;-0.00}  stage {solver.LastStage:F2}  head y={At("j_kao").Y - ground:F2} z={At("j_kao").Z:+0.00;-0.00}");
             // Crouching: the ground is a quarter of a leg up. The body comes down with its owner
             // (in its own space it stays put), the feet stand on the ground where they were, the knees go forward.
             if (MathF.Abs(ground - 0.25f * leg) < deepest / steps * 0.51f)
@@ -105,12 +128,38 @@ if (MathF.Abs(after - before) > worstLength && args.Contains("--diag")) Console.
                     Check(At($"j_asi_c_{side}").Z > Was($"j_asi_c_{side}").Z + 0.01f * height, $"{label}: crouching, knee {side} did not go forward");
                 }
             }
-            // Flat: the ground is above where the head was.
+            // On all fours: level, on its knees and its hands, hips up over the knees.
+            if (!onAllFours && solver.LastStage >= 1f)
+            {
+                onAllFours = true;
+                var thigh = Vector3.Distance(Was("j_asi_a_l"), Was("j_asi_c_l"));
+                Check(At("j_kosi").Y - ground > 0.7f * thigh, $"{label}: on all fours, the hips are only {At("j_kosi").Y - ground:F2} up (thigh {thigh:F2})");
+                Check(MathF.Abs(At("j_sebo_c").Y - At("j_kosi").Y) < 0.12f * height, $"{label}: on all fours, the back is not level (chest {At("j_sebo_c").Y - At("j_kosi").Y:+0.00;-0.00} from the hips)");
+                Check(At("j_sebo_c").Z - At("j_kosi").Z > 0.1f * height, $"{label}: on all fours, the chest is not ahead of the hips");
+                foreach (var side in new[] { "l", "r" })
+                {
+                    Check(At($"j_asi_c_{side}").Y - ground < 0.06f * height, $"{label}: on all fours, knee {side} is {At($"j_asi_c_{side}").Y - ground:F2} off the ground");
+                    Check(At($"j_te_{side}").Y - ground < 0.06f * height, $"{label}: on all fours, hand {side} is {At($"j_te_{side}").Y - ground:F2} off the ground");
+                    Check(MathF.Abs(At($"j_te_{side}").Z - At($"j_ude_a_{side}").Z) < 0.2f * height, $"{label}: on all fours, hand {side} is not under its shoulder ({At($"j_te_{side}").Z - At($"j_ude_a_{side}").Z:+0.00;-0.00})");
+                    Check(At($"j_asi_d_{side}").Z < At($"j_asi_c_{side}").Z, $"{label}: on all fours, shin {side} does not lie back from the knee");
+                }
+            }
+            // As low as it goes: on its front and low, but still on its limbs, not flat.
             if (step == steps)
             {
+                Check(onAllFours, $"{label}: never went on all fours");
                 var highest = Enumerable.Range(0, count).Where(i => structural[i]).Max(i => positions[i].Y - ground);
-                Check(highest < 0.3f * height, $"{label}: pushed under, the body still stands {highest:F2} high");
-                Check(At("j_kao").Z - At("j_kosi").Z > 0.2f * height, $"{label}: pushed under, it does not lie on its front (head {At("j_kao").Z - At("j_kosi").Z:+0.00;-0.00} from the pelvis)");
+                Check(highest < 0.4f * height, $"{label}: pushed under, the body still stands {highest:F2} high");
+                Check(At("j_kosi").Y - ground > 0.08f * height && At("j_sebo_c").Y - ground > 0.08f * height, $"{label}: pushed under, it lies flat (hips {At("j_kosi").Y - ground:F2}, chest {At("j_sebo_c").Y - ground:F2})");
+                Check(At("j_kao").Z - At("j_kosi").Z > 0.2f * height, $"{label}: pushed under, it is not on its front (head {At("j_kao").Z - At("j_kosi").Z:+0.00;-0.00} from the pelvis)");
+                Check(solver.LastDeepest < ground, $"{label}: is not as low as it goes at {ground:F2} (deepest {solver.LastDeepest:F2})");
+                // Deeper than as low as it goes changes nothing but the height it all sits at.
+                var deeper = (Vector3[])animated.Clone();
+                var deeperTurned = (Quaternion[])rotations.Clone();
+                var probe = new GroundConformSolver();
+                probe.Solve(skeleton.Parents, deeper, deeperTurned, solver.LastDeepest, Vector3.UnitZ);
+                var off = Enumerable.Range(0, count).Where(i => structural[i]).Max(i => Vector3.Distance(deeper[i] - new Vector3(0f, solver.LastDeepest, 0f), positions[i] - new Vector3(0f, ground, 0f)));
+                Check(off < 0.01f * height, $"{label}: the pose still changes ({off * 100:F1} cm) past its deepest");
             }
         }
         else if (step == steps)
@@ -121,6 +170,52 @@ if (MathF.Abs(after - before) > worstLength && args.Contains("--diag")) Console.
         }
     }
 
+    if (human)
+    {
+        // Moving: legs and arms swing as in a walk. On all fours and as low as it goes, the swing
+        // must still show in the limbs, and a little more swing must give a little more of it.
+        void Turn(Vector3[] pose, Quaternion[] turns, string bone, float angle)
+        {
+            var at = skeleton.Index(bone);
+            if (at < 0) return;
+            var turn = Quaternion.CreateFromAxisAngle(Vector3.UnitX, angle);
+            var centre = pose[at];
+            for (var i = at; i < count; i++)
+            {
+                var under = false;
+                for (var p = i; p >= 0 && !under; p = skeleton.Parents[p]) under = p == at;
+                if (!under) continue;
+                pose[i] = centre + Vector3.Transform(pose[i] - centre, turn);
+                turns[i] = Quaternion.Normalize(turn * turns[i]);
+            }
+        }
+        foreach (var (name, ground) in new[] { ("crouching", 0.3f * height), ("between", 0.5f * height), ("on all fours", 0.62f * height), ("as low as it goes", 0.85f * height) })
+        {
+            Vector3[]? last = null;
+            var worst = 0f;
+            float nearHand = float.MaxValue, farHand = float.MinValue, nearKnee = float.MaxValue, farKnee = float.MinValue;
+            for (var degrees = -24; degrees <= 24; degrees++)
+            {
+                var swing = degrees * MathF.PI / 180f;
+                var pose = (Vector3[])animated.Clone();
+                var turns = (Quaternion[])rotations.Clone();
+                Turn(pose, turns, "j_asi_a_l", swing); Turn(pose, turns, "j_asi_a_r", -swing);
+                Turn(pose, turns, "j_ude_a_l", -swing); Turn(pose, turns, "j_ude_a_r", swing);
+                solver.Solve(skeleton.Parents, pose, turns, ground, Vector3.UnitZ);
+                if (last != null)
+                    for (var i = 0; i < count; i++)
+                        if (solver.Structural[i]) { if (args.Contains("--swing") && Vector3.Distance(pose[i], last[i]) > 0.03f * height) Console.WriteLine($"      swing {name} {degrees}: {skeleton.Names[i]} {last[i] - new Vector3(0, ground, 0)} -> {pose[i] - new Vector3(0, ground, 0)} stage {solver.LastStage:F2} tip {solver.LastTip:F2}"); worst = MathF.Max(worst, Vector3.Distance(pose[i], last[i])); }
+                last = pose;
+                var hand = pose[skeleton.Index("j_te_l")].Z; var knee = pose[skeleton.Index("j_asi_c_l")].Z;
+                nearHand = MathF.Min(nearHand, hand); farHand = MathF.Max(farHand, hand);
+                nearKnee = MathF.Min(nearKnee, knee); farKnee = MathF.Max(farKnee, knee);
+            }
+            Console.WriteLine($"   {label} {name}, limbs swinging 24 degrees either way: hand travels {(farHand - nearHand) * 100:F0} cm, knee {(farKnee - nearKnee) * 100:F0} cm; largest move for one degree {worst * 100:F1} cm");
+            Check(farHand - nearHand > 0.05f * height, $"{label} {name}: the arms' swing does not show ({(farHand - nearHand) * 100:F0} cm)");
+            Check(farKnee - nearKnee > 0.03f * height, $"{label} {name}: the legs' swing does not show ({(farKnee - nearKnee) * 100:F0} cm)");
+            Check(worst < 0.04f * height, $"{label} {name}: one degree of swing moves a bone {worst * 100:F1} cm");
+        }
+    }
     if (args.Contains("--core")) Console.WriteLine($"   core of {label}: {string.Join(" ", Enumerable.Range(0, count).Where(i => solver.Core[i]).Select(i => skeleton.Names[i] + "@" + animated[i].Y.ToString("F2")))}");
     var handled = GroundConformSolver.Handles(skeleton.Parents, animated, rotations, Vector3.UnitZ);
     if (handled) handledCount++;

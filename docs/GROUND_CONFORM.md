@@ -5,9 +5,9 @@ pose each rendered frame), `Npcs/EnemyControlController.cs` (free-flight branch)
 `Tests/GroundConform`.
 
 In free flight (Enemy Control, "Walk on ground (no fly)" off) a creature could be flown down through
-the floor and simply sank out of sight. Now the floor holds it: its feet stay on the ground and its
-legs fold; pushed further it goes down on its front; and it cannot be pushed deeper than leaves it
-lying flat (1.2 times its height).
+the floor and simply sank out of sight. Now the floor holds it. Pushed down, it crouches; pushed
+further it goes on all fours; further still it comes down low over the ground, but not flat: it stays
+on its limbs, so that whatever moves them (a walk) still shows. It cannot be pushed deeper than that.
 
 ## How a skeleton is read
 
@@ -26,22 +26,31 @@ By its shape alone; no bone is looked up by name.
 ## What happens as the ground rises
 
 1. **Crouch.** The core stays where the animation holds it, so it comes down with its owner. Each leg
-   folds to keep its end where it stood: every joint bends the way that brings the leg's ends
-   together (found by trying it), all by the same share, until the end is the right distance from the
-   hip; a straight joint bends so that the joint goes forward. A bone shorter than 12% of its limb is
-   not a joint of its own (a knee made of two bones a few centimetres apart bends as one).
-2. **The crouch's limit.** A leg closed up still has its ends some distance apart; the hip cannot
-   come nearer the foot than that. From there the legs hold the core up.
-3. **Down on its front.** Pushed past that, the core tips forward: not at all at the limit, flat when
-   its owner is down to where the body lies. On the way each leg bone turns from where the crouch has
-   it to where the lying body carries it, by way of pointing down, so the knees are on the ground and
-   hold the hips up meanwhile.
-4. **A core without legs under it**, or taller than they let it lie, tips forward as the ground carries
-   it past where its top was, as far as its flattest angle. A body that is long rather than tall (four
-   legs, a belly) is flattest as it stands and never tips.
-5. **Hanging limbs** (arms, a neck, a tail, cloth) go where the core takes them.
-6. **Everything is laid clear**: any joint of a limb then under the floor, or over the ceiling, is
-   put back by leaning its bone, keeping the bone's length and the way it points along the ground.
+   folds to keep its end on the ground: every joint bends the way that brings the leg's ends together
+   (found by trying it), all by the same share; a straight joint bends so that the joint goes forward.
+   A bone shorter than 12% of its limb is not a joint of its own. A foot stands as far out from under
+   its hip as the animation has it for the height the hip is now at, so a lower body takes shorter
+   steps; and it is not lifted nearer the hip than the leg closes up.
+2. **The crouch's limit.** A leg closed up still has its ends some distance apart; the hip cannot come
+   nearer the ground than that. This is counted from a leg standing under its hip, so a foot lifted or
+   swung in a step does not change how far down the body is.
+3. **On all fours** (stage 0 to 1: a further push of 20% of the pose's height). The core tips forward
+   until it is level (by how steeply it stands over the bone it is held by; a core that is level
+   already, four legs under a belly, does not tip and stops at the crouch). Each leg bone turns from
+   where the crouch has it to kneeling: the thigh points the way it is animated, hanging from the hip,
+   and the rest of the leg lies back along the ground. The body is held up by its knees. Limbs that
+   hang down (arms) keep the way they point while the core tips, so they meet the ground under the
+   shoulders; there they are stood on it and fold as a leg does.
+4. **Low** (stage 1 to 2: as much again). The thighs lean back, up to 60 degrees, and the knees slide
+   back; hips and chest come down to about half a thigh's length; the arms fold further.
+5. **No deeper.** Past stage 2 the pose is the same and the ground carries it; the solver reports that
+   depth (`LastDeepest`) and Enemy Control does not push the creature below it.
+6. **A core without legs under it** tips forward as the ground carries it past where its top was, as
+   far as its flattest angle.
+7. **Hanging limbs**: one that is held up (a neck, a raised arm) goes where the core takes it; one
+   that hangs or trails (an arm at rest, a tail, cloth) keeps the way it points. Whatever is then under
+   the floor is put back by leaning its bone, keeping the bone's length and the way it points along
+   the ground.
 
 Bones keep their lengths exactly at every step.
 
@@ -53,12 +62,21 @@ under the ground and without its core or legs jumping between steps. A skeleton 
 sink into the ground as before. The log says which: `GroundConform: ... is fitted to the ground` or
 `... is left to sink`.
 
-Offline, on reference poses: 40 of 43 skeletons pass (3 human, 37 of 40 monsters). 14 of the 40
-monsters end lower than 35% of their height; the rest end as flat as a rigid core lets them.
+Offline, on reference poses (humans with their arms let down): 42 of 43 skeletons pass (3 human, 39 of
+40 monsters). With a human's legs and arms swung 24 degrees either way, as in a walk, one degree more
+swing moves no bone more than 3 cm at any depth, and the swing still shows on all fours and low (hands
+travel 37 to 54 cm, knees 15 to 36 cm).
 
 ## Known limits
 
-- Verified offline on reference poses only, not on animations, and not in game.
+- Verified offline on reference poses and a rigid swing of the limbs, not on real animations, and not
+  in game.
 - The ground is taken as level at the height found under the creature's root.
-- A biped's hips rise on the way from crouching to lying (it goes over its knees).
-- Cloth and hair chains are treated as hanging limbs and may move abruptly as the body tips.
+- The hips rise a little on the way from the crouch to all fours (they are higher on the knees than
+  over the heels).
+- The head goes where the chest takes it: on all fours it looks at the ground.
+- A foot keeps the way it stands while the shin lies back, so it is not turned over as a kneeling
+  foot would be.
+- A bone that points straight down and has to be laid on the ground has no way of its own to go, and
+  goes forward; next to that pose a small change can lay it the other way.
+- Most monsters have a core that is level already or is carried as one piece, and only crouch.

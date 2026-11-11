@@ -37,6 +37,7 @@ public sealed unsafe class GroundConformPoser : IDisposable
         public nint Skeleton;          // the skeleton the check below was made for
         public bool Handled;
         public float Height;           // of the pose, metres
+        public float Deepest = float.NaN; // how far under the ground the body is as low as it goes, metres
         public readonly GroundConformSolver Solver = new();
         public int[] Parents = Array.Empty<int>();
         public Vector3[] Positions = Array.Empty<Vector3>();
@@ -75,11 +76,15 @@ public sealed unsafe class GroundConformPoser : IDisposable
     }
 
     /// <summary>
-    /// How deep it is worth pushing this actor: a little more than its own height, by which point
-    /// it lies flat. Null until the actor has been under the ground once.
+    /// How deep it is worth pushing this actor: to where it is as low over the ground as it goes,
+    /// or a little more than its own height for a body that only folds its legs. Null until the
+    /// actor has been under the ground once.
     /// </summary>
     public float? DeepestUseful(nint actorAddress)
-        => actors.TryGetValue(actorAddress, out var state) && state.Height > 0f ? state.Height * 1.2f : null;
+    {
+        if (!actors.TryGetValue(actorAddress, out var state) || state.Height <= 0f) return null;
+        return float.IsFinite(state.Deepest) ? MathF.Min(state.Deepest, state.Height * 2f) : state.Height * 1.2f;
+    }
 
     private void OnRenderFrame()
     {
@@ -157,6 +162,7 @@ public sealed unsafe class GroundConformPoser : IDisposable
         Array.Copy(state.Positions, state.Before, count);
         if (!state.Solver.Solve(state.Parents, state.Positions, state.Rotations, state.Shown / scale, forward))
             return;
+        state.Deepest = state.Solver.LastDeepest * scale;
 
         var result = new BoneModificationResult(count);
         for (var i = 0; i < count; i++)
