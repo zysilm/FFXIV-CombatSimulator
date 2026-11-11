@@ -17,9 +17,9 @@ namespace CombatSimulator.Npcs;
 /// Whoever moves the actor says every tick how far below the ground its root now is; the pose is
 /// refitted each rendered frame, after the animation and before the actor is drawn.
 ///
-/// A skeleton is tried out once, on the pose it has when it first goes under, by pushing it all the
-/// way down: if the fit does not come through that cleanly the actor is left to sink into the ground
-/// as it always did.
+/// A skeleton is tried out on the pose it has when it first goes under, by pushing it all the way
+/// down, and on a few later poses if that one fails: if the fit does not come through cleanly the
+/// actor is left to sink into the ground as it always did.
 /// </summary>
 public sealed unsafe class GroundConformPoser : IDisposable
 {
@@ -27,6 +27,9 @@ public sealed unsafe class GroundConformPoser : IDisposable
     // How fast the ground under an actor may seem to move, metres a second: a floor found a step
     // higher or lower from one tick to the next eases in instead of snapping the pose.
     private const float DepthSpeed = 6f;
+    // How often, and how many frames apart, a skeleton is tried out before it is left to sink.
+    private const int MostChecks = 6;
+    private const int ChecksApart = 7;
 
     private sealed class ActorState
     {
@@ -36,6 +39,8 @@ public sealed unsafe class GroundConformPoser : IDisposable
         public int MissedFrames;
         public nint Skeleton;          // the skeleton the check below was made for
         public bool Handled;
+        public int Checks;             // how many times the check was made for it
+        public int SinceCheck;         // frames since the last
         public float Height;           // of the pose, metres
         public float Deepest = float.NaN; // how far under the ground the body is as low as it goes, metres
         public readonly GroundConformSolver Solver = new();
@@ -147,7 +152,9 @@ public sealed unsafe class GroundConformPoser : IDisposable
         if (state.Skeleton != (nint)skel.HavokSkeleton)
         {
             state.Skeleton = (nint)skel.HavokSkeleton;
-            state.Handled = GroundConformSolver.Handles(state.Parents, state.Positions, state.Rotations, forward);
+            state.Handled = false;
+            state.Checks = 0;
+            state.SinceCheck = ChecksApart;
             float lowest = float.MaxValue, highest = float.MinValue;
             foreach (var p in state.Positions)
             {
@@ -155,7 +162,17 @@ public sealed unsafe class GroundConformPoser : IDisposable
                 highest = MathF.Max(highest, p.Y);
             }
             state.Height = MathF.Max(0.1f, (highest - lowest) * scale);
-            log.Info($"GroundConform: 0x{address:X} ({count} bones, {state.Height:F2} m) {(state.Handled ? "is fitted to the ground" : "is left to sink: the fit did not pass its own check on this skeleton")}");
+        }
+        // The check is made on the pose the actor happens to be in, and a pose can be a poor one to
+        // judge by (a foot lifted high in a running step): one that fails is tried again on a few
+        // later poses before the actor is given up.
+        if (!state.Handled && state.Checks < MostChecks && ++state.SinceCheck > ChecksApart)
+        {
+            state.SinceCheck = 0;
+            state.Checks++;
+            state.Handled = GroundConformSolver.Handles(state.Parents, state.Positions, state.Rotations, forward);
+            if (state.Handled || state.Checks == MostChecks)
+                log.Info($"GroundConform: 0x{address:X} ({count} bones, {state.Height:F2} m) {(state.Handled ? "is fitted to the ground" : "is left to sink: the fit did not pass its own check on this skeleton")}");
         }
         if (!state.Handled) return;
 

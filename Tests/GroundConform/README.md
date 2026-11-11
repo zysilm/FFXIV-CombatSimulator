@@ -21,8 +21,11 @@ behind the ankles, and no bone of the body (fingers included) is under the groun
 printed beside those of a crawl made by hand; pushed under, the body is low and on its front but not
 flat, and pushing deeper changes nothing. Then with legs and arms swung 24 degrees either way, a degree
 at a time, at four depths (crouching, between, on all fours, as low as it goes): no bone moves more
-than 4% of the height for one degree, and hands and knees still travel. At least 85% of all skeletons
-must pass the fit's own check.
+than 4% of the height for one degree, and hands and knees still travel. And with the left leg drawn up
+as a walk draws up the leg it swings forward, a degree at a time, on all fours and as low as it goes:
+that knee is lifted and its hip is up, its shin comes up, the hand across from it is lifted, the other
+knee and hand stay down, the hips shift over the knee that stands, and no bone moves more than 4% of
+the height for one degree. At least 85% of all skeletons must pass the fit's own check.
 
 Options: `--why` says for each skeleton left to sink what its core and limbs are and where it first
 fails; `--core-trace` adds the core's tip and lift at every step; `--jump` lists bones that jump over

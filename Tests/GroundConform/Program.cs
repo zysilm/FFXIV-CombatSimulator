@@ -236,6 +236,47 @@ if (MathF.Abs(after - before) > worstLength && args.Contains("--diag")) Console.
             Check(farKnee - nearKnee > 0.03f * height, $"{label} {name}: the legs' swing does not show ({(farKnee - nearKnee) * 100:F0} cm)");
             Check(worst < 0.04f * height, $"{label} {name}: one degree of swing moves a bone {worst * 100:F1} cm");
         }
+
+        // Stepping: the left leg is drawn up as a walk draws up the leg it swings forward, thigh
+        // forward and shin back, the foot off the ground under the hip. On all fours that is a knee
+        // stepping: it is lifted, by its hip; the body shifts over the other knee; the shin comes
+        // up; and the hand on the other side is lifted with it, as the limbs of a body on four step
+        // in pairs across it. The rest stays down, and a little more step gives a little more of it.
+        foreach (var (name, ground) in new[] { ("on all fours", 0.62f * height), ("as low as it goes", 0.85f * height) })
+        {
+            Vector3[]? last = null;
+            Vector3[] rest = animated, stepped = animated;
+            var worst = 0f;
+            for (var degrees = 0; degrees <= 35; degrees++)
+            {
+                var draw = degrees * MathF.PI / 180f;
+                var pose = (Vector3[])animated.Clone();
+                var turns = (Quaternion[])rotations.Clone();
+                Turn(pose, turns, "j_asi_a_l", -draw); Turn(pose, turns, "j_asi_c_l", 2f * draw);
+                solver.Solve(skeleton.Parents, pose, turns, ground, Vector3.UnitZ);
+                if (last != null)
+                    for (var i = 0; i < count; i++)
+                        if (solver.Structural[i]) worst = MathF.Max(worst, Vector3.Distance(pose[i], last[i]));
+                last = pose;
+                if (degrees == 0) rest = pose;
+                stepped = pose;
+            }
+            float Up(Vector3[] pose, string bone) => pose[skeleton.Index(bone)].Y - ground;
+            float Knee(Vector3[] pose, string side) => MathF.Min(Up(pose, $"j_asi_b_{side}"), Up(pose, $"j_asi_c_{side}"));
+            float Shin(Vector3[] pose, string side) => MathF.Asin(Math.Clamp(Vector3.Normalize(pose[skeleton.Index($"j_asi_d_{side}")] - pose[skeleton.Index($"j_asi_c_{side}")]).Y, -1f, 1f)) * 180f / MathF.PI;
+            var shift = stepped[skeleton.Index("j_kosi")].X - rest[skeleton.Index("j_kosi")].X;
+            var across = MathF.Sign(rest[skeleton.Index("j_asi_a_r")].X - rest[skeleton.Index("j_asi_a_l")].X);
+            Console.WriteLine($"   {label} {name}, the left leg stepping: its knee is {Knee(stepped, "l") * 100:F0} cm up (the other {Knee(stepped, "r") * 100:F0}), its hip {(Up(stepped, "j_asi_a_l") - Up(stepped, "j_asi_a_r")) * 100:+0;-0} cm over the other, " +
+                              $"its shin {Shin(stepped, "l"):F0} degrees up (the other {Shin(stepped, "r"):F0}), the right hand {Up(stepped, "j_te_r") * 100:F0} cm up (the left {Up(stepped, "j_te_l") * 100:F0}), the hips {shift * across * 100:+0;-0} cm over to the right; largest move for one degree {worst * 100:F1} cm");
+            Check(Knee(stepped, "l") - Knee(stepped, "r") > 0.015f * height, $"{label} {name}: the knee that steps is not lifted ({Knee(stepped, "l") * 100:F0} cm, the other {Knee(stepped, "r") * 100:F0})");
+            Check(Knee(stepped, "r") < 0.05f * height, $"{label} {name}: the knee that stands is {Knee(stepped, "r") * 100:F0} cm off the ground");
+            Check(Up(stepped, "j_asi_a_l") - Up(stepped, "j_asi_a_r") > 0.01f * height, $"{label} {name}: the hip of the knee that steps is not up");
+            Check(Shin(stepped, "l") - Shin(stepped, "r") > 8f, $"{label} {name}: the shin of the leg that steps does not come up ({Shin(stepped, "l"):F0} degrees, the other {Shin(stepped, "r"):F0})");
+            Check(Up(stepped, "j_te_r") - Up(stepped, "j_te_l") > 0.012f * height, $"{label} {name}: the hand across from the knee that steps is not lifted ({Up(stepped, "j_te_r") * 100:F0} cm, the other {Up(stepped, "j_te_l") * 100:F0})");
+            Check(Up(stepped, "j_te_l") < 0.06f * height, $"{label} {name}: the hand that stands is {Up(stepped, "j_te_l") * 100:F0} cm off the ground");
+            Check(shift * across > 0.01f * height, $"{label} {name}: the body does not shift over the knee it stands on ({shift * across * 100:+0;-0} cm)");
+            Check(worst < 0.04f * height, $"{label} {name}: one degree of step moves a bone {worst * 100:F1} cm");
+        }
     }
     if (args.Contains("--core")) Console.WriteLine($"   core of {label}: {string.Join(" ", Enumerable.Range(0, count).Where(i => solver.Core[i]).Select(i => skeleton.Names[i] + "@" + animated[i].Y.ToString("F2")))}");
     var handled = GroundConformSolver.Handles(skeleton.Parents, animated, rotations, Vector3.UnitZ);
