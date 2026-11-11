@@ -107,7 +107,7 @@ public sealed unsafe class MapEnemyController
                 IncludePlayers = false,
                 MaxCount = Math.Max(1, config.MaxTargets),
                 SenseRange = Math.Max(0.1f, config.MapEnemySenseRange),
-                Level = Math.Clamp(config.DefaultNpcLevel, 1, 300),
+                Tier = CombatBudgetModel.ClampTier(config.DefaultEnemyTier),
                 HpMultiplier = Math.Max(0.0001f, config.DefaultNpcHpMultiplier),
             }
             : CurrentSettings();
@@ -138,7 +138,7 @@ public sealed unsafe class MapEnemyController
             IncludePlayers = config.EnableMapPlayerEnemySensing,
             MaxCount = Math.Max(0, config.MapEnemyMaxCount),
             SenseRange = Math.Max(0.1f, config.MapEnemySenseRange),
-            Level = Math.Clamp(config.DefaultNpcLevel, 1, 300),
+            Tier = CombatBudgetModel.ClampTier(config.DefaultEnemyTier),
             HpMultiplier = Math.Max(0.0001f, config.DefaultNpcHpMultiplier),
         };
     }
@@ -187,7 +187,7 @@ public sealed unsafe class MapEnemyController
 
         var (npc, error) = npcSelector.RegisterMapEnemy(
             obj,
-            Math.Clamp(settings.Level, 1, 300),
+            settings.Tier,
             Math.Max(0.0001f, settings.HpMultiplier),
             Math.Max(0, settings.MaxCount),
             ignoreGlobalMaxTargets: true);

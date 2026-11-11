@@ -50,7 +50,7 @@ public unsafe class NpcSelector : IDisposable
     /// Returns null with a reason string if it fails.
     /// </summary>
     public (SimulatedNpc? Npc, string? Error) SelectCurrentTarget(
-        int level, float hpMultiplier)
+        EnemyTier tier, float hpMultiplier)
     {
         if (selectedNpcs.Count >= MaxTargets)
             return (null, "Maximum target limit reached.");
@@ -77,12 +77,11 @@ public unsafe class NpcSelector : IDisposable
         byte originalObjectKind = (byte)gameObj->ObjectKind;
         byte originalSubKind = gameObj->SubKind;
 
-        // Calculate HP
-        int maxHp = CalculateNpcHp(level, hpMultiplier);
         var weaponStyle = NpcWeaponClassifier.DetectFromCharacter(character, log, target.Name.TextValue);
         var behavior = actionProfileProvider.Create(
-            target.Name.TextValue, NpcWeaponClassifier.DetectJobFromCharacter(character), weaponStyle, level,
+            target.Name.TextValue, NpcWeaponClassifier.DetectJobFromCharacter(character), weaponStyle, KitLevelCap,
             modelCharaId: (uint)Math.Max(0, originalModelCharaId));
+        int maxHp = CalculateNpcHp(tier, behavior.FightsAtRange, hpMultiplier);
 
         var npc = new SimulatedNpc
         {
@@ -104,15 +103,12 @@ public unsafe class NpcSelector : IDisposable
                 EntityId = target.EntityId,
                 Name = target.Name.TextValue,
                 IsPlayer = false,
-                Level = level,
+                Level = EnemyDisplayLevel(),
+                Tier = tier,
                 MaxHp = maxHp,
                 CurrentHp = maxHp,
                 MaxMp = 5000, // half the player's 10000 — enemy MP economy (NpcAiController)
                 CurrentMp = 5000,
-                MainStat = 100 + level * 10,
-                Defense = 100 + level * 5,
-                MagicDefense = 100 + level * 5,
-                DamageTakenMultiplier = behavior.DamageTakenMultiplier,
             },
         };
 
@@ -160,7 +156,7 @@ public unsafe class NpcSelector : IDisposable
 
     public (SimulatedNpc? Npc, string? Error) RegisterMapEnemy(
         IGameObject obj,
-        int level,
+        EnemyTier tier,
         float hpMultiplier,
         int mapEnemyLimit,
         bool ignoreGlobalMaxTargets = false)
@@ -182,7 +178,7 @@ public unsafe class NpcSelector : IDisposable
         if (!ignoreGlobalMaxTargets && selectedNpcs.Count >= MaxTargets)
             return (null, "Maximum target limit reached.");
 
-        var npc = CreateMapEnemy(obj, level, hpMultiplier);
+        var npc = CreateMapEnemy(obj, tier, hpMultiplier);
         selectedNpcs.Add(npc);
         log.Info($"Registered map enemy '{npc.Name}' (EntityId=0x{obj.EntityId:X}) as combat target. HP={npc.State.MaxHp}");
         return (npc, null);
@@ -299,12 +295,19 @@ public unsafe class NpcSelector : IDisposable
         }
     }
 
-    private int CalculateNpcHp(int level, float multiplier)
-        => NpcHpCalculator.CalculateNormalEnemyHp(level, multiplier);
+    // Kits are built with every skill the enemy's job has; how strong it is comes from its tier.
+    private const int KitLevelCap = 100;
+
+    // Enemy HP is sized from the player's own maximum HP (see CombatBudgetModel).
+    private static int CalculateNpcHp(EnemyTier tier, bool fightsAtRange, float multiplier)
+        => CombatBudgetModel.EnemyMaxHp(Core.Services.ObjectTable.LocalPlayer?.MaxHp ?? 1000u, tier, fightsAtRange, multiplier);
+
+    // Shown on the nameplate only; it has no effect on the fight.
+    private static int EnemyDisplayLevel() => Core.Services.ObjectTable.LocalPlayer?.Level ?? 1;
 
     private SimulatedNpc CreateMapEnemy(
         IGameObject obj,
-        int level,
+        EnemyTier tier,
         float hpMultiplier)
     {
         var battleChara = (BattleChara*)obj.Address;
@@ -315,11 +318,11 @@ public unsafe class NpcSelector : IDisposable
         byte originalObjectKind = (byte)gameObj->ObjectKind;
         byte originalSubKind = gameObj->SubKind;
 
-        int maxHp = CalculateNpcHp(level, hpMultiplier);
         var weaponStyle = NpcWeaponClassifier.DetectFromCharacter(character, log, obj.Name.TextValue);
         var behavior = actionProfileProvider.Create(
-            obj.Name.TextValue, NpcWeaponClassifier.DetectJobFromCharacter(character), weaponStyle, level,
+            obj.Name.TextValue, NpcWeaponClassifier.DetectJobFromCharacter(character), weaponStyle, KitLevelCap,
             modelCharaId: (uint)Math.Max(0, originalModelCharaId));
+        int maxHp = CalculateNpcHp(tier, behavior.FightsAtRange, hpMultiplier);
 
         var npc = new SimulatedNpc
         {
@@ -341,15 +344,12 @@ public unsafe class NpcSelector : IDisposable
                 EntityId = obj.EntityId,
                 Name = obj.Name.TextValue,
                 IsPlayer = false,
-                Level = level,
+                Level = EnemyDisplayLevel(),
+                Tier = tier,
                 MaxHp = maxHp,
                 CurrentHp = maxHp,
                 MaxMp = 5000, // half the player's 10000 — enemy MP economy (NpcAiController)
                 CurrentMp = 5000,
-                MainStat = 100 + level * 10,
-                Defense = 100 + level * 5,
-                MagicDefense = 100 + level * 5,
-                DamageTakenMultiplier = behavior.DamageTakenMultiplier,
             },
         };
 

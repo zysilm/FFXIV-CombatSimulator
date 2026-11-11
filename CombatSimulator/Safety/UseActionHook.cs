@@ -291,7 +291,7 @@ public unsafe class UseActionHook : IDisposable
 
             // Use NpcSelector to register the target (it reads from targetManager.Target)
             var (npc, error) = npcSelector.SelectCurrentTarget(
-                config.DefaultNpcLevel,
+                CombatBudgetModel.ClampTier(config.DefaultEnemyTier),
                 config.DefaultNpcHpMultiplier);
 
             if (npc != null)
@@ -300,7 +300,7 @@ public unsafe class UseActionHook : IDisposable
                 if (npc.SimulatedEntityId == (uint)targetId)
                 {
                     combatEngine.RegisterNpcEntity(npc);
-                    log.Info($"Auto-selected '{npc.Name}' (0x{targetId:X}) as combat target (Lv.{config.DefaultNpcLevel}).");
+                    log.Info($"Auto-selected '{npc.Name}' (0x{targetId:X}) as combat target ({CombatBudgetModel.TierLabels[(int)CombatBudgetModel.ClampTier(config.DefaultEnemyTier)]}).");
                     return true;
                 }
                 else

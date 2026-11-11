@@ -450,13 +450,14 @@ public partial class MainWindow : IDisposable
 
         if (!compact)
         {
-            var level = Math.Clamp(config.FastCombatLevel, 1, 300);
-            if (ImGui.SliderInt("Recipe enemy level", ref level, 1, 300))
+            var recipeTier = (int)CombatBudgetModel.ClampTier(config.FastCombatEnemyTier);
+            ImGui.SetNextItemWidth(200);
+            if (ImGui.Combo("Recipe enemy strength", ref recipeTier, CombatBudgetModel.TierLabels, CombatBudgetModel.TierLabels.Length))
             {
-                config.FastCombatLevel = level;
+                config.FastCombatEnemyTier = recipeTier;
                 config.Save();
             }
-            HelpMarker("Enemy simulated level used when starting a recipe. Companions mirror player stats.");
+            HelpMarker(EnemyStrengthHelp);
 
             var actionMode = config.ActionMode;
             if (ImGui.Checkbox("Action Mode", ref actionMode))
@@ -618,6 +619,11 @@ public partial class MainWindow : IDisposable
             GamepadButtons.None => "None",
             _ => button.ToString(),
         };
+
+    private const string EnemyStrengthHelp =
+        "How long one enemy takes to kill and how much of your HP that fight costs if you avoid nothing.\n" +
+        "Weak: 4 s, 5%.  Normal: 10 s, 20%.  Strong: 20 s, 50%.  Elite: 35 s, 85%.  Boss: 90 s, lethal unless you guard or bring help.\n" +
+        "Your gear, level and job do not change this.";
 
     private void DrawRecipeCombo(string id, float width)
     {
@@ -803,7 +809,7 @@ public partial class MainWindow : IDisposable
                     BNpcNameId = entry.BNpcNameId,
                     ENpcBaseId = entry.Source == NpcCatalogSource.ENpcBase ? entry.Id : 0,
                     ModelCharaId = entry.Source == NpcCatalogSource.ModelChara ? entry.ModelCharaId : 0,
-                    Level = Math.Clamp(config.FastCombatLevel, 1, 300),
+                    Tier = CombatBudgetModel.ClampTier(config.FastCombatEnemyTier),
                     HpMultiplier = Math.Max(0.0001f, group.HpMultiplier),
                 });
                 queuedEnemies++;
@@ -828,7 +834,7 @@ public partial class MainWindow : IDisposable
                 IncludePlayers = group.IncludePlayers,
                 MaxCount = Math.Max(0, group.MaxCount),
                 SenseRange = Math.Max(0.1f, group.SenseRange),
-                Level = Math.Clamp(config.FastCombatLevel, 1, 300),
+                Tier = CombatBudgetModel.ClampTier(config.FastCombatEnemyTier),
                 HpMultiplier = Math.Max(0.0001f, group.HpMultiplier),
             };
         }
@@ -1202,14 +1208,15 @@ public partial class MainWindow : IDisposable
             ? "Enemies spawn in front of your character (real in-game facing)."
             : "Enemies surround your character in loose layers; the nearest stands at this distance.");
 
-        // Level + HP multiplier. These apply to every enemy: spawned, map-sensed and recipe enemies.
-        var defaultLevel = Math.Clamp(config.DefaultNpcLevel, 1, 300);
-        ImGui.SetNextItemWidth(160);
-        if (ImGui.SliderInt("Level##virtualEnemies", ref defaultLevel, 1, 300))
+        // Strength + HP multiplier. These apply to every enemy: spawned, map-sensed and auto-selected.
+        var defaultTier = (int)CombatBudgetModel.ClampTier(config.DefaultEnemyTier);
+        ImGui.SetNextItemWidth(200);
+        if (ImGui.Combo("Enemy strength##virtualEnemies", ref defaultTier, CombatBudgetModel.TierLabels, CombatBudgetModel.TierLabels.Length))
         {
-            config.DefaultNpcLevel = defaultLevel;
+            config.DefaultEnemyTier = defaultTier;
             config.Save();
         }
+        HelpMarker(EnemyStrengthHelp);
 
         ImGui.SameLine();
         DrawNpcHpMultiplierCombo();
@@ -1239,7 +1246,7 @@ public partial class MainWindow : IDisposable
                 BNpcNameId = entry.BNpcNameId,
                 ENpcBaseId = entry.Source == NpcCatalogSource.ENpcBase ? entry.Id : 0,
                 ModelCharaId = entry.Source == NpcCatalogSource.ModelChara ? entry.ModelCharaId : 0,
-                Level = config.DefaultNpcLevel,
+                Tier = CombatBudgetModel.ClampTier(config.DefaultEnemyTier),
                 HpMultiplier = config.DefaultNpcHpMultiplier,
                 // No Position: the spawner places it. This used to pass a point computed here by a
                 // second copy of the placement logic, which meant the spawner's own version was

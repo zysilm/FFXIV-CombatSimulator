@@ -161,7 +161,6 @@ public unsafe class NpcSpawner : IDisposable
         try
         {
             var npcName = GetNpcName(request);
-            var npcLevel = request.Level;
             // Slot = how many are already placed, so a queue drained in one Tick fans out rather
             // than stacking (this method adds to pendingSpawns before the next request is handled).
             var spawnPos = request.Position
@@ -344,8 +343,6 @@ public unsafe class NpcSpawner : IDisposable
             var entityId = nextEntityId++;
             obj->EntityId = entityId;
 
-            // Calculate HP
-            int maxHp = CalculateNpcHp(npcLevel, request.HpMultiplier);
 
             // Read weapon data for deferred loading after EnableDraw and for
             // classifying humanoid NPCs as melee/ranged/caster.
@@ -388,8 +385,11 @@ public unsafe class NpcSpawner : IDisposable
                 log.Info($"NPC '{npcName}': ClassJob {character->CharacterData.ClassJob} -> {jobId} to match its weapon");
                 character->CharacterData.ClassJob = (byte)jobId;
             }
-            var behavior = actionProfileProvider.Create(npcName, jobId, weaponStyle, npcLevel, request.BNpcBaseId,
+            var behavior = actionProfileProvider.Create(npcName, jobId, weaponStyle, KitLevelCap, request.BNpcBaseId,
                 (uint)Math.Max(0, character->ModelContainer.ModelCharaId));
+            // Enemy HP is sized from the player's own maximum HP (see CombatBudgetModel).
+            int maxHp = CombatBudgetModel.EnemyMaxHp(objectTable.LocalPlayer?.MaxHp ?? 1000u, request.Tier,
+                behavior.FightsAtRange, request.HpMultiplier);
             if (weaponStyle is NpcAttackStyle.Ranged or NpcAttackStyle.Magic || jobId != 0)
                 log.Info($"NPC weapon classify '{npcName}' from ENpcBase: packedMainHand=0x{mainHandWeapon:X} -> style={weaponStyle}, job={jobId}");
 
@@ -412,15 +412,12 @@ public unsafe class NpcSpawner : IDisposable
                     EntityId = entityId,
                     Name = npcName,
                     IsPlayer = false,
-                    Level = npcLevel,
+                    Level = objectTable.LocalPlayer?.Level ?? 1, // nameplate only
+                    Tier = request.Tier,
                     MaxHp = maxHp,
                     CurrentHp = maxHp,
                     MaxMp = 5000, // half the player's 10000 — enemy MP economy (NpcAiController)
                     CurrentMp = 5000,
-                    MainStat = 100 + npcLevel * 10,
-                    Defense = 100 + npcLevel * 5,
-                    MagicDefense = 100 + npcLevel * 5,
-                    DamageTakenMultiplier = behavior.DamageTakenMultiplier,
                 },
             };
 
@@ -636,7 +633,7 @@ public unsafe class NpcSpawner : IDisposable
             BNpcBaseId = src.BNpcBaseId,
             ENpcBaseId = src.ENpcBaseId,
             ModelCharaId = src.ModelCharaId,
-            Level = src.Level,
+            Tier = src.Tier,
             HpMultiplier = src.HpMultiplier,
             Position = src.Position,
             Rotation = src.Rotation,
@@ -1202,8 +1199,8 @@ public unsafe class NpcSpawner : IDisposable
         return 0;
     }
 
-    private int CalculateNpcHp(int level, float multiplier)
-        => NpcHpCalculator.CalculateNormalEnemyHp(level, multiplier);
+    // Kits are built with every skill the enemy's job has; how strong it is comes from its tier.
+    private const int KitLevelCap = 100;
 
     public void Dispose()
     {

@@ -15,20 +15,28 @@ public class DamageResult
     public SimDamageType DamageType { get; set; }
 }
 
+/// <summary>
+/// Turns an attack into damage. All the numbers come from <see cref="CombatBudgetModel"/>; this class
+/// only decides which side of it applies (player, companion or enemy) and rolls the dice.
+/// </summary>
 public class DamageCalculator
 {
-    private readonly Random rng = new();
-    private readonly CombatStatProvider statProvider;
+    private const int DefaultAutoAttackPotency = 110;
+    private readonly Random rng;
 
-    public DamageCalculator() : this(new CombatStatProvider())
+    /// <summary>Whether Action Mode is on. It changes the player's reference output and the enemy threat.</summary>
+    public Func<bool> IsActionMode { get; set; } = () => false;
+
+    public DamageCalculator() : this(new Random())
     {
     }
 
-    public DamageCalculator(CombatStatProvider statProvider)
+    public DamageCalculator(Random rng)
     {
-        this.statProvider = statProvider;
+        this.rng = rng;
     }
 
+    /// <summary>A player's or companion's skill against an enemy.</summary>
     public DamageResult Calculate(
         SimulatedEntityState source,
         SimulatedEntityState target,
@@ -38,232 +46,68 @@ public class DamageCalculator
         bool enableDh = true,
         float damageMultiplier = 1.0f)
     {
-        var potency = ResolvePotency(actionData, isCombo);
-        var result = CalculateDirectDamage(source, potency, actionData.DamageType, enableCrit, enableDh, applyVariance: true);
-        if (result.Damage <= 0)
-            return result;
-
-        var damage = result.Damage;
-        damage = ApplyLevelCorrection(damage, source.Level, target.Level);
-        damage = ApplyStatusDamageModifiers(damage, source, target);
-        damage = (int)MathF.Floor(damage * MathF.Max(0f, damageMultiplier));
-        damage = ApplyDamageTakenMultiplier(damage, target);
-
-        result.Damage = Math.Max(1, damage);
-        return result;
+        var potency = isCombo && actionData.ComboPotency > 0 ? actionData.ComboPotency : actionData.Potency;
+        return Deal(source, target, potency, actionData.DamageType, enableCrit, enableDh, damageMultiplier);
     }
 
-    /// <summary>Scale by how fragile the TARGET is (see SimulatedEntityState.DamageTakenMultiplier).</summary>
-    private static int ApplyDamageTakenMultiplier(int damage, SimulatedEntityState target)
-        => (int)MathF.Floor(damage * MathF.Max(0f, target.DamageTakenMultiplier));
-
+    /// <summary>
+    /// An attack given as a bare potency: every enemy attack (auto-attack or skill), and the auto-attacks
+    /// of the player and of companions.
+    /// </summary>
     public DamageResult CalculateNpcAutoAttack(
-        SimulatedEntityState npc,
-        SimulatedEntityState target,
-        int potency = 110,
-        SimDamageType damageType = SimDamageType.Physical)
-    {
-        var raw = CalculateDirectDamage(npc, potency, damageType, enableCrit: false, enableDh: false, applyVariance: false);
-        var mitigated = ApplyDamageTaken(raw.Damage, target, damageType);
-
-        var corrected = ApplyLevelCorrection(mitigated, npc.Level, target.Level);
-        corrected = ApplyLevelAdvantage(corrected, npc.Level, target.Level);
-        corrected = ApplyDamageTakenMultiplier(corrected, target);
-
-        raw.Damage = Math.Max(1, corrected);
-        raw.DamageType = damageType;
-        return raw;
-    }
-
-    private DamageResult CalculateDirectDamage(
         SimulatedEntityState source,
-        int potency,
-        SimDamageType damageType,
-        bool enableCrit,
-        bool enableDh,
-        bool applyVariance)
+        SimulatedEntityState target,
+        int potency = DefaultAutoAttackPotency,
+        SimDamageType damageType = SimDamageType.Physical)
+        => Deal(source, target, potency, damageType, enableCrit: false, enableDh: false, damageMultiplier: 1f);
+
+    private DamageResult Deal(SimulatedEntityState source, SimulatedEntityState target, int potency,
+        SimDamageType damageType, bool enableCrit, bool enableDh, float damageMultiplier)
     {
         var result = new DamageResult { DamageType = damageType };
         if (potency <= 0)
             return result;
 
-        var level = Math.Clamp(source.Level > 0 ? source.Level : 90, 1, 300);
-        var mods = statProvider.GetLevelModifiers(level);
-
-        var attackStat = ResolveAttackStat(source, damageType, mods);
-        var fAtk = FAttackPower(attackStat, mods.Main, source.IsTank);
-        var fDet = FDetermination(ResolveStat(source.Determination, mods.Main), mods);
-        var fTnc = source.IsTank ? FTenacity(ResolveStat(source.Tenacity, mods.Sub), mods) : 1000;
-        var fWd = FWeaponDamage(source, damageType, mods);
-        var traitPct = source.DamageTraitPct > 0 ? source.DamageTraitPct : 100;
-
-        var damage = (long)potency * fAtk;
-        damage = damage * fDet / 1000;
-        damage /= 100;
-        damage = damage * fTnc / 1000;
-        damage = damage * fWd / 100;
-        damage = damage * traitPct / 100;
-
-        var critStat = ResolveStat(source.CriticalHit, mods.Sub);
-        var critRate = Math.Clamp(FCritRate(critStat, mods), 0, 1000);
-        var critTerm = 1000;
-        if (enableCrit && rng.Next(1000) < critRate)
+        var actionMode = IsActionMode();
+        float damage;
+        if (source.IsPlayer)
         {
-            result.IsCritical = true;
-            critTerm = FCritStrength(critStat, mods);
+            damage = potency * CombatBudgetModel.PlayerDamagePerPotency(source.MaxHp, actionMode)
+                     * MathF.Max(0f, damageMultiplier);
+        }
+        else if (source.IsCompanion)
+        {
+            damage = potency * CombatBudgetModel.CompanionDamagePerPotency(source.MaxHp, source.KitOutput(actionMode))
+                     * MathF.Max(0f, damageMultiplier);
+        }
+        else
+        {
+            // An enemy: a share of whoever it hits, so a companion with less HP is hurt as much as the player.
+            damage = CombatBudgetModel.EnemyHitShare(potency, source.Tier, source.KitOutput(actionMode), actionMode)
+                     * MathF.Max(1f, target.MaxHp);
         }
 
-        var dhStat = ResolveStat(source.DirectHit, mods.Sub);
-        var dhRate = Math.Clamp(FDirectHitRate(dhStat, mods), 0, 1000);
-        var dhTerm = 100;
-        if (enableDh && rng.Next(1000) < dhRate)
-        {
-            result.IsDirectHit = true;
-            dhTerm = 125;
-        }
+        damage *= CombatBudgetModel.RollModifier(rng.NextDouble(), rng.NextDouble(), enableCrit, enableDh,
+            out var isCritical, out var isDirectHit);
+        result.IsCritical = isCritical;
+        result.IsDirectHit = isDirectHit;
 
-        damage = damage * critTerm / 1000;
-        damage = damage * dhTerm / 100;
+        damage *= StatusModifier(source, target);
+        damage *= 0.95f + 0.10f * (float)rng.NextDouble();
 
-        if (applyVariance)
-            damage = damage * rng.Next(95, 106) / 100;
-
-        result.Damage = Math.Max(0, (int)Math.Min(int.MaxValue, damage));
+        result.Damage = (int)Math.Clamp(MathF.Floor(damage), 1f, int.MaxValue);
         return result;
     }
 
-    private int ApplyDamageTaken(int rawDamage, SimulatedEntityState target, SimDamageType damageType)
+    private static float StatusModifier(SimulatedEntityState source, SimulatedEntityState target)
     {
-        if (rawDamage <= 0)
-            return 0;
-
-        var level = Math.Clamp(target.Level > 0 ? target.Level : 90, 1, 300);
-        var mods = statProvider.GetLevelModifiers(level);
-        var defense = damageType == SimDamageType.Magical
-            ? ResolveStat(target.MagicDefense, mods.Sub)
-            : ResolveStat(target.Defense, mods.Sub);
-
-        var fDefense = FDefense(defense, mods);
-        var damage = (long)rawDamage * Math.Clamp(100 - fDefense, 1, 100) / 100;
-
-        var fTnc = target.IsTank ? FTenacity(ResolveStat(target.Tenacity, mods.Sub), mods) : 1000;
-        damage = damage * (2000 - fTnc) / 1000;
-        damage = damage * rng.Next(95, 106) / 100;
-
-        return Math.Max(1, (int)Math.Min(int.MaxValue, damage));
-    }
-
-    private int FWeaponDamage(SimulatedEntityState source, SimDamageType damageType, LevelModifiers mods)
-    {
-        var casterScaling = UsesCasterScaling(source.ClassJobId) && damageType == SimDamageType.Magical;
-        var weaponDamage = casterScaling && source.MagicWeaponDamage > 0
-            ? source.MagicWeaponDamage
-            : source.WeaponDamage;
-        if (weaponDamage <= 0)
-            weaponDamage = EstimateWeaponDamage(source.Level);
-
-        var jobMod = statProvider.GetPrimaryJobModifier(
-            source.ClassJobId,
-            casterScaling ? SimDamageType.Magical : SimDamageType.Physical);
-        return (int)Math.Floor(mods.Main * jobMod / 1000.0) + weaponDamage;
-    }
-
-    private static int FAttackPower(int attackPower, int mainMod, bool isTank)
-    {
-        var coeff = isTank ? 115 : 165;
-        return (int)Math.Floor(coeff * (attackPower - mainMod) / (double)mainMod) + 100;
-    }
-
-    private static int FDetermination(int det, LevelModifiers mods)
-        => (int)Math.Floor(140.0 * (det - mods.Main) / mods.Div + 1000);
-
-    private static int FTenacity(int tenacity, LevelModifiers mods)
-        => (int)Math.Floor(100.0 * (tenacity - mods.Sub) / mods.Div + 1000);
-
-    private static int FCritRate(int crit, LevelModifiers mods)
-        => (int)Math.Floor(200.0 * (crit - mods.Sub) / mods.Div + 50);
-
-    private static int FCritStrength(int crit, LevelModifiers mods)
-        => (int)Math.Floor(200.0 * (crit - mods.Sub) / mods.Div) + 1400;
-
-    private static int FDirectHitRate(int directHit, LevelModifiers mods)
-        => (int)Math.Floor(550.0 * (directHit - mods.Sub) / mods.Div);
-
-    private static int FDefense(int defense, LevelModifiers mods)
-        => (int)Math.Floor(15.0 * defense / mods.Div);
-
-    private static int ResolvePotency(ActionData actionData, bool isCombo)
-        => isCombo && actionData.ComboPotency > 0 ? actionData.ComboPotency : actionData.Potency;
-
-    private static int ResolveAttackStat(SimulatedEntityState source, SimDamageType damageType, LevelModifiers mods)
-    {
-        var casterScaling = UsesCasterScaling(source.ClassJobId) && damageType == SimDamageType.Magical;
-        if (casterScaling && source.AttackMagicPotency > 0)
-            return source.AttackMagicPotency;
-        if (!casterScaling && source.AttackPower > 0)
-            return source.AttackPower;
-        return source.MainStat > 0 ? source.MainStat : mods.Main + 100;
-    }
-
-    private static bool UsesCasterScaling(uint classJobId)
-        => classJobId is
-            6 or 24 or  // Conjurer / White Mage
-            7 or 25 or  // Thaumaturge / Black Mage
-            26 or 27 or // Arcanist / Summoner
-            28 or       // Scholar
-            33 or       // Astrologian
-            35 or       // Red Mage
-            36 or       // Blue Mage
-            40 or       // Sage
-            42;         // Pictomancer
-
-    private static int ResolveStat(int value, int fallback) => value > 0 ? value : fallback;
-
-    private static int EstimateWeaponDamage(int level)
-        => level switch
-        {
-            >= 100 => 132,
-            >= 90 => 120,
-            >= 80 => 104,
-            >= 70 => 92,
-            >= 60 => 75,
-            >= 50 => 59,
-            _ => Math.Max(5, 10 + level),
-        };
-
-    private static int ApplyLevelCorrection(int damage, int sourceLevel, int targetLevel)
-    {
-        if (damage <= 0 || sourceLevel <= 0 || targetLevel <= 0 || sourceLevel >= targetLevel)
-            return damage;
-
-        var penaltyPct = Math.Clamp((targetLevel - sourceLevel) * 2.5f, 0f, 90f);
-        return (int)MathF.Floor(damage * (100f - penaltyPct) / 100f);
-    }
-
-    private static int ApplyLevelAdvantage(int damage, int sourceLevel, int targetLevel)
-    {
-        if (damage <= 0 || sourceLevel <= 0 || targetLevel <= 0 || sourceLevel <= targetLevel)
-            return damage;
-
-        var bonus = Math.Clamp(1f + (sourceLevel - targetLevel) * 0.025f, 1f, 8f);
-        return (int)MathF.Floor(damage * bonus);
-    }
-
-    private static int ApplyStatusDamageModifiers(int damage, SimulatedEntityState source, SimulatedEntityState target)
-    {
-        var result = damage;
+        var modifier = 1f;
         foreach (var status in source.StatusEffects)
-        {
             if (status.StatusId == 1000001)
-                result = (int)MathF.Floor(result * 1.1f);
-        }
-
+                modifier *= 1.1f;
         foreach (var status in target.StatusEffects)
-        {
             if (status.StatusId == 1000002)
-                result = (int)MathF.Floor(result * 1.1f);
-        }
-
-        return result;
+                modifier *= 1.1f;
+        return modifier;
     }
 }

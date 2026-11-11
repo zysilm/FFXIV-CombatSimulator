@@ -159,7 +159,9 @@ public partial class Configuration : IPluginConfiguration
     public bool PartyCompanionDeathRagdoll { get; set; } = true;
 
     // NPC Defaults
-    public int DefaultNpcLevel { get; set; } = 90;
+    // How strong enemies are: index into CombatBudgetModel.TierLabels (Weak, Normal, Strong, Elite, Boss).
+    // Replaces the enemy level. This one applies to spawned, map-sensed and auto-selected enemies.
+    public int DefaultEnemyTier { get; set; } = (int)Simulation.EnemyTier.Normal;
     public float DefaultNpcHpMultiplier { get; set; } = 1.0f;
     public float DefaultNpcHeightOffset { get; set; } = 0f; // Y offset added to spawn position
 
@@ -267,7 +269,8 @@ public partial class Configuration : IPluginConfiguration
     public bool ShowFastCombatToolbar { get; set; } = false;
     public bool ShowDefeatRevivePopup { get; set; } = true;
     public string FastCombatRecipeName { get; set; } = "";
-    public int FastCombatLevel { get; set; } = 90;
+    // Strength of the enemies a recipe starts with (same scale as DefaultEnemyTier).
+    public int FastCombatEnemyTier { get; set; } = (int)Simulation.EnemyTier.Normal;
 
     // Target Formation
     public bool EnableNpcTargetPlayer { get; set; } = true;
@@ -660,6 +663,7 @@ public partial class Configuration : IPluginConfiguration
         pluginInterface = pi;
         MigrateHpBarLabelSwitches(); // before the purge below: it reads the retired switches
         MigrateKoStripHangChoices(); // reads retired keys, so before they are purged
+        MigrateEnemyLevelsToTiers();
         RemoveRetiredOptions();
         MigrateSplitVfxToggles();
         MigrateKoStripClothHoldPreset();
@@ -693,6 +697,8 @@ public partial class Configuration : IPluginConfiguration
         "KoStripCollapseWrists", "KoStripCollapseRFinger", "KoStripCollapseLFinger",
         "KoStripHandsFeetRigidDefaultMigrated20260719",
         "KoStripTopHangFrom", "KoStripLowerHangFrom",
+        // Enemy levels, replaced by enemy tiers 2026-11.
+        "DefaultNpcLevel", "FastCombatLevel",
         // Glamourer presets on death / reset, removed 2026-11.
         "ApplyGlamourerOnDeath", "DeathGlamourerDesignId", "ApplyGlamourerOnReset", "ResetGlamourerDesignId",
         "KoStripDelay", "KoStripDelaySeconds", "KoStripLHand", "KoStripRHand", "KoStripLFoot", "KoStripRFoot",
@@ -774,6 +780,18 @@ public partial class Configuration : IPluginConfiguration
             KoStripTopHolds = Animation.Attachment.GarmentTether.HoldsFromLegacyChoice(1, (int)top);
         if (PrivateConfigFields.TryGetValue("KoStripLowerHangFrom", out var lower) && lower.Type == JTokenType.Integer)
             KoStripLowerHolds = Animation.Attachment.GarmentTether.HoldsFromLegacyChoice(3, (int)lower);
+    }
+
+    // Enemy strength used to be a level from 1 to 300. Carry the intent of a saved level over to a tier.
+    private void MigrateEnemyLevelsToTiers()
+    {
+        if (PrivateConfigFields == null)
+            return;
+
+        if (PrivateConfigFields.TryGetValue("DefaultNpcLevel", out var level) && level.Type == JTokenType.Integer)
+            DefaultEnemyTier = (int)Simulation.CombatBudgetModel.TierForLegacyLevel((int)level);
+        if (PrivateConfigFields.TryGetValue("FastCombatLevel", out var recipe) && recipe.Type == JTokenType.Integer)
+            FastCombatEnemyTier = (int)Simulation.CombatBudgetModel.TierForLegacyLevel((int)recipe);
     }
 
     private void RemoveRetiredOptions()

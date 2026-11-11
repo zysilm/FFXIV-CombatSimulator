@@ -22,28 +22,27 @@ public class SimulatedEntityState
     public int Level { get; set; }
     public bool IsAlive => CurrentHp > 0;
 
-    // Stats
-    public int MainStat { get; set; }
-    public int Determination { get; set; }
-    public int CriticalHit { get; set; }
-    public int DirectHit { get; set; }
-    public int Defense { get; set; }
-    public int MagicDefense { get; set; }
-    /// <summary>Scales every point of damage this entity RECEIVES. Ranged and caster enemies fight
-    /// from a distance the player cannot answer, so they are correspondingly fragile.</summary>
-    public float DamageTakenMultiplier { get; set; } = 1.0f;
-    public int Tenacity { get; set; }
-    public int SkillSpeed { get; set; }
-    public int SpellSpeed { get; set; }
-    public int AttackPower { get; set; }
-    public int AttackMagicPotency { get; set; }
-    public int HealingMagicPotency { get; set; }
-    public int WeaponDamage { get; set; }
-    public int MagicWeaponDamage { get; set; }
-    public int WeaponDelayMs { get; set; } = 3000;
+    // Combat numbers (see CombatBudgetModel). No character stats: gear, level and job do not enter a fight.
     public uint ClassJobId { get; set; }
     public bool IsTank { get; set; }
-    public int DamageTraitPct { get; set; } = 100;
+    /// <summary>How strong an enemy is. Unused for the player and companions.</summary>
+    public EnemyTier Tier { get; set; } = EnemyTier.Normal;
+    /// <summary>
+    /// Potency per second this entity's kit sustains, at classic pace and at Action Mode pace. Enemy and
+    /// companion damage is budgeted against it; 0 until the kit has been measured.
+    /// </summary>
+    public float KitOutputClassic { get; set; }
+    public float KitOutputAction { get; set; }
+    /// <summary>Identifies the kit the two outputs were measured for, so a changed kit is measured again.</summary>
+    public int KitSignature { get; set; }
+
+    public float KitOutput(bool actionMode)
+    {
+        var output = actionMode ? KitOutputAction : KitOutputClassic;
+        return output > 0f
+            ? output
+            : CombatBudgetModel.UnmeasuredKitOutput * (actionMode ? CombatBudgetModel.ActionModePace : 1f);
+    }
 
     // Combat state
     public float AnimationLock { get; set; }

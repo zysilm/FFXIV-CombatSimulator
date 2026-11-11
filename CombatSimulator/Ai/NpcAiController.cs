@@ -59,16 +59,9 @@ public unsafe partial class NpcAiController : IDisposable
     // Enemy MP economy: enemies have half the player's max MP (set at spawn) but recover at double
     // rate, and only from natural regen + auto-attacks — never from guarding (they don't guard). This
     // makes them lead with skills while they have MP, then fall back to auto-attacks to recover.
-    private const int EnemyMpRegenPerSecond = 134;    // 2× the player's ~67/s natural regen
-    private const int EnemyAutoAttackMpRestore = 600; // 2× the player's 300 basic-attack restore
-    // Skill prices are authored against the player's 10000 pool (see SkillMpCost). Enemies pay a
-    // FRACTION of their own pool instead, remapped across the authored cost band so the relative
-    // order survives: cheapest skill ≈ 15% of the pool (about 6 casts), priciest ≈ 40% (2 casts).
-    private const float EnemySkillMpCostMinFraction = 0.15f;
-    private const float EnemySkillMpCostMaxFraction = 0.40f;
-    // The authored band skills are priced within (VirtualActionModel Min/MaxActionCost).
-    private const float ActionCostFloor = 1500f;
-    private const float ActionCostCeiling = 8500f;
+    // The numbers live in CombatBudgetModel, which also predicts what a kit sustains from them.
+    private const int EnemyMpRegenPerSecond = CombatBudgetModel.EnemyMpRegenPerSecond;       // 2× the player's ~67/s natural regen
+    private const int EnemyAutoAttackMpRestore = CombatBudgetModel.EnemyAutoAttackMpRestore; // 2× the player's 300 basic-attack restore
     // Dynamic positioning: dwell damps intent flicker (front/back thrash).
     private const float IntentMinDwell = 0.6f;
     // Anti-orbit: within this distance of its assigned slot the enemy heads straight in, ignoring
@@ -800,14 +793,9 @@ public unsafe partial class NpcAiController : IDisposable
     /// </summary>
     private int SkillMpCost(SimulatedNpc npc, uint actionId)
     {
-        var raw = combatEngine.GetActionData(actionId)?.MpCost ?? 0;
-        if (raw <= 0)
-            return 0;
-
-        var t = Math.Clamp((raw - ActionCostFloor) / (ActionCostCeiling - ActionCostFloor), 0f, 1f);
-        var fraction = EnemySkillMpCostMinFraction +
-                       t * (EnemySkillMpCostMaxFraction - EnemySkillMpCostMinFraction);
-        return Math.Max(1, (int)MathF.Round(MathF.Max(1f, npc.State.MaxMp) * fraction));
+        // Skill prices are authored against the player's 10000 pool; enemies pay a fraction of their own
+        // pool instead, cheapest about 15% of it and priciest about 40%.
+        return CombatBudgetModel.EnemySkillMpCost(combatEngine.GetActionData(actionId)?.MpCost ?? 0, npc.State.MaxMp);
     }
 
     /// <summary>

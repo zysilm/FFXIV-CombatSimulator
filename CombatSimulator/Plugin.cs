@@ -205,7 +205,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         Animation.BodyTypeAnimationFallback.Initialize(pluginInterface, dataManager, log);
         var jobActionKitProvider = new JobActionKitProvider(actionDataProvider, dataManager, log);
         npcActionProfileProvider = new NpcActionProfileProvider(jobActionKitProvider, config, log);
-        damageCalculator = new DamageCalculator(new CombatStatProvider(dataManager, log));
+        damageCalculator = new DamageCalculator { IsActionMode = () => config.ActionMode };
         glamourerIpc = new GlamourerIpc(pluginInterface, log);
         vnavmeshIpc = new VNavmeshIpc(pluginInterface, log);
         partyEngagePlanner = new PartyEngagePlanner(vnavmeshIpc);

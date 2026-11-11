@@ -11,6 +11,6 @@ public sealed class MapEnemySettings
     public bool IncludePlayers { get; set; } = false;
     public int MaxCount { get; set; } = 10;
     public float SenseRange { get; set; } = 10.0f;
-    public int Level { get; set; } = 90;
+    public Simulation.EnemyTier Tier { get; set; } = Simulation.EnemyTier.Normal;
     public float HpMultiplier { get; set; } = 1.0f;
 }

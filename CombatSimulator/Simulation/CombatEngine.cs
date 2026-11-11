@@ -743,7 +743,8 @@ public partial class CombatEngine : IDisposable
 
         var resolvedActionData = actionDataProvider.GetActionData(actionId);
 
-        // Calculate damage. Spells are mitigated by magic defense; the action's own type decides.
+        // The enemy's damage is budgeted against what its own kit sustains; measured once per kit.
+        Npcs.KitBudget.Measure(npc.State, npc.Behavior, PlayerMpPrice, usesMp: true);
         var damageType = resolvedActionData?.DamageType ?? SimDamageType.Physical;
         DamageResult dmgResult;
         if (potency > 0)
@@ -936,6 +937,7 @@ public partial class CombatEngine : IDisposable
         }
 
         var resolvedActionData = actionDataProvider.GetActionData(actionId);
+        Npcs.KitBudget.Measure(companion.State, companion.Behavior, PlayerMpPrice, usesMp: false);
         DamageResult dmgResult;
         if (potency > 0)
             dmgResult = damageCalculator.CalculateNpcAutoAttack(companion.State, targetNpc.State, potency);
@@ -1670,52 +1672,10 @@ public partial class CombatEngine : IDisposable
         ps.MaxMp = (int)player.MaxMp;
         ps.CurrentMp = (int)player.MaxMp;
 
-        // Read stats from the actual character
-        try
-        {
-            var playerState = GamePlayerState.Instance();
-            if (playerState == null)
-                throw new InvalidOperationException("PlayerState unavailable.");
-
-            ps.ClassJobId = player.ClassJob.RowId;
-            ps.AttackPower = playerState->GetAttributeByIndex(PlayerAttribute.AttackPower);
-            ps.AttackMagicPotency = playerState->GetAttributeByIndex(PlayerAttribute.AttackMagicPotency);
-            ps.HealingMagicPotency = playerState->GetAttributeByIndex(PlayerAttribute.HealingMagicPotency);
-            ps.Determination = playerState->GetAttributeByIndex(PlayerAttribute.Determination);
-            ps.CriticalHit = playerState->GetAttributeByIndex(PlayerAttribute.CriticalHit);
-            ps.DirectHit = playerState->GetAttributeByIndex(PlayerAttribute.DirectHitRate);
-            ps.Defense = playerState->GetAttributeByIndex(PlayerAttribute.Defense);
-            ps.MagicDefense = playerState->GetAttributeByIndex(PlayerAttribute.MagicDefense);
-            ps.Tenacity = playerState->GetAttributeByIndex(PlayerAttribute.Tenacity);
-            ps.SkillSpeed = playerState->GetAttributeByIndex(PlayerAttribute.SkillSpeed);
-            ps.SpellSpeed = playerState->GetAttributeByIndex(PlayerAttribute.SpellSpeed);
-            ps.WeaponDamage = playerState->GetAttributeByIndex(PlayerAttribute.PhysicalDamage);
-            ps.MagicWeaponDamage = playerState->GetAttributeByIndex(PlayerAttribute.MagicDamage);
-            ps.WeaponDelayMs = playerState->GetAttributeByIndex(PlayerAttribute.Delay);
-            ps.IsTank = IsTankJob(ps.ClassJobId);
-            ps.DamageTraitPct = 100;
-            ps.MainStat = Math.Max(ps.AttackPower, ps.AttackMagicPotency);
-        }
-        catch
-        {
-            // Fallback defaults
-            ps.MainStat = 2000;
-            ps.AttackPower = ps.MainStat;
-            ps.AttackMagicPotency = ps.MainStat;
-            ps.Determination = 1500;
-            ps.CriticalHit = 2000;
-            ps.DirectHit = 1500;
-            ps.Defense = 3000;
-            ps.MagicDefense = 3000;
-            ps.Tenacity = 400;
-            ps.SkillSpeed = 400;
-            ps.SpellSpeed = 400;
-            ps.WeaponDamage = 120;
-            ps.MagicWeaponDamage = 120;
-            ps.WeaponDelayMs = 3000;
-            ps.IsTank = false;
-            ps.DamageTraitPct = 100;
-        }
+        // Gear, level and attributes do not enter a fight (see CombatBudgetModel): only the job, for
+        // role behaviour.
+        ps.ClassJobId = player.ClassJob.RowId;
+        ps.IsTank = IsTankJob(ps.ClassJobId);
 
         ps.Reset();
         ps.MaxHp = (int)player.MaxHp;
@@ -1917,6 +1877,8 @@ public partial class CombatEngine : IDisposable
     }
 
     public ActionData? GetActionData(uint actionId) => actionDataProvider.GetActionData(actionId);
+
+    private int PlayerMpPrice(uint actionId) => actionDataProvider.GetActionData(actionId)?.MpCost ?? 0;
 
     public ActionData GetActionDataOrFallback(uint actionId, float animationDuration = 0f)
     {
