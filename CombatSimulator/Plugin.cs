@@ -67,6 +67,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     private readonly CombatCompanionManager companionManager;
     private readonly NpcAiController npcAiController;
     private readonly NpcCorpseFootIkSolver npcCorpseFootIkSolver;
+    private readonly GroundConformPoser groundConformPoser;
     private readonly VirtualEnemyLookAtController virtualEnemyLookAt;
     private readonly PlayerTargetController playerTargetController;
     private readonly MapEnemyController mapEnemyController;
@@ -357,6 +358,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.InterruptTelegraphCast = telegraphSystem.TryInterrupt;
         npcCorpseFootIkSolver.CorpseSupportHeightProvider = ResolveCorpseTraversalHeight;
         enemyControlController.FootIkSolver = npcCorpseFootIkSolver;
+        groundConformPoser = new GroundConformPoser(boneTransformService, log);
+        enemyControlController.GroundPoser = groundConformPoser;
         companionManager.CorpseSupportHeightProvider = ResolveCorpseTraversalHeight;
         virtualEnemyLookAt = new VirtualEnemyLookAtController(boneTransformService, config, npcSpawner, combatEngine,
             addr => devExperimental.ControlsNpc(addr) || enemyControlController.ControlsNpc(addr) ||
@@ -661,6 +664,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         virtualEnemyLookAt.Dispose();
         npcAiController.Dispose();
         npcCorpseFootIkSolver.Dispose();
+        groundConformPoser.Dispose();
         combatEngine.Dispose();
         devExperimental.Dispose();
         enemyControlController.Dispose();
