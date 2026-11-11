@@ -2788,9 +2788,9 @@ public partial class MainWindow : IDisposable
                     config.Save();
                 }
                 HelpMarker("Off: the ground is a grid of heights sampled every metre, which smooths over steps, edges and props.\n" +
-                           "On: the ground is the game's own collision mesh, triangle for triangle.\n" +
-                           "Takes effect at the next ragdoll. Costs more at activation. Not used together with\n" +
-                           "Rendered Mesh Body Collision. Default on.");
+                           "On: the ground under your own body is the game's own collision mesh, triangle for triangle.\n" +
+                           "Enemies and companions keep the sampled grid, so many of them dying at once costs nothing extra.\n" +
+                           "Takes effect at the next ragdoll. Not used together with Rendered Mesh Body Collision. Default on.");
 
                 // One dropdown: off, or which liquid the water behaves as.
                 var liquid = config.RagdollWaterBuoyancy ? Math.Clamp(config.RagdollWaterLiquid, 0, Animation.WaterBuoyancy.LiquidLabels.Length - 1) + 1 : 0;

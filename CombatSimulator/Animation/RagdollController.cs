@@ -5559,8 +5559,10 @@ public unsafe partial class RagdollController : IDisposable
 
         // Exact ground: the game's own collision triangles for this patch. The sampled grid below is then
         // only a safety net under it, lowered so it never holds a body up where the grid is coarser than
-        // the real ground.
-        var gridDrop = config.RagdollExactGroundCollision && !(activeRagdollMeshVolumes && !activeRagdollIsGeneric) &&
+        // the real ground. Only the player's own body gets it: building the mesh costs 2-17 ms a patch,
+        // every ragdoll has its own simulation, and a wave of dying enemies would pay that once each.
+        var gridDrop = config.RagdollExactGroundCollision && targetIsLocalPlayer &&
+                       !(activeRagdollMeshVolumes && !activeRagdollIsGeneric) &&
                        TryAddExactGround(centerX, centerZ, patchGroundY)
             ? ExactGroundSafetyNetDrop
             : 0f;

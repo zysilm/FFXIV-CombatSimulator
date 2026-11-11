@@ -44,6 +44,10 @@ patch once its centre is 4 m from every existing one; a monster reaching 5 m get
 radius is capped at 30 m. The triangle budget grows with the patch area, up to 80 000, and the sampled
 grid coarsens so it never exceeds 25 samples a side.
 
+Only the local player's ragdoll uses it. Every ragdoll has its own simulation, and building the static
+mesh was measured at 2-17 ms for 500-5 000 triangles (32 ms for 80 000), so enemies and companions keep
+the sampled grid and a wave of deaths costs nothing extra.
+
 The scene is walked under the same shared lock the game's raycasts take. Not used together with
 Rendered Mesh Body Collision. Weapon and gear drops still use their own sampled ground.
 
