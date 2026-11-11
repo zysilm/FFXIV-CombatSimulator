@@ -45,9 +45,14 @@ Each enemy has a **tier**, which is a contract:
 - **Strength** (dropdown, default Auto): Auto reads the rank in the enemy's own data row
   (`BNpcBase.Rank`: 0 Normal, 1 Strong, 2 Boss, others Elite); townspeople, players and bare models are
   Normal. The other choices force one tier for every enemy.
-- **Level** (slider, default "My level"): only the difference to the player's level matters. Every 20
-  levels above the player doubles the enemy's HP and its damage (at most x4), below it weakens the same
-  way. The single-hit cap rises with it, up to 90% of HP. The level also limits which skills its kit has.
+- **Level** (slider, default "My level"): only the gap to the player's level matters, and it counts as
+  levels do in the game. Each level has a worth (`CombatBudgetModel.LevelWorth`, the HP a typically
+  equipped character of that level has: 150 at level 1, 4 500 at 50, 160 000 at 100); the enemy's HP and
+  its damage are both multiplied by its level's worth over the player's. Five levels above is roughly
+  1.4x, ten levels 2-3x, and a level 100 enemy against a level 15 character has about 280 times the HP
+  and kills in one hit, with no cap. Equal levels give 1 at any level, so a naked level 15 character
+  and a geared level 100 one still have the same fight against an enemy of their own level. The level
+  also limits which skills the enemy's kit has.
 - There is no HP multiplier any more; strength and level cover it.
 
 ## What replaced what

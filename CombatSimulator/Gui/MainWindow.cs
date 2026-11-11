@@ -626,8 +626,9 @@ public partial class MainWindow : IDisposable
         "Weak: 4 s, 5%.  Normal: 10 s, 20%.  Strong: 20 s, 50%.  Elite: 35 s, 85%.  Boss: 90 s, lethal unless you guard or bring help.";
 
     private const string EnemyLevelHelp =
-        "Only the difference to your own level matters; your gear does not.\n" +
-        "Every 20 levels above you doubles the enemy's HP and its damage (up to x4); below you it weakens the same way.\n" +
+        "Only the gap to your own level matters; your gear does not.\n" +
+        "The gap counts as it does in the game: an enemy's HP and damage grow with what its level is worth against yours.\n" +
+        "Ten levels above you is roughly twice to three times as strong; a level 100 enemy against a level 15 character has hundreds of times the HP and kills in one hit.\n" +
         "Leave it on \"My level\" for an even fight.";
 
     // One strength dropdown and one level slider; returns true when either changed.

@@ -357,18 +357,26 @@ var cases = new (string, Action)[]
         Check(actionGuard.WinRate > 0.8f, "a well guarded boss fight was lost");
         Check(MathF.Max(raced.LargestEnemyHitShare, actionOpen.LargestEnemyHitShare) <= CombatBudgetModel.BossMaxHitShare * 1.06f, "a boss hit exceeded the cap");
     }),
-    ("a level gap scales the enemy both ways; equal levels change nothing, whatever the level", () => {
-        Check(CombatBudgetModel.LevelFactor(15, 15) == 1f && CombatBudgetModel.LevelFactor(100, 100) == 1f, "equal levels must be neutral");
-        Check(Within(CombatBudgetModel.LevelFactor(35, 15), 2f, 0.001f) && Within(CombatBudgetModel.LevelFactor(80, 100), 0.5f, 0.001f), "20 levels is a factor of two");
-        Check(CombatBudgetModel.LevelFactor(100, 1) == CombatBudgetModel.MaxLevelFactor && CombatBudgetModel.LevelFactor(1, 100) == 1f / CombatBudgetModel.MaxLevelFactor, "level factor bounds");
+    ("a level gap scales the enemy as levels do in the game; equal levels change nothing, whatever the level", () => {
+        Check(CombatBudgetModel.LevelFactor(15, 15) == 1f && CombatBudgetModel.LevelFactor(100, 100) == 1f && CombatBudgetModel.LevelFactor(1, 1) == 1f, "equal levels must be neutral");
+        for (var level = 2; level <= 100; level++)
+            Check(CombatBudgetModel.LevelWorth(level) > CombatBudgetModel.LevelWorth(level - 1), $"level {level} is not worth more than the one below");
+        Check(Within(CombatBudgetModel.LevelFactor(80, 100) * CombatBudgetModel.LevelFactor(100, 80), 1f, 0.001f), "the gap is not the same both ways");
+        Check(CombatBudgetModel.LevelFactor(100, 15) > 200f && CombatBudgetModel.LevelFactor(15, 100) < 0.005f, "a level 100 enemy must dwarf a level 15 character");
+        Check(CombatBudgetModel.LevelWorth(-5) == CombatBudgetModel.LevelWorth(1) && CombatBudgetModel.LevelWorth(400) == CombatBudgetModel.LevelWorth(100), "levels outside 1-100 clamp");
+        // What is shown: a level 100 enemy against a level 15 character with 300 HP has a level 100 enemy's HP.
+        var shown = CombatBudgetModel.EnemyMaxHp(300, EnemyTier.Normal, false, CombatBudgetModel.LevelFactor(100, 15));
+        Console.WriteLine($"      a level 15 character with 300 HP sees a normal level 100 enemy with {shown} HP, a level 20 one with {CombatBudgetModel.EnemyMaxHp(300, EnemyTier.Normal, false, CombatBudgetModel.LevelFactor(20, 15))}, a level 10 one with {CombatBudgetModel.EnemyMaxHp(300, EnemyTier.Normal, false, CombatBudgetModel.LevelFactor(10, 15))}");
+        Check(shown > 50_000, $"a level 100 enemy shows {shown} HP to a level 15 character");
+
         Outcome At(int enemyLevel, int playerLevel, EnemyTier tier = EnemyTier.Normal, bool canDie = false)
             => Average(new Setup(180_000, false, new[] { ((Func<NpcBehavior>)JobKit, tier) }) { PlayerSkill = meleeSkill, LevelFactor = CombatBudgetModel.LevelFactor(enemyLevel, playerLevel), PlayerCanDie = canDie, MaxSeconds = 400f });
-        var even = At(15, 15); var above = At(35, 15); var below = At(80, 100); var far = At(100, 15, canDie: true);
-        Console.WriteLine($"      classic normal enemy, 20 levels below {below.Seconds:F1} s / {below.CostShare:P0}; equal {even.Seconds:F1} s / {even.CostShare:P0}; 20 above {above.Seconds:F1} s / {above.CostShare:P0}; 85 above: won {far.WinRate:P0}, largest hit {far.LargestEnemyHitShare:P0}");
-        Check(above.Seconds > 1.5f * even.Seconds && above.CostShare > 2.5f * even.CostShare, "a higher-level enemy must be clearly harder");
-        Check(below.Seconds < 0.8f * even.Seconds && below.CostShare < 0.5f * even.CostShare, "a lower-level enemy must be clearly easier");
-        Check(far.WinRate < 0.2f, "an enemy 85 levels above should not be beatable by trading blows");
-        Check(far.LargestEnemyHitShare <= 0.9f, "even a far higher enemy never kills in one hit");
+        var even = At(15, 15); var above = At(20, 15); var below = At(10, 15); var far = At(100, 15, canDie: true); var trivial = At(15, 100);
+        Console.WriteLine($"      classic normal enemy: 5 levels below {below.Seconds:F1} s / {below.CostShare:P0}; equal {even.Seconds:F1} s / {even.CostShare:P0}; 5 above {above.Seconds:F1} s / {above.CostShare:P0}; 85 above: won {far.WinRate:P0}, dead after {far.PlayerDeathTime:F1} s, largest hit {far.LargestEnemyHitShare:P0} of HP; 85 below: killed in {trivial.Seconds:F1} s");
+        Check(above.Seconds > 1.2f * even.Seconds && above.CostShare > 1.5f * even.CostShare, "a higher-level enemy must be clearly harder");
+        Check(below.Seconds < 0.9f * even.Seconds && below.CostShare < 0.7f * even.CostShare, "a lower-level enemy must be clearly easier");
+        Check(far.WinRate == 0f && far.LargestEnemyHitShare >= 1f, "an enemy 85 levels above must kill in one hit");
+        Check(trivial.Seconds < 1.5f && trivial.CostShare < 0.01f, "an enemy 85 levels below must fall at once and do no harm");
     }),
     ("companions help by their share; the multipliers do what they say", () => {
         Outcome Solo(int companions, float hp = 1f, float damage = 1f)

@@ -55,17 +55,38 @@ public static class CombatBudgetModel
         _ => EnemyTier.Elite,
     };
 
-    /// <summary>Levels above the player that double an enemy's HP and its damage.</summary>
-    public const float LevelsPerDoubling = 20f;
-    public const float MaxLevelFactor = 4f;
+    // What a character of a level is worth, as the HP a typically equipped one has: the game's own
+    // growth, which is slow to 50 and then steep. Only ratios of it are used.
+    private static readonly (int Level, float Hp)[] LevelCurve =
+    {
+        (1, 150f), (10, 400f), (20, 800f), (30, 1_500f), (40, 2_600f), (50, 4_500f),
+        (60, 15_000f), (70, 30_000f), (80, 55_000f), (90, 80_000f), (100, 160_000f),
+    };
+
+    /// <summary>The worth of a level on the curve above, interpolated on a logarithmic scale.</summary>
+    public static float LevelWorth(int level)
+    {
+        level = Math.Clamp(level, LevelCurve[0].Level, LevelCurve[^1].Level);
+        for (var i = 1; i < LevelCurve.Length; i++)
+        {
+            if (level > LevelCurve[i].Level) continue;
+            var (fromLevel, fromHp) = LevelCurve[i - 1];
+            var (toLevel, toHp) = LevelCurve[i];
+            var t = (level - fromLevel) / (float)(toLevel - fromLevel);
+            return fromHp * MathF.Pow(toHp / fromHp, t);
+        }
+        return LevelCurve[^1].Hp;
+    }
 
     /// <summary>
-    /// How much stronger an enemy is for being above the player's level (weaker for being below). It
-    /// multiplies both its HP and its damage, so the fight is longer and every hit worse. 1 at equal
-    /// levels; the player's own level and gear still do not matter, only the difference.
+    /// How much stronger an enemy is for being above the player's level (weaker for being below): what
+    /// its level is worth against the player's, as in the game itself, where a level 100 enemy has
+    /// hundreds of times the HP of a level 15 one and hits accordingly. It multiplies both the
+    /// enemy's HP and its damage. 1 at equal levels, whatever the level, so gear and the player's own
+    /// level still do not matter; only the gap does, and a large gap is not a fight.
     /// </summary>
     public static float LevelFactor(int enemyLevel, int playerLevel)
-        => Math.Clamp(MathF.Pow(2f, (enemyLevel - playerLevel) / LevelsPerDoubling), 1f / MaxLevelFactor, MaxLevelFactor);
+        => LevelWorth(enemyLevel) / LevelWorth(playerLevel);
 
     // (seconds to kill at reference output, share of the target's HP an unavoided fight costs)
     private static readonly (float SecondsToKill, float Cost)[] Tiers =
@@ -162,9 +183,10 @@ public static class CombatBudgetModel
         levelFactor = MathF.Max(0.0001f, levelFactor);
         var perPotency = FightCost(tier) * (actionMode ? ActionModeThreat : 1f) * levelFactor
                          / (SecondsToKill(tier) * MathF.Max(1f, kitOutput));
-        // A higher-level enemy may hit past the usual cap, but never in one blow.
-        var cap = (tier == EnemyTier.Boss ? BossMaxHitShare : MaxHitShare) * Math.Clamp(levelFactor, 1f, 2f);
-        return MathF.Min(potency * perPotency, MathF.Min(cap, 0.9f));
+        // The cap keeps an even fight from ending in one blow. It is a cap on the enemy's own scale:
+        // an enemy far above the player does kill in one.
+        var cap = (tier == EnemyTier.Boss ? BossMaxHitShare : MaxHitShare) * levelFactor;
+        return MathF.Min(potency * perPotency, cap);
     }
 
     /// <summary>What an enemy pays for a skill priced against the player's 10 000 MP pool.</summary>
