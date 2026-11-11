@@ -10,7 +10,7 @@ namespace CombatSimulator.Gui;
 
 public partial class MainWindow
 {
-    // Targets tab > "Enhanced enemy tactics". Every switch here defaults to the pre-existing behaviour
+    // Combat tab > "Enhanced enemy tactics". Every switch here defaults to the pre-existing behaviour
     // while the master is off.
     private void DrawEnemyTacticsSection()
     {

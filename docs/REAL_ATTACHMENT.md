@@ -1,6 +1,6 @@
 # Half off, hanging on the body
 
-Effects tab → **Armor Detachment** → **Body / Legs** → **Half off, hanging on the body** (stored as
+Ragdoll tab → **Armor Detachment** → **Body / Legs** → **Half off, hanging on the body** (stored as
 cloth hold preset 5; formerly "Stay on the body" / "Visual only (enhanced)"). Body and Legs only.
 
 ## Runtime

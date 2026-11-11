@@ -68,9 +68,6 @@ public partial class MainWindow : IDisposable
 
     // Glamourer design list cache for combo box
     private List<KeyValuePair<Guid, string>> glamourerDesigns = new();
-    private bool glamourerDesignsLoaded;
-    private int glamourerSelectedIndex = -1;
-    private int glamourerResetSelectedIndex = -1;
     private bool showControlsPopup;
 
     // Local player's skeleton bone names (Virtual Enemies look-at bone fallback list).
@@ -194,8 +191,6 @@ public partial class MainWindow : IDisposable
     private static readonly string[] TabNames = new[]
     {
         "Combat",
-        "Targets",
-        "Party",
         "Effects",
         "Camera",
         "Ragdoll",
@@ -316,31 +311,31 @@ public partial class MainWindow : IDisposable
                 if (DevExperimentalUnlocked)
                     DrawFightingModeSection();
                 DrawActionModeSection();
-                break;
-            case 1: // Targets
                 DrawEnemyTacticsSection();
                 DrawMapEnemiesSection();
+                if (ImGui.CollapsingHeader("Party"))
+                {
+                    ImGui.Indent();
+                    DrawPartyTab();
+                    ImGui.Unindent();
+                }
                 break;
-            case 2: // Party
-                DrawPartyTab();
-                break;
-            case 3: // Effects
+            case 1: // Effects
                 DrawHitVfxSection();
                 DrawArrowImpactSection();
                 DrawPrivateEffectsSection();
                 DrawExperimentalEffects();
-                DrawArmorDetachmentEntrySection();
                 DrawEnemyControlEntrySection();
-                DrawGlamourerHeaderSection();
                 break;
-            case 4: // Camera
+            case 2: // Camera
                 DrawActiveCamSection();
                 DrawDynamicCamSection();
                 break;
-            case 5: // Ragdoll
+            case 3: // Ragdoll
                 DrawRagdollSection();
                 DrawGuidedCollapseSection();
                 DrawNpcCollisionSection();
+                DrawArmorDetachmentEntrySection();
                 ImGui.Separator();
                 if (ImGui.Button("Reset All to Defaults##ragdollpage"))
                     config.ResetRagdollPageDefaults();
@@ -348,16 +343,16 @@ public partial class MainWindow : IDisposable
                     ImGui.SetTooltip("Restore every option on this page to its default.\n" +
                                      "Leaves Enable Ragdoll alone: resetting it would switch the feature off and take the page with it.");
                 break;
-            case 6: // Virtual Enemies
+            case 4: // Virtual Enemies
                 DrawVirtualEnemiesTab();
                 break;
-            case 7: // Spectators (Experimental)
+            case 5: // Spectators (Experimental)
                 DrawSpectatorsTab();
                 break;
-            case 8: // Settings
+            case 6: // Settings
                 DrawGuiSettingsSection();
                 break;
-            case 9: // Diagnose
+            case 7: // Diagnose
                 DrawDiagnoseSection();
                 break;
             default:
@@ -2206,14 +2201,6 @@ public partial class MainWindow : IDisposable
         ("L Shin", "j_asi_b_l"),      ("R Shin", "j_asi_b_r"),
     };
 
-    private void DrawGlamourerHeaderSection()
-    {
-        if (ImGui.CollapsingHeader("Glamourer Integration"))
-        {
-            DrawGlamourerSection();
-        }
-    }
-
     private void DrawConflictConfirmPopup()
     {
         if (showConflictConfirmPopup)
@@ -3027,100 +3014,6 @@ public partial class MainWindow : IDisposable
                 ImGui.Unindent();
             }
         }
-    }
-
-    private void DrawGlamourerSection()
-    {
-        var enabled = config.ApplyGlamourerOnDeath;
-        if (ImGui.Checkbox("Apply Glamourer Preset on Death", ref enabled))
-        {
-            config.ApplyGlamourerOnDeath = enabled;
-            config.Save();
-        }
-
-        var enabledReset = config.ApplyGlamourerOnReset;
-        if (ImGui.Checkbox("Apply Glamourer Preset on Start/Reset", ref enabledReset))
-        {
-            config.ApplyGlamourerOnReset = enabledReset;
-            config.Save();
-        }
-
-        ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1),
-            "Death preset reverts on reset/stop.\n" +
-            "Start/Reset preset applies on start, reset, and reboot.");
-
-        if (!enabled && !enabledReset)
-            return;
-
-        ImGui.Spacing();
-
-        // Load the design list once when the section is first shown, instead of a Refresh button.
-        if (!glamourerDesignsLoaded)
-        {
-            glamourerDesignsLoaded = true;
-            glamourerDesigns = new List<KeyValuePair<Guid, string>>(glamourerIpc.GetDesignList());
-            glamourerDesigns.Sort((a, b) => string.Compare(a.Value, b.Value, StringComparison.OrdinalIgnoreCase));
-            glamourerSelectedIndex = FindDesignIndex(config.DeathGlamourerDesignId);
-            glamourerResetSelectedIndex = FindDesignIndex(config.ResetGlamourerDesignId);
-        }
-
-        if (glamourerDesigns.Count == 0)
-        {
-            ImGui.TextColored(new Vector4(1f, 0.5f, 0.3f, 1),
-                glamourerIpc.IsAvailable ? "No Glamourer designs found." : "Glamourer not detected.");
-            if (ImGui.SmallButton("Retry##glamourerdesigns"))
-                glamourerDesignsLoaded = false;
-        }
-
-        if (glamourerDesigns.Count > 0)
-        {
-            var names = new string[glamourerDesigns.Count];
-            for (int i = 0; i < glamourerDesigns.Count; i++)
-                names[i] = glamourerDesigns[i].Value;
-
-            if (enabled)
-            {
-                ImGui.SetNextItemWidth(-1);
-                if (ImGui.Combo("##DeathDesign", ref glamourerSelectedIndex, names, names.Length))
-                {
-                    if (glamourerSelectedIndex >= 0 && glamourerSelectedIndex < glamourerDesigns.Count)
-                    {
-                        config.DeathGlamourerDesignId = glamourerDesigns[glamourerSelectedIndex].Key.ToString();
-                        config.Save();
-                    }
-                }
-                if (glamourerSelectedIndex >= 0 && glamourerSelectedIndex < glamourerDesigns.Count)
-                    ImGui.TextColored(new Vector4(0.5f, 0.8f, 0.5f, 1),
-                        $"Death: {glamourerDesigns[glamourerSelectedIndex].Value}");
-            }
-
-            if (enabledReset)
-            {
-                ImGui.SetNextItemWidth(-1);
-                if (ImGui.Combo("##ResetDesign", ref glamourerResetSelectedIndex, names, names.Length))
-                {
-                    if (glamourerResetSelectedIndex >= 0 && glamourerResetSelectedIndex < glamourerDesigns.Count)
-                    {
-                        config.ResetGlamourerDesignId = glamourerDesigns[glamourerResetSelectedIndex].Key.ToString();
-                        config.Save();
-                    }
-                }
-                if (glamourerResetSelectedIndex >= 0 && glamourerResetSelectedIndex < glamourerDesigns.Count)
-                    ImGui.TextColored(new Vector4(0.5f, 0.8f, 0.5f, 1),
-                        $"Reset: {glamourerDesigns[glamourerResetSelectedIndex].Value}");
-            }
-        }
-    }
-
-    private int FindDesignIndex(string designId)
-    {
-        if (Guid.TryParse(designId, out var id))
-        {
-            for (int i = 0; i < glamourerDesigns.Count; i++)
-                if (glamourerDesigns[i].Key == id)
-                    return i;
-        }
-        return -1;
     }
 
     public void DrawShortcutsBar()

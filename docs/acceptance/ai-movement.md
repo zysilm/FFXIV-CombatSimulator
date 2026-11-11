@@ -20,7 +20,7 @@ To isolate one behaviour: master on, every other sub-switch off.
 
 Common setup for the tests below unless stated otherwise: default config (Combat Companions **on**, Target
 Approach on, vnavmesh approach on), a flat open area, Fast Combat or spawned virtual enemies. "No companions" =
-clear companions in the Party tab.
+clear companions under Combat tab → Party.
 
 ---
 

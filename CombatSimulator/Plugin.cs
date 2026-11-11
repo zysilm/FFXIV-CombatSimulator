@@ -260,7 +260,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         activeCameraController.GetCurrentOwner = () => cameraModeCoordinator.CurrentOwner;
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
-            glamourerIpc, movementBlockHook, ragdollController,
+            movementBlockHook, ragdollController,
             config, npcSelector, clientState, log);
         // Action Mode wiring. Seams: ActionComboSink (player input), CombatModeRouter
         // (enemy attack executor), TelegraphSystem (windup→hitbox). All gate on

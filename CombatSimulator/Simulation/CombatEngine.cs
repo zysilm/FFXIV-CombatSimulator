@@ -58,7 +58,6 @@ public partial class CombatEngine : IDisposable
     private readonly ActionDataProvider actionDataProvider;
     private readonly DamageCalculator damageCalculator;
     private readonly AnimationController animationController;
-    private readonly GlamourerIpc glamourerIpc;
     private readonly MovementBlockHook movementBlockHook;
     private readonly Configuration config;
     private readonly NpcSelector npcSelector;
@@ -78,7 +77,6 @@ public partial class CombatEngine : IDisposable
     // Set by ProcessPlayerAction when the player lands a real action; cleared
     // on Start / Reset / Stop.
     private bool playerInitiatedCombat;
-    private bool glamourerApplied;
 
     public SimulationState State { get; } = new();
     public bool IsActive => State.IsActive;
@@ -179,7 +177,6 @@ public partial class CombatEngine : IDisposable
         ActionDataProvider actionDataProvider,
         DamageCalculator damageCalculator,
         AnimationController animationController,
-        GlamourerIpc glamourerIpc,
         MovementBlockHook movementBlockHook,
         RagdollController ragdollController,
         Configuration config,
@@ -190,7 +187,6 @@ public partial class CombatEngine : IDisposable
         this.actionDataProvider = actionDataProvider;
         this.damageCalculator = damageCalculator;
         this.animationController = animationController;
-        this.glamourerIpc = glamourerIpc;
         this.movementBlockHook = movementBlockHook;
         this.ragdollController = ragdollController;
         this.config = config;
@@ -215,13 +211,9 @@ public partial class CombatEngine : IDisposable
         LastPlayerKillerEntityId = 0;
         playerVictoryTriggered = false;
         enemyVictoryTriggered = false;
-        glamourerApplied = false;
         playerInitiatedCombat = false;
         pendingDeaths.Clear();
         ClearDeferredHits();
-
-        // Apply glamourer combat-ready preset on start
-        ApplyResetGlamourer();
 
         AddLogEntry("Combat simulation started.", CombatLogType.Info);
         log.Info("Combat simulation started.");
@@ -275,7 +267,6 @@ public partial class CombatEngine : IDisposable
         animationController.RemoveAllActiveVfx();
         movementBlockHook.IsBlocking = false;
         ragdollController.Deactivate();
-        RevertGlamourer();
         playerInitiatedCombat = false;
         LastPlayerDefeatedBy = string.Empty;
         LastPlayerKillerAddress = nint.Zero;
@@ -328,8 +319,6 @@ public partial class CombatEngine : IDisposable
         animationController.RestorePlayerCombatVisualState();
         movementBlockHook.IsBlocking = false;
         ragdollController.Deactivate();
-        RevertGlamourer();
-        ApplyResetGlamourer();
 
         playerDeathTriggered = false;
         LastPlayerDefeatedBy = string.Empty;
@@ -337,7 +326,6 @@ public partial class CombatEngine : IDisposable
         LastPlayerKillerEntityId = 0;
         playerVictoryTriggered = false;
         enemyVictoryTriggered = false;
-        glamourerApplied = false;
         playerInitiatedCombat = false;
         pendingDeaths.Clear();
         ClearDeferredHits();
@@ -376,8 +364,6 @@ public partial class CombatEngine : IDisposable
         animationController.RestorePlayerCombatVisualState();
         movementBlockHook.IsBlocking = false;
         ragdollController.Deactivate();
-        RevertGlamourer();
-        ApplyResetGlamourer();
 
         AddLogEntry("Player revived in place.", CombatLogType.Info);
     }
@@ -1536,7 +1522,6 @@ public partial class CombatEngine : IDisposable
                 BeforePlayerDeath?.Invoke();
                 animationController.PlayPlayerDeath(forceCombatDeath: true);
                 TriggerEnemyVictoryIfPartyDefeated();
-                ApplyGlamourer();
 
                 // Activate ragdoll physics on player death + fire weapon-drop hook
                 {
@@ -1655,42 +1640,6 @@ public partial class CombatEngine : IDisposable
             Timer = entity.IsPlayer && config.ActionMode ? ActionPlayerDeathDelay : DeathAnimationDelay,
         });
 
-    }
-
-    private void ApplyGlamourer()
-    {
-        if (!config.ApplyGlamourerOnDeath || glamourerApplied)
-            return;
-
-        if (!Guid.TryParse(config.DeathGlamourerDesignId, out var designId))
-            return;
-
-        if (glamourerIpc.ApplyDesign(designId))
-        {
-            glamourerApplied = true;
-            AddLogEntry("Glamourer death preset applied.", CombatLogType.Info);
-        }
-    }
-
-    private void ApplyResetGlamourer()
-    {
-        if (!config.ApplyGlamourerOnReset)
-            return;
-
-        if (!Guid.TryParse(config.ResetGlamourerDesignId, out var designId))
-            return;
-
-        if (glamourerIpc.ApplyDesign(designId))
-            AddLogEntry("Glamourer reset preset applied.", CombatLogType.Info);
-    }
-
-    private void RevertGlamourer()
-    {
-        if (!glamourerApplied)
-            return;
-
-        glamourerIpc.RevertState();
-        glamourerApplied = false;
     }
 
     /// <summary>

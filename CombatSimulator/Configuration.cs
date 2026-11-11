@@ -167,20 +167,13 @@ public partial class Configuration : IPluginConfiguration
     // actions at the sim enemy level. Monsters / NPC-only weapons resolve to no job → auto-attack only.
     public int EnemyMaxRealSkills { get; set; } = 4;
 
-    // Glamourer: apply a preset on player death
-    public bool ApplyGlamourerOnDeath { get; set; } = false;
-    public string DeathGlamourerDesignId { get; set; } = "";
-
-    // Glamourer: apply a preset on start / reset / reboot (combat ready look)
-    public bool ApplyGlamourerOnReset { get; set; } = false;
-    public string ResetGlamourerDesignId { get; set; } = "";
 
     // Glamourer: equipment-only design applied to party companion clones on spawn.
     // "" = None — the clone keeps its own (inherited) equipment. Also the effective
     // behavior when Glamourer is not installed.
     public string PartyCompanionGlamourerDesignId { get; set; } = "";
 
-    // Armor Detachment (Effects tab). "Detach armor" is one dropdown over these two exclusive switches.
+    // Armor Detachment (Ragdoll tab). "Detach armor" is one dropdown over these two exclusive switches.
     public bool KoStripEnabled { get; set; } = false;
     public bool KoStripOnHitEnabled { get; set; } = false;
     public bool KoStripHead { get; set; } = true;
@@ -700,6 +693,8 @@ public partial class Configuration : IPluginConfiguration
         "KoStripCollapseWrists", "KoStripCollapseRFinger", "KoStripCollapseLFinger",
         "KoStripHandsFeetRigidDefaultMigrated20260719",
         "KoStripTopHangFrom", "KoStripLowerHangFrom",
+        // Glamourer presets on death / reset, removed 2026-11.
+        "ApplyGlamourerOnDeath", "DeathGlamourerDesignId", "ApplyGlamourerOnReset", "ResetGlamourerDesignId",
         "KoStripDelay", "KoStripDelaySeconds", "KoStripLHand", "KoStripRHand", "KoStripLFoot", "KoStripRFoot",
         // Ragdoll pages, simplified 2026-11 (values fixed in RagdollTuning or the ON side of a switch).
         "PartyEnemyDeathRagdoll", "NpcRagdollActivationDelay", "MaxNpcRagdolls", "RagdollGravity", "RagdollDamping",

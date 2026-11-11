@@ -60,7 +60,7 @@ spots capped inside attack reach; player self-centred AoEs (Overpower etc.) now 
 | Story pool / line variants / grips / scripted grab / cues | Dev → Stories | [victory-story.md](victory-story.md) §b–h; example profiles in `examples.json.example` |
 | Spectator reactions / outcome chatter | Spectators section | [victory-story.md](victory-story.md) §f |
 | Monster real skills, telegraphs, omens, casts, phases, humanoid AoE | Map enemies → Enemy skills | [monster-skills.md](monster-skills.md) |
-| Enhanced enemy tactics (+ sub-switches) | Party tab → Enhanced enemy tactics | [ai-movement.md](ai-movement.md) |
+| Enhanced enemy tactics (+ sub-switches) | Combat tab → Enhanced enemy tactics | [ai-movement.md](ai-movement.md) |
 
 ## 3. Interactions to watch when several features are on
 

@@ -36,7 +36,7 @@ while KoStrip still hid the source. This is independently sufficient to cause di
 
 ## Triggers
 
-Effects tab → **Armor Detachment** → **Detach armor**: Off / On KO / On each enemy hit (stored as the
+Ragdoll tab → **Armor Detachment** → **Detach armor**: Off / On KO / On each enemy hit (stored as the
 two exclusive switches KoStripEnabled / KoStripOnHitEnabled). On-hit detachment fires from `CombatEngine.OnPlayerDamagedByNpc` (every enemy hit
 that deals damage to the player, including the killing blow) and requests the next enabled slot in
 the order Head, Ears, Neck, Wrists, R/L Finger, Body, Hands, Legs, Feet. A failed preparation
