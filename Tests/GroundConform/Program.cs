@@ -136,9 +136,30 @@ if (MathF.Abs(after - before) > worstLength && args.Contains("--diag")) Console.
                 Check(At("j_kosi").Y - ground > 0.7f * thigh, $"{label}: on all fours, the hips are only {At("j_kosi").Y - ground:F2} up (thigh {thigh:F2})");
                 Check(MathF.Abs(At("j_sebo_c").Y - At("j_kosi").Y) < 0.12f * height, $"{label}: on all fours, the back is not level (chest {At("j_sebo_c").Y - At("j_kosi").Y:+0.00;-0.00} from the hips)");
                 Check(At("j_sebo_c").Z - At("j_kosi").Z > 0.1f * height, $"{label}: on all fours, the chest is not ahead of the hips");
+                // Against a crawl made by hand (measured on c0101: hips 0.51 m, chest 0.53, shin 21 degrees
+                // up off the ground, toes 35 down and behind the ankle, face 42 below level, knee bent 109).
+                float Deg(float radians) => radians * 180f / MathF.PI;
+                float Rise(Vector3 from, Vector3 to) => Deg(MathF.Asin(Math.Clamp(Vector3.Normalize(to - from).Y, -1f, 1f)));
+                var faces = Vector3.Transform(Vector3.UnitZ, Quaternion.Normalize(turned[skeleton.Index("j_kao")] * Quaternion.Inverse(rotations[skeleton.Index("j_kao")])));
+                var face = Deg(MathF.Asin(Math.Clamp(faces.Y, -1f, 1f)));
+                var kneeBend = Deg(MathF.Acos(Math.Clamp(Vector3.Dot(Vector3.Normalize(At("j_asi_c_l") - At("j_asi_a_l")), Vector3.Normalize(At("j_asi_d_l") - At("j_asi_c_l"))), -1f, 1f)));
+                var elbowBend = Deg(MathF.Acos(Math.Clamp(Vector3.Dot(Vector3.Normalize(At("j_ude_b_l") - At("j_ude_a_l")), Vector3.Normalize(At("j_te_l") - At("j_ude_b_l"))), -1f, 1f)));
+                var lowestBone = Enumerable.Range(0, count).Where(i => skeleton.Names[i].StartsWith("j_") && !skeleton.Names[i].StartsWith("j_sk_")).OrderBy(i => positions[i].Y).First();
+                var fingers = Enumerable.Range(0, count).Where(i => { for (var b = i; b >= 0; b = skeleton.Parents[b]) if (b == skeleton.Index("j_te_l")) return i != b; return false; }).ToArray();
+                var fingerRise = fingers.Length > 0 ? fingers.Max(i => positions[i].Y) - fingers.Min(i => positions[i].Y) : 0f;
+                Console.WriteLine($"   {label} on all fours, against the crawl made by hand (scaled by height {height / 1.73f:F2}): hips {At("j_kosi").Y - ground:F2} (0.51), chest {At("j_sebo_c").Y - ground:F2} (0.53), head {At("j_kao").Y - ground:F2} (0.52), " +
+                                  $"face {face:F0} (-42), knee bend {kneeBend:F0} (109), shin up {Rise(At("j_asi_c_l"), At("j_asi_d_l")):F0} (21), foot {Rise(At("j_asi_d_l"), At("j_asi_e_l")):F0} (-35), ankle {At("j_asi_d_l").Y - ground:F2} (0.20), " +
+                                  $"elbow bend {elbowBend:F0} (50), elbow {At("j_ude_b_l").Y - ground:F2} (0.27), wrist {At("j_te_l").Y - ground:F2} (0.06), lowest bone {skeleton.Names[lowestBone]} {positions[lowestBone].Y - ground:+0.00;-0.00}, hand spans {fingerRise:F2} in height");
+                Check(face is > -65f and < -20f, $"{label}: on all fours, the face looks {face:F0} degrees from level (a crawl looks ahead and down, about -42)");
+                Check(positions[lowestBone].Y - ground > -0.02f, $"{label}: on all fours, {skeleton.Names[lowestBone]} is {ground - positions[lowestBone].Y:F2} under the ground");
                 foreach (var side in new[] { "l", "r" })
                 {
-                    Check(At($"j_asi_c_{side}").Y - ground < 0.06f * height, $"{label}: on all fours, knee {side} is {At($"j_asi_c_{side}").Y - ground:F2} off the ground");
+                    Check(Rise(At($"j_asi_c_{side}"), At($"j_asi_d_{side}")) is > -5f and < 35f, $"{label}: on all fours, shin {side} is {Rise(At($"j_asi_c_{side}"), At($"j_asi_d_{side}")):F0} degrees up (0 to 21)");
+                    Check(At($"j_asi_e_{side}").Z < At($"j_asi_d_{side}").Z && At($"j_asi_e_{side}").Y < At($"j_asi_d_{side}").Y, $"{label}: on all fours, foot {side} does not trail toes down behind the ankle");
+                }
+                foreach (var side in new[] { "l", "r" })
+                {
+                    Check(MathF.Min(At($"j_asi_b_{side}").Y, At($"j_asi_c_{side}").Y) - ground < 0.06f * height, $"{label}: on all fours, knee {side} is {MathF.Min(At($"j_asi_b_{side}").Y, At($"j_asi_c_{side}").Y) - ground:F2} off the ground");
                     Check(At($"j_te_{side}").Y - ground < 0.06f * height, $"{label}: on all fours, hand {side} is {At($"j_te_{side}").Y - ground:F2} off the ground");
                     Check(MathF.Abs(At($"j_te_{side}").Z - At($"j_ude_a_{side}").Z) < 0.2f * height, $"{label}: on all fours, hand {side} is not under its shoulder ({At($"j_te_{side}").Z - At($"j_ude_a_{side}").Z:+0.00;-0.00})");
                     Check(At($"j_asi_d_{side}").Z < At($"j_asi_c_{side}").Z, $"{label}: on all fours, shin {side} does not lie back from the knee");

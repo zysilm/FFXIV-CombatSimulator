@@ -38,7 +38,8 @@ By its shape alone; no bone is looked up by name.
    until it is level (by how steeply it stands over the bone it is held by; a core that is level
    already, four legs under a belly, does not tip and stops at the crouch). Each leg bone turns from
    where the crouch has it to kneeling: the thigh points the way it is animated, hanging from the hip,
-   and the rest of the leg lies back along the ground. The body is held up by its knees. Limbs that
+   the rest of the leg lies back along the ground, and the foot is turned over to trail behind the
+   ankle, toes down. The body is held up by its knees. Limbs that
    hang down (arms) keep the way they point while the core tips, so they meet the ground under the
    shoulders; there they are stood on it and fold as a leg does.
 4. **Low** (stage 1 to 2: as much again). The thighs lean back, up to 60 degrees, and the knees slide
@@ -47,10 +48,14 @@ By its shape alone; no bone is looked up by name.
    depth (`LastDeepest`) and Enemy Control does not push the creature below it.
 6. **A core without legs under it** tips forward as the ground carries it past where its top was, as
    far as its flattest angle.
-7. **Hanging limbs**: one that is held up (a neck, a raised arm) goes where the core takes it; one
-   that hangs or trails (an arm at rest, a tail, cloth) keeps the way it points. Whatever is then under
-   the floor is put back by leaning its bone, keeping the bone's length and the way it points along
-   the ground.
+7. **Hanging limbs**: one that is held up (a neck, a raised arm) goes where the core takes it, but
+   what is beyond its first bone is lifted half way back: the neck stays in line with the back and the
+   head looks ahead and down, not at the ground. One that hangs or trails (an arm at rest, a tail,
+   cloth) keeps the way it points. Whatever is then under the floor is put back by leaning its bone,
+   keeping the bone's length and the way it points along the ground.
+8. **Hands and toes.** The small bones a limb's bone carries (fingers) take no part; if they would
+   point into the ground the bone is turned up about its own joint by the least that brings them
+   clear, so a hand lies on the ground instead of standing on its fingertips.
 
 Bones keep their lengths exactly at every step.
 
@@ -67,6 +72,15 @@ Offline, on reference poses (humans with their arms let down): 42 of 43 skeleton
 swing moves no bone more than 3 cm at any depth, and the swing still shows on all fours and low (hands
 travel 37 to 54 cm, knees 15 to 36 cm).
 
+## Against a crawl made by hand
+
+The all-fours pose is compared with a crawl animation made by hand (the walk loop of the "[Feri]
+Craaawl" mod, decoded offline, c0101). Ours on the same skeleton, theirs in brackets: hips 0.50 m
+(0.51), chest 0.52 (0.53), back level (level), face 45 degrees below level (42), foot 37 degrees down
+behind the ankle (35), wrist 0.06 (0.06), thigh upright (upright, swinging 32 either way). Still
+different: their shins are 21 degrees up off the ground (ours 6), their elbows are bent 50 degrees
+(ours 29), and their head is 6 cm higher.
+
 ## Known limits
 
 - Verified offline on reference poses and a rigid swing of the limbs, not on real animations, and not
@@ -74,9 +88,8 @@ travel 37 to 54 cm, knees 15 to 36 cm).
 - The ground is taken as level at the height found under the creature's root.
 - The hips rise a little on the way from the crouch to all fours (they are higher on the knees than
   over the heels).
-- The head goes where the chest takes it: on all fours it looks at the ground.
-- A foot keeps the way it stands while the shin lies back, so it is not turned over as a kneeling
-  foot would be.
+- A foot is turned over on the way down to the knees; where the ankle is near the ground it flips
+  from in front to behind in one step.
 - A bone that points straight down and has to be laid on the ground has no way of its own to go, and
   goes forward; next to that pose a small change can lay it the other way.
 - Most monsters have a core that is level already or is carried as one piece, and only crouch.
