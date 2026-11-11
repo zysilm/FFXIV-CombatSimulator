@@ -13,8 +13,8 @@ public class NpcSpawnRequest
     public uint BNpcBaseId { get; set; }
     public uint ENpcBaseId { get; set; }     // Non-zero for humanoid NPC (ENpcBase)
     public uint ModelCharaId { get; set; }   // Direct model fallback for ModelChara-only Monsters
-    public Simulation.EnemyTier Tier { get; set; } = Simulation.EnemyTier.Normal;
-    public float HpMultiplier { get; set; } = 1.0f;
+    public Simulation.EnemyTier? Tier { get; set; } // null: taken from the enemy's own data
+    public int Level { get; set; }                  // 0: the player's level
     public Vector3? Position { get; set; }
     public float? Rotation { get; set; }
     public bool IsRanged { get; set; } // Carries the per-NPC ranged-attack flag through respawn

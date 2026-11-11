@@ -81,7 +81,8 @@ Outcome Fight(Setup setup)
         var state = new SimulatedEntityState
         {
             Tier = tier, MaxMp = EnemyMaxMp, CurrentMp = EnemyMaxMp,
-            MaxHp = CombatBudgetModel.EnemyMaxHp(setup.PlayerMaxHp, tier, behavior.FightsAtRange, setup.HpMultiplier),
+            MaxHp = CombatBudgetModel.EnemyMaxHp(setup.PlayerMaxHp, tier, behavior.FightsAtRange, setup.HpMultiplier * setup.LevelFactor),
+            LevelFactor = setup.LevelFactor,
         };
         state.CurrentHp = state.MaxHp;
         KitBudget.Measure(state, behavior, Price, usesMp: true);
@@ -356,6 +357,19 @@ var cases = new (string, Action)[]
         Check(actionGuard.WinRate > 0.8f, "a well guarded boss fight was lost");
         Check(MathF.Max(raced.LargestEnemyHitShare, actionOpen.LargestEnemyHitShare) <= CombatBudgetModel.BossMaxHitShare * 1.06f, "a boss hit exceeded the cap");
     }),
+    ("a level gap scales the enemy both ways; equal levels change nothing, whatever the level", () => {
+        Check(CombatBudgetModel.LevelFactor(15, 15) == 1f && CombatBudgetModel.LevelFactor(100, 100) == 1f, "equal levels must be neutral");
+        Check(Within(CombatBudgetModel.LevelFactor(35, 15), 2f, 0.001f) && Within(CombatBudgetModel.LevelFactor(80, 100), 0.5f, 0.001f), "20 levels is a factor of two");
+        Check(CombatBudgetModel.LevelFactor(100, 1) == CombatBudgetModel.MaxLevelFactor && CombatBudgetModel.LevelFactor(1, 100) == 1f / CombatBudgetModel.MaxLevelFactor, "level factor bounds");
+        Outcome At(int enemyLevel, int playerLevel, EnemyTier tier = EnemyTier.Normal, bool canDie = false)
+            => Average(new Setup(180_000, false, new[] { ((Func<NpcBehavior>)JobKit, tier) }) { PlayerSkill = meleeSkill, LevelFactor = CombatBudgetModel.LevelFactor(enemyLevel, playerLevel), PlayerCanDie = canDie, MaxSeconds = 400f });
+        var even = At(15, 15); var above = At(35, 15); var below = At(80, 100); var far = At(100, 15, canDie: true);
+        Console.WriteLine($"      classic normal enemy, 20 levels below {below.Seconds:F1} s / {below.CostShare:P0}; equal {even.Seconds:F1} s / {even.CostShare:P0}; 20 above {above.Seconds:F1} s / {above.CostShare:P0}; 85 above: won {far.WinRate:P0}, largest hit {far.LargestEnemyHitShare:P0}");
+        Check(above.Seconds > 1.5f * even.Seconds && above.CostShare > 2.5f * even.CostShare, "a higher-level enemy must be clearly harder");
+        Check(below.Seconds < 0.8f * even.Seconds && below.CostShare < 0.5f * even.CostShare, "a lower-level enemy must be clearly easier");
+        Check(far.WinRate < 0.2f, "an enemy 85 levels above should not be beatable by trading blows");
+        Check(far.LargestEnemyHitShare <= 0.9f, "even a far higher enemy never kills in one hit");
+    }),
     ("companions help by their share; the multipliers do what they say", () => {
         Outcome Solo(int companions, float hp = 1f, float damage = 1f)
             => Average(new Setup(180_000, true, new[] { ((Func<NpcBehavior>)JobKit, EnemyTier.Strong) }) { PlayerSkill = meleeSkill, Companions = companions, HpMultiplier = hp, DamageMultiplier = damage, PlayerCanDie = false, MaxSeconds = 400f });
@@ -399,7 +413,9 @@ var cases = new (string, Action)[]
             Check(CombatBudgetModel.FightCost(tiers[i]) > CombatBudgetModel.FightCost(tiers[i - 1]), "tiers must get more dangerous");
         }
         Check(CombatBudgetModel.ClampTier(-3) == EnemyTier.Weak && CombatBudgetModel.ClampTier(99) == EnemyTier.Boss, "tier clamp");
-        Check(CombatBudgetModel.TierForLegacyLevel(6) == EnemyTier.Weak && CombatBudgetModel.TierForLegacyLevel(90) == EnemyTier.Normal && CombatBudgetModel.TierForLegacyLevel(172) == EnemyTier.Elite, "legacy level mapping");
+        Check(CombatBudgetModel.TierForChoice(0) == null && CombatBudgetModel.TierForChoice(1) == EnemyTier.Weak && CombatBudgetModel.TierForChoice(5) == EnemyTier.Boss && CombatBudgetModel.TierForChoice(42) == EnemyTier.Boss, "strength choices");
+        Check(CombatBudgetModel.StrengthChoices.Length == CombatBudgetModel.TierLabels.Length + 1, "one choice per tier plus Auto");
+        Check(CombatBudgetModel.TierForRank(0) == EnemyTier.Normal && CombatBudgetModel.TierForRank(1) == EnemyTier.Strong && CombatBudgetModel.TierForRank(2) == EnemyTier.Boss && CombatBudgetModel.TierForRank(4) == EnemyTier.Elite, "rank detection");
         Check(CombatBudgetModel.EnemySkillMpCost(1500, 5000) == 750 && CombatBudgetModel.EnemySkillMpCost(8500, 5000) == 2000 && CombatBudgetModel.EnemySkillMpCost(0, 5000) == 0, "enemy MP prices");
         Check(CombatBudgetModel.EnemyMaxHp(180_000, EnemyTier.Normal, false, 1f) == (int)MathF.Round(180_000 * 10f / 11f), "normal enemy HP");
         Check(CombatBudgetModel.EnemyMaxHp(1, EnemyTier.Weak, true, 0.0001f) >= 1, "enemy HP floor");
@@ -425,7 +441,8 @@ sealed record Setup(int PlayerMaxHp, bool ActionMode, (Func<NpcBehavior> Make, E
     public bool PlayerCanDie { get; init; } = true;
     public float GuardRate { get; init; }
     public int Companions { get; init; }
-    public float HpMultiplier { get; init; } = 1f;
+    public float HpMultiplier { get; init; } = 1f; // test-only: a dummy that outlives the measurement
+    public float LevelFactor { get; init; } = 1f;
     public float DamageMultiplier { get; init; } = 1f;
     public bool Crits { get; init; } = true;
     public float MaxSeconds { get; init; } = 200f;

@@ -37,6 +37,36 @@ public static class CombatBudgetModel
 {
     public static readonly string[] TierLabels = { "Weak", "Normal", "Strong", "Elite", "Boss" };
 
+    /// <summary>The strength choices offered: detect it from the enemy, or force one tier.</summary>
+    public static readonly string[] StrengthChoices = { "Auto", "Weak", "Normal", "Strong", "Elite", "Boss" };
+
+    /// <summary>The tier a strength choice forces, or null when it is left to detection.</summary>
+    public static EnemyTier? TierForChoice(int choice) => choice <= 0 ? null : ClampTier(choice - 1);
+
+    /// <summary>
+    /// Tier of a game enemy from the rank in its data row: 0 is ordinary, 1 a tougher or notorious
+    /// one, 2 a boss; the remaining ranks are the special marks, taken as elite.
+    /// </summary>
+    public static EnemyTier TierForRank(int rank) => rank switch
+    {
+        <= 0 => EnemyTier.Normal,
+        1 => EnemyTier.Strong,
+        2 => EnemyTier.Boss,
+        _ => EnemyTier.Elite,
+    };
+
+    /// <summary>Levels above the player that double an enemy's HP and its damage.</summary>
+    public const float LevelsPerDoubling = 20f;
+    public const float MaxLevelFactor = 4f;
+
+    /// <summary>
+    /// How much stronger an enemy is for being above the player's level (weaker for being below). It
+    /// multiplies both its HP and its damage, so the fight is longer and every hit worse. 1 at equal
+    /// levels; the player's own level and gear still do not matter, only the difference.
+    /// </summary>
+    public static float LevelFactor(int enemyLevel, int playerLevel)
+        => Math.Clamp(MathF.Pow(2f, (enemyLevel - playerLevel) / LevelsPerDoubling), 1f / MaxLevelFactor, MaxLevelFactor);
+
     // (seconds to kill at reference output, share of the target's HP an unavoided fight costs)
     private static readonly (float SecondsToKill, float Cost)[] Tiers =
     {
@@ -115,10 +145,10 @@ public static class CombatBudgetModel
     /// Maximum HP of an enemy. Independent of the play mode: the player's damage per potency carries the
     /// mode, so the same enemy takes the same time to kill either way.
     /// </summary>
-    public static int EnemyMaxHp(float playerMaxHp, EnemyTier tier, bool ranged, float hpMultiplier)
+    public static int EnemyMaxHp(float playerMaxHp, EnemyTier tier, bool ranged, float levelFactor = 1f)
     {
         var hp = MathF.Max(1f, playerMaxHp) * SecondsToKill(tier) / SelfKillSeconds
-                 * (ranged ? RangedHpShare : 1f) * MathF.Max(0.0001f, hpMultiplier);
+                 * (ranged ? RangedHpShare : 1f) * MathF.Max(0.0001f, levelFactor);
         return (int)Math.Clamp(MathF.Round(hp), 1f, int.MaxValue);
     }
 
@@ -126,13 +156,15 @@ public static class CombatBudgetModel
     /// Share of the target's maximum HP one enemy attack removes. The tier's cost is paid out over the
     /// time the enemy is meant to live, in proportion to potency, against the output its kit sustains.
     /// </summary>
-    public static float EnemyHitShare(int potency, EnemyTier tier, float kitOutput, bool actionMode)
+    public static float EnemyHitShare(int potency, EnemyTier tier, float kitOutput, bool actionMode, float levelFactor = 1f)
     {
         if (potency <= 0) return 0f;
-        var perPotency = FightCost(tier) * (actionMode ? ActionModeThreat : 1f)
+        levelFactor = MathF.Max(0.0001f, levelFactor);
+        var perPotency = FightCost(tier) * (actionMode ? ActionModeThreat : 1f) * levelFactor
                          / (SecondsToKill(tier) * MathF.Max(1f, kitOutput));
-        var cap = tier == EnemyTier.Boss ? BossMaxHitShare : MaxHitShare;
-        return MathF.Min(potency * perPotency, cap);
+        // A higher-level enemy may hit past the usual cap, but never in one blow.
+        var cap = (tier == EnemyTier.Boss ? BossMaxHitShare : MaxHitShare) * Math.Clamp(levelFactor, 1f, 2f);
+        return MathF.Min(potency * perPotency, MathF.Min(cap, 0.9f));
     }
 
     /// <summary>What an enemy pays for a skill priced against the player's 10 000 MP pool.</summary>
@@ -221,13 +253,4 @@ public static class CombatBudgetModel
             modifier *= (isDirectHit ? DirectHitBonus : 1f) / (1f + DirectHitChance * (DirectHitBonus - 1f));
         return modifier;
     }
-
-    /// <summary>Tier for an enemy level saved by an older version.</summary>
-    public static EnemyTier TierForLegacyLevel(int level) => level switch
-    {
-        < 50 => EnemyTier.Weak,
-        < 110 => EnemyTier.Normal,
-        < 150 => EnemyTier.Strong,
-        _ => EnemyTier.Elite,
-    };
 }

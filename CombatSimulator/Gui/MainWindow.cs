@@ -450,14 +450,14 @@ public partial class MainWindow : IDisposable
 
         if (!compact)
         {
-            var recipeTier = (int)CombatBudgetModel.ClampTier(config.FastCombatEnemyTier);
-            ImGui.SetNextItemWidth(200);
-            if (ImGui.Combo("Recipe enemy strength", ref recipeTier, CombatBudgetModel.TierLabels, CombatBudgetModel.TierLabels.Length))
+            var recipeStrength = config.RecipeEnemyStrength;
+            var recipeLevel = config.RecipeEnemyLevel;
+            if (DrawEnemyStrengthAndLevel("recipe", "Recipe enemy strength", "Recipe enemy level", ref recipeStrength, ref recipeLevel))
             {
-                config.FastCombatEnemyTier = recipeTier;
+                config.RecipeEnemyStrength = recipeStrength;
+                config.RecipeEnemyLevel = recipeLevel;
                 config.Save();
             }
-            HelpMarker(EnemyStrengthHelp);
 
             var actionMode = config.ActionMode;
             if (ImGui.Checkbox("Action Mode", ref actionMode))
@@ -622,8 +622,29 @@ public partial class MainWindow : IDisposable
 
     private const string EnemyStrengthHelp =
         "How long one enemy takes to kill and how much of your HP that fight costs if you avoid nothing.\n" +
-        "Weak: 4 s, 5%.  Normal: 10 s, 20%.  Strong: 20 s, 50%.  Elite: 35 s, 85%.  Boss: 90 s, lethal unless you guard or bring help.\n" +
-        "Your gear, level and job do not change this.";
+        "Auto: read from the enemy itself (ordinary enemies Normal, notorious ones Strong or Elite, bosses Boss).\n" +
+        "Weak: 4 s, 5%.  Normal: 10 s, 20%.  Strong: 20 s, 50%.  Elite: 35 s, 85%.  Boss: 90 s, lethal unless you guard or bring help.";
+
+    private const string EnemyLevelHelp =
+        "Only the difference to your own level matters; your gear does not.\n" +
+        "Every 20 levels above you doubles the enemy's HP and its damage (up to x4); below you it weakens the same way.\n" +
+        "Leave it on \"My level\" for an even fight.";
+
+    // One strength dropdown and one level slider; returns true when either changed.
+    private static bool DrawEnemyStrengthAndLevel(string id, string strengthLabel, string levelLabel, ref int strength, ref int level)
+    {
+        var changed = false;
+        strength = Math.Clamp(strength, 0, CombatBudgetModel.StrengthChoices.Length - 1);
+        ImGui.SetNextItemWidth(200);
+        changed |= ImGui.Combo($"{strengthLabel}##{id}", ref strength, CombatBudgetModel.StrengthChoices, CombatBudgetModel.StrengthChoices.Length);
+        HelpMarker(EnemyStrengthHelp);
+
+        level = Math.Clamp(level, 0, 100);
+        ImGui.SetNextItemWidth(200);
+        changed |= ImGui.SliderInt($"{levelLabel}##{id}", ref level, 0, 100, level == 0 ? "My level" : "%d");
+        HelpMarker(EnemyLevelHelp);
+        return changed;
+    }
 
     private void DrawRecipeCombo(string id, float width)
     {
@@ -809,8 +830,8 @@ public partial class MainWindow : IDisposable
                     BNpcNameId = entry.BNpcNameId,
                     ENpcBaseId = entry.Source == NpcCatalogSource.ENpcBase ? entry.Id : 0,
                     ModelCharaId = entry.Source == NpcCatalogSource.ModelChara ? entry.ModelCharaId : 0,
-                    Tier = CombatBudgetModel.ClampTier(config.FastCombatEnemyTier),
-                    HpMultiplier = Math.Max(0.0001f, group.HpMultiplier),
+                    Tier = CombatBudgetModel.TierForChoice(config.RecipeEnemyStrength),
+                    Level = config.RecipeEnemyLevel,
                 });
                 queuedEnemies++;
             }
@@ -834,8 +855,8 @@ public partial class MainWindow : IDisposable
                 IncludePlayers = group.IncludePlayers,
                 MaxCount = Math.Max(0, group.MaxCount),
                 SenseRange = Math.Max(0.1f, group.SenseRange),
-                Tier = CombatBudgetModel.ClampTier(config.FastCombatEnemyTier),
-                HpMultiplier = Math.Max(0.0001f, group.HpMultiplier),
+                Tier = CombatBudgetModel.TierForChoice(config.RecipeEnemyStrength),
+                Level = config.RecipeEnemyLevel,
             };
         }
 
@@ -1208,18 +1229,15 @@ public partial class MainWindow : IDisposable
             ? "Enemies spawn in front of your character (real in-game facing)."
             : "Enemies surround your character in loose layers; the nearest stands at this distance.");
 
-        // Strength + HP multiplier. These apply to every enemy: spawned, map-sensed and auto-selected.
-        var defaultTier = (int)CombatBudgetModel.ClampTier(config.DefaultEnemyTier);
-        ImGui.SetNextItemWidth(200);
-        if (ImGui.Combo("Enemy strength##virtualEnemies", ref defaultTier, CombatBudgetModel.TierLabels, CombatBudgetModel.TierLabels.Length))
+        // Strength + level. These apply to every enemy: spawned, map-sensed and auto-selected.
+        var enemyStrength = config.EnemyStrength;
+        var enemyLevel = config.EnemyLevel;
+        if (DrawEnemyStrengthAndLevel("virtualEnemies", "Enemy strength", "Enemy level", ref enemyStrength, ref enemyLevel))
         {
-            config.DefaultEnemyTier = defaultTier;
+            config.EnemyStrength = enemyStrength;
+            config.EnemyLevel = enemyLevel;
             config.Save();
         }
-        HelpMarker(EnemyStrengthHelp);
-
-        ImGui.SameLine();
-        DrawNpcHpMultiplierCombo();
 
         // Spawn button + counter
         ImGui.Spacing();
@@ -1246,8 +1264,8 @@ public partial class MainWindow : IDisposable
                 BNpcNameId = entry.BNpcNameId,
                 ENpcBaseId = entry.Source == NpcCatalogSource.ENpcBase ? entry.Id : 0,
                 ModelCharaId = entry.Source == NpcCatalogSource.ModelChara ? entry.ModelCharaId : 0,
-                Tier = CombatBudgetModel.ClampTier(config.DefaultEnemyTier),
-                HpMultiplier = config.DefaultNpcHpMultiplier,
+                Tier = CombatBudgetModel.TierForChoice(config.EnemyStrength),
+                Level = config.EnemyLevel,
                 // No Position: the spawner places it. This used to pass a point computed here by a
                 // second copy of the placement logic, which meant the spawner's own version was
                 // never reached from this button — so the fan that keeps a group from stacking
@@ -1344,27 +1362,6 @@ public partial class MainWindow : IDisposable
         }
 
         DrawVirtualEnemyLookAtSection();
-    }
-
-    private static readonly float[] NpcHpMultiplierValues = { 0.01f, 0.1f, 0.5f, 1f, 2f, 5f, 10f };
-
-    private void DrawNpcHpMultiplierCombo()
-    {
-        var current = config.DefaultNpcHpMultiplier;
-        var index = Array.FindIndex(NpcHpMultiplierValues, v => MathF.Abs(v - current) < 0.00001f);
-        var labels = NpcHpMultiplierValues.Select(v => $"HP ×{v:0.##}").ToList();
-        if (index < 0)
-        {
-            // Keep a saved value that is not one of the presets selectable, so it is never overwritten.
-            labels.Add($"HP ×{current:0.####} (custom)");
-            index = labels.Count - 1;
-        }
-        ImGui.SetNextItemWidth(-1);
-        if (ImGui.Combo("##npcHpMult", ref index, labels.ToArray(), labels.Count) && index < NpcHpMultiplierValues.Length)
-        {
-            config.DefaultNpcHpMultiplier = NpcHpMultiplierValues[index];
-            config.Save();
-        }
     }
 
     private static readonly string[] VirtualEnemyLookAtBones = { "j_kao", "j_kubi", "j_sebo_c" };

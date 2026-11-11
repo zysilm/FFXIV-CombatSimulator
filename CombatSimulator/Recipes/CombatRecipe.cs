@@ -39,7 +39,6 @@ public sealed class CombatRecipeEnemyGroup
     public int Occurrence { get; set; } = 1;
     public string Description { get; set; } = string.Empty;
     public int Count { get; set; }
-    public float HpMultiplier { get; set; } = 1.0f;
 }
 
 public sealed class CombatRecipeMapEnemyGroup
@@ -49,8 +48,6 @@ public sealed class CombatRecipeMapEnemyGroup
     public bool IncludePlayers { get; set; } = false;
     public int MaxCount { get; set; } = 10;
     public float SenseRange { get; set; } = 10.0f;
-    public int Level { get; set; } = 90;
-    public float HpMultiplier { get; set; } = 1.0f;
 }
 
 public enum CompanionRecipeType

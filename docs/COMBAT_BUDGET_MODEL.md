@@ -12,7 +12,8 @@ three coupled things (level, attributes, HP formula) per character.
 
 ## The model
 
-A fight is decided in **potency per second**. Gear, level, job and attributes do not enter it. The player's
+A fight is decided in **potency per second**. Gear, job and attributes do not enter it, and level only as
+the gap between enemy and player. The player's
 maximum HP is read only to size the numbers on screen and cancels out of every outcome.
 
 Each enemy has a **tier**, which is a contract:
@@ -39,11 +40,21 @@ Each enemy has a **tier**, which is a contract:
 - **Companions** deal half the player's reference output whatever their kit.
 - **Critical and direct hits** are normalised: they change the spread, not the average.
 
+## Strength and level
+
+- **Strength** (dropdown, default Auto): Auto reads the rank in the enemy's own data row
+  (`BNpcBase.Rank`: 0 Normal, 1 Strong, 2 Boss, others Elite); townspeople, players and bare models are
+  Normal. The other choices force one tier for every enemy.
+- **Level** (slider, default "My level"): only the difference to the player's level matters. Every 20
+  levels above the player doubles the enemy's HP and its damage (at most x4), below it weakens the same
+  way. The single-hit cap rises with it, up to 90% of HP. The level also limits which skills its kit has.
+- There is no HP multiplier any more; strength and level cover it.
+
 ## What replaced what
 
-- Enemy level sliders → an "Enemy strength" dropdown (Virtual Enemies tab, and the recipe one in Combat).
-  Saved levels migrate: below 50 Weak, below 110 Normal, below 150 Strong, otherwise Elite.
 - `CombatStatProvider`, `NpcHpCalculator` and every attribute on `SimulatedEntityState` are gone.
+- Options `DefaultNpcLevel`, `FastCombatLevel`, `DefaultNpcHpMultiplier` → `EnemyStrength`, `EnemyLevel`,
+  `RecipeEnemyStrength`, `RecipeEnemyLevel` (all default 0: Auto, my level).
 
 ## Verification
 

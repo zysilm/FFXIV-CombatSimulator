@@ -385,11 +385,11 @@ public unsafe class NpcSpawner : IDisposable
                 log.Info($"NPC '{npcName}': ClassJob {character->CharacterData.ClassJob} -> {jobId} to match its weapon");
                 character->CharacterData.ClassJob = (byte)jobId;
             }
-            var behavior = actionProfileProvider.Create(npcName, jobId, weaponStyle, KitLevelCap, request.BNpcBaseId,
+            var npcLevel = EnemyStrength.ResolveLevel(request.Level);
+            var npcTier = EnemyStrength.ResolveTier(request.Tier, request.BNpcBaseId);
+            var behavior = actionProfileProvider.Create(npcName, jobId, weaponStyle, npcLevel, request.BNpcBaseId,
                 (uint)Math.Max(0, character->ModelContainer.ModelCharaId));
-            // Enemy HP is sized from the player's own maximum HP (see CombatBudgetModel).
-            int maxHp = CombatBudgetModel.EnemyMaxHp(objectTable.LocalPlayer?.MaxHp ?? 1000u, request.Tier,
-                behavior.FightsAtRange, request.HpMultiplier);
+            int maxHp = EnemyStrength.MaxHp(npcTier, behavior.FightsAtRange, npcLevel);
             if (weaponStyle is NpcAttackStyle.Ranged or NpcAttackStyle.Magic || jobId != 0)
                 log.Info($"NPC weapon classify '{npcName}' from ENpcBase: packedMainHand=0x{mainHandWeapon:X} -> style={weaponStyle}, job={jobId}");
 
@@ -412,8 +412,9 @@ public unsafe class NpcSpawner : IDisposable
                     EntityId = entityId,
                     Name = npcName,
                     IsPlayer = false,
-                    Level = objectTable.LocalPlayer?.Level ?? 1, // nameplate only
-                    Tier = request.Tier,
+                    Level = npcLevel,
+                    LevelFactor = EnemyStrength.LevelFactor(npcLevel),
+                    Tier = npcTier,
                     MaxHp = maxHp,
                     CurrentHp = maxHp,
                     MaxMp = 5000, // half the player's 10000 — enemy MP economy (NpcAiController)
@@ -634,7 +635,7 @@ public unsafe class NpcSpawner : IDisposable
             ENpcBaseId = src.ENpcBaseId,
             ModelCharaId = src.ModelCharaId,
             Tier = src.Tier,
-            HpMultiplier = src.HpMultiplier,
+            Level = src.Level,
             Position = src.Position,
             Rotation = src.Rotation,
             IsRanged = src.IsRanged,
@@ -1199,8 +1200,6 @@ public unsafe class NpcSpawner : IDisposable
         return 0;
     }
 
-    // Kits are built with every skill the enemy's job has; how strong it is comes from its tier.
-    private const int KitLevelCap = 100;
 
     public void Dispose()
     {

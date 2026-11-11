@@ -20,6 +20,8 @@ public class SimulatedEntityState
     public int CurrentMp { get; set; }
     public int MaxMp { get; set; } = 10000;
     public int Level { get; set; }
+    /// <summary>For an enemy: CombatBudgetModel.LevelFactor of its level against the player's.</summary>
+    public float LevelFactor { get; set; } = 1f;
     public bool IsAlive => CurrentHp > 0;
 
     // Combat numbers (see CombatBudgetModel). No character stats: gear, level and job do not enter a fight.
