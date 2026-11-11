@@ -19,6 +19,8 @@ public enum RagdollTriggerMode
     FallingFastest,
     /// <summary>Once the body has come down and stopped falling.</summary>
     Landed,
+    /// <summary>Once the death animation has moved the body and the body has all but stopped moving.</summary>
+    Still,
 }
 
 /// <summary>The animation that currently dominates a character's pose.</summary>
@@ -39,6 +41,7 @@ public sealed class RagdollTrigger
         "At 90% of the death animation",
         "When the body falls fastest",
         "When the body has landed",
+        "When the body has stopped moving",
     };
 
     /// <summary>However the moment is chosen, physics starts by this many seconds after death.</summary>
@@ -59,6 +62,12 @@ public sealed class RagdollTrigger
     // Landed: the middle has come down by a quarter of its height and is hardly moving.
     private const float LandedDropShare = 0.25f;
     private const float RestingFall = 0.15f;       // m/s
+    // Still: the body has moved at least this fast since death (the stance it died in hardly
+    // moves, and is not the death having played out), and has then moved no faster than the
+    // still speed for the still time: longer than a pause in the middle of a death.
+    private const float MovingSpeed = 0.3f;        // m/s
+    private const float StillSpeed = 0.06f;        // m/s
+    private const float StillSeconds = 0.3f;
     // With nothing to read, wait this long before giving up on reading it.
     private const float UnreadableGrace = 1f;
 
@@ -72,6 +81,9 @@ public sealed class RagdollTrigger
     private bool heightSeen;
     private float startHeight, previousHeight, fallSpeed, fastestFall;
     private int restingFrames;
+
+    private bool motionSeen, hasMoved;
+    private float stillFor;
 
     public RagdollTrigger(RagdollTriggerMode mode, float fixedDelay)
     {
@@ -89,7 +101,8 @@ public sealed class RagdollTrigger
     /// <param name="elapsed">Seconds since death, including this frame.</param>
     /// <param name="animation">The dominant animation, or null when it cannot be read.</param>
     /// <param name="middleHeight">Height of the body's middle above its own ground, in metres, or null.</param>
-    public bool Update(float dt, float elapsed, RagdollAnimationSample? animation, float? middleHeight)
+    /// <param name="motion">How fast the body is moving within itself, metres a second (see <see cref="BodyMotion"/>), or null.</param>
+    public bool Update(float dt, float elapsed, RagdollAnimationSample? animation, float? middleHeight, float? motion = null)
     {
         if (elapsed >= MaximumWait)
             return true;
@@ -98,6 +111,7 @@ public sealed class RagdollTrigger
 
         var animationEnded = TrackAnimation(animation);
         TrackHeight(dt, middleHeight);
+        TrackMotion(dt, motion);
 
         switch (mode)
         {
@@ -119,6 +133,10 @@ public sealed class RagdollTrigger
                 if (heightSeen && startHeight - previousHeight >= LandedDropShare * startHeight && restingFrames >= 2)
                     return true;
                 break;
+            case RagdollTriggerMode.Still:
+                if (hasMoved && stillFor >= StillSeconds)
+                    return true;
+                break;
         }
 
         // Whatever the mode waits for, the death animation running out ends the wait: a body that
@@ -127,9 +145,12 @@ public sealed class RagdollTrigger
             return true;
 
         // Nothing to go by at all: fall back on the clock.
-        var blind = mode is RagdollTriggerMode.AnimationLastFrame or RagdollTriggerMode.AnimationNinetyPercent
-            ? !animationSeen
-            : !heightSeen && !animationSeen;
+        var blind = mode switch
+        {
+            RagdollTriggerMode.AnimationLastFrame or RagdollTriggerMode.AnimationNinetyPercent => !animationSeen,
+            RagdollTriggerMode.Still => !motionSeen && !animationSeen,
+            _ => !heightSeen && !animationSeen,
+        };
         return blind && elapsed >= MathF.Max(fixedDelay, UnreadableGrace);
     }
 
@@ -157,6 +178,30 @@ public sealed class RagdollTrigger
         trackedTime = animation.Time;
         trackedDuration = animation.Duration;
         return ended;
+    }
+
+    /// <summary>
+    /// How fast a body is moving within itself, for <see cref="Update"/>: given how far each of its
+    /// bones has moved since the frame before, in its own space, the speed nine tenths of them
+    /// are under. So a body counts as moving while a limb of it moves, and as still while only
+    /// a few small bones do (cloth and hair settling).
+    /// </summary>
+    /// <param name="moved">Metres each bone moved; reordered by the call.</param>
+    public static float? BodyMotion(Span<float> moved, float dt)
+    {
+        if (moved.Length == 0 || dt <= 1e-5f) return null;
+        moved.Sort();
+        var speed = moved[Math.Min(moved.Length - 1, (int)(0.9f * moved.Length))] / dt;
+        return float.IsFinite(speed) ? speed : null;
+    }
+
+    private void TrackMotion(float dt, float? motion)
+    {
+        if (motion is not { } speed || !float.IsFinite(speed))
+            return;
+        motionSeen = true;
+        hasMoved |= speed >= MovingSpeed;
+        stillFor = speed <= StillSpeed ? stillFor + MathF.Max(0f, dt) : 0f;
     }
 
     private void TrackHeight(float dt, float? middleHeight)

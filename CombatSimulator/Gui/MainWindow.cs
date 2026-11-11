@@ -2746,7 +2746,8 @@ public partial class MainWindow : IDisposable
                            "At 90% of the death animation: a little earlier, while the body still has some motion.\n" +
                            "When the body falls fastest: as soon as the body's middle drops fast, or at the fastest point of a slower fall.\n" +
                            "When the body has landed: once it has come down and stopped falling.\n" +
-                           "The last four also start when the death animation runs out, and never later than 30 seconds.");
+                           "When the body has stopped moving: once the death animation has moved the body and it then lies still, for deaths that end in seconds of stillness.\n" +
+                           "The last five also start when the death animation runs out, and never later than 30 seconds.");
 
                 if (triggerMode == (int)RagdollTriggerMode.FixedDelay)
                 {

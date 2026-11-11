@@ -106,9 +106,13 @@ body over from the death animation. Ragdoll tab, "Ragdoll Trigger", "Ragdoll sta
 | At 90% of the death animation | when nine tenths of it have played |
 | When the body falls fastest | when the pelvis drops at 1.2 m/s or more, or, in a slower fall, once it has lost 30% of its top speed |
 | When the body has landed | when the pelvis has come down a quarter of its height and stopped falling |
+| When the body has stopped moving | once the death animation has moved the body (0.3 m/s or more) and the body has then all but stopped (under 0.06 m/s) for 0.3 seconds: for deaths that end in seconds of stillness |
 
-The last four also start when the death animation runs out (a death without a fall), fall back on the
-fixed delay when neither animation nor height can be read, and never start later than 30 seconds. The
+How fast the body moves is read from its bones, in its own space: the speed nine tenths of them are
+under, so a limb still moving counts and a few small bones settling (cloth, hair) do not.
+
+The last five also start when the death animation runs out (a death without a fall), fall back on the
+fixed delay when nothing they go by can be read, and never start later than 30 seconds. The
 animation followed is the one with the most weight on the body's skeleton, and only if it was seen from
 near its start, so the looping stance the character died in is not mistaken for the death. Enemy
 ragdolls keep their short fixed delay; the player and companions use the choice.

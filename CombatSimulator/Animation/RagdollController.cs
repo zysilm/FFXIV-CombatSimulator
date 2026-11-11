@@ -64,6 +64,10 @@ public unsafe partial class RagdollController : IDisposable
     private float activationDelay;
     // Decides the moment physics takes over from the death animation (see RagdollTrigger).
     private RagdollTrigger? trigger;
+    // The pose the trigger last saw, to tell how fast the body is moving.
+    private Vector3[] triggerPosePositions = Array.Empty<Vector3>();
+    private float[] triggerPoseMoved = Array.Empty<float>();
+    private bool triggerPoseKnown;
     private float triggerStagger;
     private float triggeredAt = -1f;
     private bool physicsStarted;
@@ -2728,6 +2732,7 @@ public unsafe partial class RagdollController : IDisposable
         targetCharacterAddress = characterAddress;
         activationDelay = delay;
         trigger = new RagdollTrigger(mode, delay);
+        triggerPoseKnown = false;
         triggerStagger = MathF.Max(0f, stagger);
         triggeredAt = -1f;
         elapsed = 0f;
@@ -2962,9 +2967,10 @@ public unsafe partial class RagdollController : IDisposable
         {
             RagdollAnimationSample? animation = null;
             float? middleHeight = null;
+            float? motion = null;
             if (trigger.Automatic)
-                ReadTriggerInputs(out animation, out middleHeight);
-            if (!trigger.Update(dt, elapsed, animation, middleHeight))
+                ReadTriggerInputs(dt, out animation, out middleHeight, out motion);
+            if (!trigger.Update(dt, elapsed, animation, middleHeight, motion))
                 return false;
             triggeredAt = elapsed;
             if (trigger.Automatic)
@@ -2973,11 +2979,15 @@ public unsafe partial class RagdollController : IDisposable
         return elapsed >= triggeredAt + triggerStagger;
     }
 
-    /// <summary>What the death animation is doing right now: the dominant animation and the height of the pelvis.</summary>
-    private void ReadTriggerInputs(out RagdollAnimationSample? animation, out float? middleHeight)
+    /// <summary>
+    /// What the death animation is doing right now: the dominant animation, the height of the
+    /// pelvis, and how fast the body is moving within itself.
+    /// </summary>
+    private void ReadTriggerInputs(float dt, out RagdollAnimationSample? animation, out float? middleHeight, out float? motion)
     {
         animation = null;
         middleHeight = null;
+        motion = null;
         try
         {
             var skelNullable = boneService.TryGetSkeleton(targetCharacterAddress);
@@ -2987,6 +2997,29 @@ public unsafe partial class RagdollController : IDisposable
             var pelvis = boneService.ResolveBoneIndex(skel, "j_kosi");
             if (pelvis >= 0 && pelvis < skel.BoneCount && skel.Pose != null)
                 middleHeight = skel.Pose->ModelPose.Data[pelvis].Translation.Y * GetCharacterScale(targetCharacterAddress, skel).Y;
+
+            // How far every bone has moved since the frame before, in the skeleton's own space.
+            if (skel.Pose != null && skel.BoneCount > 0)
+            {
+                var bones = skel.BoneCount;
+                var scale = GetCharacterScale(targetCharacterAddress, skel).Y;
+                var known = triggerPosePositions.Length == bones && triggerPoseKnown;
+                if (triggerPosePositions.Length != bones)
+                {
+                    triggerPosePositions = new Vector3[bones];
+                    triggerPoseMoved = new float[bones];
+                }
+                for (var i = 0; i < bones; i++)
+                {
+                    ref var bone = ref skel.Pose->ModelPose.Data[i];
+                    var at = new Vector3(bone.Translation.X, bone.Translation.Y, bone.Translation.Z);
+                    triggerPoseMoved[i] = Vector3.Distance(at, triggerPosePositions[i]) * scale;
+                    triggerPosePositions[i] = at;
+                }
+                triggerPoseKnown = true;
+                if (known)
+                    motion = RagdollTrigger.BodyMotion(triggerPoseMoved, dt);
+            }
 
             var skeleton = skel.CharBase->Skeleton;
             if (skeleton == null || skeleton->PartialSkeletonCount < 1 || skeleton->PartialSkeletons == null) return;
