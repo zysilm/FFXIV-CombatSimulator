@@ -14,8 +14,8 @@ down is each skeleton's reference pose, not an animation.
 Checked for every skeleton: no bone changes length; nothing is not-a-number. For every skeleton the
 fit's own check lets through: nothing ends up under the ground, and the body and the limbs it stands on
 never jump from one step to the next. For the human skeletons, by name, with their arms let down from
-the reference pose: crouching keeps the pelvis at the height it is held at, the feet where they stood
-and the knees going forward; on all fours the back is level, knees and hands are on the ground, hands
+the reference pose: crouching (the ground a tenth of a leg up) keeps the pelvis at the height it is
+held at, the feet where they stood and the knees going forward; on all fours the back is level, knees and hands are on the ground, hands
 under the shoulders, hips up over the knees, the face looks ahead and down, the feet trail toes down
 behind the ankles, and no bone of the body (fingers included) is under the ground, with the numbers
 printed beside those of a crawl made by hand; pushed under, the body is low and on its front but not

@@ -114,9 +114,9 @@ if (MathF.Abs(after - before) > worstLength && args.Contains("--diag")) Console.
             var leg = Was("j_asi_a_l").Y - Was("j_asi_d_l").Y;
             if (step % 6 == 0 || step == steps)
                 notes.Add($"      ground {ground / height,4:P0} of height: pelvis y={At("j_kosi").Y - ground:F2} z={At("j_kosi").Z:+0.00;-0.00}  knee y={At("j_asi_c_l").Y - ground:F2} z={At("j_asi_c_l").Z:+0.00;-0.00}  foot y={At("j_asi_d_l").Y - ground:F2} z={At("j_asi_d_l").Z:+0.00;-0.00}  chest y={At("j_sebo_c").Y - ground:F2} z={At("j_sebo_c").Z:+0.00;-0.00}  hand y={At("j_te_l").Y - ground:F2} z={At("j_te_l").Z:+0.00;-0.00}  stage {solver.LastStage:F2}  head y={At("j_kao").Y - ground:F2} z={At("j_kao").Z:+0.00;-0.00}");
-            // Crouching: the ground is a quarter of a leg up. The body comes down with its owner
+            // Crouching: the ground is a tenth of a leg up (pushed further it goes down on its knees). The body comes down with its owner
             // (in its own space it stays put), the feet stand on the ground where they were, the knees go forward.
-            if (MathF.Abs(ground - 0.25f * leg) < deepest / steps * 0.51f)
+            if (MathF.Abs(ground - 0.1f * leg) < deepest / steps * 0.51f)
             {
                 Check(MathF.Abs(At("j_kosi").Y - Was("j_kosi").Y) < 0.03f * height, $"{label}: crouching, the pelvis is {At("j_kosi").Y - Was("j_kosi").Y:+0.000;-0.000} off the height it is held at");
                 Check(MathF.Abs(At("j_kao").Y - Was("j_kao").Y) < 0.03f * height, $"{label}: crouching, the head moved {At("j_kao").Y - Was("j_kao").Y:+0.000;-0.000}");
@@ -125,7 +125,7 @@ if (MathF.Abs(after - before) > worstLength && args.Contains("--diag")) Console.
                     var foot = At($"j_asi_d_{side}");
                     Check(foot.Y >= ground && foot.Y < ground + 0.08f * height, $"{label}: crouching, foot {side} is {foot.Y - ground:F3} above the ground");
                     Check(new Vector2(foot.X - Was($"j_asi_d_{side}").X, foot.Z - Was($"j_asi_d_{side}").Z).Length() < 0.06f * height, $"{label}: crouching, foot {side} slid");
-                    Check(At($"j_asi_c_{side}").Z > Was($"j_asi_c_{side}").Z + 0.01f * height, $"{label}: crouching, knee {side} did not go forward");
+                    Check(At($"j_asi_c_{side}").Z > Was($"j_asi_c_{side}").Z + 0.005f * height, $"{label}: crouching, knee {side} did not go forward");
                 }
             }
             // On all fours: level, on its knees and its hands, hips up over the knees.
@@ -210,7 +210,7 @@ if (MathF.Abs(after - before) > worstLength && args.Contains("--diag")) Console.
                 turns[i] = Quaternion.Normalize(turn * turns[i]);
             }
         }
-        foreach (var (name, ground) in new[] { ("crouching", 0.3f * height), ("between", 0.5f * height), ("on all fours", 0.62f * height), ("as low as it goes", 0.85f * height) })
+        foreach (var (name, ground) in new[] { ("crouching", 0.06f * height), ("between", 0.2f * height), ("on all fours", 0.36f * height), ("as low as it goes", 0.7f * height) })
         {
             Vector3[]? last = null;
             var worst = 0f;
@@ -242,7 +242,7 @@ if (MathF.Abs(after - before) > worstLength && args.Contains("--diag")) Console.
         // stepping: it is lifted, by its hip; the body shifts over the other knee; the shin comes
         // up; and the hand on the other side is lifted with it, as the limbs of a body on four step
         // in pairs across it. The rest stays down, and a little more step gives a little more of it.
-        foreach (var (name, ground) in new[] { ("on all fours", 0.62f * height), ("as low as it goes", 0.85f * height) })
+        foreach (var (name, ground) in new[] { ("on all fours", 0.36f * height), ("as low as it goes", 0.7f * height) })
         {
             Vector3[]? last = null;
             Vector3[] rest = animated, stepped = animated;
