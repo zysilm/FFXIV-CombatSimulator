@@ -36,6 +36,103 @@ public class HpBarOverlay : IDisposable
     private const float MpBarHeight = 12f;
     private const float ResourceBarGap = 2f;
 
+    // Everyone but the player: a small bar (smaller further off), shown only while it matters to the
+    // player: the player's target, someone attacking the player, someone hit in the last few seconds,
+    // anyone near, an enemy casting nearby, an ally praying / raising / held captive. The rest fade out.
+    private const float SmallBarWidth = 70f;
+    private const float SmallHpHeight = 5f;
+    private const float SmallMpHeight = 2f;
+    private const float SmallCastHeight = 4f;
+    private const float SmallBarNearMeters = 10f;
+    private const float SmallBarMinScale = 0.6f;
+    private const float RecentHitSeconds = 5f;
+    private const float NearMeters = 10f;
+    private const float CastWatchMeters = 25f;
+    private const float FadeSeconds = 0.25f;
+
+    /// <summary>The address of what the player has targeted (0: nothing).</summary>
+    public Func<nint>? PlayerTarget { get; set; }
+
+    private readonly Dictionary<uint, float> lastHitAt = new();
+    private readonly Dictionary<uint, float> barAlpha = new();
+    private readonly System.Diagnostics.Stopwatch barClock = System.Diagnostics.Stopwatch.StartNew();
+    private float lastDrawAt;
+
+    /// <summary>A hit landed on someone: their bar shows for a few seconds.</summary>
+    public void NoteDamage(SimulatedEntityState target, DamageResult hit, SimulatedEntityState? source)
+        => lastHitAt[target.EntityId] = (float)barClock.Elapsed.TotalSeconds;
+
+    /// <summary>Ease this bar's opacity toward shown or hidden; the opacity now.</summary>
+    private float FadeBar(uint id, bool shown, float deltaTime)
+    {
+        var alpha = barAlpha.GetValueOrDefault(id, 0f);
+        var step = deltaTime / FadeSeconds;
+        alpha = shown ? MathF.Min(1f, alpha + step) : MathF.Max(0f, alpha - step);
+        barAlpha[id] = alpha;
+        return alpha;
+    }
+
+    private bool HitRecently(uint id, float now)
+        => lastHitAt.TryGetValue(id, out var at) && now - at <= RecentHitSeconds;
+
+    private static float SmallBarScale(float distance)
+        => Math.Clamp(SmallBarNearMeters / MathF.Max(distance, 0.01f), SmallBarMinScale, 1f);
+
+    private static uint Fade(Vector4 color, float alpha) => ImGui.ColorConvertFloat4ToU32(color with { W = color.W * alpha });
+
+    /// <summary>A small bar: HP, a sliver of MP, and an enemy's cast under it; an optional tag above.</summary>
+    private static void DrawSmallBar(ImDrawListPtr drawList, SimulatedEntityState state, Vector2 screenPos, float scale,
+        float alpha, Vector4 fill, string? tag, Vector4 tagColor, string? castName, float castProgress)
+    {
+        var width = SmallBarWidth * scale;
+        var hpHeight = MathF.Max(3f, SmallHpHeight * scale);
+        var barPos = screenPos - new Vector2(width / 2f, 0f);
+        var hp = state.MaxHp > 0 ? Math.Clamp((float)Math.Max(0, state.CurrentHp) / state.MaxHp, 0f, 1f) : 0f;
+
+        drawList.AddRectFilled(barPos, barPos + new Vector2(width, hpHeight), Fade(new Vector4(0.08f, 0.08f, 0.08f, 0.8f), alpha));
+        if (hp > 0f)
+            drawList.AddRectFilled(barPos, barPos + new Vector2(width * hp, hpHeight), Fade(fill, alpha));
+        drawList.AddRect(barPos, barPos + new Vector2(width, hpHeight), Fade(new Vector4(0f, 0f, 0f, 0.7f), alpha));
+
+        var y = barPos.Y + hpHeight + 1f;
+        if (state.MaxMp > 0)
+        {
+            var mp = state.IsAlive ? Math.Clamp((float)Math.Max(0, state.CurrentMp) / state.MaxMp, 0f, 1f) : 0f;
+            var mpHeight = MathF.Max(1.5f, SmallMpHeight * scale);
+            drawList.AddRectFilled(new Vector2(barPos.X, y), new Vector2(barPos.X + width, y + mpHeight), Fade(new Vector4(0.04f, 0.05f, 0.1f, 0.8f), alpha));
+            if (mp > 0f)
+                drawList.AddRectFilled(new Vector2(barPos.X, y), new Vector2(barPos.X + width * mp, y + mpHeight), Fade(new Vector4(0.1f, 0.35f, 0.95f, 0.95f), alpha));
+            y += mpHeight + 1f;
+        }
+
+        if (castName != null)
+        {
+            var castHeight = MathF.Max(2f, SmallCastHeight * scale);
+            drawList.AddRectFilled(new Vector2(barPos.X, y), new Vector2(barPos.X + width, y + castHeight), Fade(new Vector4(0.1f, 0.1f, 0.1f, 0.85f), alpha));
+            drawList.AddRectFilled(new Vector2(barPos.X, y), new Vector2(barPos.X + width * Math.Clamp(castProgress, 0f, 1f), y + castHeight), Fade(new Vector4(0.9f, 0.55f, 0f, 1f), alpha));
+            var size = ImGui.CalcTextSize(castName);
+            drawList.AddText(new Vector2(screenPos.X - size.X / 2f, y + castHeight + 1f), Fade(new Vector4(1f, 0.85f, 0.5f, 1f), alpha), castName);
+        }
+
+        if (tag != null)
+        {
+            var size = ImGui.CalcTextSize(tag);
+            drawList.AddText(screenPos - new Vector2(size.X / 2f, size.Y + 2f), Fade(tagColor, alpha), tag);
+        }
+    }
+
+    private static Vector4 HpFill(float hp, bool friend)
+        => hp > 0.5f ? (friend ? new Vector4(0.1f, 0.6f, 0.9f, 1) : new Vector4(0.1f, 0.8f, 0.1f, 1))
+            : hp > 0.25f ? new Vector4(0.8f, 0.8f, 0.1f, 1)
+            : new Vector4(0.8f, 0.1f, 0.1f, 1);
+
+    private (string Name, float Progress)? CastOf(SimulatedNpc npc)
+    {
+        if (npc.State.IsCasting && npc.CurrentCastSkill != null)
+            return (npc.CurrentCastSkill.Name, npc.State.CastTimeTotal > 0 ? npc.State.CastTimeElapsed / npc.State.CastTimeTotal : 0f);
+        return ExternalCast?.Invoke(npc);
+    }
+
     // Native addon names to hide when combat sim is active
     private static readonly string[] NativeAddonNames =
     {
@@ -106,6 +203,15 @@ public class HpBarOverlay : IDisposable
             }
         }
 
+        var now = (float)barClock.Elapsed.TotalSeconds;
+        var deltaTime = Math.Clamp(now - lastDrawAt, 0f, 0.25f);
+        lastDrawAt = now;
+        var me = Core.Services.ObjectTable.LocalPlayer;
+        var myPos = me?.Position ?? Vector3.Zero;
+        var myTarget = PlayerTarget?.Invoke() ?? nint.Zero;
+        // "Show all": every bar, full size, with names and numbers (as before).
+        var full = OthersLabelled;
+
         // Draw enemy HP bars
         if (config.ShowEnemyHpBar)
         {
@@ -113,6 +219,22 @@ public class HpBarOverlay : IDisposable
             {
                 if (!npc.IsSpawned || npc.BattleChara == null)
                     continue;
+
+                float alpha = 1f, scale = 1f;
+                (string Name, float Progress)? cast = null;
+                if (!full)
+                {
+                    var npcObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
+                    var distance = Vector3.Distance((Vector3)npcObj->Position, myPos);
+                    cast = CastOf(npc);
+                    var matters = npc.State.IsAlive &&
+                                  (npc.Address == myTarget || npc.IsAttackingPlayer || HitRecently(npc.State.EntityId, now) ||
+                                   distance <= NearMeters || (cast != null && distance <= CastWatchMeters));
+                    alpha = FadeBar(npc.State.EntityId, matters, deltaTime);
+                    if (alpha <= 0f)
+                        continue;
+                    scale = SmallBarScale(distance);
+                }
 
                 var headPos = GetBoneWorldPos(npc.Address, "j_kao");
                 Vector3 worldPos;
@@ -133,7 +255,14 @@ public class HpBarOverlay : IDisposable
                 if (!gameGui.WorldToScreen(worldPos, out var screenPos))
                     continue;
 
-                DrawNpcHpBar(drawList, npc, screenPos);
+                if (full)
+                    DrawNpcHpBar(drawList, npc, screenPos);
+                else
+                {
+                    var hp = npc.State.MaxHp > 0 ? (float)npc.State.CurrentHp / npc.State.MaxHp : 0f;
+                    DrawSmallBar(drawList, npc.State, screenPos, scale, alpha, HpFill(hp, friend: false),
+                        null, default, cast?.Name, cast?.Progress ?? 0f);
+                }
             }
         }
 
@@ -168,6 +297,22 @@ public class HpBarOverlay : IDisposable
                 if (!companion.IsSpawned || companion.BattleChara == null)
                     continue;
 
+                float alpha = 1f, scale = 1f;
+                string? tag = null;
+                if (!full)
+                {
+                    var companionObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)companion.BattleChara;
+                    var distance = Vector3.Distance((Vector3)companionObj->Position, myPos);
+                    tag = SpecialStatus(companion.State) is { } special ? $"[{special}]" : null;
+                    var matters = tag != null ||
+                                  (companion.State.IsAlive &&
+                                   (companion.Address == myTarget || HitRecently(companion.State.EntityId, now) || distance <= NearMeters));
+                    alpha = FadeBar(companion.State.EntityId, matters, deltaTime);
+                    if (alpha <= 0f)
+                        continue;
+                    scale = SmallBarScale(distance);
+                }
+
                 var headPos = GetBoneWorldPos(companion.Address, "j_kao");
                 Vector3 worldPos;
                 if (headPos != null)
@@ -184,8 +329,18 @@ public class HpBarOverlay : IDisposable
                 if (playerBodyPoints != null && IsOccludedByPlayer(camPos, worldPos, playerBodyPoints))
                     continue;
 
-                if (gameGui.WorldToScreen(worldPos, out var screenPos))
+                if (!gameGui.WorldToScreen(worldPos, out var screenPos))
+                    continue;
+                if (full)
                     DrawCompanionHpBar(drawList, companion, screenPos);
+                else
+                {
+                    var state = companion.State;
+                    var hp = state.MaxHp > 0 ? (float)state.CurrentHp / state.MaxHp : 0f;
+                    DrawSmallBar(drawList, state, screenPos, scale, alpha,
+                        state.IsAlive ? HpFill(hp, friend: true) : new Vector4(0.3f, 0f, 0f, 1),
+                        tag, new Vector4(0.4f, 0.7f, 1f, 1), null, 0f);
+                }
             }
         }
 

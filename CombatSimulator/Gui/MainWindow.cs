@@ -3102,7 +3102,7 @@ public partial class MainWindow : IDisposable
                 config.ShowAllBarLabels = showAllLabels;
                 config.Save();
             }
-            HelpMarker("Names and HP numbers on enemies' and allies' bars too. Off: only your own bar has them.\nAnonymous Mode hides every name and number regardless.");
+            HelpMarker("Every bar at full size with names and HP numbers, enemies and allies too.\nOff: only your own bar is full; the others are small and show only while they matter to you\n(your target, whoever attacks you, whoever was just hit, anyone near, enemies casting nearby, allies praying, raising or held captive).\nAnonymous Mode hides every name and number regardless.");
 
             var damageNumbers = config.ShowDamageNumbers;
             if (ImGui.Checkbox("Show Damage Numbers", ref damageNumbers))

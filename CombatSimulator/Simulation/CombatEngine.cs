@@ -1024,12 +1024,12 @@ public partial class CombatEngine : IDisposable
             if (target.IsPlayer)
                 State.TotalDamageTaken += Math.Max(0, target.CurrentHp - 1);
             target.CurrentHp = 1;
-            OnDamageLanded?.Invoke(target, damage);
+            OnDamageLanded?.Invoke(target, damage, npc.State);
             TakeCaptive(target);
             return;
         }
 
-        LandDamage(target, damage);
+        LandDamage(target, damage, npc.State);
         OnHit?.Invoke(npc.State, target, damage.Damage);
         if (target.IsPlayer)
         {
@@ -1108,7 +1108,7 @@ public partial class CombatEngine : IDisposable
         var deferred = contactDelay >= 0f;
         if (!deferred)
         {
-            LandDamage(targetNpc.State, dmgResult);
+            LandDamage(targetNpc.State, dmgResult, companion.State);
             State.TotalDamageDealt += dmgResult.Damage;
         }
 
@@ -1149,7 +1149,7 @@ public partial class CombatEngine : IDisposable
                     : damageCalculator.CalculateNpcAutoAttack(companion.State, extraTarget);
             if (!deferred)
             {
-                LandDamage(extraTarget, extraDamage);
+                LandDamage(extraTarget, extraDamage, companion.State);
                 State.TotalDamageDealt += extraDamage.Damage;
             }
             hits.Add(new AppliedActionDamage(extraTarget, extraDamage));
@@ -1180,7 +1180,7 @@ public partial class CombatEngine : IDisposable
                 {
                     if (!hit.Target.IsAlive)
                         continue;
-                    LandDamage(hit.Target, hit.DamageResult);
+                    LandDamage(hit.Target, hit.DamageResult, companion.State);
                     State.TotalDamageDealt += hit.DamageResult.Damage;
                     PlayHitReactionOnTarget(hit.Target, hit.DamageResult.Damage > 0);
                     if (!hit.Target.IsAlive)
@@ -1209,15 +1209,15 @@ public partial class CombatEngine : IDisposable
     /// <summary>A hit by someone on someone: (source, target, damage). Who fights whom is drawn from these.</summary>
     public Action<SimulatedEntityState, SimulatedEntityState, int>? OnHit { get; set; }
 
-    /// <summary>A hit has landed and taken HP: (target, the hit). Damage numbers are drawn from it.</summary>
-    public Action<SimulatedEntityState, DamageResult>? OnDamageLanded { get; set; }
+    /// <summary>A hit has landed and taken HP: (target, the hit, who struck it if known). Damage numbers are drawn from it.</summary>
+    public Action<SimulatedEntityState, DamageResult, SimulatedEntityState?>? OnDamageLanded { get; set; }
 
     /// <summary>Take a landed hit off the target's HP; every hit goes through here.</summary>
-    private void LandDamage(SimulatedEntityState target, DamageResult damage)
+    private void LandDamage(SimulatedEntityState target, DamageResult damage, SimulatedEntityState? source = null)
     {
         target.CurrentHp = Math.Max(0, target.CurrentHp - damage.Damage);
         if (damage.Damage > 0)
-            OnDamageLanded?.Invoke(target, damage);
+            OnDamageLanded?.Invoke(target, damage, source);
     }
 
     public SimulatedEntityState GetNpcTarget(SimulatedNpc npc)
@@ -1238,7 +1238,7 @@ public partial class CombatEngine : IDisposable
                 continue;
 
             var damage = calculateDamage(target);
-            LandDamage(target, damage);
+            LandDamage(target, damage, source);
             OnHit?.Invoke(source, target, damage.Damage);
             hits.Add(new AppliedActionDamage(target, damage));
         }
@@ -2070,7 +2070,7 @@ public partial class CombatEngine : IDisposable
 
     private void ApplyPlayerAutoAttack(SimulatedEntityState ps, SimulatedNpc npc, DamageResult dmg)
     {
-        LandDamage(npc.State, dmg);
+        LandDamage(npc.State, dmg, ps);
         State.TotalDamageDealt += dmg.Damage;
         OnPlayerDamageDealt?.Invoke(dmg.Damage);
         OnPlayerDamageDealtToTarget?.Invoke(npc.State.EntityId, dmg.Damage);
@@ -2175,7 +2175,7 @@ public partial class CombatEngine : IDisposable
             var dmg = damageCalculator.Calculate(
                 ps, target, damageAction, false,
                 EnableCriticalHits, EnableDirectHits, DamageMultiplier);
-            LandDamage(target, dmg);
+            LandDamage(target, dmg, ps);
             hits.Add(new AppliedActionDamage(target, dmg));
             total += dmg.Damage;
             State.TotalDamageDealt += dmg.Damage;

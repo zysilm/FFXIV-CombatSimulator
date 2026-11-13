@@ -601,6 +601,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         hpBarOverlay = new HpBarOverlay(npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config);
         damageNumbers = new Gui.DamageNumberOverlay(gameGui, config, combatEngine.ResolveEntityAddress);
         combatEngine.OnDamageLanded += damageNumbers.Add;
+        combatEngine.OnDamageLanded += hpBarOverlay.NoteDamage;
+        hpBarOverlay.PlayerTarget = () => targetManager.Target?.Address ?? nint.Zero;
         combatEngine.OnSimulationReset += damageNumbers.Clear;
         WireWar();
         combatLogWindow = new CombatLogWindow(combatEngine);

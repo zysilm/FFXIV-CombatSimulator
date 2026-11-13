@@ -15,14 +15,21 @@ namespace CombatSimulator.Gui;
 
 /// <summary>
 /// Damage numbers: every landed hit rises above the head of whoever took it and fades. White on
-/// enemies, red on the player's side; a critical hit is larger and gold. Drawn by the plugin itself,
-/// since the game's own flytext does not show for client-side actors.
+/// enemies, red on the player's side; a critical hit is larger and gold. A hit on the player, or by
+/// the player, is much larger than the rest of the battle's, so the player's own fight reads at a
+/// glance in a crowd. Drawn by the plugin itself, since the game's own flytext does not show for
+/// client-side actors.
 /// </summary>
 public sealed unsafe class DamageNumberOverlay
 {
     private const float LifeSeconds = 1.1f;
     private const float RiseMeters = 0.7f;
     private const int MaxNumbers = 160;
+    // Text size against the font: the battle's hits, and the player's own (struck or striking).
+    private const float BattleScale = 1.6f;
+    private const float BattleCriticalScale = 2.1f;
+    private const float OwnScale = 2.6f;
+    private const float OwnCriticalScale = 3.3f;
 
     private static readonly Vector4 OnEnemy = new(1f, 1f, 1f, 1f);
     private static readonly Vector4 OnFriend = new(1f, 0.35f, 0.3f, 1f);
@@ -53,8 +60,8 @@ public sealed unsafe class DamageNumberOverlay
         this.resolveAddress = resolveAddress;
     }
 
-    /// <summary>A hit landed on this target.</summary>
-    public void Add(SimulatedEntityState target, DamageResult hit)
+    /// <summary>A hit landed on this target (struck by <paramref name="source"/>, when known).</summary>
+    public void Add(SimulatedEntityState target, DamageResult hit, SimulatedEntityState? source)
     {
         if (!config.ShowDamageNumbers || hit.Damage <= 0)
             return;
@@ -64,6 +71,7 @@ public sealed unsafe class DamageNumberOverlay
             return;
 
         var friend = target.IsPlayer || target.IsCompanion;
+        var own = target.IsPlayer || source?.IsPlayer == true;
         if (numbers.Count >= MaxNumbers)
             numbers.RemoveAt(0);
         numbers.Add(new Number
@@ -71,10 +79,12 @@ public sealed unsafe class DamageNumberOverlay
             Address = address,
             Anchor = head,
             Born = (float)clock.Elapsed.TotalSeconds,
-            Drift = (float)(random.NextDouble() * 2 - 1),
+            Drift = (float)(random.NextDouble() * 2 - 1) * (own ? 0.6f : 1f),
             Text = hit.IsDirectHit ? $"{hit.Damage:N0}!" : $"{hit.Damage:N0}",
             Color = hit.IsCritical ? Critical : friend ? OnFriend : OnEnemy,
-            Scale = hit.IsCritical ? 1.75f : 1.3f,
+            Scale = own
+                ? hit.IsCritical ? OwnCriticalScale : OwnScale
+                : hit.IsCritical ? BattleCriticalScale : BattleScale,
         });
     }
 
