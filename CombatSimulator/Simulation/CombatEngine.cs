@@ -1091,7 +1091,8 @@ public partial class CombatEngine : IDisposable
         }
 
         var resolvedActionData = actionDataProvider.GetActionData(actionId);
-        Npcs.KitBudget.Measure(companion.State, companion.Behavior, PlayerMpPrice, usesMp: false);
+        // Companions pay MP for skills as enemies do, so their output is budgeted the same way.
+        Npcs.KitBudget.Measure(companion.State, companion.Behavior, PlayerMpPrice, usesMp: true);
         DamageResult dmgResult;
         if (potency > 0)
             dmgResult = damageCalculator.CalculateNpcAutoAttack(companion.State, targetNpc.State, potency);

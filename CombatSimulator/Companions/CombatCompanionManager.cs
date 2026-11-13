@@ -806,6 +806,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         foreach (var companion in companions)
         {
             companion.State.CurrentHp = companion.State.MaxHp;
+            companion.State.CurrentMp = companion.State.MaxMp;
             companion.State.IsCaptive = false;
             companion.State.Executed = false;
             companion.State.IncomingDamageScale = 1f;
@@ -1213,6 +1214,9 @@ public unsafe partial class CombatCompanionManager : IDisposable
             return;
         }
 
+        // MP comes back as it does for enemies: steadily, and with each auto-attack.
+        companion.State.RegenerateMp(CombatBudgetModel.EnemyMpRegenPerSecond, deltaTime);
+
         if (TickCaptive(companion))
             return;
         if (TickPrayer(companion, deltaTime, terrainCache))
@@ -1307,11 +1311,17 @@ public unsafe partial class CombatCompanionManager : IDisposable
                 continue;
             if (dist > GetPartySkillRange(skill.Range, skill.AttackStyle))
                 continue;
+            // A skill costs MP as it does an enemy: a share of the companion's own pool. Out of MP,
+            // it auto-attacks until it has earned enough back.
+            var mpCost = CombatBudgetModel.EnemySkillMpCost(combatEngine.GetActionData(skill.ActionId)?.MpCost ?? 0, companion.State.MaxMp);
+            if (companion.State.CurrentMp < mpCost)
+                continue;
 
             var result = combatEngine.ProcessCompanionAction(companion, target,
                 skill.ActionId, skill.Potency, skill.AttackStyle, skill.Radius);
             if (result.Success)
             {
+                companion.State.CurrentMp = Math.Max(0, companion.State.CurrentMp - mpCost);
                 RegisterDamage(companion.SimulatedEntityId, result.Damage);
                 AddThreat(target.SimulatedEntityId, companion.SimulatedEntityId, result.Damage, companion.State.IsTank);
                 skill.CooldownRemaining = skill.Cooldown / ActionPace();
@@ -1331,6 +1341,8 @@ public unsafe partial class CombatCompanionManager : IDisposable
                 companion.Behavior.AutoAttackStyle);
             if (result.Success)
             {
+                companion.State.CurrentMp = Math.Min(companion.State.MaxMp,
+                    companion.State.CurrentMp + CombatBudgetModel.EnemyAutoAttackMpRestore);
                 RegisterDamage(companion.SimulatedEntityId, result.Damage);
                 AddThreat(target.SimulatedEntityId, companion.SimulatedEntityId, result.Damage, companion.State.IsTank);
                 companion.State.AnimationLock = 0.6f;

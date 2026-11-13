@@ -257,9 +257,12 @@ public class HpBarOverlay : IDisposable
             castPercent = external.Progress;
         }
 
+        // MP under the HP, as for the player and allies.
+        DrawMpBar(drawList, npc.State, barPos + new Vector2((BarWidth - MpBarWidth) / 2, BarHeight + ResourceBarGap), MpBarWidth);
+
         if (castName != null)
         {
-            var castBarY = barPos.Y + BarHeight + 2;
+            var castBarY = barPos.Y + BarHeight + ResourceBarGap + MpBarHeight + 2;
 
             drawList.AddRectFilled(
                 new Vector2(barPos.X, castBarY),

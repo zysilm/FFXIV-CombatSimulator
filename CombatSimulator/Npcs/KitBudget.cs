@@ -15,7 +15,7 @@ namespace CombatSimulator.Npcs;
 public static class KitBudget
 {
     /// <param name="playerPrice">MP price of an action for a player, or 0 when unknown.</param>
-    /// <param name="usesMp">True for enemies, which pay MP for skills; false for companions.</param>
+    /// <param name="usesMp">Whether skills are paid for in MP (enemies and companions both do).</param>
     /// <remarks>
     /// An enemy's kit is played out for as long as its tier is meant to live, because the MP pool it
     /// opens with makes its first seconds stronger than its later ones; set the tier before measuring.
@@ -40,7 +40,8 @@ public static class KitBudget
             skills[i] = new KitSkill(skill.Potency, skill.Cooldown, cost, skill.HpThreshold < 1f, cast);
         }
 
-        var seconds = usesMp ? CombatBudgetModel.SecondsToKill(state.Tier) : CombatBudgetModel.CompanionKitWindow;
+        // An enemy over the life its tier is meant to have; a companion over its own window.
+        var seconds = usesMp && !state.IsCompanion ? CombatBudgetModel.SecondsToKill(state.Tier) : CombatBudgetModel.CompanionKitWindow;
         state.KitOutputClassic = CombatBudgetModel.KitOutput(behavior.AutoAttackPotency, behavior.AutoAttackDelay,
             skills, 1f, usesMp, state.MaxMp, seconds, castsBlock: true);
         state.KitOutputAction = CombatBudgetModel.KitOutput(behavior.AutoAttackPotency, behavior.AutoAttackDelay,
