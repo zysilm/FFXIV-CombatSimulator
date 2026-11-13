@@ -1,6 +1,8 @@
 # 敌我 AI 移动 / 寻路重写方案
 
-状态：调研完成（2026-11-13），**等用户选方案，尚未动代码**。用户要求：不要自己手写，先找开源库，再定怎么重写。
+状态：用户选了方案 1（DotRecast 全面重写，2026-11-13）。**阶段 A 已实现，待游戏内验证**；B–D 未开始。用户要求：不要自己手写，先找开源库，再定怎么重写。
+
+阶段 A 实现：`Navigation/NavMeshBuild.cs`（纯 DotRecast 建网格，离线测试 `Tests/Navigation`），`Navigation/NavMeshService.cs`（主线程在游戏锁内读碰撞 `WorldCollisionMesh.TryCollectSolid`——全部实体碰撞，排除水和 vnavmesh 规则下的未激活碰撞——后台线程建网格，玩家周围水平 ±96 m、下 60 m 上 80 m），调试命令 `/combatsim navmesh build|show|hide|floor|clear`（只是命令，不进设置界面）。
 
 ## 1. 用户报告的现象
 

@@ -33,6 +33,10 @@
     <!-- Nested standalone tests and their generated obj sources are not plugin sources. -->
     <Compile Remove="**\Tests\**\*.cs" />
     <PackageReference Include="BepuPhysics" Version="2.5.0-beta.22" />
+    <PackageReference Include="DotRecast.Core" Version="2026.3.1" />
+    <PackageReference Include="DotRecast.Recast" Version="2026.3.1" />
+    <PackageReference Include="DotRecast.Detour" Version="2026.3.1" />
+    <PackageReference Include="DotRecast.Detour.Crowd" Version="2026.3.1" />
     <PackageReference Include="Silk.NET.Direct3D11" Version="2.21.0" />
   </ItemGroup>
   <ItemGroup>

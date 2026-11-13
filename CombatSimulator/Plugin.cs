@@ -102,6 +102,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     private readonly Rendering.WorldGeometry.WorldGeometryRenderer worldGeometryRenderer;
     private readonly Effects.ArrowImpactController arrowImpactController;
     private readonly Rendering.WorldGeometry.WorldGeometryPreview worldGeometryPreview;
+    private readonly Navigation.NavMeshService navMesh;
     public Rendering.WorldGeometry.WorldGeometryRenderer WorldGeometry => worldGeometryRenderer;
     private readonly EnemyControlController enemyControlController;
     private readonly HookSafetyChecker hookSafetyChecker;
@@ -233,6 +234,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         animationController.ArrowImpacts = arrowImpactController;
         InitPrivateEffects();
         worldGeometryPreview = new Rendering.WorldGeometry.WorldGeometryPreview(worldGeometryRenderer);
+        navMesh = new Navigation.NavMeshService(worldGeometryRenderer, log);
         dismembermentController = new DismembermentController(boneTransformService, glamourerIpc, animationController, objectTable, config, log);
         dismembermentController.PlayerRagdollController = ragdollController;
         // Clothes still on the corpse ride along when it is picked up; the dismemberment side owns the
@@ -678,6 +680,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         DisposePrivateEffects();
         arrowImpactController.Dispose();
         worldGeometryPreview.Dispose();
+        navMesh.Dispose();
         worldGeometryRenderer.Dispose();
         npcSpawner.Dispose();
         useActionHook.Dispose();
@@ -723,6 +726,30 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
 
         switch (parts[0].ToLowerInvariant())
         {
+            case "navmesh":
+                {
+                    // Phase A of the movement rewrite (docs/AI_MOVEMENT_REWRITE.md): build and look at the mesh.
+                    var navCommand = parts.Length > 1 ? parts[1].Trim().ToLowerInvariant() : "status";
+                    var navPlayer = Services.ObjectTable.LocalPlayer;
+                    if (navCommand == "build" && navPlayer != null)
+                    {
+                        navMesh.Build(navPlayer.Position, clientState.TerritoryType);
+                        navMesh.ShowDebug = true;
+                    }
+                    else if (navCommand == "show") navMesh.ShowDebug = true;
+                    else if (navCommand == "hide") navMesh.ShowDebug = false;
+                    else if (navCommand == "clear") navMesh.Clear();
+                    else if (navCommand == "floor" && navPlayer != null)
+                    {
+                        var floorText = navMesh.TryFloor(navPlayer.Position, 2f, out var floor, out _)
+                            ? $"floor under you at y {floor.Y:F2} (you are at {navPlayer.Position.Y:F2})"
+                            : "no floor under you within 2 m";
+                        chatGui.Print($"[CombatSim] Navigation mesh: {floorText}");
+                    }
+                    chatGui.Print($"[CombatSim] Navigation mesh: {navMesh.Status}" + (navMesh.ShowDebug ? " (shown)" : ""));
+                    break;
+                }
+
             case "geometry":
                 var geometryCommand = parts.Length > 1 ? parts[1].Trim().ToLowerInvariant() : "status";
                 if (geometryCommand == "marker" && clientState.IsLoggedIn && Services.ObjectTable.LocalPlayer is { } geometryPlayer)
@@ -981,6 +1008,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             devExperimental.TickWorld(deltaTime);
             npcScaleController.Tick();
             arrowImpactController.Tick();
+            navMesh.Tick(deltaTime, Services.ObjectTable.LocalPlayer?.Position);
             worldGeometryRenderer.Tick();
             worldGeometryPreview.Tick(deltaTime);
             TickPrivateEffects(deltaTime);
@@ -1365,6 +1393,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         ResetPrivateDirectors();
         ClearPrivateEffects();
         worldGeometryPreview.Clear();
+        navMesh.Clear();
         worldGeometryRenderer.ClearAll();
         // Despawn client-spawned NPCs first (they don't survive zone changes)
         npcSpawner.SpawnModeActive = false;

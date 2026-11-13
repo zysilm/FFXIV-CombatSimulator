@@ -29,6 +29,20 @@ public static unsafe class WorldCollisionMesh
     /// <paramref name="maxTriangles"/> triangles there.
     /// </summary>
     public static bool TryCollectGround(Vector3 min, Vector3 max, List<Vector3> triangles, int maxTriangles)
+        => TryCollect(min, max, triangles, maxTriangles, CollisionMeshGeometry.IsGround);
+
+    /// <summary>
+    /// Append every solid triangle overlapping the box (ground, walls, roofs: what a navigation mesh is
+    /// built from), leaving out water and the colliders the game keeps inactive (material 0x400 without
+    /// 0x10, the rule vnavmesh uses). Same contract as <see cref="TryCollectGround"/>.
+    /// </summary>
+    public static bool TryCollectSolid(Vector3 min, Vector3 max, List<Vector3> triangles, int maxTriangles)
+        => TryCollect(min, max, triangles, maxTriangles, IsSolid);
+
+    private static bool IsSolid(ulong material)
+        => (material & 0x410) != 0x400 && !CollisionMeshGeometry.IsWater(material);
+
+    private static bool TryCollect(Vector3 min, Vector3 max, List<Vector3> triangles, int maxTriangles, Func<ulong, bool> accept)
     {
         var start = triangles.Count;
         var framework = Framework.Instance();
@@ -48,7 +62,7 @@ public static unsafe class WorldCollisionMesh
                     if (collider == null) continue;
                     // Same gates a ground raycast applies: active, and on the default layer.
                     if ((collider->VisibilityFlags & 1) == 0 || (collider->LayerMask & 1) == 0) continue;
-                    AppendCollider(collider, min, max, triangles);
+                    AppendCollider(collider, min, max, triangles, accept);
                     if ((triangles.Count - start) / 3 > maxTriangles) { ok = false; break; }
                 }
                 if (!ok) break;
@@ -91,7 +105,7 @@ public static unsafe class WorldCollisionMesh
         return true;
     }
 
-    private static void AppendCollider(Collider* collider, Vector3 min, Vector3 max, List<Vector3> triangles)
+    private static void AppendCollider(Collider* collider, Vector3 min, Vector3 max, List<Vector3> triangles, Func<ulong, bool> accept)
     {
         switch (collider->GetColliderType())
         {
@@ -103,26 +117,26 @@ public static unsafe class WorldCollisionMesh
                 var pcb = (MeshPCB*)mesh->Mesh;
                 if (pcb->RootNode == null) return;
                 AppendMeshNode(pcb->RootNode, mesh->World.Row0, mesh->World.Row1, mesh->World.Row2, mesh->World.Row3,
-                    collider->ObjectMaterialValue, collider->ObjectMaterialMask, min, max, triangles, 0);
+                    collider->ObjectMaterialValue, collider->ObjectMaterialMask, min, max, triangles, 0, accept);
                 return;
             }
             case ColliderType.Box:
             {
-                if (!CollisionMeshGeometry.IsGround(collider->ObjectMaterialValue)) return;
+                if (!accept(collider->ObjectMaterialValue)) return;
                 var box = (ColliderBox*)collider;
                 AppendIfNear(triangles, min, max, list => CollisionMeshGeometry.AppendBox(list, box->World.Row0, box->World.Row1, box->World.Row2, box->World.Row3));
                 return;
             }
             case ColliderType.Cylinder:
             {
-                if (!CollisionMeshGeometry.IsGround(collider->ObjectMaterialValue)) return;
+                if (!accept(collider->ObjectMaterialValue)) return;
                 var cylinder = (ColliderCylinder*)collider;
                 AppendIfNear(triangles, min, max, list => CollisionMeshGeometry.AppendCylinder(list, cylinder->World.Row0, cylinder->World.Row1, cylinder->World.Row2, cylinder->World.Row3));
                 return;
             }
             case ColliderType.Sphere:
             {
-                if (!CollisionMeshGeometry.IsGround(collider->ObjectMaterialValue)) return;
+                if (!accept(collider->ObjectMaterialValue)) return;
                 var sphere = (ColliderSphere*)collider;
                 AppendIfNear(triangles, min, max, list => CollisionMeshGeometry.AppendSphere(list, sphere->World.Row0, sphere->World.Row1, sphere->World.Row2, sphere->World.Row3));
                 return;
@@ -151,7 +165,7 @@ public static unsafe class WorldCollisionMesh
     }
 
     private static void AppendMeshNode(MeshPCB.FileNode* node, Vector3 row0, Vector3 row1, Vector3 row2, Vector3 row3,
-        ulong objectValue, ulong objectMask, Vector3 min, Vector3 max, List<Vector3> triangles, int depth)
+        ulong objectValue, ulong objectMask, Vector3 min, Vector3 max, List<Vector3> triangles, int depth, Func<ulong, bool> accept)
     {
         if (node == null || depth > MaxNodeDepth) return;
 
@@ -176,7 +190,7 @@ public static unsafe class WorldCollisionMesh
         {
             ref var primitive = ref primitives[i];
             if (primitive.V1 >= vertexCount || primitive.V2 >= vertexCount || primitive.V3 >= vertexCount) continue;
-            if (!CollisionMeshGeometry.IsGround(CollisionMeshGeometry.EffectiveMaterial(primitive.Material, objectValue, objectMask))) continue;
+            if (!accept(CollisionMeshGeometry.EffectiveMaterial(primitive.Material, objectValue, objectMask))) continue;
             var a = CollisionMeshGeometry.Transform(node->Vertex(primitive.V1), row0, row1, row2, row3);
             var b = CollisionMeshGeometry.Transform(node->Vertex(primitive.V2), row0, row1, row2, row3);
             var c = CollisionMeshGeometry.Transform(node->Vertex(primitive.V3), row0, row1, row2, row3);
@@ -186,7 +200,7 @@ public static unsafe class WorldCollisionMesh
             triangles.Add(c);
         }
 
-        AppendMeshNode(node->Child1, row0, row1, row2, row3, objectValue, objectMask, min, max, triangles, depth + 1);
-        AppendMeshNode(node->Child2, row0, row1, row2, row3, objectValue, objectMask, min, max, triangles, depth + 1);
+        AppendMeshNode(node->Child1, row0, row1, row2, row3, objectValue, objectMask, min, max, triangles, depth + 1, accept);
+        AppendMeshNode(node->Child2, row0, row1, row2, row3, objectValue, objectMask, min, max, triangles, depth + 1, accept);
     }
 }
