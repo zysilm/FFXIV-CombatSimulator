@@ -594,6 +594,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         // GUI
         mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, spectatorController, devExperimental, clientState, dataManager, chatGui, log);
         mainWindow.ArrowImpacts = arrowImpactController;
+        mainWindow.HideResultBanner = warBanner.Hide;
         mainWindow.ArmorDetachment = armorDetachmentController;
         InitVoice(dataManager);
         InitPrivateDirectors();

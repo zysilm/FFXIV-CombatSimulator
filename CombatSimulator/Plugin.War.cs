@@ -69,12 +69,41 @@ public sealed unsafe partial class CombatSimulatorPlugin
             return;
         outcomeShown = true;
 
+        if (!config.ShowResultBanner)
+            return;
+        var (title, reason) = DescribeOutcome(playerWon);
+        warBanner.Show(title, reason, playerWon ? new Vector4(0.95f, 0.85f, 0.3f, 1f) : new Vector4(0.9f, 0.25f, 0.2f, 1f));
+    }
+
+    /// <summary>
+    /// The result and why, for the banner. Each battle rule that ends a fight its own way adds its case
+    /// here.
+    /// </summary>
+    private (string Title, string Reason) DescribeOutcome(bool playerWon)
+    {
+        var lordAlive = combatEngine.State.PlayerState.IsAlive;
+        var warringStates = config.WarFallenRule == (int)WarFallenRule.WarringStates;
+        var anyExecuted = combatEngine.State.PlayerState.Executed;
+        foreach (var companion in companionManager.Companions)
+            if (companion.State.Executed)
+                anyExecuted = true;
+
         if (!playerWon)
-            warBanner.Show("DEFEAT", new Vector4(0.9f, 0.25f, 0.2f, 1f));
-        else if (config.WarFallenRule == (int)WarFallenRule.WarringStates && !combatEngine.State.PlayerState.IsAlive)
-            warBanner.Show("BODY RECOVERED", new Vector4(0.95f, 0.8f, 0.35f, 1f));
-        else
-            warBanner.Show("VICTORY", new Vector4(0.95f, 0.85f, 0.3f, 1f));
+        {
+            if (bodySeized)
+                return ("DEFEAT", "Your lord's corpse has been captured. Your army is executed.");
+            if (anyExecuted)
+                return ("DEFEAT", warringStates
+                    ? "Your lord has fallen and the captives have been executed."
+                    : "Your party has been executed.");
+            return ("DEFEAT", "Every member of your party lies dead on the field.");
+        }
+
+        if (!lordAlive && warringStates)
+            return ("BODY RECOVERED", "Your lord is dead, but the corpse is secured and will be carried back to Eorzea.");
+        if (!lordAlive)
+            return ("VICTORY", "Every enemy has been slain, though you fell in the battle.");
+        return ("VICTORY", "Every enemy has been slain. Your army is victorious.");
     }
 
     private void ResetWar()
@@ -83,6 +112,7 @@ public sealed unsafe partial class CombatSimulatorPlugin
         grabRetryLeft = 0f;
         ReleaseSeizers();
         bodySeized = false;
+        companionManager.LordCorpseCaptured = false;
         outcomeShown = false;
         warBanner.Hide();
     }
@@ -256,6 +286,7 @@ public sealed unsafe partial class CombatSimulatorPlugin
     private void SeizeBody(SimulatedNpc npc)
     {
         bodySeized = true;
+        companionManager.LordCorpseCaptured = true;
         ReleaseSeizers();
         combatEngine.AddLogEntry($"{npc.Name} carries off the lord's body!", CombatLogType.Death);
         companionManager.SurrenderRetainers();

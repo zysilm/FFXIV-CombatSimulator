@@ -143,6 +143,8 @@ public partial class Configuration : IPluginConfiguration
     // Names and numbers on the bars of enemies and allies too (the player's own bar always has them).
     // Anonymous Mode hides every name and number, whatever this says.
     public bool ShowAllBarLabels { get; set; } = false;
+    // The battle's result across the screen (and why), kept until the battle is reset.
+    public bool ShowResultBanner { get; set; } = true;
 
     // Simulation
     public float DamageMultiplier { get; set; } = 1.0f;

@@ -13,6 +13,7 @@ using Dalamud.Plugin.Services;
 using Dalamud.Bindings.ImGui;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using FFXIVClientStructs.FFXIV.Component.GUI;
+using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 using GameCameraManager = FFXIVClientStructs.FFXIV.Client.Game.Control.CameraManager;
 
 namespace CombatSimulator.Gui;
@@ -49,6 +50,71 @@ public class HpBarOverlay : IDisposable
     private const float NearMeters = 10f;
     private const float CastWatchMeters = 25f;
     private const float FadeSeconds = 0.25f;
+    // An enemy's bar shows at any range while the camera can see it: a ray from the camera to its
+    // head that hits no wall first. Each enemy is looked at again this often.
+    private const float SightCheckSeconds = 0.15f;
+    // With no enemy in sight in a fight: a ring under the player and an arrow on it toward the
+    // nearest enemy, gone as soon as one comes into view.
+    private const float CompassRadius = 1.1f;
+    private const float CompassArrowLength = 0.55f;
+    private const float CompassArrowWidth = 0.32f;
+    private const int CompassSegments = 40;
+
+    private readonly Dictionary<uint, (bool Seen, float At)> sight = new();
+    private float compassAlpha;
+
+    /// <summary>Whether the camera sees this point: on screen, and no wall between.</summary>
+    private unsafe bool InSight(uint id, Vector3 point, Vector3 camPos, float now)
+    {
+        if (sight.TryGetValue(id, out var known) && now - known.At < SightCheckSeconds)
+            return known.Seen;
+        var seen = gameGui.WorldToScreen(point, out _);
+        if (seen && camPos != Vector3.Zero)
+        {
+            var toPoint = point - camPos;
+            var distance = toPoint.Length();
+            if (distance > 0.5f &&
+                BGCollisionModule.RaycastMaterialFilter(camPos, toPoint / distance, out var hit, distance) &&
+                Vector3.Distance(hit.Point, camPos) < distance - 0.4f)
+                seen = false;
+        }
+        // Spread the next looks over a few frames so twenty enemies do not all cast on one.
+        sight[id] = (seen, now - (id % 5) * 0.02f);
+        return seen;
+    }
+
+    /// <summary>A ring on the ground under the player and an arrow on it pointing at <paramref name="enemy"/>.</summary>
+    private void DrawCompass(ImDrawListPtr drawList, Vector3 feet, Vector3 enemy, float alpha)
+    {
+        var ring = Fade(new Vector4(1f, 0.3f, 0.25f, 0.55f), alpha);
+        var arrow = Fade(new Vector4(1f, 0.3f, 0.25f, 0.95f), alpha);
+        var ground = feet + new Vector3(0f, 0.05f, 0f);
+        Vector2? previous = null;
+        for (var i = 0; i <= CompassSegments; i++)
+        {
+            var a = MathF.Tau * i / CompassSegments;
+            var p = ground + new Vector3(MathF.Sin(a), 0f, MathF.Cos(a)) * CompassRadius;
+            if (gameGui.WorldToScreen(p, out var s))
+            {
+                if (previous is { } q)
+                    drawList.AddLine(q, s, ring, 2.5f);
+                previous = s;
+            }
+            else
+                previous = null;
+        }
+
+        var dir = new Vector3(enemy.X - feet.X, 0f, enemy.Z - feet.Z);
+        if (dir.LengthSquared() < 1e-4f)
+            return;
+        dir = Vector3.Normalize(dir);
+        var side = new Vector3(dir.Z, 0f, -dir.X);
+        var tip = ground + dir * (CompassRadius + CompassArrowLength);
+        var left = ground + dir * CompassRadius + side * CompassArrowWidth;
+        var right = ground + dir * CompassRadius - side * CompassArrowWidth;
+        if (gameGui.WorldToScreen(tip, out var t) && gameGui.WorldToScreen(left, out var l) && gameGui.WorldToScreen(right, out var r))
+            drawList.AddTriangleFilled(t, l, r, arrow);
+    }
 
     /// <summary>The address of what the player has targeted (0: nothing).</summary>
     public Func<nint>? PlayerTarget { get; set; }
@@ -191,7 +257,6 @@ public class HpBarOverlay : IDisposable
         // Get camera + player bone positions for NPC HP bar occlusion
         Vector3 camPos = default;
         Vector3[]? playerBodyPoints = null;
-        if (config.HpBarOcclusion)
         {
             var player = Core.Services.ObjectTable.LocalPlayer;
             var camMgr = GameCameraManager.Instance();
@@ -199,9 +264,14 @@ public class HpBarOverlay : IDisposable
             {
                 var cp = camMgr->Camera->LastPosition;
                 camPos = new Vector3(cp.X, cp.Y, cp.Z);
-                playerBodyPoints = GetPlayerBodyPoints(player.Address);
+                if (config.HpBarOcclusion)
+                    playerBodyPoints = GetPlayerBodyPoints(player.Address);
             }
         }
+        var anyEnemySeen = false;
+        Vector3? nearestEnemy = null;
+        var nearestEnemyDistance = float.MaxValue;
+        var nearestEngaged = false;
 
         var now = (float)barClock.Elapsed.TotalSeconds;
         var deltaTime = Math.Clamp(now - lastDrawAt, 0f, 0.25f);
@@ -222,14 +292,30 @@ public class HpBarOverlay : IDisposable
 
                 float alpha = 1f, scale = 1f;
                 (string Name, float Progress)? cast = null;
+                var npcObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
+                var npcPos = (Vector3)npcObj->Position;
+                var distance = Vector3.Distance(npcPos, myPos);
+                // An enemy in sight (any range, no wall between it and the camera) has its bar.
+                var seen = false;
+                if (npc.State.IsAlive)
+                {
+                    var head = GetBoneWorldPos(npc.Address, "j_kao") ?? npcPos + new Vector3(0f, MathF.Max(1f, npcObj->Height), 0f);
+                    seen = InSight(npc.State.EntityId, head, camPos, now);
+                    if (seen)
+                        anyEnemySeen = true;
+                    // The nearest enemy for the compass: one in the fight before one that has not noticed it.
+                    var engaged = npc.IsEngaged;
+                    if ((engaged && !nearestEngaged) || (engaged == nearestEngaged && distance < nearestEnemyDistance))
+                    {
+                        nearestEnemy = npcPos;
+                        nearestEnemyDistance = distance;
+                        nearestEngaged = engaged;
+                    }
+                }
                 if (!full)
                 {
-                    var npcObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara;
-                    var distance = Vector3.Distance((Vector3)npcObj->Position, myPos);
                     cast = CastOf(npc);
-                    var matters = npc.State.IsAlive &&
-                                  (npc.Address == myTarget || npc.IsAttackingPlayer || HitRecently(npc.State.EntityId, now) ||
-                                   distance <= NearMeters || (cast != null && distance <= CastWatchMeters));
+                    var matters = npc.State.IsAlive && (seen || npc.Address == myTarget);
                     alpha = FadeBar(npc.State.EntityId, matters, deltaTime);
                     if (alpha <= 0f)
                         continue;
@@ -343,6 +429,15 @@ public class HpBarOverlay : IDisposable
                 }
             }
         }
+
+        // No enemy in sight during a fight: point the way to the nearest one.
+        var wantCompass = combatEngine.IsActive && me != null && combatEngine.State.PlayerState.IsAlive &&
+                          nearestEnemy != null && !anyEnemySeen;
+        compassAlpha = wantCompass
+            ? MathF.Min(1f, compassAlpha + deltaTime / FadeSeconds)
+            : MathF.Max(0f, compassAlpha - deltaTime / FadeSeconds);
+        if (compassAlpha > 0f && me != null && nearestEnemy is { } towards)
+            DrawCompass(drawList, me.Position, towards, compassAlpha);
 
         // Draw HUD player HP bar (fixed screen position)
         if (config.ShowHudPlayerHpBar)

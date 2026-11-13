@@ -35,6 +35,9 @@ public unsafe partial class CombatCompanionManager
 
     private Vector3 LordBodyAt(Vector3 playerPosition) => LordBodyPosition?.Invoke() ?? playerPosition;
 
+    /// <summary>The lord's body has been carried off by the enemy (set by the battle).</summary>
+    public bool LordCorpseCaptured { get; set; }
+
     /// <summary>The enemies sent to carry off the lord's body (set by the battle each frame).</summary>
     public HashSet<uint> LordSeizers { get; } = new();
 
@@ -339,7 +342,9 @@ public unsafe partial class CombatCompanionManager
     public string StatusOf(SimulatedEntityState state)
     {
         if (!state.IsAlive)
-            return "Fallen";
+            return state.IsPlayer && LordCorpseCaptured ? "Corpse captured"
+                : state.Executed ? "Executed"
+                : "Killed in battle";
         if (state.IsCaptive)
             return "Captive";
         if (state.IsPlayer)

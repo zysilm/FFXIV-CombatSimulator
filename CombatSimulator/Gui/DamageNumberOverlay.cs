@@ -28,8 +28,8 @@ public sealed unsafe class DamageNumberOverlay
     // Text size against the font: the battle's hits, and the player's own (struck or striking).
     private const float BattleScale = 1.6f;
     private const float BattleCriticalScale = 2.1f;
-    private const float OwnScale = 2.6f;
-    private const float OwnCriticalScale = 3.3f;
+    private const float OwnScale = 5.2f;
+    private const float OwnCriticalScale = 6.6f;
 
     private static readonly Vector4 OnEnemy = new(1f, 1f, 1f, 1f);
     private static readonly Vector4 OnFriend = new(1f, 0.35f, 0.3f, 1f);

@@ -29,6 +29,9 @@ namespace CombatSimulator.Gui;
 
 public partial class MainWindow : IDisposable
 {
+    /// <summary>Takes the battle result banner off the screen (its switch was turned off).</summary>
+    public Action? HideResultBanner { get; set; }
+
     private static readonly (string Label, string BoneName)[] FightingModeTranslateBones =
     {
         ("Hips (j_kosi)", "j_kosi"),
@@ -3103,6 +3106,16 @@ public partial class MainWindow : IDisposable
                 config.Save();
             }
             HelpMarker("Every bar at full size with names and HP numbers, enemies and allies too.\nOff: only your own bar is full; the others are small and show only while they matter to you\n(your target, whoever attacks you, whoever was just hit, anyone near, enemies casting nearby, allies praying, raising or held captive).\nAnonymous Mode hides every name and number regardless.");
+
+            var resultBanner = config.ShowResultBanner;
+            if (ImGui.Checkbox("Show Battle Result Banner", ref resultBanner))
+            {
+                config.ShowResultBanner = resultBanner;
+                if (!resultBanner)
+                    HideResultBanner?.Invoke();
+                config.Save();
+            }
+            HelpMarker("When a battle is won or lost, its result and the reason stay across the screen until the battle is reset.");
 
             var damageNumbers = config.ShowDamageNumbers;
             if (ImGui.Checkbox("Show Damage Numbers", ref damageNumbers))
