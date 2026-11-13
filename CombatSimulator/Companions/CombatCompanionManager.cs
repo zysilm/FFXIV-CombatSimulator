@@ -1245,7 +1245,10 @@ public unsafe partial class CombatCompanionManager : IDisposable
         var sourceObj = (GameObject*)companion.BattleChara;
         var targetPos = (Vector3)targetObj->Position;
         var sourcePos = (Vector3)sourceObj->Position;
-        var dist = FlatDistance(sourcePos, targetPos);
+        var onMesh = CrowdReady;
+        if (onMesh && CrowdApproach(companion, target, deltaTime, terrainCache))
+            return;
+        var dist = onMesh ? CrowdGap(companion, target) : FlatDistance(sourcePos, targetPos);
         // Enhanced tactics: measure past the body-size excess so a companion stops at a big monster's
         // surface instead of walking into its centre.
         if (config.EnhancedEnemyTactics)
@@ -1272,7 +1275,8 @@ public unsafe partial class CombatCompanionManager : IDisposable
 
         var wasHoldingRange = companion.AiState is CompanionAiState.CombatReady or CompanionAiState.ActionLocked;
         var resumeRange = effectiveRange + PartyAttackRangeHysteresis;
-        var shouldMove = wasHoldingRange ? dist > resumeRange : dist > effectiveRange;
+        // (On the mesh, CrowdApproach has already decided: the ally is in reach.)
+        var shouldMove = !onMesh && (wasHoldingRange ? dist > resumeRange : dist > effectiveRange);
         if (shouldMove)
         {
             if (MoveByPartyPlan(companion, deltaTime, targetPos, terrainCache))
@@ -1307,7 +1311,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         {
             if (skill.CooldownRemaining > 0)
                 continue;
-            if (dist > GetPartySkillRange(skill.Range, skill.AttackStyle))
+            if (dist > (onMesh ? SkillReach(companion, skill) : GetPartySkillRange(skill.Range, skill.AttackStyle)))
                 continue;
             // A skill costs MP as it does an enemy: a share of the companion's own pool. Out of MP,
             // it auto-attacks until it has earned enough back.
@@ -1331,6 +1335,9 @@ public unsafe partial class CombatCompanionManager : IDisposable
         companion.AutoAttackTimer -= deltaTime;
         if (companion.AutoAttackTimer <= 0)
         {
+            // A caster's auto-attack is a melee swing, as an enemy's: held until it is in melee.
+            if (onMesh && companion.Behavior.AutoAttackStyle == NpcAttackStyle.Magic && dist > CrowdMagicAutoReach)
+                return;
             companion.AutoAttackTimer = companion.Behavior.AutoAttackDelay / ActionPace();
             var result = combatEngine.ProcessCompanionAction(
                 companion, target,
@@ -1771,6 +1778,8 @@ public unsafe partial class CombatCompanionManager : IDisposable
         float deltaTime,
         TerrainHeightCache? terrainCache)
     {
+        if (TryCrowdMove(companion, targetPos, deltaTime))
+            return;
         var obj = (GameObject*)companion.BattleChara;
         var current = (Vector3)obj->Position;
         var moveTarget = GetPathMoveTarget(companion, current, targetPos, deltaTime);
@@ -2291,6 +2300,12 @@ public unsafe partial class CombatCompanionManager : IDisposable
 
     private void StopMove(CombatCompanion companion)
     {
+        // On the mesh it holds its place in the crowd (and is nudged aside by those passing).
+        if (TryCrowdMove(companion, null, 0f))
+        {
+            pathStates.Remove(companion.Address);
+            return;
+        }
         movementBlockHook.RemoveApproachNpc(companion.Address);
         StopMoveAnim(companion);
         pathStates.Remove(companion.Address);

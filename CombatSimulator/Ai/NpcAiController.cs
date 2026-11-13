@@ -360,6 +360,9 @@ public unsafe partial class NpcAiController : IDisposable
             crowdDriven.Clear();
             foreach (var npc in approachNpcs)
                 npc.CrowdDriven = false;
+            // The player is in the crowd as something to walk round.
+            if (Crowd is { Ready: true } playerCrowd && combatEngine.State.PlayerState.IsAlive)
+                playerCrowd.SetObstacle(player.Address, playerPos, ((GameObject*)player.Address)->HitboxRadius);
             for (int i = 0; i < approachNpcs.Count; i++)
             {
                 var npc = approachNpcs[i];
@@ -754,13 +757,15 @@ public unsafe partial class NpcAiController : IDisposable
         return true;
     }
 
-    /// <summary>Step the crowd, then put every enemy it moves where it is, facing where it goes or its target.</summary>
+    /// <summary>
+    /// Put every enemy the crowd moves where it is (the crowd is stepped once a frame by the plugin,
+    /// after both sides have set their goals), facing where it goes or its target.
+    /// </summary>
     private void ApplyCrowdMotion(float deltaTime)
     {
         var crowd = Crowd;
         if (crowd == null)
             return;
-        crowd.Update(deltaTime);
 
         foreach (var npc in crowdDriven)
         {

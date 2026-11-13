@@ -366,6 +366,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             telegraphSystem.IsBusy);
         npcAiController.AreaMarkers = enemyAreaMarkers;
         npcAiController.Crowd = crowdMover;
+        companionManager.Crowd = crowdMover;
         npcAiController.CollectPartyPositions = companionManager.CollectPartyPositions;
         npcSpawner.Navmesh = vnavmeshIpc;
         npcSpawner.OnAllySpawnComplete = (npc, request) =>
@@ -1022,6 +1023,10 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             TickPrivateEffects(deltaTime);
             // Before the active gate: the director clears its state when the fight ends. Inert when voices are off.
             TickVoice(deltaTime);
+
+            // One step of the crowd for everyone it moves: allies (who set their goals above, and move
+            // outside a battle too) and enemies (who set theirs after the previous step).
+            crowdMover.Update(deltaTime);
 
             if (!combatEngine.IsActive)
                 return;

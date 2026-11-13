@@ -127,6 +127,25 @@ public sealed class CrowdMover
         return true;
     }
 
+    /// <summary>
+    /// Something the crowd walks round but does not move (the player): put where it is now, standing.
+    /// Call every frame, like <see cref="Drive"/>.
+    /// </summary>
+    public void SetObstacle(nint address, Vector3 position, float radius)
+    {
+        Sync();
+        if (crowd == null || address == nint.Zero)
+            return;
+        Remove(address);
+        if (!navMesh.TryFloor(position, FloorSearch, out var floor, out _))
+            return;
+        var p = AgentParams(Math.Clamp(radius, 0.3f, MaxAgentRadius), 0.5f);
+        p.updateFlags = 0;
+        var crowdAgent = crowd.AddAgent(NavMeshBuild.ToRc(floor), p);
+        if (crowdAgent != null)
+            agents[address] = new Agent { Crowd = crowdAgent, Radius = radius, Speed = 0f, Frame = frame };
+    }
+
     /// <summary>Step the crowd once; actors not driven since the last step leave it.</summary>
     public void Update(float deltaTime)
     {
