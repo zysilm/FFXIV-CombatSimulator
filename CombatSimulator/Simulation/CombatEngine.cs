@@ -435,10 +435,13 @@ public partial class CombatEngine : IDisposable
         }
     }
 
-    public void RevivePlayerInPlace() => RevivePlayerInPlace(1f);
+    public void RevivePlayerInPlace() => RevivePlayerInPlace(1f, refillMp: true);
 
-    /// <summary>Bring the player back where they lie, with this share of their HP.</summary>
-    public void RevivePlayerInPlace(float hpShare)
+    /// <summary>
+    /// Bring the player back where they lie, with this share of their HP; MP full, or (raised by an
+    /// ally) empty.
+    /// </summary>
+    public void RevivePlayerInPlace(float hpShare, bool refillMp)
     {
         var ps = State.PlayerState;
         if (ps.MaxHp <= 0)
@@ -448,7 +451,7 @@ public partial class CombatEngine : IDisposable
         ps.Executed = false;
         ps.IncomingDamageScale = 1f;
         ps.CurrentHp = Math.Clamp((int)MathF.Ceiling(ps.MaxHp * hpShare), 1, Math.Max(1, ps.MaxHp));
-        ps.CurrentMp = ps.MaxMp;
+        ps.CurrentMp = refillMp ? ps.MaxMp : 0;
         ps.AnimationLock = 0;
         ps.GcdRemaining = 0;
         ps.AutoAttackTimer = 0;

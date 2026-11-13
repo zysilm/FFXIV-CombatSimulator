@@ -240,7 +240,7 @@ public unsafe partial class CombatCompanionManager
     private void RaiseFriend(SimulatedEntityState patient, CombatCompanion by)
     {
         if (patient.IsPlayer)
-            combatEngine.RevivePlayerInPlace(RaisedHpShare);
+            combatEngine.RevivePlayerInPlace(RaisedHpShare, refillMp: false);
         else if (GetCompanion(patient.EntityId) is { } fallen)
             ReviveCompanion(fallen, RaisedHpShare);
         combatEngine.AddLogEntry($"{by.Name} raised {patient.Name}.", CombatLogType.Info);
@@ -254,6 +254,8 @@ public unsafe partial class CombatCompanionManager
         state.Executed = false;
         state.IncomingDamageScale = 1f;
         state.CurrentHp = Math.Clamp((int)MathF.Ceiling(state.MaxHp * hpShare), 1, Math.Max(1, state.MaxHp));
+        // A raise brings back the body, not the mana: MP starts empty.
+        state.CurrentMp = 0;
         state.AnimationLock = 0;
         companion.DeathAnimationPlayed = false;
         companion.CaptiveEmotePlayed = false;
