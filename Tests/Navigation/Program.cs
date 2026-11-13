@@ -17,13 +17,108 @@ if (args.Length > 0 && args[0].EndsWith(".bin", StringComparison.OrdinalIgnoreCa
 {
     var input = NavMeshBuild.LoadTriangles(args[0], out var center);
     var studyClock = Stopwatch.StartNew();
-    var studied = NavMeshBuild.Build(input, new NavMeshBuild.Settings(), threads: Environment.ProcessorCount);
+    float Arg(int i, float fallback) => args.Length > i ? float.Parse(args[i], System.Globalization.CultureInfo.InvariantCulture) : fallback;
+    var studySettings = new NavMeshBuild.Settings { TileCells = (int)Arg(1, 64), AgentClimb = Arg(2, 0.6f), CellSize = Arg(3, 0.3f), CellHeight = Arg(4, 0.2f), AgentRadius = Arg(5, 0.4f), MaxSlopeDegrees = Arg(6, 55f) };
+    Console.WriteLine($"settings: {studySettings}");
+    var studied = NavMeshBuild.Build(input, studySettings, threads: Environment.ProcessorCount);
     Console.WriteLine($"{input.Count / 3:N0} triangles around {center}; built in {studyClock.ElapsedMilliseconds} ms");
     if (studied == null) { Console.WriteLine("nothing walkable"); return 1; }
     Console.WriteLine("links: " + NavMeshBuild.DescribeLinks(studied));
     var studyQuery = new DtNavMeshQuery(studied);
     studyQuery.FindNearestPoly(NavMeshBuild.ToRc(center), new RcVec3f(1.5f, 2.5f, 1.5f), new DtQueryDefaultFilter(), out var seedRef, out var seedPt, out _);
     Console.WriteLine($"seed under the build centre: {seedRef} at {NavMeshBuild.ToVector(seedPt)}");
+    // Connected pieces, largest first, with their extents.
+    var pieceOf = new Dictionary<long, int>();
+    var pieces = new List<(int Size, Vector3 Min, Vector3 Max)>();
+    for (var ti = 0; ti < studied.GetMaxTiles(); ti++)
+    {
+        var tile = studied.GetTile(ti);
+        if (tile?.data?.header == null) continue;
+        var baseRef = studied.GetPolyRefBase(tile);
+        for (var p = 0; p < tile.data.header.polyCount; p++)
+        {
+            var start = baseRef | (long)p;
+            if (pieceOf.ContainsKey(start)) continue;
+            var id = pieces.Count; var size = 0; var mn = new Vector3(float.MaxValue); var mx = new Vector3(float.MinValue);
+            var open = new Queue<long>(); open.Enqueue(start); pieceOf[start] = id;
+            while (open.Count > 0)
+            {
+                var cur = open.Dequeue(); size++;
+                var c = NavMeshBuild.ToVector(studied.GetPolyCenter(cur)); mn = Vector3.Min(mn, c); mx = Vector3.Max(mx, c);
+                studied.GetTileAndPolyByRefUnsafe(cur, out var ct, out var cp);
+                for (var l = cp.firstLink; l != DtDetour.DT_NULL_LINK; l = ct.links[l].next)
+                {
+                    var n = ct.links[l].refs;
+                    if (n != 0 && pieceOf.TryAdd(n, id)) open.Enqueue(n);
+                }
+            }
+            pieces.Add((size, mn, mx));
+        }
+    }
+    Console.WriteLine($"{pieces.Count} connected pieces; the seed is in piece {(pieceOf.TryGetValue(seedRef, out var sp) ? sp : -1)}");
+    foreach (var (piece, idx) in pieces.Select((x, i) => (x, i)).OrderByDescending(x => x.x.Size).Take(8))
+        Console.WriteLine($"  piece {idx}: {piece.Size} polygons, centres from {piece.Min:F0} to {piece.Max:F0}");
+    if (pieceOf.TryGetValue(seedRef, out var seedPiece))
+        Console.WriteLine($"  seed piece {seedPiece}: {pieces[seedPiece].Size} polygons, from {pieces[seedPiece].Min:F0} to {pieces[seedPiece].Max:F0}");
+    // A top-down picture (BMP, 2 px a metre): mesh pieces coloured, the seed's piece red, steep
+    // collision (walls) black, the build centre a white cross.
+    {
+        const int size = 384; const float scale = 2f;
+        var pixels = new byte[size * size * 3];
+        for (var i = 0; i < pixels.Length; i++) pixels[i] = 235;
+        (int, int) Px(Vector3 w) => ((int)((w.X - center.X) * scale + size / 2), (int)((w.Z - center.Z) * scale + size / 2));
+        void Put(int x, int y, byte r, byte g, byte b) { if (x < 0 || y < 0 || x >= size || y >= size) return; var o = ((size - 1 - y) * size + x) * 3; pixels[o] = b; pixels[o + 1] = g; pixels[o + 2] = r; }
+        void FillTri(Vector3 a3, Vector3 b3, Vector3 c3, byte r, byte g, byte b)
+        {
+            var (ax, ay) = Px(a3); var (bx, by) = Px(b3); var (cx, cy) = Px(c3);
+            int minX = Math.Max(0, Math.Min(ax, Math.Min(bx, cx))), maxX = Math.Min(size - 1, Math.Max(ax, Math.Max(bx, cx)));
+            int minY = Math.Max(0, Math.Min(ay, Math.Min(by, cy))), maxY = Math.Min(size - 1, Math.Max(ay, Math.Max(by, cy)));
+            float Edge(int x0, int y0, int x1, int y1, int x, int y) => (x1 - x0) * (y - y0) - (y1 - y0) * (x - x0);
+            var area = Edge(ax, ay, bx, by, cx, cy); if (MathF.Abs(area) < 0.5f) return;
+            for (var y = minY; y <= maxY; y++) for (var x = minX; x <= maxX; x++)
+            {
+                var w0 = Edge(bx, by, cx, cy, x, y) / area; var w1 = Edge(cx, cy, ax, ay, x, y) / area; var w2 = 1 - w0 - w1;
+                if (w0 >= 0 && w1 >= 0 && w2 >= 0) Put(x, y, r, g, b);
+            }
+        }
+        for (var ti = 0; ti < studied.GetMaxTiles(); ti++)
+        {
+            var tile = studied.GetTile(ti); var data = tile?.data;
+            if (data?.header == null) continue;
+            var baseRef = studied.GetPolyRefBase(tile);
+            for (var p = 0; p < data.header.polyCount; p++)
+            {
+                var poly = data.polys[p];
+                var piece = pieceOf.TryGetValue(baseRef | (long)p, out var pc) ? pc : 0;
+                byte r = (byte)(80 + piece * 53 % 150), g = (byte)(90 + piece * 97 % 150), b = (byte)(100 + piece * 31 % 150);
+                if (piece == seedPiece) { r = 230; g = 30; b = 30; }
+                Vector3 V(int k) { var v = poly.verts[k] * 3; return new Vector3(data.verts[v], data.verts[v + 1], data.verts[v + 2]); }
+                for (var k = 2; k < poly.vertCount; k++) FillTri(V(0), V(k - 1), V(k), r, g, b);
+            }
+        }
+        for (var i = 0; i + 2 < input.Count; i += 3)
+        {
+            var n = Vector3.Cross(input[i + 1] - input[i], input[i + 2] - input[i]);
+            if (n.LengthSquared() < 1e-8f) continue;
+            n = Vector3.Normalize(n);
+            if (MathF.Abs(n.Y) > 0.5f) continue; // only steep faces
+            var lo = MathF.Min(input[i].Y, MathF.Min(input[i + 1].Y, input[i + 2].Y));
+            if (lo > center.Y + 25f || lo < center.Y - 25f) continue;
+            foreach (var (pa, pb) in new[] { (input[i], input[i + 1]), (input[i + 1], input[i + 2]), (input[i + 2], input[i]) })
+            {
+                var (x0, y0) = Px(pa); var (x1, y1) = Px(pb);
+                var steps = Math.Max(Math.Abs(x1 - x0), Math.Abs(y1 - y0)) + 1;
+                for (var t = 0; t <= steps; t++) Put(x0 + (x1 - x0) * t / steps, y0 + (y1 - y0) * t / steps, 0, 0, 0);
+            }
+        }
+        for (var d = -6; d <= 6; d++) { Put(size / 2 + d, size / 2, 255, 255, 255); Put(size / 2, size / 2 + d, 255, 255, 255); }
+        var file = System.IO.Path.ChangeExtension(args[0], ".bmp");
+        using var bmp = new System.IO.BinaryWriter(System.IO.File.Create(file));
+        bmp.Write((byte)'B'); bmp.Write((byte)'M'); bmp.Write(54 + pixels.Length); bmp.Write(0); bmp.Write(54);
+        bmp.Write(40); bmp.Write(size); bmp.Write(size); bmp.Write((short)1); bmp.Write((short)24); bmp.Write(0); bmp.Write(pixels.Length); bmp.Write(2835); bmp.Write(2835); bmp.Write(0); bmp.Write(0);
+        bmp.Write(pixels);
+        Console.WriteLine($"picture: {file}");
+    }
     var cutOff = NavMeshBuild.MarkUnreachable(studied, seedRef);
     Console.WriteLine($"cut off from the seed: {cutOff}");
     return 0;

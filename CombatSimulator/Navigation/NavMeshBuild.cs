@@ -188,6 +188,69 @@ public static class NavMeshBuild
         return DtNavMeshBuilder.CreateNavMeshData(option);
     }
 
+    /// <summary>The mesh split into connected pieces: which piece each polygon is in, and each piece's polygons.</summary>
+    public sealed class Pieces
+    {
+        public readonly Dictionary<long, int> PieceOf = new();
+        public readonly List<List<long>> Members = new();
+    }
+
+    public static Pieces FindPieces(DtNavMesh nav)
+    {
+        var result = new Pieces();
+        var open = new Queue<long>();
+        for (var i = 0; i < nav.GetMaxTiles(); i++)
+        {
+            var tile = nav.GetTile(i);
+            if (tile?.data?.header == null)
+                continue;
+            var baseRef = nav.GetPolyRefBase(tile);
+            for (var p = 0; p < tile.data.header.polyCount; p++)
+            {
+                var start = baseRef | (long)p;
+                if (result.PieceOf.ContainsKey(start))
+                    continue;
+                var id = result.Members.Count;
+                var members = new List<long>();
+                result.Members.Add(members);
+                result.PieceOf[start] = id;
+                open.Enqueue(start);
+                while (open.Count > 0)
+                {
+                    var current = open.Dequeue();
+                    members.Add(current);
+                    nav.GetTileAndPolyByRefUnsafe(current, out var ct, out var cp);
+                    for (var link = cp.firstLink; link != DtDetour.DT_NULL_LINK; link = ct.links[link].next)
+                    {
+                        var next = ct.links[link].refs;
+                        if (next != 0 && result.PieceOf.TryAdd(next, id))
+                            open.Enqueue(next);
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    /// <summary>Make a piece walkable (queries and paths use it) or not.</summary>
+    public static void SetPieceEnabled(DtNavMesh nav, List<long> members, bool enabled)
+    {
+        foreach (var polyRef in members)
+            nav.SetPolyFlags(polyRef, enabled ? WalkableFlag : 0);
+    }
+
+    /// <summary>A query filter that accepts every polygon, switched on or not.</summary>
+    public sealed class AnyPolygonFilter : IDtQueryFilter
+    {
+        private readonly DtQueryDefaultFilter costs = new();
+
+        public bool PassFilter(long refs, DtMeshTile tile, DtPoly poly) => true;
+
+        public float GetCost(RcVec3f pa, RcVec3f pb, long prevRef, DtMeshTile prevTile, DtPoly prevPoly, long curRef,
+            DtMeshTile curTile, DtPoly curPoly, long nextRef, DtMeshTile nextTile, DtPoly nextPoly)
+            => costs.GetCost(pa, pb, prevRef, prevTile, prevPoly, curRef, curTile, curPoly, nextRef, nextTile, nextPoly);
+    }
+
     /// <summary>How the mesh is linked: within tiles, across tile borders, and polygons with no link at all.</summary>
     public static string DescribeLinks(DtNavMesh nav)
     {

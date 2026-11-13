@@ -135,6 +135,8 @@ public sealed class NavMeshService : IDisposable
         CancelBuild();
         mesh = null;
         query = null;
+        pieces = null;
+        enabledPieces.Clear();
         Territory = 0;
         attempted = false;
         Status = "no navigation mesh";
@@ -162,10 +164,15 @@ public sealed class NavMeshService : IDisposable
                 Center = buildingCenter;
                 var tiles = CountTiles(built, out var polys);
                 // Only what can be walked to from where the player stood when it was built.
-                var seeded = TryFloor(buildingCenter, 2.5f, out var seedPos, out var seed);
-                log.Info($"NavMesh: links {NavMeshBuild.DescribeLinks(built)}; seed {(seeded ? $"poly {seed} at {seedPos}" : "none under the player")}");
-                var cut = seeded ? NavMeshBuild.MarkUnreachable(built, seed) : 0;
-                Status = $"ready: {tiles} tiles, {polys:N0} polygons ({cut:N0} out of reach), built in {buildClock.ElapsedMilliseconds / 1000.0:F1} s";
+                // Connected pieces: the player's is walkable; the others are switched off (roofs,
+                // railing tops, ledges nobody stands on) until someone is found standing on one.
+                pieces = NavMeshBuild.FindPieces(built);
+                enabledPieces.Clear();
+                foreach (var members in pieces.Members)
+                    NavMeshBuild.SetPieceEnabled(built, members, false);
+                var seeded = EnablePieceUnder(buildingCenter, 2.5f);
+                log.Info($"NavMesh: links {NavMeshBuild.DescribeLinks(built)}; {pieces.Members.Count} connected pieces; the player's {(seeded ? "switched on" : "not found")}");
+                Status = $"ready: {tiles} tiles, {polys:N0} polygons in {pieces.Members.Count} pieces, built in {buildClock.ElapsedMilliseconds / 1000.0:F1} s";
                 log.Info($"NavMesh: {Status} from {buildingTriangles:N0} triangles.");
                 debugTimer = 0f;
             }
@@ -189,6 +196,30 @@ public sealed class NavMeshService : IDisposable
             return;
         debugTimer = DebugRefreshSeconds;
         DrawDebug(player);
+    }
+
+    private NavMeshBuild.Pieces? pieces;
+    private readonly HashSet<int> enabledPieces = new();
+    private readonly NavMeshBuild.AnyPolygonFilter anyPolygon = new();
+
+    /// <summary>
+    /// Switch on the piece of mesh under a point (within <paramref name="vertical"/> metres of it): someone
+    /// stands there, so it is real ground. False when there is no mesh under the point.
+    /// </summary>
+    public bool EnablePieceUnder(Vector3 point, float vertical)
+    {
+        if (query == null || mesh == null || pieces == null)
+            return false;
+        var status = query.FindNearestPoly(NavMeshBuild.ToRc(point), new RcVec3f(1.5f, vertical, 1.5f), anyPolygon,
+            out var polyRef, out _, out _);
+        if (status.Failed() || polyRef == 0 || !pieces.PieceOf.TryGetValue(polyRef, out var piece))
+            return false;
+        if (enabledPieces.Add(piece))
+        {
+            NavMeshBuild.SetPieceEnabled(mesh, pieces.Members[piece], true);
+            log.Verbose($"NavMesh: piece {piece} ({pieces.Members[piece].Count} polygons) switched on: someone stands at {point}.");
+        }
+        return true;
     }
 
     /// <summary>

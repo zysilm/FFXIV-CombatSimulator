@@ -79,7 +79,10 @@ public sealed class CrowdMover
         radius = Math.Clamp(radius, 0.3f, MaxAgentRadius);
         if (!agents.TryGetValue(address, out var agent))
         {
-            if (!navMesh.TryFloor(position, FloorSearch, out var floor, out _))
+            // Standing on a piece of mesh that was switched off (not connected to where the player
+            // stood): it is real ground all the same, so switch it on.
+            if (!navMesh.TryFloor(position, FloorSearch, out var floor, out _) &&
+                (!navMesh.EnablePieceUnder(position, FloorSearch) || !navMesh.TryFloor(position, FloorSearch, out floor, out _)))
                 return false;
             var p = AgentParams(radius, speed);
             var crowdAgent = crowd.AddAgent(NavMeshBuild.ToRc(floor), p);
