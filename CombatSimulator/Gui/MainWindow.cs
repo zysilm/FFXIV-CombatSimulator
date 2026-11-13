@@ -3096,6 +3096,14 @@ public partial class MainWindow : IDisposable
             }
             HelpMarker("Display a floating HP bar above enemy targets during combat.");
 
+            var damageNumbers = config.ShowDamageNumbers;
+            if (ImGui.Checkbox("Show Damage Numbers", ref damageNumbers))
+            {
+                config.ShowDamageNumbers = damageNumbers;
+                config.Save();
+            }
+            HelpMarker("Every hit shows its damage above whoever took it: white on enemies, red on you and your allies, larger and gold for a critical hit. A trailing ! marks a direct hit.");
+
             var hpOcclusion = config.HpBarOcclusion;
             if (ImGui.Checkbox("Hide HP Bar Behind Player", ref hpOcclusion))
             {

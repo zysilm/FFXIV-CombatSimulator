@@ -136,6 +136,7 @@ public partial class Configuration : IPluginConfiguration
     public float SidebarWidth { get; set; } = 130f;
     public bool ShowCombatLog { get; set; } = true;
     public bool ShowEnemyHpBar { get; set; } = true;
+    public bool ShowDamageNumbers { get; set; } = true;
     public bool ShowPlayerHpBar { get; set; } = true;
     public bool ShowHudPlayerHpBar { get; set; } = false;
     public bool AnonymousMode { get; set; } = false;

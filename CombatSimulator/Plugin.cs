@@ -119,6 +119,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
 
     // NPC ragdoll controllers (multiple concurrent, persist until sim stop/reset/zone change)
     private readonly Dictionary<nint, RagdollController> npcRagdolls = new();
+    private Gui.DamageNumberOverlay? damageNumbers;
     private readonly Queue<nint> pendingNpcRagdolls = new();
     private readonly HashSet<nint> pendingNpcRagdollAddresses = new();
 
@@ -593,6 +594,9 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         InitPrivateDirectors();
         AttachPrivateEffects();
         hpBarOverlay = new HpBarOverlay(npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config);
+        damageNumbers = new Gui.DamageNumberOverlay(gameGui, config, combatEngine.ResolveEntityAddress);
+        combatEngine.OnDamageLanded += damageNumbers.Add;
+        combatEngine.OnSimulationReset += damageNumbers.Clear;
         WireWar();
         combatLogWindow = new CombatLogWindow(combatEngine);
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, dismembermentController, mainWindow, config, gameGui, clientState);
@@ -839,6 +843,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         {
             if (config.ShowEnemyHpBar || config.ShowPlayerHpBar || config.ShowHudPlayerHpBar)
                 hpBarOverlay.Draw();
+            damageNumbers?.Draw();
             DrawWar();
 
             if (config.ShowCombatLog)
