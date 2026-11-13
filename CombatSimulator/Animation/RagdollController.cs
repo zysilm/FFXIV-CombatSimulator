@@ -102,6 +102,7 @@ public unsafe partial class RagdollController : IDisposable
     private float physicsAccumulator;
     private const float FixedTimestep = 1f / 60f;
     private const int MaxSubstepsPerFrame = 4;  // cap catch-up to avoid a spiral of death
+    private const float SlowFrameSeconds = 1f / 30f; // slower than this, one substep a frame
     private const float MaxFrameDelta = 0.1f;   // ignore huge gaps (loading screens, hitches)
     private const float BiomechanicalSettleDuration = 1.25f;
     private const float RagdollSleepThreshold = 0.03f;
@@ -7517,6 +7518,25 @@ public unsafe partial class RagdollController : IDisposable
     // range, real collider motion blocks the resting fast-path, so the next contact is stepped.
     private const float NpcColliderWakeRadiusSq = 2.5f * 2.5f;
 
+    // A collider within this of the corpse's bounds (beyond its own extent) could touch it now.
+    private const float NpcWakeContactMargin = 0.1f;
+
+    /// <summary>
+    /// A collider moved. It keeps the corpse awake only if it could touch it: with the corpse's
+    /// bounds known and the collider's extent given, only when it is within that extent of them. A
+    /// crowd fighting over a body no longer holds it awake while nobody is touching it.
+    /// </summary>
+    private void NoteNpcColliderMoved(Vector3 colliderPos, float extent)
+    {
+        if (hasCorpseBounds && extent > 0f)
+        {
+            if (DistanceToCorpseBounds(colliderPos) <= extent + NpcWakeContactMargin)
+                npcColliderMovedNearCorpse = true;
+            return;
+        }
+        NoteNpcColliderMoved(colliderPos);
+    }
+
     private void NoteNpcColliderMoved(Vector3 colliderPos)
     {
         if (Vector3.DistanceSquared(colliderPos, corpseWakeCenter) < NpcColliderWakeRadiusSq)
@@ -7532,7 +7552,8 @@ public unsafe partial class RagdollController : IDisposable
                 ref bone.PreviousPosition, ref bone.PreviousOrientation, ref bone.HasPreviousPose, dt))
         {
             SoftenNpcTraversalKinematicVelocity(body);
-            NoteNpcColliderMoved(targetPosition);
+            var scale = bone.AppliedCollisionScale > 0f ? bone.AppliedCollisionScale : 1f;
+            NoteNpcColliderMoved(targetPosition, (bone.BaseHalfLength + bone.BaseRadius) * scale);
         }
     }
 
@@ -8523,7 +8544,11 @@ public unsafe partial class RagdollController : IDisposable
             meshCollisionTicks = meshSolveTicks = 0;
             var maxLinear = activeRagdollIsGeneric ? GenericMaxLinearVelocity : HumanMaxLinearVelocity;
             var maxAngular = activeRagdollIsGeneric ? GenericMaxAngularVelocity : HumanMaxAngularVelocity;
-            while (physicsAccumulator >= FixedTimestep && substeps < MaxSubstepsPerFrame)
+            // In a slow frame (a crowd of corpses, a hitch) one substep only: catching up with
+            // several made each slow frame slower still, every corpse multiplying it. The corpse
+            // moves in slow motion for those frames instead.
+            var substepCap = dt > SlowFrameSeconds ? 1 : MaxSubstepsPerFrame;
+            while (physicsAccumulator >= FixedTimestep && substeps < substepCap)
             {
                 // Snapshot the pre-tick bone pose for render interpolation. Overwritten each
                 // iteration, so it ends as the state immediately before the final tick.
@@ -8564,7 +8589,7 @@ public unsafe partial class RagdollController : IDisposable
             ReportMeshPhysicsBudget(meshFrameStart, substeps);
             // If we hit the substep cap (severe hitch / very low fps), drop the backlog so
             // we don't fire a burst of catch-up steps on the next frame (spiral of death).
-            if (substeps == MaxSubstepsPerFrame)
+            if (substeps == substepCap)
                 physicsAccumulator = 0f;
         }
         else
