@@ -15,10 +15,13 @@ Checks:
 - a path into the house goes through the door and stays on the floor;
 - the ramp leads to the terrace; the sheer island is not reachable — the "spawned off the map" bug;
 - a DetourCrowd of 50 agents closes on a target, those that reach their spot stay still and none keeps
-  walking once the crowd has gathered — the "circling" bug — and the update is cheap.
+  walking once the crowd has gathered — the "circling" bug — and the update is cheap;
+- a flood fill from where the player stands cuts off what cannot be walked to (the roof, the island),
+  keeping the house floor and the terrace — the "mesh outside the bridge" seen in game.
 
-Measured on the development machine (2026-11-13, tile 64 cells = 19 m): the scene builds in about
-0.15 s; the crowd update for 50 agents averages 0.6–0.8 ms. A handful of updates in the first seconds take
-up to 8 ms while .NET re-compiles hot code (with `DOTNET_TieredCompilation=0`: none over 3 ms, worst
-0.9 ms, mean 0.37 ms). 34–40 of 50 reach their exact spot; the rest stand just behind them, all within
-8 m of the target, the busiest moving 0.3 m in the last second.
+Measured on the development machine (2026-11-13, tile 64 cells = 19 m, the game running alongside): the
+scene builds in about 0.15 s. The crowd is run twice and the second run measured, because .NET re-compiles
+hot code during the first seconds (first-run updates of up to 8–12 ms; none with
+`DOTNET_TieredCompilation=0`): warmed up, 50 agents cost 0.34 ms an update on average, at worst 1–3 ms,
+none over 3 ms. The plugin must warm the crowd up the same way before a fight (phase B). 34–40 of 50 reach
+their exact spot; the rest stand just behind them, all within 8 m of the target.

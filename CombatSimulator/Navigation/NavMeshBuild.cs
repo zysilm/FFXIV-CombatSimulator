@@ -105,6 +105,51 @@ public static class NavMeshBuild
         return added > 0 ? mesh : null;
     }
 
+    /// <summary>
+    /// Keep only what can be walked to from the seed polygon (where the player stands): every polygon
+    /// not connected to it (railing tops, roofs, ledges, islands) loses its walkable flag, so no query or
+    /// path ever lands there. Returns how many polygons were cut off.
+    /// </summary>
+    public static int MarkUnreachable(DtNavMesh nav, long seed)
+    {
+        var reached = new HashSet<long>();
+        if (seed != 0 && nav.IsValidPolyRef(seed))
+        {
+            var open = new Queue<long>();
+            reached.Add(seed);
+            open.Enqueue(seed);
+            while (open.Count > 0)
+            {
+                var current = open.Dequeue();
+                nav.GetTileAndPolyByRefUnsafe(current, out var tile, out var poly);
+                for (var link = poly.firstLink; link != DtDetour.DT_NULL_LINK; link = tile.links[link].next)
+                {
+                    var next = tile.links[link].refs;
+                    if (next != 0 && reached.Add(next))
+                        open.Enqueue(next);
+                }
+            }
+        }
+
+        var cut = 0;
+        for (var i = 0; i < nav.GetMaxTiles(); i++)
+        {
+            var tile = nav.GetTile(i);
+            if (tile?.data?.header == null)
+                continue;
+            var baseRef = nav.GetPolyRefBase(tile);
+            for (var p = 0; p < tile.data.header.polyCount; p++)
+            {
+                var polyRef = baseRef | (long)p;
+                if (reached.Contains(polyRef))
+                    continue;
+                nav.SetPolyFlags(polyRef, 0);
+                cut++;
+            }
+        }
+        return cut;
+    }
+
     private static DtMeshData? ToMeshData(RcBuilderResult result, Settings s)
     {
         var poly = result.Mesh;

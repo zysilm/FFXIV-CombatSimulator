@@ -108,6 +108,19 @@ var cases = new (string, Action)[]
         Check(island.Ref == 0 || last != island.Ref, "the sheer island was reachable");
     }),
     ("a crowd of 50 closes on a target, stops, and does not orbit; and it is cheap", () => {
+        // Run once to warm .NET up (it re-compiles hot code during the first seconds, and longer when
+        // the machine is busy), then measure a second, identical run: the steady cost.
+        RunCrowd(report: false);
+        RunCrowd(report: true);
+    }),
+    // Last: it changes the mesh's flags.
+    ("only what can be walked to from where the player stands is kept: roof and island are cut off", () => {
+        CutOff();
+    }),
+};
+
+void RunCrowd(bool report)
+{
         var crowd = new DtCrowd(new DtCrowdConfig(0.6f), mesh!);
         var agentParams = new DtCrowdAgentParams
         {
@@ -171,6 +184,7 @@ var cases = new (string, Action)[]
             else
                 for (var i = 0; i < agents.Count; i++) lastPositions[i] = NavMeshBuild.ToVector(agents[i].Agent.npos);
         }
+        if (!report) return;
         Console.WriteLine($"      updates over 3 ms after the first second: {spikes} of {frames - 60}, {spikesWithGc} of them during a GC; {GC.CollectionCount(0) - gcStart} gen-0 GCs; {(GC.GetAllocatedBytesForCurrentThread() - allocStart) / frames / 1024.0:F1} KB allocated per update");
         var meanMs = updateTicks * 1000.0 / Stopwatch.Frequency / frames;
         var near = agents.Count(a => Vector2.Distance(new(a.Agent.npos.X, a.Agent.npos.Z), new(target.X, target.Z)) < 8f);
@@ -183,11 +197,21 @@ var cases = new (string, Action)[]
         Check(settled < 0.1f, "an agent moves again after arriving");
         Check(travelled.Max() < 0.6f, "an agent keeps walking (orbiting) once the crowd has gathered");
         Check(maxY < 0.5f, "an agent left the ground floor");
-        // A few updates in the first seconds are slow while .NET re-compiles hot code (gone with
-        // DOTNET_TieredCompilation=0: worst 0.9 ms); what matters is the steady cost.
         Check(meanMs < 2.0 && spikes <= (frames - 60) / 50, "the crowd update is too slow");
-    }),
-};
+}
+
+void CutOff()
+{
+        var player = Snap(new Vector3(0, 0, -15));
+        var roof = Snap(new Vector3(0, 4.5f, 0)); var island = Snap(new Vector3(-25, 10.2f, 25));
+        var cut = NavMeshBuild.MarkUnreachable(mesh!, player.Ref);
+        var floor = Snap(new Vector3(0, 0.3f, 0)); var terrace = Snap(new Vector3(25, 3.2f, 0));
+        var roofNow = Snap(new Vector3(0, 4.5f, 0), 0.6f); var islandNow = Snap(new Vector3(-25, 10.2f, 25), 0.6f);
+        Console.WriteLine($"      {cut} polygons cut off; house floor kept {floor.Ref != 0}, terrace kept {terrace.Ref != 0}; roof found now {roofNow.Ref != 0}, island found now {islandNow.Ref != 0}");
+        Check(roof.Ref != 0 && island.Ref != 0, "the roof or island had no mesh to cut");
+        Check(floor.Ref != 0 && terrace.Ref != 0, "a reachable place was cut off");
+        Check(roofNow.Ref == 0 && islandNow.Ref == 0, "an unreachable surface is still offered");
+}
 
 var failures = 0;
 foreach (var (name, test) in cases)

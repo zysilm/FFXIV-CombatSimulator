@@ -124,7 +124,9 @@ public sealed class NavMeshService : IDisposable
                 Territory = buildingTerritory;
                 Center = buildingCenter;
                 var tiles = CountTiles(built, out var polys);
-                Status = $"ready: {tiles} tiles, {polys:N0} polygons, built in {buildClock.ElapsedMilliseconds / 1000.0:F1} s";
+                // Only what can be walked to from where the player stood when it was built.
+                var cut = TryFloor(buildingCenter, 2.5f, out _, out var seed) ? NavMeshBuild.MarkUnreachable(built, seed) : 0;
+                Status = $"ready: {tiles} tiles, {polys:N0} polygons ({cut:N0} out of reach), built in {buildClock.ElapsedMilliseconds / 1000.0:F1} s";
                 log.Info($"NavMesh: {Status} from {buildingTriangles:N0} triangles.");
                 debugTimer = 0f;
             }
@@ -216,7 +218,10 @@ public sealed class NavMeshService : IDisposable
                     continue;
 
                 var hash = (uint)(i * 7919 + p * 104729);
-                var color = new Vector4(0.2f + (hash % 97) / 160f, 0.45f + (hash / 97 % 89) / 200f, 0.9f - (hash / 8633 % 83) / 200f, 0.38f);
+                // Out of reach (cut off by the flood fill): dim red.
+                var color = (poly.flags & NavMeshBuild.WalkableFlag) == 0
+                    ? new Vector4(0.8f, 0.15f, 0.1f, 0.22f)
+                    : new Vector4(0.2f + (hash % 97) / 160f, 0.45f + (hash / 97 % 89) / 200f, 0.9f - (hash / 8633 % 83) / 200f, 0.38f);
                 for (var t = 0; t < detail.triCount; t++)
                 {
                     var tri = (detail.triBase + t) * 4;

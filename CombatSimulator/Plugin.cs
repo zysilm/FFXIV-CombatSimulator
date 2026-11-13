@@ -745,6 +745,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
                             ? $"floor under you at y {floor.Y:F2} (you are at {navPlayer.Position.Y:F2})"
                             : "no floor under you within 2 m";
                         chatGui.Print($"[CombatSim] Navigation mesh: {floorText}");
+                        log.Info($"NavMesh: {floorText} at {navPlayer.Position}");
                     }
                     chatGui.Print($"[CombatSim] Navigation mesh: {navMesh.Status}" + (navMesh.ShowDebug ? " (shown)" : ""));
                     break;
