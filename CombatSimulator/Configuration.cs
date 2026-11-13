@@ -502,12 +502,12 @@ public partial class Configuration : IPluginConfiguration
     public List<RecentNpcEntry> RecentNpcEntries { get; set; } = new();
 
     // -- Action Mode --------------------------------------------------------
-    // A toggleable real-time action layer that replaces the tab-target / GCD
-    // interaction. Player attacks/guard come from hotbar actions remapped by
-    // actionId (the game resolves keyboard/gamepad for us); enemy attacks
-    // telegraph from a wind-up snapshot, then resolve by hitbox at the active frame. When OFF,
-    // every seam falls back to the original simulation behavior.
-    public bool ActionMode { get; set; } = true;
+    // Combat is real-time action combat: player attacks/guard come from hotbar actions remapped by
+    // actionId (the game resolves keyboard/gamepad for us); enemy attacks telegraph from a wind-up
+    // snapshot, then resolve by hitbox at the active frame. The tab-target mode it once replaced is
+    // gone (2026-11-13); the only other combat is the experimental Fighting Mode, which runs its own
+    // 1v1 lane and takes the simulation's plain paths.
+    [JsonIgnore] public bool ActionMode => !FightingMode;
 
     // Fighting Mode (Experimental): 1v1 side-view combat layer. It owns player
     // action routing, constrains the player/enemy pair onto a 2D lane, and drives
@@ -755,6 +755,8 @@ public partial class Configuration : IPluginConfiguration
         "EnemyTelegraphedCasts", "EnemyMaxCastSeconds", "EnemyKitIncludeAoe", "EnemyHpPhaseSkills",
         "KeepCompanionsOnReset", "PartyCommandRange", "PartyCommandRangeRandomness",
         "PartyMeleeAttackRange", "PartyRangedAttackRange",
+        // Action combat is the only combat (2026-11-13).
+        "ActionMode",
         // The old movers, replaced by the crowd on the plugin's navigation mesh (2026-11-13).
         "EnableTargetApproach", "UseSoloTargetFormationWhenNoCompanions", "TargetApproachDistance",
         "UseVNavmeshTargetApproach",
@@ -991,10 +993,8 @@ public partial class Configuration : IPluginConfiguration
 
     public void ResetActionModeDefaults(bool preserveEnabled = true)
     {
-        var enabled = ActionMode;
         var defaults = new Configuration();
 
-        ActionMode = preserveEnabled ? enabled : defaults.ActionMode;
         ActionGuardId = defaults.ActionGuardId;
         ActionSkill1Id = defaults.ActionSkill1Id;
         ActionSkill2Id = defaults.ActionSkill2Id;

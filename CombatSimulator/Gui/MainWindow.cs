@@ -463,14 +463,7 @@ public partial class MainWindow : IDisposable
 
         if (!compact)
         {
-            var actionMode = config.ActionMode;
-            if (ImGui.Checkbox("Action Mode", ref actionMode))
-            {
-                config.ActionMode = actionMode;
-                if (actionMode)
-                    config.FightingMode = false;
-                config.Save();
-            }
+            ImGui.TextDisabled("Action combat");
             HelpMarker(BuildActionModeQuickHelp());
 
             // Hidden pending a security review of its direct position/rotation writes
@@ -481,8 +474,6 @@ public partial class MainWindow : IDisposable
                 if (ImGui.Checkbox("Fighting Mode [Experimental]", ref fightingMode))
                 {
                     config.FightingMode = fightingMode;
-                    if (fightingMode)
-                        config.ActionMode = false;
                     config.Save();
                 }
                 HelpMarker("Experimental 1v1 side-view mode. Press an attack on an enemy to lock the pair into a 2D fighting lane and side camera. Ignores profiles while active.");
@@ -771,7 +762,6 @@ public partial class MainWindow : IDisposable
 
         if (config.FightingMode)
         {
-            config.ActionMode = false;
             config.EnableCombatCompanions = false;
             config.SensePartyMembers = false;
             config.EnableMapPlayerEnemySensing = false;
@@ -2133,8 +2123,6 @@ public partial class MainWindow : IDisposable
         if (ImGui.Checkbox("Enable Fighting Mode", ref fightingMode))
         {
             config.FightingMode = fightingMode;
-            if (fightingMode)
-                config.ActionMode = false;
             config.Save();
         }
         HelpMarker("1v1 side-view combat mode. The first player attack against an enemy locks the pair into a fighting-game lane and camera: 2D movement (forward/back + jump), weapon-contact hit detection, timed guard against telegraphs, a dedicated fighting AI, and a KO camera.");
@@ -2594,12 +2582,12 @@ public partial class MainWindow : IDisposable
 
     private void DrawActionModeSection()
     {
-        if (!ImGui.CollapsingHeader("Action Mode [Experimental]"))
+        if (!ImGui.CollapsingHeader("Action Combat"))
             return;
 
         if (!config.ActionMode)
         {
-            ImGui.TextWrapped("Action Mode is off. Turn it on with the Action Mode checkbox in the main window.");
+            ImGui.TextWrapped("Fighting Mode is on: it runs its own 1v1 combat.");
             return;
         }
 
