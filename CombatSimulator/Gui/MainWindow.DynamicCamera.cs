@@ -43,7 +43,7 @@ public partial class MainWindow
         DrawDynamicCamStatus();
 
         var directs = Array.FindIndex(DynCamDirects, d => d.Combat == config.DynCamCombatFraming && d.Death == config.DynCamDeathFraming);
-        ImGui.SetNextItemWidth(200);
+        ImGui.SetNextItemWidth(CameraItemWidth());
         if (PresetCombo("Directs##dyncam", DynCamDirectsLabels, directs, out var pickedDirects))
         {
             (config.DynCamCombatFraming, config.DynCamDeathFraming) = DynCamDirects[pickedDirects];
@@ -55,7 +55,7 @@ public partial class MainWindow
         if (config.DynCamCombatFraming)
         {
             var size = Array.FindIndex(DynCamBodySizes, s => Near(s, config.DynCamSubjectScreenShare));
-            ImGui.SetNextItemWidth(200);
+            ImGui.SetNextItemWidth(CameraItemWidth());
             if (PresetCombo("Character size##dyncam", DynCamBodySizeLabels, size, out var pickedSize))
             {
                 config.DynCamSubjectScreenShare = DynCamBodySizes[pickedSize];
@@ -64,7 +64,7 @@ public partial class MainWindow
             HelpMarker("How much of the screen height your character fills in combat. Scroll-wheel zoom still works and is remembered.");
 
             var enemies = Array.FindIndex(DynCamEnemies, e => e.FitVolume == config.DynCamEnemyVolumeFitting && Near(e.CrowdRelief, config.DynCamCrowdingRelief));
-            ImGui.SetNextItemWidth(200);
+            ImGui.SetNextItemWidth(CameraItemWidth());
             if (PresetCombo("Keep enemies in frame##dyncam", DynCamEnemiesLabels, enemies, out var pickedEnemies))
             {
                 (config.DynCamEnemyVolumeFitting, config.DynCamCrowdingRelief) = DynCamEnemies[pickedEnemies];
@@ -74,7 +74,7 @@ public partial class MainWindow
 
             var position = Array.FindIndex(DynCamPositions, p => Near(p.Frac, config.DynCamShoulderScreenFrac) &&
                 (p.Frac == 0f || p.Side == config.DynCamShoulderSide));
-            ImGui.SetNextItemWidth(200);
+            ImGui.SetNextItemWidth(CameraItemWidth());
             if (PresetCombo("Character position##dyncam", DynCamPositionLabels, position, out var pickedPosition))
             {
                 (config.DynCamShoulderScreenFrac, config.DynCamShoulderSide) = DynCamPositions[pickedPosition];
@@ -83,7 +83,7 @@ public partial class MainWindow
             HelpMarker("Where the character sits on screen. Auto keeps them on the far side from whatever they are fighting.");
 
             var response = Array.FindIndex(DynCamResponses, r => Near(r.Follow, config.DynCamPivotSmoothing) && Near(r.Zoom, config.DynCamDistanceSmoothing));
-            ImGui.SetNextItemWidth(200);
+            ImGui.SetNextItemWidth(CameraItemWidth());
             if (PresetCombo("Responsiveness##dyncam", DynCamResponseLabels, response, out var pickedResponse))
             {
                 (config.DynCamPivotSmoothing, config.DynCamDistanceSmoothing) = DynCamResponses[pickedResponse];
@@ -95,7 +95,7 @@ public partial class MainWindow
         if (config.DynCamDeathFraming)
         {
             var body = config.DynCamDeathBodyVisibility;
-            ImGui.SetNextItemWidth(200);
+            ImGui.SetNextItemWidth(CameraItemWidth());
             if (ImGui.SliderFloat("Body coverage##dyncam", ref body, 0.25f, 2f, "%.2f"))
             {
                 config.DynCamDeathBodyVisibility = body;
@@ -105,7 +105,7 @@ public partial class MainWindow
                        "0.25 head and chest. Above 1.00 adds space around the body. The scroll wheel drives this live during the shot.");
 
             var shot = Array.FindIndex(DynCamDeathShots, s => Near(s.Band, config.DynCamDeathBodyBand) && Near(s.Angle, config.DynCamDeathAngle));
-            ImGui.SetNextItemWidth(200);
+            ImGui.SetNextItemWidth(CameraItemWidth());
             if (PresetCombo("Death shot##dyncam", DynCamDeathShotLabels, shot, out var pickedShot))
             {
                 (config.DynCamDeathBodyBand, config.DynCamDeathAngle) = DynCamDeathShots[pickedShot];

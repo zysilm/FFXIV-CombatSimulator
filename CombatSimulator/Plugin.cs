@@ -479,6 +479,13 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         // npcSelector by DeselectAll during StopSimulation). For real
         // first-time starts this just re-populates the selector so
         // NpcAiController can tick the existing spawns.
+        combatEngine.OnSimulationStarted += SwitchToDirectedCameraForBattle;
+        // (Reset also fires on Stop, when the simulation is no longer active: only a reset mid-battle counts.)
+        combatEngine.OnSimulationReset += () =>
+        {
+            if (combatEngine.State.IsActive)
+                SwitchToDirectedCameraForBattle();
+        };
         combatEngine.OnSimulationStarted += () =>
         {
             foreach (var npc in npcSpawner.SpawnedNpcs)
@@ -1327,6 +1334,17 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     /// Return the highest low corpse surface under an NPC's next foot position. High/flying body
     /// parts are deliberately rejected: this is a small step-over aid, not arbitrary climbing.
     /// </summary>
+    /// <summary>Put the camera in Directed mode for a battle, when that is asked for.</summary>
+    private void SwitchToDirectedCameraForBattle()
+    {
+        if (!config.DirectedCameraOnBattle || (config.EnableDynamicCamera && !config.EnableActiveCamera))
+            return;
+        config.EnableActiveCamera = false;
+        config.EnableDynamicCamera = true;
+        activeCameraController.SetActive(false);
+        config.Save();
+    }
+
     private float? ResolveCorpseTraversalHeight(nint actorAddress, Vector3 position)
     {
         if (!config.NpcCollisionActive)

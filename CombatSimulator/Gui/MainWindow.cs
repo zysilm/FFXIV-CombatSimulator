@@ -3240,12 +3240,15 @@ public partial class MainWindow : IDisposable
     private static readonly string[] ActiveCamVerticalLabels = { "Free", "Locked: level", "Locked: slight tilt", "Locked: strong tilt" };
     private static readonly float[] ActiveCamVerticalAngles = { 0f, 0f, 0.4f, 0.8f };
 
+    /// <summary>Width of the Camera page's controls: most of the page, never narrower than 200 px.</summary>
+    private static float CameraItemWidth() => MathF.Max(200f, ImGui.GetContentRegionAvail().X * 0.6f);
+
     private void DrawActiveCamSection()
     {
         // One mode instead of two Enable switches: Active Camera always took priority over the
         // directed camera when both were on, so "Follow bone" here means exactly that.
         var mode = config.EnableActiveCamera ? 1 : config.EnableDynamicCamera ? 2 : 0;
-        ImGui.SetNextItemWidth(200);
+        ImGui.SetNextItemWidth(CameraItemWidth());
         if (ImGui.Combo("Camera mode##camera", ref mode, CameraModeLabels, CameraModeLabels.Length))
         {
             config.EnableActiveCamera = mode == 1;
@@ -3256,6 +3259,14 @@ public partial class MainWindow : IDisposable
         HelpMarker("Game: the game's own camera.\n" +
                    "Follow bone: the camera tracks a bone of your character; you rotate and zoom freely.\n" +
                    "Directed: the camera frames you over the shoulder in combat and composes a shot when you go down.");
+
+        var directedOnBattle = config.DirectedCameraOnBattle;
+        if (ImGui.Checkbox("Switch to Directed when a battle starts##camera", ref directedOnBattle))
+        {
+            config.DirectedCameraOnBattle = directedOnBattle;
+            config.Save();
+        }
+        HelpMarker("Start or Reset puts the camera in Directed mode, whatever mode it was in.");
 
         if (!config.EnableActiveCamera)
             return;
@@ -3273,7 +3284,7 @@ public partial class MainWindow : IDisposable
         for (int b = 0; b < bones.Length; b++)
             if (bones[b].BoneName == config.ActiveCameraBoneName) { boneIdx = b; break; }
 
-        ImGui.SetNextItemWidth(200);
+        ImGui.SetNextItemWidth(CameraItemWidth());
         if (ImGui.Combo("Center Bone##activecam", ref boneIdx, boneNames, boneNames.Length))
         {
             config.ActiveCameraBoneName = bones[boneIdx].BoneName;
@@ -3281,7 +3292,7 @@ public partial class MainWindow : IDisposable
         }
 
         var height = config.ActiveCameraHeightOffset;
-        ImGui.SetNextItemWidth(200);
+        ImGui.SetNextItemWidth(CameraItemWidth());
         if (ImGui.SliderFloat("Height Offset##activecam", ref height, -1f, 3f, "%.2f"))
         {
             config.ActiveCameraHeightOffset = height;
@@ -3291,7 +3302,7 @@ public partial class MainWindow : IDisposable
         var vertical = !config.ActiveCameraLockVertical ? 0
             : config.ActiveCameraVerticalAngle == 0f ? 1
             : Array.FindIndex(ActiveCamVerticalAngles, a => a > 0f && MathF.Abs(a - config.ActiveCameraVerticalAngle) < 0.005f);
-        ImGui.SetNextItemWidth(200);
+        ImGui.SetNextItemWidth(CameraItemWidth());
         if (PresetCombo("Vertical angle##activecam", ActiveCamVerticalLabels, vertical, out var pickedVertical))
         {
             config.ActiveCameraLockVertical = pickedVertical > 0;
@@ -3309,7 +3320,7 @@ public partial class MainWindow : IDisposable
         HelpMarker("The camera passes through walls and objects, and characters no longer fade out when it comes very close.");
 
         var minDist = config.ActiveCameraMinZoomDistance;
-        ImGui.SetNextItemWidth(200);
+        ImGui.SetNextItemWidth(CameraItemWidth());
         if (ImGui.SliderFloat("Min Zoom Distance##activecam", ref minDist, 0.0f, 2.0f, "%.2f"))
         {
             config.ActiveCameraMinZoomDistance = minDist;

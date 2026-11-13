@@ -145,6 +145,8 @@ public partial class Configuration : IPluginConfiguration
     public bool ShowAllBarLabels { get; set; } = false;
     // The battle's result across the screen (and why), kept until the battle is reset.
     public bool ShowResultBanner { get; set; } = true;
+    // Starting or resetting a battle switches the camera to the Directed camera.
+    public bool DirectedCameraOnBattle { get; set; } = false;
 
     // Simulation
     public float DamageMultiplier { get; set; } = 1.0f;
