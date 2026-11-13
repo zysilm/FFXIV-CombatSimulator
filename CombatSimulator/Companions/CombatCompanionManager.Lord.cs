@@ -135,7 +135,7 @@ public unsafe partial class CombatCompanionManager
             return true;
         }
 
-        StopMove(companion);
+        HaltForEmote(companion);
         RotateToward(companion, body, deltaTime);
         if (!prayerAtPost)
         {

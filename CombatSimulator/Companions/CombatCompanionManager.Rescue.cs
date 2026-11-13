@@ -169,7 +169,7 @@ public unsafe partial class CombatCompanionManager
             return true;
         }
 
-        StopMove(companion);
+        HaltForEmote(companion);
         RotateToward(companion, at, deltaTime);
         if (!rescue.Channelling)
         {
@@ -299,7 +299,7 @@ public unsafe partial class CombatCompanionManager
 
         ClearCompanionActionState(companion);
         ClearCompanionTargetState(companion);
-        StopMove(companion);
+        HaltForEmote(companion);
         companion.AiState = CompanionAiState.Captive;
         if (!companion.CaptiveEmotePlayed && companion.BattleChara != null)
         {
@@ -311,6 +311,18 @@ public unsafe partial class CombatCompanionManager
         if (companion.BattleChara != null)
             AnimationController.HoldEmoteLoop((Character*)companion.BattleChara, companion.CaptiveLoop);
         return true;
+    }
+
+    /// <summary>
+    /// Stand still to hold an emote. Stopping alone left the companion marked as moving, and every
+    /// later stop then cleared its base timeline: the held emote was wiped and restarted each frame,
+    /// so it never showed. Marking it idle lets the emote loop stay.
+    /// </summary>
+    private void HaltForEmote(CombatCompanion companion)
+    {
+        StopMove(companion);
+        if (companion.BattleChara != null)
+            ActorVisualStateController.ApplyCombatIdle((Character*)companion.BattleChara, companion.VisualState);
     }
 
     private void ClearRescues()
