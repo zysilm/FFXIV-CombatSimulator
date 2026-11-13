@@ -442,6 +442,11 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             log.Info($"Spawned companion '{companion.Name}' registered as friendly combatant.");
         };
         companionManager.OnCompanionDeathRagdoll = OnCompanionDeathRagdoll;
+        companionManager.OnCompanionRevived = address =>
+        {
+            RemoveNpcRagdoll(address);
+            weaponDropController.RemoveFor(address);
+        };
         companionManager.OnSpawnError = msg =>
         {
             chatGui.PrintError($"[CombatSim] Party error: {msg}");
@@ -1211,10 +1216,20 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         controller.SetDismemberedBones(Array.Empty<string>());
         // Shares the enemy stagger budget — a wipe drops companions alongside enemies, and they are
         // the same kind of load. See ActivateNpcDeathRagdoll.
-        controller.Activate(address, config.RagdollActivationDelay,
-            Animation.RagdollTrigger.ClampMode(config.RagdollTriggerMode), npcRagdollStaggerBudget);
-        npcRagdollStaggerBudget = MathF.Min(
-            npcRagdollStaggerBudget + NpcRagdollActivationStagger, NpcRagdollMaxStagger);
+        // An executed captive drops at once, from the kneel.
+        var executed = false;
+        foreach (var companion in companionManager.Companions)
+            if (companion.Address == address)
+                executed = companion.State.Executed;
+        if (executed)
+            controller.Activate(address, 0f, Animation.RagdollTriggerMode.FixedDelay);
+        else
+        {
+            controller.Activate(address, config.RagdollActivationDelay,
+                Animation.RagdollTrigger.ClampMode(config.RagdollTriggerMode), npcRagdollStaggerBudget);
+            npcRagdollStaggerBudget = MathF.Min(
+                npcRagdollStaggerBudget + NpcRagdollActivationStagger, NpcRagdollMaxStagger);
+        }
         npcRagdolls[address] = controller;
     }
 

@@ -20,6 +20,16 @@ public class SimulatedEntityState
     /// </summary>
     public float HitReferenceHp { get; set; }
 
+    /// <summary>
+    /// Of the player's side: held at 1 HP, kneeling in the chosen emote, unable to act, until an
+    /// enemy executes them or a friend frees them (War Generator hostages).
+    /// </summary>
+    public bool IsCaptive { get; set; }
+    /// <summary>Died by execution while captive: the body drops at once, from the kneel.</summary>
+    public bool Executed { get; set; }
+    /// <summary>Times the damage enemies do to this one (one raising a friend takes more).</summary>
+    public float IncomingDamageScale { get; set; } = 1f;
+
     // Vitals
     public int CurrentHp { get; set; }
     public int MaxHp { get; set; }
@@ -98,6 +108,9 @@ public class SimulatedEntityState
 
     public void Reset()
     {
+        IsCaptive = false;
+        Executed = false;
+        IncomingDamageScale = 1f;
         CurrentHp = MaxHp;
         CurrentMp = MaxMp;
         AnimationLock = 0;

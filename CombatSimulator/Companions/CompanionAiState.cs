@@ -12,4 +12,6 @@ public enum CompanionAiState
     CombatReady,
     ActionLocked,
     Dead,
+    /// <summary>Held at 1 HP, kneeling, until executed or freed (War Generator hostages).</summary>
+    Captive,
 }

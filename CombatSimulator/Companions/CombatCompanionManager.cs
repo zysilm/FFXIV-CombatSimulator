@@ -23,7 +23,7 @@ using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 
 namespace CombatSimulator.Companions;
 
-public unsafe class CombatCompanionManager : IDisposable
+public unsafe partial class CombatCompanionManager : IDisposable
 {
     private readonly IObjectTable objectTable;
     private readonly IClientState clientState;
@@ -487,6 +487,7 @@ public unsafe class CombatCompanionManager : IDisposable
             plannerAccumulatedDt = 0f;
         }
 
+        TickRescues(deltaTime);
         for (var i = 0; i < liveCompanions.Count; i++)
             TickCompanion(liveCompanions[i], deltaTime, enemies, i, liveCompanions.Count, terrainCache);
 
@@ -604,6 +605,9 @@ public unsafe class CombatCompanionManager : IDisposable
         candidates.RemoveAll(c => !c.State.IsAlive);
         if (candidates.Count == 0)
             return null;
+        // A captive is executed only by an enemy with nobody else left to fight.
+        if (candidates.Exists(c => !c.State.IsCaptive))
+            candidates.RemoveAll(c => c.State.IsCaptive);
 
         var validTargetIds = candidates.Select(c => c.EntityId).ToHashSet();
         foreach (var kv in enemyTargetByEnemyId.ToList())
@@ -796,11 +800,16 @@ public unsafe class CombatCompanionManager : IDisposable
         selectedFocusTargetId = 0;
         lastFocusTargetId = 0;
 
+        ClearRescues();
         foreach (var companion in companions)
         {
             companion.State.CurrentHp = companion.State.MaxHp;
+            companion.State.IsCaptive = false;
+            companion.State.Executed = false;
+            companion.State.IncomingDamageScale = 1f;
             companion.State.AnimationLock = 0;
             companion.DeathAnimationPlayed = false;
+            companion.CaptiveEmotePlayed = false;
             companion.EquipmentVariantApplied = false;
             companion.AutoAttackTimer = 0;
             ClearCompanionTargetState(companion);
@@ -842,6 +851,7 @@ public unsafe class CombatCompanionManager : IDisposable
 
         allocatedIndices.Clear();
         pathStates.Clear();
+        rescues.Clear();
         enemyTargetByEnemyId.Clear();
         threatByEnemy.Clear();
         playerRecentDamage = 0;
@@ -1187,7 +1197,9 @@ public unsafe class CombatCompanionManager : IDisposable
             if (!companion.DeathAnimationPlayed)
             {
                 ApplyCompanionDefeatAppearance(companion);
-                animationController.PlayDeathAnimation(ToSimulatedNpcView(companion));
+                // (An executed captive drops from its kneel straight into the ragdoll.)
+                if (!companion.State.Executed)
+                    animationController.PlayDeathAnimation(ToSimulatedNpcView(companion));
                 if (config.PartyCompanionDeathRagdoll && companion.Address != nint.Zero)
                     OnCompanionDeathRagdoll?.Invoke(companion.Address);
                 companion.DeathAnimationPlayed = true;
@@ -1195,6 +1207,11 @@ public unsafe class CombatCompanionManager : IDisposable
             }
             return;
         }
+
+        if (TickCaptive(companion))
+            return;
+        if (TickRescuer(companion, deltaTime, terrainCache))
+            return;
 
         if (!IsWithinCommandRange(companion))
         {

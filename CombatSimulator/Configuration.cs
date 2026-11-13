@@ -481,7 +481,12 @@ public partial class Configuration : IPluginConfiguration
     public int SpawnCount { get; set; } = 1;
     public int AllyStrength { get; set; } = 0;          // as EnemyStrength, for allies from the NPC catalog
     public int AllyLevel { get; set; } = 0;
-    public float MapSpawnRadius { get; set; } = 60.0f;  // yalms from player, opponents placed on the map
+    public float MapSpawnRadius { get; set; } = 60.0f;
+    // War Generator rules for the player's side. See docs/WAR_GENERATOR.md.
+    public bool WarCaptives { get; set; } = false;
+    public uint WarCaptiveEmoteId { get; set; } = 19; // Kneel
+    public int WarFallenRule { get; set; } = 0;        // WarFallenRule
+    public bool WarRetreat { get; set; } = false;  // yalms from player, opponents placed on the map
     // When true, virtual enemies spawn directly in front of the player using the character's real
     // in-game facing (GameObject.Rotation, NOT any ragdoll/visual facing), instead of a random
     // direction around the player. Also governs regenerate/refresh on combat reset. Default off.

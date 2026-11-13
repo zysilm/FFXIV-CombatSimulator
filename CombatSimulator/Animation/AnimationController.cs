@@ -1993,6 +1993,37 @@ public unsafe class AnimationController : IDisposable
     }
 
     /// <summary>
+    /// Hold an emote (by its Emote sheet id) on any character, the player included: its intro, then
+    /// its loop. False when the emote has no animation.
+    /// </summary>
+    public bool PlayEmoteOn(Character* character, uint emoteId)
+    {
+        if (character == null || emoteId == 0)
+            return false;
+        // Emotes are humanoid animations: a creature of another build has none to play.
+        if (((byte*)&character->DrawData.CustomizeData)[0] == 0)
+            return false;
+        try
+        {
+            var row = dataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>().GetRowOrDefault(emoteId);
+            if (row is not { } emote)
+                return false;
+            var loop = (ushort)emote.ActionTimeline[0].RowId;
+            var intro = (ushort)emote.ActionTimeline[1].RowId;
+            if (loop == 0 && intro == 0)
+                return false;
+            BodyTypeAnimationFallback.EnsureEmoteFiles(character, loop, intro);
+            EmotePlayer.PlayLoopedEmote(character, loop, intro);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"Failed to play emote {emoteId}.");
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Play an emote on an NPC character (looped: intro then BaseOverride loop).
     /// </summary>
     public void PlayNpcEmote(SimulatedNpc npc, ushort loopTimeline, ushort introTimeline)

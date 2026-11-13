@@ -1473,6 +1473,7 @@ public partial class MainWindow : IDisposable
             ImGui.TextColored(new Vector4(1f, 0.8f, 0f, 1f), $"({npcSpawner.PendingCount} pending...)");
         }
 
+        DrawWarRules();
         DrawWarAllies();
 
         // Spawned NPCs list with HP bars and despawn buttons
@@ -1674,6 +1675,96 @@ public partial class MainWindow : IDisposable
                 config.Save();
             }
         }
+    }
+
+    private static readonly string[] WarFallenRuleNames = { "Stay down", "Spring and Autumn", "Warring States" };
+    private string warCaptiveEmoteFilter = string.Empty;
+
+    /// <summary>What becomes of your side's fallen: hostages, and who may be raised.</summary>
+    private void DrawWarRules()
+    {
+        ImGui.Spacing();
+        if (!ImGui.CollapsingHeader("Battle Rules##warRules"))
+            return;
+        ImGui.Indent();
+
+        var captives = config.WarCaptives;
+        if (ImGui.Checkbox("Hostages##warCaptives", ref captives))
+        {
+            config.WarCaptives = captives;
+            config.Save();
+        }
+        HelpMarker("Your side only. A blow that would fell you or an ally leaves them at 1 HP instead, taken captive: " +
+                   "they hold the emote chosen here and cannot move or act.\n" +
+                   "An enemy with nobody else left to fight walks over, stands over the captive a moment and executes them: " +
+                   "the body drops at once.\nWinning the battle frees every captive.");
+
+        if (captives)
+        {
+            ImGui.SameLine();
+            DrawWarCaptiveEmotePicker();
+        }
+
+        var rule = Math.Clamp(config.WarFallenRule, 0, WarFallenRuleNames.Length - 1);
+        ImGui.SetNextItemWidth(200);
+        if (ImGui.Combo("The fallen##warFallen", ref rule, WarFallenRuleNames, WarFallenRuleNames.Length))
+        {
+            config.WarFallenRule = rule;
+            config.Save();
+        }
+        HelpMarker("Stay down: the fallen of your side stay down.\n\n" +
+                   "Spring and Autumn: an ally runs to a fallen or captive friend (you first) and kneels there " +
+                   $"for {CombatCompanionManager.RaiseSeconds:0} seconds to raise or free them; while at it, that ally takes " +
+                   $"{CombatCompanionManager.RaiserDamageScale:0} times the damage. Killing it first stops the raise.\n\n" +
+                   "Warring States: you are the lord, and nobody is raised, you included. When you fall, your allies are taken captive " +
+                   "to be executed; or, with Retreat, one prays over your body while the others guard it.");
+
+        if (rule == (int)WarFallenRule.WarringStates)
+        {
+            var retreat = config.WarRetreat;
+            if (ImGui.Checkbox("Retreat##warRetreat", ref retreat))
+            {
+                config.WarRetreat = retreat;
+                config.Save();
+            }
+            HelpMarker("When you fall, one ally goes to stand before your body and prays: it cannot raise you or fight, " +
+                       "and takes 4 times the damage. If it falls, the next ally takes its place. The others guard it.\n" +
+                       "Drive the enemy off to the last and the body is recovered. If an enemy reaches the body, " +
+                       "it carries it off (Enemy Control's grab, with its current settings) and the battle is lost.");
+        }
+
+        ImGui.Unindent();
+    }
+
+    private void DrawWarCaptiveEmotePicker()
+    {
+        EnsureEnemyControlGrabEmoteCache();
+        var ids = EnemyControlGrabEmoteIds!;
+        var names = EnemyControlGrabEmoteNames!;
+        var idx = Array.IndexOf(ids, config.WarCaptiveEmoteId);
+        var preview = idx > 0 ? names[idx] : "Kneel";
+
+        ImGui.SetNextItemWidth(200);
+        if (ImGui.BeginCombo("##warCaptiveEmote", preview))
+        {
+            ImGui.SetNextItemWidth(-1);
+            ImGui.InputTextWithHint("##warCaptiveEmoteFilter", "search", ref warCaptiveEmoteFilter, 32);
+            // (Entry 0 of the shared list is Enemy Control's own default pose: not an emote.)
+            for (int i = 1; i < names.Length; i++)
+            {
+                if (warCaptiveEmoteFilter.Length > 0 &&
+                    names[i].IndexOf(warCaptiveEmoteFilter, StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+                if (ImGui.Selectable($"{names[i]}##warEmote{ids[i]}", i == idx))
+                {
+                    config.WarCaptiveEmoteId = ids[i];
+                    config.Save();
+                }
+            }
+            ImGui.EndCombo();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The emote a captive holds (humanoids only; a creature of another build just stands).");
     }
 
     private static readonly string[] WarMapCreatureNames = { "Stay out", "Join the opponents" };

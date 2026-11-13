@@ -212,6 +212,7 @@ public partial class CombatEngine : IDisposable
         playerVictoryTriggered = false;
         enemyVictoryTriggered = false;
         playerInitiatedCombat = false;
+        executionWindups.Clear();
         pendingDeaths.Clear();
         ClearDeferredHits();
 
@@ -327,6 +328,7 @@ public partial class CombatEngine : IDisposable
         playerVictoryTriggered = false;
         enemyVictoryTriggered = false;
         playerInitiatedCombat = false;
+        executionWindups.Clear();
         pendingDeaths.Clear();
         ClearDeferredHits();
         ClearQueuedActions();
@@ -336,13 +338,92 @@ public partial class CombatEngine : IDisposable
         OnSimulationReset?.Invoke();
     }
 
-    public void RevivePlayerInPlace()
+    // An enemy's first try at a captive starts the wind-up; it strikes once the wind-up is over.
+    private const float ExecutionWindupSeconds = 1.5f;
+    private readonly Dictionary<(uint Npc, uint Captive), float> executionWindups = new();
+
+    private bool ExecutionReady(SimulatedNpc npc, SimulatedEntityState captive)
+    {
+        var key = (npc.SimulatedEntityId, captive.EntityId);
+        if (!executionWindups.TryGetValue(key, out var since))
+        {
+            executionWindups[key] = State.SimulationTime;
+            return false;
+        }
+        return State.SimulationTime - since >= ExecutionWindupSeconds;
+    }
+
+    /// <summary>One of the player's side has been taken captive.</summary>
+    public Action<SimulatedEntityState>? OnCaptured { get; set; }
+
+    /// <summary>
+    /// Hold one of the player's side at 1 HP, captive: the player kneels in the chosen emote and can
+    /// neither move nor act; a companion does the same in its own tick.
+    /// </summary>
+    public void TakeCaptive(SimulatedEntityState friend)
+    {
+        if (friend.IsCaptive || !friend.IsAlive)
+            return;
+
+        friend.IsCaptive = true;
+        friend.CurrentHp = Math.Min(friend.CurrentHp, 1);
+        friend.IsCasting = false;
+        friend.CastTimeElapsed = 0;
+        friend.CastActionId = 0;
+        AddLogEntry($"{friend.Name} is taken captive!", CombatLogType.Death);
+
+        if (friend.IsPlayer)
+        {
+            ClearQueuedActions();
+            movementBlockHook.IsBlocking = true;
+            unsafe
+            {
+                var player = Core.Services.ObjectTable.LocalPlayer;
+                if (player != null && player.Address != nint.Zero)
+                    animationController.PlayEmoteOn((Character*)player.Address, config.WarCaptiveEmoteId);
+            }
+        }
+
+        OnCaptured?.Invoke(friend);
+    }
+
+    /// <summary>Free a captive with this share of their HP.</summary>
+    public void ReleaseCaptive(SimulatedEntityState friend, float hpShare)
+    {
+        if (!friend.IsCaptive)
+            return;
+        friend.IsCaptive = false;
+        friend.CurrentHp = Math.Clamp((int)MathF.Ceiling(friend.MaxHp * hpShare), 1, Math.Max(1, friend.MaxHp));
+        foreach (var key in new List<(uint Npc, uint Captive)>(executionWindups.Keys))
+            if (key.Captive == friend.EntityId)
+                executionWindups.Remove(key);
+
+        if (friend.IsPlayer && !playerDeathTriggered)
+        {
+            movementBlockHook.IsBlocking = false;
+            unsafe
+            {
+                var player = Core.Services.ObjectTable.LocalPlayer;
+                if (player != null && player.Address != nint.Zero)
+                    animationController.EmotePlayer.ResetEmote((Character*)player.Address);
+            }
+            animationController.RestorePlayerCombatVisualState();
+        }
+    }
+
+    public void RevivePlayerInPlace() => RevivePlayerInPlace(1f);
+
+    /// <summary>Bring the player back where they lie, with this share of their HP.</summary>
+    public void RevivePlayerInPlace(float hpShare)
     {
         var ps = State.PlayerState;
         if (ps.MaxHp <= 0)
             InitializePlayerState();
 
-        ps.CurrentHp = ps.MaxHp;
+        ps.IsCaptive = false;
+        ps.Executed = false;
+        ps.IncomingDamageScale = 1f;
+        ps.CurrentHp = Math.Clamp((int)MathF.Ceiling(ps.MaxHp * hpShare), 1, Math.Max(1, ps.MaxHp));
         ps.CurrentMp = ps.MaxMp;
         ps.AnimationLock = 0;
         ps.GcdRemaining = 0;
@@ -484,6 +565,11 @@ public partial class CombatEngine : IDisposable
         if (!State.PlayerState.IsAlive)
         {
             result.FailReason = "Player is dead.";
+            return result;
+        }
+        if (State.PlayerState.IsCaptive)
+        {
+            result.FailReason = "Player is held captive.";
             return result;
         }
 
@@ -713,6 +799,13 @@ public partial class CombatEngine : IDisposable
             return result;
         }
 
+        // An execution is not a passing blow: the enemy stands over the captive a moment first.
+        if (target.IsCaptive && !ExecutionReady(npc, target))
+        {
+            result.FailReason = "Winding up an execution.";
+            return result;
+        }
+
         // A snapshotted telegraph area decides who is hit: everyone hostile standing in it at
         // resolve, and only them — the primary included only if it stayed inside, the guarding
         // player (excludeTargetId) spared without sparing the companions next to them.
@@ -809,7 +902,7 @@ public partial class CombatEngine : IDisposable
                 visualAction.Potency > 0 ? visualAction.Potency : 110,
                 damageType);
             if (!deferred)
-                ApplyNpcHit(npc, extraTarget, extraDamage);
+                ApplyNpcHit(npc, extraTarget, extraDamage, primary: false);
             hits.Add(new AppliedActionDamage(extraTarget, extraDamage));
             totalDamage += extraDamage.Damage;
         }
@@ -857,7 +950,7 @@ public partial class CombatEngine : IDisposable
                 {
                     if (!hit.Target.IsAlive)
                         continue;
-                    ApplyNpcHit(npc, hit.Target, hit.DamageResult);
+                    ApplyNpcHit(npc, hit.Target, hit.DamageResult, primary: hit.Target == target);
                     PlayHitReactionOnTarget(hit.Target, hit.DamageResult.Damage > 0, includePlayer: true);
                 }
                 FinishNpcDeaths(npc, hits, target, null);
@@ -869,9 +962,33 @@ public partial class CombatEngine : IDisposable
         return result;
     }
 
-    /// <summary>Land one of an enemy's hits: HP, the damage-taken tally and the auto-counter cue.</summary>
-    private void ApplyNpcHit(SimulatedNpc npc, SimulatedEntityState target, DamageResult damage)
+    /// <summary>
+    /// Land one of an enemy's hits: HP, the damage-taken tally and the auto-counter cue. With
+    /// hostages on, a blow that would fell one of the player's side takes them captive instead, and
+    /// a captive dies only to a blow aimed at them (<paramref name="primary"/>), not to a splash.
+    /// </summary>
+    private void ApplyNpcHit(SimulatedNpc npc, SimulatedEntityState target, DamageResult damage, bool primary = true)
     {
+        var friend = target.IsPlayer || target.IsCompanion;
+        if (friend && target.IsCaptive)
+        {
+            if (!primary)
+                return;
+            target.Executed = true;
+            target.CurrentHp = 0;
+            executionWindups.Remove((npc.SimulatedEntityId, target.EntityId));
+            AddLogEntry($"{npc.Name} executes {target.Name}!", CombatLogType.Death);
+            return;
+        }
+        if (friend && config.WarCaptives && target.IsAlive && damage.Damage >= target.CurrentHp)
+        {
+            if (target.IsPlayer)
+                State.TotalDamageTaken += Math.Max(0, target.CurrentHp - 1);
+            target.CurrentHp = 1;
+            TakeCaptive(target);
+            return;
+        }
+
         target.CurrentHp = Math.Max(0, target.CurrentHp - damage.Damage);
         if (target.IsPlayer)
         {
@@ -1576,6 +1693,12 @@ public partial class CombatEngine : IDisposable
             if (allDead && !playerVictoryTriggered)
             {
                 playerVictoryTriggered = true;
+                // The battle won, whoever was held captive is free.
+                foreach (var entity in State.Entities.Values)
+                    if (entity.IsCompanion && entity.IsCaptive)
+                        ReleaseCaptive(entity, entity.CurrentHp / (float)Math.Max(1, entity.MaxHp));
+                if (State.PlayerState.IsCaptive)
+                    ReleaseCaptive(State.PlayerState, State.PlayerState.CurrentHp / (float)Math.Max(1, State.PlayerState.MaxHp));
                 animationController.PlayVictory(isPlayerVictory: true);
                 OnOutcomeDecided?.Invoke(true);
             }
@@ -1631,7 +1754,18 @@ public partial class CombatEngine : IDisposable
 
         if (entity.IsCompanion)
         {
+            entity.IsCaptive = false;
             TriggerEnemyVictoryIfPartyDefeated();
+            return;
+        }
+
+        // An executed captive drops at once, from the kneel: no delay, no death animation first.
+        if (entity.IsPlayer && entity.Executed)
+        {
+            entity.IsCaptive = false;
+            instantRagdollOverride = true;
+            ExecuteDeathAnimation(0UL, isPlayer: true);
+            instantRagdollOverride = false;
             return;
         }
 
@@ -1770,7 +1904,7 @@ public partial class CombatEngine : IDisposable
             return;
 
         var ps = State.PlayerState;
-        if (!ps.IsAlive)
+        if (!ps.IsAlive || ps.IsCaptive)
             return;
 
         if (config.EnableCustomTargeting)
@@ -1944,7 +2078,7 @@ public partial class CombatEngine : IDisposable
         bool suppressCasterActionEffect = false)
     {
         var ps = State.PlayerState;
-        if (!ps.IsAlive)
+        if (!ps.IsAlive || ps.IsCaptive)
             return 0;
 
         var primary = State.GetEntity(primaryEntityId);
