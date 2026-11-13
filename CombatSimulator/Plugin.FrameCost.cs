@@ -23,6 +23,13 @@ public sealed partial class CombatSimulatorPlugin
         Core.FrameCostMeter.Add("Plugin.FrameworkUpdate", System.Diagnostics.Stopwatch.GetTimestamp() - start);
     }
 
+    private void OnDrawTimed()
+    {
+        var start = System.Diagnostics.Stopwatch.GetTimestamp();
+        OnDraw();
+        Core.FrameCostMeter.Add("Plugin.Draw (overlays and windows)", System.Diagnostics.Stopwatch.GetTimestamp() - start);
+    }
+
     private void NoteFrameCost(float frameSeconds)
     {
         frameCostWindow += frameSeconds;

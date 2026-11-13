@@ -623,7 +623,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
                           "/combatsim export-actions - Export player action data to Actions.json",
         });
 
-        pluginInterface.UiBuilder.Draw += OnDraw;
+        pluginInterface.UiBuilder.Draw += OnDrawTimed;
         pluginInterface.UiBuilder.OpenMainUi += OnOpenMainUi;
         pluginInterface.UiBuilder.OpenConfigUi += OnOpenConfig;
         framework.Update += OnFrameworkUpdateTimed;
@@ -638,7 +638,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         Animation.BodyTypeAnimationFallback.Shutdown();
         framework.Update -= OnFrameworkUpdateTimed;
         clientState.TerritoryChanged -= OnTerritoryChanged;
-        pluginInterface.UiBuilder.Draw -= OnDraw;
+        pluginInterface.UiBuilder.Draw -= OnDrawTimed;
         pluginInterface.UiBuilder.OpenMainUi -= OnOpenMainUi;
         pluginInterface.UiBuilder.OpenConfigUi -= OnOpenConfig;
         commandManager.RemoveHandler(CommandName);

@@ -79,6 +79,8 @@ public unsafe class WeaponDropController : IDisposable
         public List<BodyKinematicCollider> BodyColliders = new();
     }
     private readonly Dictionary<nint, Entry> entries = new();
+    private long lastStepTimestamp;
+    private const float SlowFrameSeconds = 1f / 30f;
 
     // Characters whose weapons are released on the next render frame.
     private readonly List<nint> pending = new();
@@ -184,11 +186,23 @@ public unsafe class WeaponDropController : IDisposable
                     UpdateBodyColliders(entry);
                     UpdateReleaseContacts(entry);
                 }
-                if (meshBodies.Count > 0 || meshColliders.Count > 0)
+                // Nothing awake (every weapon at rest, no collider moving): a step would change
+                // nothing, so take none.
+                var frameNow = System.Diagnostics.Stopwatch.GetTimestamp();
+                var frameSeconds = lastStepTimestamp == 0 ? 0f
+                    : (float)((frameNow - lastStepTimestamp) / (double)System.Diagnostics.Stopwatch.Frequency);
+                lastStepTimestamp = frameNow;
+                var anythingAwake = simulation.Bodies.ActiveSet.Count > 0;
+                if (!anythingAwake)
+                    lastStepTimestamp = frameNow;
+                else if (meshBodies.Count > 0 || meshColliders.Count > 0)
                 {
                     simulation.Solver.SubstepCount = 4;
                     simulation.Timestep(1f / 120f);
-                    simulation.Timestep(1f / 120f);
+                    // In a slow frame one half-step only, as the ragdolls do: catching up made each
+                    // slow frame slower still.
+                    if (frameSeconds <= SlowFrameSeconds)
+                        simulation.Timestep(1f / 120f);
                 }
                 else { simulation.Solver.SubstepCount = 1; simulation.Timestep(1f / 60f); }
             }
