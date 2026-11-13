@@ -3554,6 +3554,17 @@ public partial class MainWindow : IDisposable
             }
             HelpMarker("Apply ragdoll physics to party companion clones when they die.");
 
+            var fineDetail = config.NpcRagdollFineDetail;
+            if (ImGui.Checkbox("Fine physics for everyone##npcragdollfine", ref fineDetail))
+            {
+                config.NpcRagdollFineDetail = fineDetail;
+                config.Save();
+            }
+            HelpMarker("Off (default): enemies' and allies' bodies use lighter physics than yours, and their dropped weapons " +
+                       "land on simple body shapes instead of the body mesh. A battle with many bodies on the ground stays smooth.\n" +
+                       "On: everyone's body and weapon get the same detail as yours. Costlier with many bodies.\n" +
+                       "Applies to bodies that fall after the change.");
+
             ImGui.Unindent();
         }
 

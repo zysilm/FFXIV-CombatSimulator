@@ -337,6 +337,9 @@ public partial class Configuration : IPluginConfiguration
     public int RagdollWaterLiquid { get; set; } = 0;
     // NPC death ragdoll
     public bool EnableNpcDeathRagdoll { get; set; } = true;
+    // Off: other characters' corpses (enemies and allies) take the light physics budget and their
+    // dropped weapons land on simple body shapes. On: the same detail as the player's own.
+    public bool NpcRagdollFineDetail { get; set; } = false;
     // Read by the private module; the ragdoll's gravity is fixed (RagdollTuning.Gravity).
     [JsonIgnore] public float RagdollGravity => RagdollTuning.Gravity;
     // Directional/asymmetric range-of-motion limits (Tier C). Default off after field testing and no
@@ -858,6 +861,7 @@ public partial class Configuration : IPluginConfiguration
         nameof(ExtendTerrainDetection),
         nameof(EnableNpcDeathRagdoll),
         nameof(PartyCompanionDeathRagdoll),
+        nameof(NpcRagdollFineDetail),
         nameof(WeaponBodyMeshContacts),
     };
 

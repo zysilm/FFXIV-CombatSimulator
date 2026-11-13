@@ -22,6 +22,9 @@ public static class RagdollTuning
     public const int SolverSubsteps = 16;
     public const int NpcSolverIterations = 2;
     public const int NpcSolverSubsteps = 8;
+    // The light budget for other characters' corpses (default): half the substeps again. The solve
+    // rate (240 Hz) stays above twice the 90 Hz limit walls. Fine detail restores the 8.
+    public const int NpcLightSolverSubsteps = 4;
 
     // Spring frequency (Hz) of the joint limit walls, and the soft overdamped edge used on ball-joint
     // swing cones so a joint sliding to its range edge settles instead of pinning at the extreme.

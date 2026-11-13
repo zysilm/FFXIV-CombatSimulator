@@ -4366,7 +4366,9 @@ public unsafe partial class RagdollController : IDisposable
 
         var solverSubsteps = targetIsLocalPlayer
             ? RagdollTuning.SolverSubsteps
-            : RagdollTuning.NpcSolverSubsteps;
+            : config.NpcRagdollFineDetail
+                ? RagdollTuning.NpcSolverSubsteps
+                : RagdollTuning.NpcLightSolverSubsteps;
 
         bufferPool = new BufferPool();
         // FallbackBatchThreshold raised from the default 64: the pelvis alone carries the

@@ -256,10 +256,12 @@ public unsafe class WeaponDropController : IDisposable
         var offDraw = GetWeaponDrawObject(characterAddress, DrawDataContainer.WeaponSlot.OffHand);
 
         var entry = new Entry { CharacterAddress = characterAddress };
+        // Only the player's own weapon, or everyone's with fine detail on, lands on mesh surfaces.
+        var fine = FineDetailFor(characterAddress);
         if (mainDraw != null)
-            entry.Main = TryCreateWeaponBody(mainDraw, out entry.MainShape, out entry.MainHalf, out entry.MainCenter);
+            entry.Main = TryCreateWeaponBody(mainDraw, fine, out entry.MainShape, out entry.MainHalf, out entry.MainCenter);
         if (offDraw != null)
-            entry.Off = TryCreateWeaponBody(offDraw, out entry.OffShape, out entry.OffHalf, out entry.OffCenter);
+            entry.Off = TryCreateWeaponBody(offDraw, fine, out entry.OffShape, out entry.OffHalf, out entry.OffCenter);
 
         if (!entry.Main.HasValue && !entry.Off.HasValue)
         {
@@ -271,7 +273,7 @@ public unsafe class WeaponDropController : IDisposable
         // ground but makes weapons visibly float or clip on slopes, so build a small mesh
         // from game collision raycasts.
         (entry.GroundTile, entry.GroundShape) = CreateTerrainPatch(skelWorldPos.X, skelWorldPos.Z, skelWorldPos.Y);
-        entry.BodyColliders = CreateMeshBodyColliders(characterAddress, skel, skelWorldPos, skelWorldRot)
+        entry.BodyColliders = (fine ? CreateMeshBodyColliders(characterAddress, skel, skelWorldPos, skelWorldRot) : null)
                               ?? CreateBodyColliders(skel, skelWorldPos, skelWorldRot);
 
         foreach (var collider in entry.BodyColliders)
@@ -601,7 +603,11 @@ public unsafe class WeaponDropController : IDisposable
                 WeaponReleaseContacts.Separated(pose, half, arm.PreviousPosition, arm.TargetPosition, arm.Reach));
         }
     }
-    private BodyHandle? TryCreateWeaponBody(DrawObject* weaponDraw, out TypedIndex? shapeIndex, out Vector3 half, out Vector3 center)
+    /// <summary>Whether this character's dropped weapon gets the detailed (mesh) contacts.</summary>
+    private bool FineDetailFor(nint characterAddress)
+        => config.NpcRagdollFineDetail || characterAddress == (Core.Services.ObjectTable.LocalPlayer?.Address ?? 0);
+
+    private BodyHandle? TryCreateWeaponBody(DrawObject* weaponDraw, bool fine, out TypedIndex? shapeIndex, out Vector3 half, out Vector3 center)
     {
         shapeIndex = null;
         half = default;
@@ -616,7 +622,7 @@ public unsafe class WeaponDropController : IDisposable
         if (!float.IsFinite(worldPos.LengthSquared()) || !float.IsFinite(worldRot.LengthSquared()) || worldRot.LengthSquared() < 1e-8f)
             return null;
         worldRot = Quaternion.Normalize(worldRot);
-        var mesh = ragdoll.TryBuildWeaponMesh(weaponDraw);
+        var mesh = fine ? ragdoll.TryBuildWeaponMesh(weaponDraw) : null;
         if (mesh != null)
         {
             var meshShape = mesh.CreateShape(simulation!, bufferPool!, RagdollTuning.WeaponDropMass, out var meshInertia);
