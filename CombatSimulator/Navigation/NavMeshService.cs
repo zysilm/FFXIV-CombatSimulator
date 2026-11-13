@@ -136,6 +136,7 @@ public sealed class NavMeshService : IDisposable
         mesh = null;
         query = null;
         pieces = null;
+        playerPiece = -1;
         enabledPieces.Clear();
         Territory = 0;
         attempted = false;
@@ -168,9 +169,13 @@ public sealed class NavMeshService : IDisposable
                 // railing tops, ledges nobody stands on) until someone is found standing on one.
                 pieces = NavMeshBuild.FindPieces(built);
                 enabledPieces.Clear();
+                playerPiece = -1;
                 foreach (var members in pieces.Members)
                     NavMeshBuild.SetPieceEnabled(built, members, false);
                 var seeded = EnablePieceUnder(buildingCenter, 2.5f);
+                if (seeded && query.FindNearestPoly(NavMeshBuild.ToRc(buildingCenter), new RcVec3f(1.5f, 2.5f, 1.5f), anyPolygon,
+                        out var seedRef, out _, out _).Succeeded() && pieces.PieceOf.TryGetValue(seedRef, out var seedPiece))
+                    playerPiece = seedPiece;
                 log.Info($"NavMesh: links {NavMeshBuild.DescribeLinks(built)}; {pieces.Members.Count} connected pieces; the player's {(seeded ? "switched on" : "not found")}");
                 Status = $"ready: {tiles} tiles, {polys:N0} polygons in {pieces.Members.Count} pieces, built in {buildClock.ElapsedMilliseconds / 1000.0:F1} s";
                 log.Info($"NavMesh: {Status} from {buildingTriangles:N0} triangles.");
@@ -201,6 +206,30 @@ public sealed class NavMeshService : IDisposable
     private NavMeshBuild.Pieces? pieces;
     private readonly HashSet<int> enabledPieces = new();
     private readonly NavMeshBuild.AnyPolygonFilter anyPolygon = new();
+    // The piece the player stood on when the mesh was built: the ground the fight can reach.
+    private int playerPiece = -1;
+
+    /// <summary>Whether this polygon is on the piece of mesh connected to where the player stood.</summary>
+    public bool OnPlayersPiece(long polyRef)
+        => pieces != null && playerPiece >= 0 && pieces.PieceOf.TryGetValue(polyRef, out var piece) && piece == playerPiece;
+
+    /// <summary>
+    /// The nearest point on the piece connected to where the player stood, within
+    /// <paramref name=sideways/> metres horizontally and <paramref name=vertical/> vertically.
+    /// </summary>
+    public bool TryFloorOnPlayersPiece(Vector3 point, float vertical, float sideways, out Vector3 floor)
+    {
+        floor = point;
+        if (query == null || pieces == null || playerPiece < 0)
+            return false;
+        var only = new NavMeshBuild.PieceFilter(pieces, playerPiece);
+        var status = query.FindNearestPoly(NavMeshBuild.ToRc(point), new RcVec3f(sideways, vertical, sideways), only,
+            out var polyRef, out var nearest, out _);
+        if (status.Failed() || polyRef == 0)
+            return false;
+        floor = NavMeshBuild.ToVector(nearest);
+        return true;
+    }
 
     /// <summary>
     /// Switch on the piece of mesh under a point (within <paramref name="vertical"/> metres of it): someone

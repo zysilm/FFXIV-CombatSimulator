@@ -226,6 +226,24 @@ var cases = new (string, Action)[]
         RunCrowd(report: false);
         RunCrowd(report: true);
     }),
+    ("someone spawned on the unreachable island is put on the nearest ground the player can walk to", () => {
+        var pieces = NavMeshBuild.FindPieces(mesh!);
+        var start = Snap(new Vector3(0, 0, -15));
+        var playerPiece = pieces.PieceOf[start.Ref];
+        var spawn = new Vector3(-25, 10.2f, 25);
+        var onIsland = Snap(spawn);
+        Check(onIsland.Ref != 0 && pieces.PieceOf[onIsland.Ref] != playerPiece, "the island is not a piece of its own");
+        var only = new NavMeshBuild.PieceFilter(pieces, playerPiece);
+        query.FindNearestPoly(NavMeshBuild.ToRc(spawn), new RcVec3f(20f, 12f, 20f), only, out var r, out var pt, out _);
+        var placed = NavMeshBuild.ToVector(pt);
+        Span<long> path = stackalloc long[512];
+        query.FindPath(start.Ref, r, NavMeshBuild.ToRc(start.Pos), NavMeshBuild.ToRc(placed), filter, path, out var n, 512);
+        var flat = new Vector2(placed.X - spawn.X, placed.Z - spawn.Z).Length();
+        Console.WriteLine($"      island piece {pieces.PieceOf[onIsland.Ref]}, player's {playerPiece}; placed at {placed} ({flat:F1} m sideways, y {placed.Y:F2}); walkable from the player: {n > 0 && path[n - 1] == r}");
+        Check(r != 0 && pieces.PieceOf[r] == playerPiece, "not put on the player's piece");
+        Check(n > 0 && path[n - 1] == r, "the spot is not walkable from the player");
+        Check(flat < 8f, "put far from where it spawned");
+    }),
     // Last: it changes the mesh's flags.
     ("only what can be walked to from where the player stands is kept: roof and island are cut off", () => {
         CutOff();

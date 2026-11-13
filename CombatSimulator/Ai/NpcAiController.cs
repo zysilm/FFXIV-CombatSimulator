@@ -453,8 +453,12 @@ public unsafe partial class NpcAiController : IDisposable
         var fighting = npc.AiState is NpcAiState.Engaging or NpcAiState.Combat or NpcAiState.Chasing;
         if (npc.SeizeGoal is { } seize)
         {
-            goal = seize;
-            npc.InReach = false;
+            // Going for the lord's body: a guard within reach is fought where it stands (the body
+            // cannot be taken while one stands over it); otherwise on to the body.
+            npc.InReach = target is { IsAlive: true } guard && !npc.State.IsCasting &&
+                          CrowdGap(npc, guard, npcPos, combatEngine.GetSimulatedEntityPosition(guard)) <= ReachNow(npc);
+            if (!npc.InReach && !npc.State.IsCasting)
+                goal = seize;
         }
         else if (IsUnawareSentry(npc))
         {

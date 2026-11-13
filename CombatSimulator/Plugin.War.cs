@@ -19,14 +19,18 @@ namespace CombatSimulator;
 /// </summary>
 public sealed unsafe partial class CombatSimulatorPlugin
 {
-    // An enemy that stands this close to the body this long carries it off; with no retainer left
-    // to stand before the body, the nearest enemy goes for it.
+    // Half the living enemies (the nearest to the body, at least one) go for the lord's body; the rest
+    // fight on. One that stands at the body this long, with no retainer within the contest radius,
+    // carries it off.
     private const float SeizeReach = 1.0f;
     private const float SeizeSeconds = 2f;
+    private const float SeizerShare = 0.5f;
 
     private readonly WarBanner warBanner = new();
     private readonly Dictionary<uint, float> nearBodySeconds = new();
-    private SimulatedNpc? bodySeizer;
+    private readonly List<SimulatedNpc> bodySeizers = new();
+    private readonly List<(SimulatedNpc Npc, float Distance)> seizerCandidates = new();
+    private bool bodyContested;
     private bool bodySeized;
     private bool outcomeShown;
 
@@ -59,9 +63,7 @@ public sealed unsafe partial class CombatSimulatorPlugin
     private void ResetWar()
     {
         nearBodySeconds.Clear();
-        if (bodySeizer != null)
-            bodySeizer.SeizeGoal = null;
-        bodySeizer = null;
+        ReleaseSeizers();
         bodySeized = false;
         outcomeShown = false;
         warBanner.Hide();
@@ -70,15 +72,21 @@ public sealed unsafe partial class CombatSimulatorPlugin
     /// <summary>Whether the lord's body is to be guarded (Warring States with Retreat, the lord down).</summary>
     private bool LordBodyAtStake => companionManager.GuardingLord && !bodySeized;
 
+    private void ReleaseSeizers()
+    {
+        foreach (var npc in bodySeizers)
+            npc.SeizeGoal = null;
+        bodySeizers.Clear();
+        companionManager.LordSeizers.Clear();
+        bodyContested = false;
+    }
+
     private void TickWar(float deltaTime)
     {
         if (!LordBodyAtStake || outcomeShown)
         {
-            if (bodySeizer != null)
-            {
-                bodySeizer.SeizeGoal = null;
-                bodySeizer = null;
-            }
+            if (bodySeizers.Count > 0)
+                ReleaseSeizers();
             nearBodySeconds.Clear();
             return;
         }
@@ -88,49 +96,78 @@ public sealed unsafe partial class CombatSimulatorPlugin
             return;
         var body = player.Position;
 
-        SimulatedNpc? nearest = null;
-        var nearestDistance = float.MaxValue;
+        // Who goes for the body: those already going (while they live), then the nearest others,
+        // until half the living enemies are on it.
+        bodySeizers.RemoveAll(npc =>
+        {
+            if (npc.IsSpawned && npc.IsAlive && npc.BattleChara != null)
+                return false;
+            npc.SeizeGoal = null;
+            return true;
+        });
+        seizerCandidates.Clear();
+        var living = 0;
         foreach (var npc in npcSelector.SelectedNpcs)
         {
-            if (!npc.IsSpawned || !npc.IsAlive || npc.BattleChara == null)
+            if (!npc.IsSpawned || !npc.IsAlive || npc.BattleChara == null || npc.State.IsCaptive)
+                continue;
+            living++;
+            if (bodySeizers.Contains(npc))
                 continue;
             var pos = (Vector3)((GameObject*)npc.BattleChara)->Position;
-            var d = new Vector2(pos.X - body.X, pos.Z - body.Z).Length();
-            if (d < nearestDistance)
+            seizerCandidates.Add((npc, new Vector2(pos.X - body.X, pos.Z - body.Z).Length()));
+        }
+        var wanted = living == 0 ? 0 : Math.Max(1, (int)MathF.Ceiling(living * SeizerShare));
+        if (bodySeizers.Count < wanted)
+        {
+            seizerCandidates.Sort((a, b) => a.Distance.CompareTo(b.Distance));
+            for (var i = 0; i < seizerCandidates.Count && bodySeizers.Count < wanted; i++)
             {
-                nearestDistance = d;
-                nearest = npc;
+                var npc = seizerCandidates[i].Npc;
+                bodySeizers.Add(npc);
+                // Woken if it was standing idle (a sentry): the body is what it is here for.
+                npcAiController.EngageNpc(npc);
             }
-
-            if (d <= SeizeReach)
-            {
-                var held = nearBodySeconds.GetValueOrDefault(npc.SimulatedEntityId) + deltaTime;
-                nearBodySeconds[npc.SimulatedEntityId] = held;
-                if (held >= SeizeSeconds || npc == bodySeizer)
-                {
-                    SeizeBody(npc);
-                    return;
-                }
-            }
-            else
-                nearBodySeconds.Remove(npc.SimulatedEntityId);
+        }
+        companionManager.LordSeizers.Clear();
+        foreach (var npc in bodySeizers)
+        {
+            npc.SeizeGoal = body;
+            companionManager.LordSeizers.Add(npc.SimulatedEntityId);
         }
 
-        // Nobody left to stand before the body: the nearest enemy goes to take it.
-        if (!companionManager.HasRetainer)
+        // While a retainer stands over the body, nobody can carry it off.
+        var contested = companionManager.LordBodyContested(body, Companions.CombatCompanionManager.LordContestRadius);
+        if (contested != bodyContested)
         {
-            if (bodySeizer == null || !bodySeizer.IsAlive || !bodySeizer.IsSpawned)
-                bodySeizer = nearest;
-            if (bodySeizer != null)
-                bodySeizer.SeizeGoal = body;
+            bodyContested = contested;
+            if (!contested && bodySeizers.Count > 0)
+                combatEngine.AddLogEntry("Nobody stands over the lord's body!", CombatLogType.Death);
+        }
+
+        foreach (var npc in bodySeizers)
+        {
+            var pos = (Vector3)((GameObject*)npc.BattleChara)->Position;
+            var d = new Vector2(pos.X - body.X, pos.Z - body.Z).Length();
+            if (contested || d > SeizeReach + npc.HitboxRadius)
+            {
+                nearBodySeconds.Remove(npc.SimulatedEntityId);
+                continue;
+            }
+            var held = nearBodySeconds.GetValueOrDefault(npc.SimulatedEntityId) + deltaTime;
+            nearBodySeconds[npc.SimulatedEntityId] = held;
+            if (held >= SeizeSeconds)
+            {
+                SeizeBody(npc);
+                return;
+            }
         }
     }
 
     private void SeizeBody(SimulatedNpc npc)
     {
         bodySeized = true;
-        npc.SeizeGoal = null;
-        bodySeizer = null;
+        ReleaseSeizers();
         combatEngine.AddLogEntry($"{npc.Name} carries off the lord's body!", CombatLogType.Death);
         companionManager.SurrenderRetainers();
         combatEngine.ForceEnemyVictory();

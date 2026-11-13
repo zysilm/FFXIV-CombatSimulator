@@ -34,6 +34,12 @@ public sealed class CrowdMover
     private const float GroundAbove = 0.6f;
     private const float GroundBelow = 1.2f;
     private const float ReportSeconds = 5f;
+    // Someone just spawned (not driven in the last second) beside the ground the fight is on (off a
+    // bridge, on a ledge, in water) is put on that ground from this far, instead of on whatever island
+    // it landed on, where it would be stuck for the whole fight.
+    private const float SpawnSnapSideways = 20f;
+    private const float SpawnSnapVertical = 12f;
+    private const int FreshAfterFrames = 60;
     private const float MaxAgentRadius = 1.5f;
     private const int AgentsWarmUp = 24;
 
@@ -55,6 +61,10 @@ public sealed class CrowdMover
     }
 
     private readonly Dictionary<nint, Agent> agents = new();
+    // The frame each actor was last driven: a rebuilt mesh re-adds everyone, but only someone not
+    // seen for a while is new to the fight.
+    private readonly Dictionary<nint, int> lastDriven = new();
+    private int spawnSnaps;
 
     public CrowdMover(NavMeshService navMesh, IPluginLog log)
     {
@@ -84,11 +94,20 @@ public sealed class CrowdMover
             return false;
 
         radius = Math.Clamp(radius, 0.3f, MaxAgentRadius);
+        var fresh = !lastDriven.TryGetValue(address, out var seen) || frame - seen > FreshAfterFrames;
+        lastDriven[address] = frame;
         if (!agents.TryGetValue(address, out var agent))
         {
+            // New to the fight and not on the ground the player can reach: onto that ground.
+            var onFight = navMesh.TryFloor(position, FloorSearch, out var floor, out var floorRef) && navMesh.OnPlayersPiece(floorRef);
+            if (fresh && !onFight && navMesh.TryFloorOnPlayersPiece(position, SpawnSnapVertical, SpawnSnapSideways, out var snapped))
+            {
+                floor = snapped;
+                spawnSnaps++;
+            }
             // Standing on a piece of mesh that was switched off (not connected to where the player
             // stood): it is real ground all the same, so switch it on.
-            if (!navMesh.TryFloor(position, FloorSearch, out var floor, out _) &&
+            else if (!onFight && !navMesh.TryFloor(position, FloorSearch, out floor, out _) &&
                 (!navMesh.EnablePieceUnder(position, FloorSearch) || !navMesh.TryFloor(position, FloorSearch, out floor, out _)) &&
                 !navMesh.TryFloor(position, FloorSearch, JoinSideways, out floor, out _) &&
                 (!navMesh.EnablePieceUnder(position, FloorSearch, JoinSideways) || !navMesh.TryFloor(position, FloorSearch, JoinSideways, out floor, out _)))
@@ -170,6 +189,15 @@ public sealed class CrowdMover
                 stale.Add(address);
         foreach (var address in stale)
             Remove(address);
+        if (frame % 600 == 0)
+        {
+            stale.Clear();
+            foreach (var (address, seen) in lastDriven)
+                if (frame - seen > 600)
+                    stale.Add(address);
+            foreach (var address in stale)
+                lastDriven.Remove(address);
+        }
 
         if (agents.Count > 0 && deltaTime > 0f)
             crowd.Update(MathF.Min(deltaTime, 0.1f), null);
@@ -211,6 +239,11 @@ public sealed class CrowdMover
         if (reportClock.Elapsed.TotalSeconds < ReportSeconds)
             return;
         reportClock.Restart();
+        if (spawnSnaps > 0)
+        {
+            log.Info($"Crowd: {spawnSnaps} new actors were off the ground the fight is on and were put onto it.");
+            spawnSnaps = 0;
+        }
         if (agents.Count == 0 && refusedCount == 0)
             return;
         log.Info(refusedCount == 0
@@ -231,6 +264,7 @@ public sealed class CrowdMover
             foreach (var agent in agents.Values)
                 crowd.RemoveAgent(agent.Crowd);
         agents.Clear();
+        lastDriven.Clear();
     }
 
     // A new mesh (built, rebuilt around the player, or cleared): a new crowd on it. Actors rejoin at

@@ -579,6 +579,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
                 EnemyMeleePressureCap,
                 EnemyRangedPressureCap);
         score += TargetGraphScore(enemyId, candidate.EntityId);
+        score += LordSeizerTargetScore(enemyId, candidate.EntityId);
         return score;
     }
 
@@ -1274,18 +1275,27 @@ public unsafe partial class CombatCompanionManager : IDisposable
 
         var obj = (GameObject*)companion.BattleChara;
         var current = (Vector3)obj->Position;
-        var commandAnchor = combatAnchorActive ? combatAnchorPosition : player.Position;
-        var delta = current - commandAnchor;
+        var delta = current - CommandAnchor(player.Position);
         delta.Y = 0;
         return delta.Length() <= CommandLimit(companion.SimulatedEntityId);
     }
 
-    /// <summary>How far from the command anchor this ally may go: the party range, a little less for some.</summary>
+    /// <summary>
+    /// What the allies keep close to: the lord's body while they guard it, otherwise where the fight
+    /// began (or the player).
+    /// </summary>
+    private Vector3 CommandAnchor(Vector3 playerPosition)
+        => GuardingLord || !combatAnchorActive ? playerPosition : combatAnchorPosition;
+
+    /// <summary>
+    /// How far from the command anchor this ally may go: the party range (the guard range around the
+    /// lord's body), a little less for some.
+    /// </summary>
     private float CommandLimit(uint actorId)
     {
         var jitter = StableUnit(actorId ^ 0xC001u);
         var factor = 1.0f - Math.Clamp(config.PartyCommandRangeRandomness, 0, 0.8f) * jitter;
-        return MathF.Max(1.0f, config.PartyCommandRange * factor);
+        return MathF.Max(1.0f, (GuardingLord ? LordGuardRange : config.PartyCommandRange) * factor);
     }
 
     private static float StableUnit(uint x)
@@ -1308,12 +1318,15 @@ public unsafe partial class CombatCompanionManager : IDisposable
         if (player == null || companion.BattleChara == null)
             return;
 
-        // Its place in the formation behind the anchor (the player, or where the fight began).
+        // Its place in the formation behind the anchor (the player, or where the fight began); guarding
+        // the lord, its place in the ring round the body.
         var obj = (GameObject*)companion.BattleChara;
         var current = (Vector3)obj->Position;
-        var anchor = combatAnchorActive ? combatAnchorPosition : player.Position;
-        var anchorRotation = combatAnchorActive ? combatAnchorRotation : player.Rotation;
-        var goal = CalculateFollowPosition(anchor, anchorRotation, companionIndex, companionCount);
+        var anchor = CommandAnchor(player.Position);
+        var anchorRotation = combatAnchorActive && !GuardingLord ? combatAnchorRotation : player.Rotation;
+        var goal = GuardingLord
+            ? GuardRingPosition(anchor, companionIndex, companionCount)
+            : CalculateFollowPosition(anchor, anchorRotation, companionIndex, companionCount);
         if (FlatDistance(current, goal) > FollowStopDistance)
         {
             MoveToward(companion, goal, deltaTime);
@@ -1422,6 +1435,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         var distance = DistanceToPlayer(enemy);
         if (!float.IsInfinity(distance) && !float.IsNaN(distance))
             score -= distance * DistancePenaltyPerYalm;
+        score += LordGuardScore(enemy, distance);
 
         return score;
     }
@@ -1469,7 +1483,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
             return (true, 0f);
 
         var enemyPos = (Vector3)((GameObject*)enemy.BattleChara)->Position;
-        var anchor = combatAnchorActive ? combatAnchorPosition : player.Position;
+        var anchor = CommandAnchor(player.Position);
         var standOff = CrowdReachNow(companion) + HitboxOf((GameObject*)companion.BattleChara) + enemy.HitboxRadius;
         var overflow = FlatDistance(enemyPos, anchor) - standOff - CommandLimit(companion.SimulatedEntityId);
         return (overflow <= ReachabilityRecoveryDistance, MathF.Max(0f, overflow));

@@ -251,6 +251,27 @@ public static class NavMeshBuild
             => costs.GetCost(pa, pb, prevRef, prevTile, prevPoly, curRef, curTile, curPoly, nextRef, nextTile, nextPoly);
     }
 
+    /// <summary>Only the polygons of one connected piece, switched on or not.</summary>
+    public sealed class PieceFilter : IDtQueryFilter
+    {
+        private readonly DtQueryDefaultFilter costs = new();
+        private readonly Pieces pieces;
+        private readonly int piece;
+
+        public PieceFilter(Pieces pieces, int piece)
+        {
+            this.pieces = pieces;
+            this.piece = piece;
+        }
+
+        public bool PassFilter(long refs, DtMeshTile tile, DtPoly poly)
+            => pieces.PieceOf.TryGetValue(refs, out var p) && p == piece;
+
+        public float GetCost(RcVec3f pa, RcVec3f pb, long prevRef, DtMeshTile prevTile, DtPoly prevPoly, long curRef,
+            DtMeshTile curTile, DtPoly curPoly, long nextRef, DtMeshTile nextTile, DtPoly nextPoly)
+            => costs.GetCost(pa, pb, prevRef, prevTile, prevPoly, curRef, curTile, curPoly, nextRef, nextTile, nextPoly);
+    }
+
     /// <summary>How the mesh is linked: within tiles, across tile borders, and polygons with no link at all.</summary>
     public static string DescribeLinks(DtNavMesh nav)
     {

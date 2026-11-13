@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using CombatSimulator.Animation;
 using CombatSimulator.Simulation;
@@ -22,6 +23,17 @@ public unsafe partial class CombatCompanionManager
     private const uint PrayEmoteId = 58;
     private const float PrayerStandOff = 1.3f;
     private const float PrayerReach = 0.6f;
+    // Guarding the body: the allies keep within this of it, and stand in a ring this far out while
+    // nobody comes; an enemy inside the contest radius (and not yet dead) is fought before any other.
+    private const float LordGuardRange = 10f;
+    private const float GuardRingRadius = 3f;
+    public const float LordContestRadius = 3.5f;
+    private const float SeizerTargetBonus = 400f;
+    private const float NearBodyTargetBonus = 200f;
+    private const float NearBodyTargetReach = 12f;
+
+    /// <summary>The enemies sent to carry off the lord's body (set by the battle each frame).</summary>
+    public HashSet<uint> LordSeizers { get; } = new();
 
     private uint prayerId;
     private bool prayerAtPost;
@@ -146,6 +158,60 @@ public unsafe partial class CombatCompanionManager
         }
         AnimationController.HoldEmoteLoop((Character*)companion.BattleChara, prayerLoop);
         return true;
+    }
+
+    /// <summary>
+    /// Whether a retainer who can still fight for it (alive, not captive) stands within
+    /// <paramref name=radius/> of the lord's body: while one does, nobody can carry it off.
+    /// </summary>
+    public bool LordBodyContested(Vector3 body, float radius)
+    {
+        foreach (var companion in companions)
+        {
+            if (!CanRescue(companion))
+                continue;
+            if (FlatDistance((Vector3)((GameObject*)companion.BattleChara)->Position, body) <= radius)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>Guarding the body: the enemies going for it first, then those nearest it.</summary>
+    private float LordGuardScore(Npcs.SimulatedNpc enemy, float distanceToBody)
+    {
+        if (!GuardingLord)
+            return 0f;
+        var score = 0f;
+        if (LordSeizers.Contains(enemy.SimulatedEntityId))
+            score += SeizerTargetBonus;
+        if (float.IsFinite(distanceToBody))
+            score += NearBodyTargetBonus * Math.Clamp(1f - distanceToBody / NearBodyTargetReach, 0f, 1f);
+        return score;
+    }
+
+    /// <summary>
+    /// Enemies going for the lord's body fight whoever stands over it: the one praying most of all (it
+    /// cannot fight back), then the guards nearest the body.
+    /// </summary>
+    private float LordSeizerTargetScore(uint enemyId, uint candidateId)
+    {
+        if (!GuardingLord || !LordSeizers.Contains(enemyId) || !TryGetLordBody(out var body, out _))
+            return 0f;
+        var guard = GetCompanion(candidateId);
+        if (guard == null || guard.BattleChara == null)
+            return 0f;
+        var d = FlatDistance((Vector3)((GameObject*)guard.BattleChara)->Position, body);
+        var score = SeizerTargetBonus * Math.Clamp(1f - d / NearBodyTargetReach, 0f, 1f);
+        if (candidateId == prayerId)
+            score += SeizerTargetBonus;
+        return score;
+    }
+
+    /// <summary>A guard's place in the ring round the lord's body.</summary>
+    private static Vector3 GuardRingPosition(Vector3 body, int index, int count)
+    {
+        var angle = MathF.Tau * index / Math.Max(1, count);
+        return body + new Vector3(MathF.Sin(angle), 0f, MathF.Cos(angle)) * GuardRingRadius;
     }
 
     private void ReleasePrayer()
