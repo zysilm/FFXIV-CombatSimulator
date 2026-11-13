@@ -40,8 +40,16 @@ public unsafe partial class CombatCompanionManager
     /// <summary>The enemies sent to carry off the lord's body (set by the battle each frame).</summary>
     public HashSet<uint> LordSeizers { get; } = new();
 
+    // Pushed further than this from where it knelt, the one praying gets up and goes back; one that
+    // cannot get nearer to its post for this long kneels where it is.
+    private const float PrayerPushedOff = 1.0f;
+    private const float PrayerStallSeconds = 1.5f;
+
     private uint prayerId;
     private bool prayerAtPost;
+    private Vector3 prayerSpot;
+    private float prayerBest = float.MaxValue;
+    private float prayerStall;
     private ushort prayerLoop;
     private bool lordFallHandled;
 
@@ -76,6 +84,8 @@ public unsafe partial class CombatCompanionManager
         body = LordBodyAt(player.Position);
         var facing = new Vector3(MathF.Sin(player.Rotation), 0f, MathF.Cos(player.Rotation));
         post = body + facing * PrayerStandOff;
+        if (Crowd?.TrySnapToFloor(post, out var floor) == true)
+            post = floor;
         return true;
     }
 
@@ -104,7 +114,10 @@ public unsafe partial class CombatCompanionManager
         }
 
         if (!config.WarRetreat)
+        {
+            ReleasePrayer();
             return;
+        }
 
         if (prayerId != 0 && (GetCompanion(prayerId) is not { } current || !CanRescue(current)))
             ReleasePrayer();
@@ -129,9 +142,11 @@ public unsafe partial class CombatCompanionManager
 
         prayerId = nearest.SimulatedEntityId;
         prayerAtPost = false;
+        prayerBest = float.MaxValue;
+        prayerStall = 0f;
         ClearCompanionActionState(nearest);
         ClearCompanionTargetState(nearest);
-        combatEngine.AddLogEntry($"{nearest.Name} kneels to pray over the lord.", CombatLogType.Info);
+        combatEngine.AddLogEntry($"{nearest.Name} goes to the lord's body.", CombatLogType.Info);
     }
 
     /// <summary>
@@ -143,23 +158,48 @@ public unsafe partial class CombatCompanionManager
         if (prayerId == 0 || companion.SimulatedEntityId != prayerId || !TryGetLordBody(out var body, out var post))
             return false;
 
-        companion.State.IncomingDamageScale = PrayerDamageScale;
         var self = (Vector3)((GameObject*)companion.BattleChara)->Position;
-        if (!prayerAtPost && FlatDistance(self, post) > PrayerReach)
+
+        // Pushed off where it knelt: up, and back to the post.
+        if (prayerAtPost && FlatDistance(self, prayerSpot) > PrayerPushedOff)
         {
-            EnterCompanionState(companion, CompanionAiState.MovingToTarget, deltaTime);
-            MoveToward(companion, post, deltaTime);
-            return true;
+            prayerAtPost = false;
+            prayerBest = float.MaxValue;
+            prayerStall = 0f;
+            companion.State.IncomingDamageScale = 1f;
+            animationController.EmotePlayer.ResetEmote((Character*)companion.BattleChara);
+        }
+
+        if (!prayerAtPost)
+        {
+            var off = FlatDistance(self, post);
+            if (off < prayerBest - 0.1f)
+            {
+                prayerBest = off;
+                prayerStall = 0f;
+            }
+            else
+                prayerStall += deltaTime;
+            if (off > PrayerReach && prayerStall < PrayerStallSeconds)
+            {
+                EnterCompanionState(companion, CompanionAiState.MovingToTarget, deltaTime);
+                MoveToward(companion, post, deltaTime);
+                return true;
+            }
         }
 
         HaltForEmote(companion);
         RotateToward(companion, body, deltaTime);
         if (!prayerAtPost)
         {
+            // Only kneeling does it lay itself open.
             prayerAtPost = true;
+            prayerSpot = self;
+            companion.State.IncomingDamageScale = PrayerDamageScale;
             prayerLoop = animationController.PlayEmoteOn((Character*)companion.BattleChara, PrayEmoteId)
                 ? animationController.EmoteLoopTimeline(PrayEmoteId)
                 : (ushort)0;
+            combatEngine.AddLogEntry($"{companion.Name} kneels to pray over the lord.", CombatLogType.Info);
         }
         AnimationController.HoldEmoteLoop((Character*)companion.BattleChara, prayerLoop);
         return true;
@@ -211,10 +251,14 @@ public unsafe partial class CombatCompanionManager
     {
         if (!GuardingLord || !LordSeizers.Contains(enemy.SimulatedEntityId) || !TryGetLordBody(out var body, out _))
             return null;
-        if (prayerId != 0 && GetCompanion(prayerId) is { } prayer && CanRescue(prayer))
+        // Only those at the body stand in a seizer's way; a retainer far off is left to the ordinary
+        // choice (or a ranged seizer would stop to shoot it while the body lay open).
+        const float atBody = LordContestRadius + 2f;
+        if (prayerId != 0 && GetCompanion(prayerId) is { } prayer && CanRescue(prayer) &&
+            FlatDistance((Vector3)((GameObject*)prayer.BattleChara)->Position, body) <= atBody)
             return prayer;
         CombatCompanion? nearest = null;
-        var best = float.MaxValue;
+        var best = atBody;
         foreach (var companion in companions)
         {
             if (!CanRescue(companion))
@@ -229,9 +273,48 @@ public unsafe partial class CombatCompanionManager
         return nearest;
     }
 
-    /// <summary>A guard's place in the ring round the lord's body.</summary>
-    private static Vector3 GuardRingPosition(Vector3 body, int index, int count)
+    // A guard that strays past its leash walks back until it is this share of the way in, so it does
+    // not flicker in and out at the edge.
+    private const float GuardReturnShare = 0.7f;
+
+    /// <summary>
+    /// Whether a guard of the lord's body is inside its leash: past the leash it must come back, and
+    /// stays coming back until well inside.
+    /// </summary>
+    private bool GuardInsideLeash(CombatCompanion companion, float distance, float limit)
     {
+        if (companion.ReturningToLord)
+        {
+            if (distance <= limit * GuardReturnShare)
+                companion.ReturningToLord = false;
+        }
+        else if (distance > limit)
+            companion.ReturningToLord = true;
+        return !companion.ReturningToLord;
+    }
+
+    /// <summary>
+    /// Where a guard goes when it is not fighting: coming back from past its leash, well inside it on
+    /// its own side; otherwise its place in the ring of guards (the one praying and those raising
+    /// are not in the ring).
+    /// </summary>
+    private Vector3 GuardGoal(CombatCompanion companion, Vector3 body, Vector3 current)
+    {
+        if (companion.ReturningToLord)
+        {
+            var away = new Vector3(current.X - body.X, 0f, current.Z - body.Z);
+            away = away.LengthSquared() > 1e-4f ? Vector3.Normalize(away) : Vector3.UnitZ;
+            return body + away * (CommandLimit(companion.SimulatedEntityId) * GuardReturnShare * 0.85f);
+        }
+        int index = 0, count = 0;
+        foreach (var other in companions)
+        {
+            if (!CanRescue(other) || other.SimulatedEntityId == prayerId || IsRescuing(other.SimulatedEntityId))
+                continue;
+            if (other == companion)
+                index = count;
+            count++;
+        }
         var angle = MathF.Tau * index / Math.Max(1, count);
         return body + new Vector3(MathF.Sin(angle), 0f, MathF.Cos(angle)) * GuardRingRadius;
     }
@@ -248,6 +331,8 @@ public unsafe partial class CombatCompanionManager
         }
         prayerId = 0;
         prayerAtPost = false;
+        prayerBest = float.MaxValue;
+        prayerStall = 0f;
     }
 
     /// <summary>The lord's body has been carried off: whoever is left is taken.</summary>

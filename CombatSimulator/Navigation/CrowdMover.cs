@@ -158,6 +158,13 @@ public sealed class CrowdMover
         return true;
     }
 
+    /// <summary>The walkable floor at or beside a point (a few metres sideways), for a spot to walk to.</summary>
+    public bool TrySnapToFloor(Vector3 point, out Vector3 floor)
+    {
+        floor = point;
+        return navMesh.Mesh != null && navMesh.TryFloor(point, FloorSearch, JoinSideways, out floor, out _);
+    }
+
     /// <summary>
     /// Something the crowd walks round but does not move (the player): put where it is now, standing.
     /// Call every frame, like <see cref="Drive"/>.

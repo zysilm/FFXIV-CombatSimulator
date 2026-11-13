@@ -384,7 +384,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
             }
         }
 
-        TickRescues(deltaTime);
+        TickRescues(deltaTime, enemies);
         TickLord();
         for (var i = 0; i < liveCompanions.Count; i++)
             TickCompanion(liveCompanions[i], deltaTime, enemies, i, liveCompanions.Count);
@@ -1295,7 +1295,12 @@ public unsafe partial class CombatCompanionManager : IDisposable
         var current = (Vector3)obj->Position;
         var delta = current - CommandAnchor(player.Position);
         delta.Y = 0;
-        return delta.Length() <= CommandLimit(companion.SimulatedEntityId);
+        if (!GuardingLord)
+        {
+            companion.ReturningToLord = false;
+            return delta.Length() <= CommandLimit(companion.SimulatedEntityId);
+        }
+        return GuardInsideLeash(companion, delta.Length(), CommandLimit(companion.SimulatedEntityId));
     }
 
     /// <summary>
@@ -1343,7 +1348,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         var anchor = CommandAnchor(player.Position);
         var anchorRotation = combatAnchorActive && !GuardingLord ? combatAnchorRotation : player.Rotation;
         var goal = GuardingLord
-            ? GuardRingPosition(anchor, companionIndex, companionCount)
+            ? GuardGoal(companion, anchor, current)
             : CalculateFollowPosition(anchor, anchorRotation, companionIndex, companionCount);
         if (FlatDistance(current, goal) > FollowStopDistance)
         {

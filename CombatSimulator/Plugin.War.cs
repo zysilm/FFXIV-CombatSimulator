@@ -28,6 +28,13 @@ public sealed unsafe partial class CombatSimulatorPlugin
     private const float SeizeDrainRate = 0.5f;
     private const float SeizerShare = 0.5f;
     private const float SeizeReportSeconds = 2f;
+    // Every few seconds a seizer much further from the body than an enemy who is not one goes back to
+    // the fight (and the nearer one takes its place); sentries that never noticed the fight and stand
+    // further than this are not woken for it.
+    private const float SeizerReviewSeconds = 3f;
+    private const float SeizerKeepDistance = 10f;
+    private const float SeizerWakeRange = 40f;
+    private float seizerReviewTimer;
 
     private readonly WarBanner warBanner = new();
     private float seizeProgress;
@@ -79,7 +86,10 @@ public sealed unsafe partial class CombatSimulatorPlugin
     private void ReleaseSeizers()
     {
         foreach (var npc in bodySeizers)
+        {
             npc.SeizeGoal = null;
+            npc.SeizeHeld = false;
+        }
         bodySeizers.Clear();
         companionManager.LordSeizers.Clear();
         bodyContested = false;
@@ -107,6 +117,7 @@ public sealed unsafe partial class CombatSimulatorPlugin
             if (npc.IsSpawned && npc.IsAlive && npc.BattleChara != null)
                 return false;
             npc.SeizeGoal = null;
+            npc.SeizeHeld = false;
             return true;
         });
         seizerCandidates.Clear();
@@ -119,12 +130,34 @@ public sealed unsafe partial class CombatSimulatorPlugin
             if (bodySeizers.Contains(npc))
                 continue;
             var pos = (Vector3)((GameObject*)npc.BattleChara)->Position;
-            seizerCandidates.Add((npc, new Vector2(pos.X - body.X, pos.Z - body.Z).Length()));
+            var distance = new Vector2(pos.X - body.X, pos.Z - body.Z).Length();
+            if (npc.IsSentry && npc.AiState == Ai.NpcAiState.Idle && distance > SeizerWakeRange)
+                continue;
+            seizerCandidates.Add((npc, distance));
+        }
+        seizerCandidates.Sort((a, b) => a.Distance.CompareTo(b.Distance));
+
+        seizerReviewTimer -= deltaTime;
+        if (seizerReviewTimer <= 0f)
+        {
+            seizerReviewTimer = SeizerReviewSeconds;
+            if (seizerCandidates.Count > 0)
+            {
+                var keep = MathF.Max(SeizerKeepDistance, seizerCandidates[0].Distance * 2f);
+                bodySeizers.RemoveAll(npc =>
+                {
+                    var pos = (Vector3)((GameObject*)npc.BattleChara)->Position;
+                    if (new Vector2(pos.X - body.X, pos.Z - body.Z).Length() <= keep)
+                        return false;
+                    npc.SeizeGoal = null;
+                    npc.SeizeHeld = false;
+                    return true;
+                });
+            }
         }
         var wanted = living == 0 ? 0 : Math.Max(1, (int)MathF.Ceiling(living * SeizerShare));
         if (bodySeizers.Count < wanted)
         {
-            seizerCandidates.Sort((a, b) => a.Distance.CompareTo(b.Distance));
             for (var i = 0; i < seizerCandidates.Count && bodySeizers.Count < wanted; i++)
             {
                 var npc = seizerCandidates[i].Npc;
@@ -143,6 +176,8 @@ public sealed unsafe partial class CombatSimulatorPlugin
         // While a retainer stands over the body, nobody can carry it off.
         var contested = companionManager.LordBodyContested(body, Companions.CombatCompanionManager.LordContestRadius,
             out var guardName, out var guardDistance);
+        foreach (var npc in bodySeizers)
+            npc.SeizeHeld = contested;
         if (contested != bodyContested)
         {
             bodyContested = contested;
@@ -179,6 +214,16 @@ public sealed unsafe partial class CombatSimulatorPlugin
 
         if (closest != null && seizeProgress >= SeizeSeconds)
             SeizeBody(closest);
+    }
+
+    /// <summary>Where a fallen actor's body lies: its ragdoll's pelvis, or null without one.</summary>
+    private Vector3? BodyPositionOf(nint address)
+    {
+        if (!config.EnableRagdoll || address == nint.Zero)
+            return null;
+        if (npcRagdolls.TryGetValue(address, out var npc))
+            return npc.IsActive ? npc.GetBodyWorldPosition("j_kosi") : null;
+        return Core.Services.ObjectTable.LocalPlayer?.Address == address ? LordBodyPosition() : null;
     }
 
     /// <summary>Where the lord's body lies: its ragdoll pelvis once it falls, else where the lord died.</summary>

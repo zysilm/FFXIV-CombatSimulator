@@ -375,6 +375,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         enemyControlController.FootIkSolver = npcCorpseFootIkSolver;
         companionManager.CorpseSupportHeightProvider = ResolveCorpseTraversalHeight;
         companionManager.LordBodyPosition = LordBodyPosition;
+        companionManager.BodyPositionOf = BodyPositionOf;
         virtualEnemyLookAt = new VirtualEnemyLookAtController(boneTransformService, config, npcSpawner, combatEngine,
             addr => devExperimental.ControlsNpc(addr) || enemyControlController.ControlsNpc(addr) ||
                     fightingModeController?.ControlsEnemy(addr) == true,

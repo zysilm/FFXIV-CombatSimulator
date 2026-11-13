@@ -33,6 +33,26 @@ public unsafe partial class CombatCompanionManager
     private const uint RaiseEmoteId = 19;
     // Raise: the game's own resurrection spell, for its effect when a raise lands.
     private const uint RaiseActionId = 125;
+    // Triage: at most one ally in this many living ones raises at a time, so the army keeps fighting.
+    private const int AlliesPerRescue = 4;
+    // A fallen friend in the thick of it (more enemies than friends this close) waits; the lord does not.
+    private const float RescueDangerRadius = 8f;
+    // Pushed off a friend mid-raise, the raise waits and runs down at this share of its rate.
+    private const float RaiseDrainRate = 0.5f;
+    // Hurt this badly on the way, a rescuer gives up and fights on, and is not sent again for a while.
+    private const float RescuerGiveUpHpShare = 0.3f;
+    private const float RescuerRestSeconds = 6f;
+    // Someone two enemies are already on is not sent to kneel.
+    private const int RescuerMaxAttackers = 2;
+    private const float RescueReportSeconds = 5f;
+
+    /// <summary>Where a fallen actor's body lies (its ragdoll's pelvis); null: where it fell.</summary>
+    public Func<nint, Vector3?>? BodyPositionOf { private get; set; }
+
+    private readonly Dictionary<uint, float> rescuerRestUntil = new();
+    private readonly List<(SimulatedEntityState Patient, Vector3 At, int Rank, float Distance)> rescueQueue = new();
+    private int raisesLanded, rescuesAbandoned, rescuersFallen;
+    private float rescueReportTimer;
 
     private sealed class Rescue
     {
@@ -63,7 +83,7 @@ public unsafe partial class CombatCompanionManager
     private bool RaisingAllowed => config.WarFallenRule == (int)WarFallenRule.SpringAndAutumn;
 
     /// <summary>Who needs raising or freeing, and who goes: once per frame, before the companions act.</summary>
-    private void TickRescues(float deltaTime)
+    private void TickRescues(float deltaTime, IReadOnlyList<Npcs.SimulatedNpc> enemies)
     {
         if (!RaisingAllowed || !combatEngine.IsActive)
         {
@@ -78,19 +98,96 @@ public unsafe partial class CombatCompanionManager
             var patient = combatEngine.State.GetEntity(patientId);
             var rescuer = GetCompanion(rescue.RescuerId);
             if (patient == null || !NeedsRescue(patient) || rescuer == null || !CanRescue(rescuer))
+            {
+                if (rescuer != null && !CanRescue(rescuer))
+                    rescuersFallen++;
                 finishedRescues.Add(patientId);
+            }
         }
         foreach (var id in finishedRescues)
             EndRescue(id);
 
-        // The player first, then companions; each to the nearest free companion.
-        TryAssignRescue(combatEngine.State.PlayerState, PlayerPosition());
+        // Triage: the lord first, then tanks, then the others, nearest first; only so many at once,
+        // and nobody is sent into the thick of the enemy for anyone but the lord.
+        var fighters = 0;
+        foreach (var companion in companions)
+            if (CanRescue(companion))
+                fighters++;
+        var allowed = Math.Max(1, (int)MathF.Ceiling(fighters / (float)AlliesPerRescue));
+
+        rescueQueue.Clear();
+        var player = combatEngine.State.PlayerState;
+        var lord = objectTable.LocalPlayer;
+        if (NeedsRescue(player) && lord != null)
+            rescueQueue.Add((player, BodyPositionOf?.Invoke(lord.Address) ?? lord.Position, 0, 0f));
+        var anchor = lord?.Position ?? Vector3.Zero;
         foreach (var companion in companions)
         {
-            if (!companion.IsSpawned || companion.BattleChara == null)
+            if (!companion.IsSpawned || companion.BattleChara == null || !NeedsRescue(companion.State))
                 continue;
-            TryAssignRescue(companion.State, (Vector3)((GameObject*)companion.BattleChara)->Position);
+            var at = PatientPosition(companion);
+            rescueQueue.Add((companion.State, at, companion.State.IsTank ? 1 : 2, FlatDistance(at, anchor)));
         }
+        rescueQueue.Sort((a, b) => a.Rank != b.Rank ? a.Rank.CompareTo(b.Rank) : a.Distance.CompareTo(b.Distance));
+        foreach (var (patient, at, rank, _) in rescueQueue)
+        {
+            if (rescues.ContainsKey(patient.EntityId))
+                continue;
+            if (rescues.Count >= allowed && rank != 0)
+                break;
+            if (rank != 0 && Outnumbered(at, enemies))
+                continue;
+            TryAssignRescue(patient, at);
+        }
+
+        rescueReportTimer -= deltaTime;
+        if (rescueReportTimer <= 0f)
+        {
+            rescueReportTimer = RescueReportSeconds;
+            if (rescues.Count > 0 || raisesLanded + rescuesAbandoned + rescuersFallen > 0)
+            {
+                var kneeling = 0;
+                foreach (var r in rescues.Values) if (r.Channelling) kneeling++;
+                log.Info($"Rescue: {rescues.Count} under way ({kneeling} kneeling, at most {allowed} of {fighters} allies), {rescueQueue.Count} fallen; over {RescueReportSeconds:0} s {raisesLanded} raised, {rescuesAbandoned} given up, {rescuersFallen} rescuers fell.");
+            }
+            raisesLanded = rescuesAbandoned = rescuersFallen = 0;
+        }
+    }
+
+    /// <summary>Where a fallen companion lies: its ragdoll, else its game position.</summary>
+    private Vector3 PatientPosition(CombatCompanion companion)
+        => BodyPositionOf?.Invoke(companion.Address) ?? (Vector3)((GameObject*)companion.BattleChara)->Position;
+
+    /// <summary>More living enemies than friends within the danger radius of a point.</summary>
+    private bool Outnumbered(Vector3 at, IReadOnlyList<Npcs.SimulatedNpc> enemies)
+    {
+        var foes = 0;
+        foreach (var enemy in enemies)
+        {
+            if (!enemy.IsSpawned || !enemy.State.IsAlive || enemy.BattleChara == null)
+                continue;
+            if (enemy.IsSentry && enemy.AiState == Ai.NpcAiState.Idle)
+                continue;
+            if (FlatDistance((Vector3)((GameObject*)enemy.BattleChara)->Position, at) <= RescueDangerRadius)
+                foes++;
+        }
+        if (foes == 0)
+            return false;
+        var friends = 0;
+        foreach (var companion in companions)
+            if (CanRescue(companion) && FlatDistance((Vector3)((GameObject*)companion.BattleChara)->Position, at) <= RescueDangerRadius)
+                friends++;
+        return foes > friends;
+    }
+
+    /// <summary>How many enemies have this one as their target.</summary>
+    private int AttackersOn(uint entityId)
+    {
+        var n = 0;
+        foreach (var target in enemyTargetByEnemyId.Values)
+            if (target == entityId)
+                n++;
+        return n;
     }
 
     private static bool NeedsRescue(SimulatedEntityState friend)
@@ -107,11 +204,22 @@ public unsafe partial class CombatCompanionManager
         if (where is not { } at || patient.EntityId == 0 || !NeedsRescue(patient) || rescues.ContainsKey(patient.EntityId))
             return;
 
+        // The nearest friend free to go: not already raising, not resting after giving up, not badly
+        // hurt, not the one the enemy is swarming, and not the one praying over the lord.
+        var now = combatEngine.State.SimulationTime;
         CombatCompanion? nearest = null;
         var best = float.MaxValue;
         foreach (var companion in companions)
         {
             if (!CanRescue(companion) || companion.State.EntityId == patient.EntityId || IsRescuing(companion.SimulatedEntityId))
+                continue;
+            if (companion.SimulatedEntityId == prayerId)
+                continue;
+            if (rescuerRestUntil.TryGetValue(companion.SimulatedEntityId, out var restUntil) && now < restUntil)
+                continue;
+            if (companion.State.CurrentHp < companion.State.MaxHp * RescuerGiveUpHpShare)
+                continue;
+            if (AttackersOn(companion.SimulatedEntityId) >= RescuerMaxAttackers)
                 continue;
             var d = FlatDistance((Vector3)((GameObject*)companion.BattleChara)->Position, at);
             if (d < best)
@@ -148,10 +256,10 @@ public unsafe partial class CombatCompanionManager
             return false;
 
         var patient = combatEngine.State.GetEntity(rescue.PatientId);
-        var where = patient == null ? null
-            : patient.IsPlayer ? PlayerPosition()
+        Vector3? where = patient == null ? null
+            : patient.IsPlayer ? (objectTable.LocalPlayer is { } lord ? BodyPositionOf?.Invoke(lord.Address) ?? lord.Position : (Vector3?)null)
             : GetCompanion(rescue.PatientId) is { BattleChara: not null } friend
-                ? (Vector3)((GameObject*)friend.BattleChara)->Position
+                ? PatientPosition(friend)
                 : null;
         if (patient == null || where is not { } at)
         {
@@ -162,8 +270,19 @@ public unsafe partial class CombatCompanionManager
         var self = (Vector3)((GameObject*)companion.BattleChara)->Position;
         if (FlatDistance(self, at) > RaiseReach)
         {
+            // Pushed off mid-raise: it waits and runs down slowly, it does not start over.
             if (rescue.Channelling)
-                StopChannelling(companion, rescue);
+                StopChannelling(companion, rescue, keepProgress: true);
+            rescue.Progress = MathF.Max(0f, rescue.Progress - deltaTime * RaiseDrainRate);
+            // Hurt badly on the way: gives up and fights on.
+            if (companion.State.CurrentHp < companion.State.MaxHp * RescuerGiveUpHpShare)
+            {
+                rescuerRestUntil[companion.SimulatedEntityId] = combatEngine.State.SimulationTime + RescuerRestSeconds;
+                rescuesAbandoned++;
+                combatEngine.AddLogEntry($"{companion.Name} cannot reach {patient.Name}.", CombatLogType.Info);
+                EndRescue(rescue.PatientId);
+                return false;
+            }
             EnterCompanionState(companion, CompanionAiState.MovingToTarget, deltaTime);
             MoveToward(companion, at, deltaTime);
             return true;
@@ -196,14 +315,16 @@ public unsafe partial class CombatCompanionManager
             FreeFriend(patient, companion);
         else
             RaiseFriend(patient, companion);
+        raisesLanded++;
         EndRescue(rescue.PatientId);
         return true;
     }
 
-    private void StopChannelling(CombatCompanion companion, Rescue rescue)
+    private void StopChannelling(CombatCompanion companion, Rescue rescue, bool keepProgress = false)
     {
         rescue.Channelling = false;
-        rescue.Progress = 0f;
+        if (!keepProgress)
+            rescue.Progress = 0f;
         companion.State.IncomingDamageScale = 1f;
         if (companion.BattleChara != null && companion.State.IsAlive)
             animationController.EmotePlayer.ResetEmote((Character*)companion.BattleChara);
@@ -331,5 +452,6 @@ public unsafe partial class CombatCompanionManager
     {
         CancelAllRescues();
         rescues.Clear();
+        rescuerRestUntil.Clear();
     }
 }

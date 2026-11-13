@@ -337,12 +337,15 @@ public partial class CombatEngine : IDisposable
 
     // An enemy's first try at a captive starts the wind-up; it strikes once the wind-up is over.
     private const float ExecutionWindupSeconds = 1.5f;
+    private const float ExecutionWindupForgetSeconds = 4f;
     private readonly Dictionary<(uint Npc, uint Captive), float> executionWindups = new();
 
     private bool ExecutionReady(SimulatedNpc npc, SimulatedEntityState captive)
     {
         var key = (npc.SimulatedEntityId, captive.EntityId);
-        if (!executionWindups.TryGetValue(key, out var since))
+        // A wind-up the enemy walked away from (it fought someone else meanwhile) starts over.
+        if (!executionWindups.TryGetValue(key, out var since) ||
+            State.SimulationTime - since > ExecutionWindupSeconds + ExecutionWindupForgetSeconds)
         {
             executionWindups[key] = State.SimulationTime;
             return false;
@@ -1730,10 +1733,11 @@ public partial class CombatEngine : IDisposable
             }
 
             // Check if all NPCs are dead for victory
+            // (A sentry that never noticed the fight does not keep it going.)
             bool allDead = true;
             foreach (var npc in npcSelector.SelectedNpcs)
             {
-                if (npc.State.IsAlive)
+                if (npc.State.IsAlive && !(npc.IsSentry && npc.AiState == Ai.NpcAiState.Idle))
                 {
                     allDead = false;
                     break;

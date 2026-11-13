@@ -75,6 +75,8 @@ public unsafe class SimulatedNpc
     public bool WalkPace { get; set; }
     /// <summary>Where this enemy is going to carry off the fallen lord's body (Warring States), or null.</summary>
     public Vector3? SeizeGoal { get; set; }
+    /// <summary>Going for the lord's body while a retainer stands over it: it fights its way in.</summary>
+    public bool SeizeHeld { get; set; }
     /// <summary>A sentry that walks about its post while idle.</summary>
     public bool Patrols { get; set; }
     public Vector3 PatrolGoal { get; set; }
