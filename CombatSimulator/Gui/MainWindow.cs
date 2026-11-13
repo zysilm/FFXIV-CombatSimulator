@@ -616,9 +616,9 @@ public partial class MainWindow : IDisposable
         };
 
     private const string EnemyStrengthHelp =
-        "How long one enemy takes to kill and how much of your HP that fight costs if you avoid nothing.\n" +
+        "How much HP an enemy has: how long you need to kill it. Its hits are the same as yours: a skill does the same damage whoever uses it, and costs the same share of MP.\n" +
         "Auto: read from the enemy itself (ordinary enemies Normal, notorious ones Strong or Elite, bosses Boss).\n" +
-        "Weak: 4 s, 5%.  Normal: 10 s, 20%.  Strong: 20 s, 50%.  Elite: 35 s, 85%.  Boss: 90 s, lethal unless you guard or bring help.";
+        "Weak: about a third of your HP.  Normal: about your HP, an even duel.  Strong: twice.  Elite: three times.  Boss: eight times.";
 
     private const string EnemyLevelHelp =
         "Only the gap to your own level matters; your gear does not.\n" +
@@ -1866,14 +1866,13 @@ public partial class MainWindow : IDisposable
     private const int WarMaxSpawnCount = 20;
 
     private const string AllyStrengthHelp =
-        "How tough an ally is and how hard it hits, both together.\n" +
-        "Normal: about as tough and as hard-hitting as a copy of you fighting at your side.\n" +
-        "Weak: 0.4 times that.  Strong: 2 times.  Elite: 3.5 times.  Boss: 9 times.\n" +
+        "How much HP an ally has. Its hits are the same as yours: a skill does the same damage whoever uses it.\n" +
+        "Normal: about your HP.  Weak: 0.4 times.  Strong: 2 times.  Elite: 3.5 times.  Boss: 9 times.\n" +
         "Auto: read from the creature itself (ordinary ones Normal, notorious ones Strong or Elite, bosses Boss).";
 
     private const string AllyLevelHelp =
         "Only the gap to your own level matters, as it does for enemies: an ally above your level is tougher and hits harder by what the gap is worth.\n" +
-        "Leave it on \"My level\" for an ally exactly as strong as its strength says.";
+        "Leave it on \"My level\" for an ally that hits exactly as hard as you.";
 
     /// <summary>Allies asked for that the spawner has not handed to the party yet.</summary>
     private int PendingAllies()

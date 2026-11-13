@@ -27,6 +27,9 @@ public class DamageCalculator
     /// <summary>Whether Action Mode is on. It changes the player's reference output and the enemy threat.</summary>
     public Func<bool> IsActionMode { get; set; } = () => false;
 
+    /// <summary>The player's maximum HP, which sizes everyone's damage (0: use the attacker's own).</summary>
+    public Func<float> PlayerMaxHp { get; set; } = () => 0f;
+
     public DamageCalculator() : this(new Random())
     {
     }
@@ -68,25 +71,15 @@ public class DamageCalculator
         if (potency <= 0)
             return result;
 
+        // One rate for everyone: the player's, sized by the player's HP, times the attacker's level worth.
+        // The same skill hits as hard from an enemy or an ally as from the player.
         var actionMode = IsActionMode();
-        float damage;
-        if (source.IsPlayer)
-        {
-            damage = potency * CombatBudgetModel.PlayerDamagePerPotency(source.MaxHp, actionMode)
-                     * MathF.Max(0f, damageMultiplier);
-        }
-        else if (source.IsCompanion)
-        {
-            damage = potency * CombatBudgetModel.CompanionDamagePerPotency(source.MaxHp, source.KitOutput(actionMode))
-                     * MathF.Max(0f, damageMultiplier);
-        }
-        else
-        {
-            // An enemy: a share of whoever it hits, so a companion with less HP is hurt as much as the player.
-            damage = CombatBudgetModel.EnemyHitShare(potency, source.Tier, source.KitOutput(actionMode), actionMode, source.LevelFactor)
-                     * MathF.Max(1f, target.HitReferenceHp > 0f ? target.HitReferenceHp : target.MaxHp)
+        var playerHp = source.IsPlayer ? source.MaxHp : PlayerMaxHp();
+        if (playerHp <= 0f) playerHp = source.MaxHp;
+        var levelFactor = source.IsPlayer ? 1f : source.LevelFactor;
+        var damage = potency * CombatBudgetModel.DamagePerPotency(playerHp, actionMode, levelFactor)
+                     * MathF.Max(0f, damageMultiplier)
                      * MathF.Max(0f, target.IncomingDamageScale);
-        }
 
         damage *= CombatBudgetModel.RollModifier(rng.NextDouble(), rng.NextDouble(), enableCrit, enableDh,
             out var isCritical, out var isDirectHit);

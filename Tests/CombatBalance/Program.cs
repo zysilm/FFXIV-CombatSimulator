@@ -2,7 +2,7 @@ using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
 
 // Offline fight simulator for the combat numbers. It drives the production DamageCalculator,
-// CombatBudgetModel, KitBudget, VirtualActionModel and NpcBehavior kits through whole fights, with the
+// CombatBudgetModel, VirtualActionModel and NpcBehavior kits through whole fights, with the
 // player and enemy action economies the engine uses (constants below mirror CombatEngine and
 // NpcAiController), and checks the outcomes against the model's contract.
 
@@ -70,7 +70,7 @@ var kits = new (string Name, Func<NpcBehavior> Make)[]
 Outcome Fight(Setup setup)
 {
     var random = new Random(setup.Seed);
-    var calculator = new DamageCalculator(random) { IsActionMode = () => setup.ActionMode };
+    var calculator = new DamageCalculator(random) { IsActionMode = () => setup.ActionMode, PlayerMaxHp = () => setup.PlayerMaxHp };
     var pace = setup.ActionMode ? CombatBudgetModel.ActionModePace : 1f;
 
     var player = new SimulatedEntityState { IsPlayer = true, MaxHp = setup.PlayerMaxHp, CurrentHp = setup.PlayerMaxHp, MaxMp = PlayerMaxMp, CurrentMp = PlayerMaxMp };
@@ -85,15 +85,13 @@ Outcome Fight(Setup setup)
             LevelFactor = setup.LevelFactor,
         };
         state.CurrentHp = state.MaxHp;
-        KitBudget.Measure(state, behavior, Price, usesMp: true);
         enemies.Add(new Enemy(behavior, state) { AutoTimer = (float)random.NextDouble() * behavior.AutoAttackDelay / pace });
     }
     var companions = new List<Enemy>();
     for (var i = 0; i < setup.Companions; i++)
     {
         var behavior = JobKit();
-        var state = new SimulatedEntityState { IsCompanion = true, MaxHp = setup.PlayerMaxHp, CurrentHp = setup.PlayerMaxHp };
-        KitBudget.Measure(state, behavior, Price, usesMp: false);
+        var state = new SimulatedEntityState { IsCompanion = true, MaxHp = setup.PlayerMaxHp, CurrentHp = setup.PlayerMaxHp, MaxMp = PlayerMaxMp, CurrentMp = PlayerMaxMp };
         companions.Add(new Enemy(behavior, state));
     }
 
@@ -161,19 +159,30 @@ Outcome Fight(Setup setup)
             }
         }
 
-        // --- companions: skills by cooldown, otherwise auto-attack (CombatCompanionManager) ---
+        // --- companions: an affordable skill by cooldown, otherwise auto-attack; MP as enemies (CombatCompanionManager) ---
         foreach (var companion in companions)
         {
             var target = enemies.FirstOrDefault(e => e.State.IsAlive);
             if (target == null) break;
+            companion.MpCarry += CombatBudgetModel.EnemyMpRegenPerSecond * Dt;
+            if (companion.MpCarry >= 1f) { companion.State.CurrentMp = Math.Min(companion.State.MaxMp, companion.State.CurrentMp + (int)companion.MpCarry); companion.MpCarry -= (int)companion.MpCarry; }
             companion.Lock -= Dt;
             foreach (var skill in companion.Behavior.Skills) skill.CooldownRemaining -= Dt;
             companion.AutoTimer -= Dt;
             if (companion.Lock > 0f) continue;
-            var ready = companion.Behavior.Skills.OrderByDescending(s => s.Priority).FirstOrDefault(s => s.CooldownRemaining <= 0f);
+            var ready = companion.Behavior.Skills.OrderByDescending(s => s.Priority).FirstOrDefault(s => s.CooldownRemaining <= 0f &&
+                companion.State.CurrentMp >= CombatBudgetModel.EnemySkillMpCost(Price(s.ActionId), companion.State.MaxMp));
             int potency;
-            if (ready != null) { potency = ready.Potency; ready.CooldownRemaining = ready.Cooldown / pace; }
-            else if (companion.AutoTimer <= 0f) { potency = companion.Behavior.AutoAttackPotency; companion.AutoTimer = companion.Behavior.AutoAttackDelay / pace; }
+            if (ready != null)
+            {
+                potency = ready.Potency; ready.CooldownRemaining = ready.Cooldown / pace;
+                companion.State.CurrentMp -= CombatBudgetModel.EnemySkillMpCost(Price(ready.ActionId), companion.State.MaxMp);
+            }
+            else if (companion.AutoTimer <= 0f)
+            {
+                potency = companion.Behavior.AutoAttackPotency; companion.AutoTimer = companion.Behavior.AutoAttackDelay / pace;
+                companion.State.CurrentMp = Math.Min(companion.State.MaxMp, companion.State.CurrentMp + CombatBudgetModel.EnemyAutoAttackMpRestore);
+            }
             else continue;
             companion.Lock = AnimationLock;
             var damage = calculator.CalculateNpcAutoAttack(companion.State, target.State, potency).Damage;
@@ -300,62 +309,67 @@ var cases = new (string, Action)[]
                 Check(Within(o.Seconds, reference.Seconds, 0.08f) && MathF.Abs(o.CostShare - reference.CostShare) < 0.05f, $"max HP {hp} changed the fight");
             }
     }),
-    ("every tier takes its intended time to kill and costs its intended share of HP", () => {
+    ("one set of numbers: the same potency does the same damage from the player, an ally or an enemy", () => {
+        foreach (var mode in new[] { false, true })
+        {
+            var calculator = new DamageCalculator(new Random(5)) { IsActionMode = () => mode, PlayerMaxHp = () => 180_000f };
+            var dummy = new SimulatedEntityState { MaxHp = 1_000_000_000 };
+            double Mean(SimulatedEntityState source)
+            {
+                long sum = 0;
+                for (var i = 0; i < 20_000; i++) sum += calculator.CalculateNpcAutoAttack(source, dummy, 500).Damage;
+                return sum / 20_000.0;
+            }
+            var player = Mean(new SimulatedEntityState { IsPlayer = true, MaxHp = 180_000 });
+            var ally = Mean(new SimulatedEntityState { IsCompanion = true, MaxHp = 400_000 });   // a tougher ally: HP does not change its hits
+            var enemy = Mean(new SimulatedEntityState { MaxHp = 1_500_000, Tier = EnemyTier.Boss });
+            var higher = Mean(new SimulatedEntityState { MaxHp = 180_000, LevelFactor = 2f });
+            Console.WriteLine($"      {(mode ? "action " : "classic")}: 500 potency hits for {player:F0} from the player, {ally:F0} from an ally, {enemy:F0} from a boss, {higher:F0} from an enemy worth twice the player's level");
+            Check(Within((float)ally, (float)player, 0.01f) && Within((float)enemy, (float)player, 0.01f), "the same potency did different damage");
+            Check(Within((float)higher, 2f * (float)player, 0.01f), "a level gap did not scale the damage");
+        }
+    }),
+    ("a tier is HP: every tier takes its intended time to kill", () => {
         foreach (var mode in new[] { true, false })
             foreach (var tier in tiers)
             {
                 var ttk = Average(new Setup(180_000, mode, new[] { ((Func<NpcBehavior>)JobKit, tier) }) { PlayerSkill = meleeSkill, PlayerCanDie = false, MaxSeconds = 400f });
-                var pressure = Average(new Setup(180_000, mode, new[] { ((Func<NpcBehavior>)JobKit, tier) }) { PlayerAttacks = false, PlayerCanDie = false, MaxSeconds = CombatBudgetModel.SecondsToKill(tier) });
-                var expectedRate = CombatBudgetModel.FightCost(tier) * (mode ? CombatBudgetModel.ActionModeThreat : 1f) / CombatBudgetModel.SecondsToKill(tier);
-                var rate = pressure.CostShare / pressure.Seconds;
-                Console.WriteLine($"      {(mode ? "action " : "classic")} {tier,-6}: killed in {ttk.Seconds,5:F1} s (target {CombatBudgetModel.SecondsToKill(tier),2:F0}), unavoided cost of the fight {rate * CombatBudgetModel.SecondsToKill(tier),5:P0} (target {expectedRate * CombatBudgetModel.SecondsToKill(tier):P0})");
+                var pressure = Average(new Setup(180_000, mode, new[] { ((Func<NpcBehavior>)JobKit, tier) }) { PlayerAttacks = false, PlayerCanDie = false, MaxSeconds = 20f });
+                Console.WriteLine($"      {(mode ? "action " : "classic")} {tier,-6}: killed in {ttk.Seconds,5:F1} s (target {CombatBudgetModel.SecondsToKill(tier),2:F0}); a job kit deals {pressure.CostShare / pressure.Seconds * 10f,5:P0} of the player's HP per 10 s, whatever the tier");
                 // The bot never misses and opens with a full MP pool, so it may be up to twice as fast; it must not be slower.
                 // Classic play runs out of MP in a long fight, so its long tiers take longer than the reference says.
                 var slowest = CombatBudgetModel.SecondsToKill(tier) * (mode ? 1.1f : 1.8f);
                 Check(ttk.Seconds <= slowest && ttk.Seconds >= CombatBudgetModel.SecondsToKill(tier) * 0.45f, $"{tier} time to kill {ttk.Seconds:F1}");
-                Check(Within(rate, expectedRate, 0.25f), $"{tier} damage rate {rate:F4} vs {expectedRate:F4}");
             }
+        var weak = Average(new Setup(180_000, false, new[] { ((Func<NpcBehavior>)JobKit, EnemyTier.Weak) }) { PlayerAttacks = false, PlayerCanDie = false, MaxSeconds = 20f });
+        var boss = Average(new Setup(180_000, false, new[] { ((Func<NpcBehavior>)JobKit, EnemyTier.Boss) }) { PlayerAttacks = false, PlayerCanDie = false, MaxSeconds = 20f });
+        Check(Within(boss.CostShare, weak.CostShare, 0.1f), "the tier changed how hard an enemy hits");
     }),
-    ("every kind of kit delivers the same pressure for its tier", () => {
+    ("a bigger kit hits harder, from either side", () => {
         foreach (var mode in new[] { false, true })
+        {
+            var rates = new List<(string Name, float Rate)>();
             foreach (var (name, make) in kits)
             {
-                var o = Average(new Setup(180_000, mode, new[] { (make, EnemyTier.Normal) }) { PlayerAttacks = false, PlayerCanDie = false, MaxSeconds = CombatBudgetModel.SecondsToKill(EnemyTier.Normal) });
-                var expected = CombatBudgetModel.FightCost(EnemyTier.Normal) * (mode ? CombatBudgetModel.ActionModeThreat : 1f) / CombatBudgetModel.SecondsToKill(EnemyTier.Normal);
-                var rate = o.CostShare / o.Seconds;
-                var state = new SimulatedEntityState { MaxMp = EnemyMaxMp, Tier = EnemyTier.Normal };
-                KitBudget.Measure(state, make(), Price, true);
-                Console.WriteLine($"      {(mode ? "action " : "classic")} {name,-17}: kit {state.KitOutput(mode),4:F0} potency/s, deals {rate / expected,5:P0} of its budget, largest hit {o.LargestEnemyHitShare:P0} of HP");
-                Check(Within(rate, expected, 0.25f), $"{name} delivers {rate / expected:P0} of its budget");
+                var o = Average(new Setup(180_000, mode, new[] { (make, EnemyTier.Normal) }) { PlayerAttacks = false, PlayerCanDie = false, MaxSeconds = 20f });
+                rates.Add((name, o.CostShare / o.Seconds * 10f));
             }
+            Console.WriteLine($"      {(mode ? "action " : "classic")}: per 10 s, of the player's HP: " + string.Join(", ", rates.Select(r => $"{r.Name} {r.Rate:P0}")));
+            Check(rates.Single(r => r.Name == "humanoid job kit").Rate > 1.5f * rates.Single(r => r.Name == "auto-attack only").Rate, "a kit of big skills does not hit harder than auto-attacks");
+        }
     }),
-    ("one enemy is a fair fight; several at once are dangerous", () => {
-        Outcome Pack(int count, EnemyTier tier, bool mode, float guard = 0f)
-            => Average(new Setup(180_000, mode, Enumerable.Repeat(((Func<NpcBehavior>)JobKit, tier), count).ToArray()) { PlayerSkill = meleeSkill, GuardRate = guard, MaxSeconds = 300f });
-        var one = Pack(1, EnemyTier.Normal, false); var two = Pack(2, EnemyTier.Normal, false); var three = Pack(3, EnemyTier.Normal, false);
-        var weak = Pack(5, EnemyTier.Weak, false); var strong = Pack(1, EnemyTier.Strong, false); var elite = Pack(1, EnemyTier.Elite, false);
-        Console.WriteLine($"      classic: 1 normal costs {one.CostShare:P0}; 2 cost {two.CostShare:P0} (won {two.WinRate:P0}); 3 cost {three.CostShare:P0} (won {three.WinRate:P0}); 5 weak cost {weak.CostShare:P0} (won {weak.WinRate:P0})");
-        Console.WriteLine($"      classic: 1 strong costs {strong.CostShare:P0} (won {strong.WinRate:P0}); 1 elite costs {elite.CostShare:P0} (won {elite.WinRate:P0})");
-        Check(one.WinRate == 1 && one.CostShare is > 0.10f and < 0.35f, "one normal enemy is not a fair fight");
-        Check(two.WinRate > 0.9f && two.CostShare is > 0.4f and < 0.95f, "two normal enemies");
-        Check(three.CostShare > 0.75f, "three normal enemies should be dangerous without help or guarding");
-        Check(weak.WinRate > 0.9f, "five weak enemies should be survivable");
-        Check(strong.WinRate > 0.9f && strong.CostShare is > 0.35f and < 0.75f, "a strong enemy");
-        // Action Mode: unguarded hits cost double, guarding half of them brings the cost back.
-        var open = Pack(1, EnemyTier.Normal, true); var guarded = Pack(1, EnemyTier.Normal, true, 0.5f); var crowd = Pack(3, EnemyTier.Normal, true, 0.6f);
-        Console.WriteLine($"      action:  1 normal costs {open.CostShare:P0} unguarded, {guarded.CostShare:P0} guarding half; 3 normals guarding 60% cost {crowd.CostShare:P0} (won {crowd.WinRate:P0})");
-        Check(open.WinRate == 1 && Within(open.CostShare, 2f * one.CostShare, 0.45f), "action mode unguarded cost");
-        Check(guarded.CostShare < 0.65f * open.CostShare, "guarding does not pay off");
-    }),
-    ("a boss cannot be out-raced, only out-played, and never one-shots", () => {
-        var raced = Average(new Setup(180_000, false, new[] { ((Func<NpcBehavior>)(() => NpcBehavior.Create(NpcBehaviorType.Boss)), EnemyTier.Boss) }) { PlayerSkill = meleeSkill, MaxSeconds = 400f });
-        var actionOpen = Average(new Setup(180_000, true, new[] { ((Func<NpcBehavior>)(() => NpcBehavior.Create(NpcBehaviorType.Boss)), EnemyTier.Boss) }) { PlayerSkill = meleeSkill, MaxSeconds = 400f });
-        var actionGuard = Average(new Setup(180_000, true, new[] { ((Func<NpcBehavior>)(() => NpcBehavior.Create(NpcBehaviorType.Boss)), EnemyTier.Boss) }) { PlayerSkill = meleeSkill, GuardRate = 0.85f, MaxSeconds = 400f });
-        Console.WriteLine($"      classic: dead after {raced.PlayerDeathTime:F0} s (won {raced.WinRate:P0}); action unguarded: dead after {actionOpen.PlayerDeathTime:F0} s; action guarding 85%: won {actionGuard.WinRate:P0}, cost {actionGuard.CostShare:P0}; largest hit {MathF.Max(raced.LargestEnemyHitShare, actionOpen.LargestEnemyHitShare):P0} of HP");
-        Check(raced.WinRate < 0.1f && raced.PlayerDeathTime is > 20f and < 60f, "a boss was out-raced, or kills too fast");
-        Check(actionOpen.WinRate < 0.1f, "an unguarded boss fight was won");
-        Check(actionGuard.WinRate > 0.8f, "a well guarded boss fight was lost");
-        Check(MathF.Max(raced.LargestEnemyHitShare, actionOpen.LargestEnemyHitShare) <= CombatBudgetModel.BossMaxHitShare * 1.06f, "a boss hit exceeded the cap");
+    ("an even duel: a Normal enemy with the player's kit is the player's match", () => {
+        // The enemy fights with the player's own kit: one weaponskill on the GCD, auto-attacks between.
+        NpcBehavior Mirror() => new() { Skills = new() { new NpcSkill { ActionId = 1001, Potency = meleeSkill.Potency, Cooldown = ClassicGcd } } };
+        prices[1001] = meleeSkill.MpCost;
+        var duel = Average(new Setup(180_000, false, new[] { ((Func<NpcBehavior>)Mirror, EnemyTier.Normal) }) { PlayerSkill = meleeSkill, MaxSeconds = 300f });
+        var two = Average(new Setup(180_000, false, new[] { ((Func<NpcBehavior>)Mirror, EnemyTier.Normal), ((Func<NpcBehavior>)Mirror, EnemyTier.Normal) }) { PlayerSkill = meleeSkill, MaxSeconds = 300f });
+        var boss = Average(new Setup(180_000, false, new[] { ((Func<NpcBehavior>)Mirror, EnemyTier.Boss) }) { PlayerSkill = meleeSkill, MaxSeconds = 400f });
+        Console.WriteLine($"      classic: one mirror enemy: won {duel.WinRate:P0}, costing {duel.CostShare:P0} of HP in {duel.Seconds:F1} s; two: won {two.WinRate:P0}; a mirror boss: won {boss.WinRate:P0}, dead after {boss.PlayerDeathTime:F0} s");
+        // The bot never misses and has a tenth more HP than a Normal enemy, so it wins, but only just.
+        Check(duel.WinRate >= 0.5f && duel.CostShare > 0.5f, "one mirror enemy is not an even duel");
+        Check(two.WinRate < duel.WinRate, "two enemies are not harder than one");
+        Check(boss.WinRate < 0.1f, "a boss with the player's kit was beaten alone");
     }),
     ("a level gap scales the enemy as levels do in the game; equal levels change nothing, whatever the level", () => {
         Check(CombatBudgetModel.LevelFactor(15, 15) == 1f && CombatBudgetModel.LevelFactor(100, 100) == 1f && CombatBudgetModel.LevelFactor(1, 1) == 1f, "equal levels must be neutral");
@@ -378,14 +392,12 @@ var cases = new (string, Action)[]
         Check(far.WinRate == 0f && far.LargestEnemyHitShare >= 1f, "an enemy 85 levels above must kill in one hit");
         Check(trivial.Seconds < 1.5f && trivial.CostShare < 0.01f, "an enemy 85 levels below must fall at once and do no harm");
     }),
-    ("companions help by their share; the multipliers do what they say", () => {
+    ("allies help; the multipliers do what they say", () => {
         Outcome Solo(int companions, float hp = 1f, float damage = 1f)
             => Average(new Setup(180_000, true, new[] { ((Func<NpcBehavior>)JobKit, EnemyTier.Strong) }) { PlayerSkill = meleeSkill, Companions = companions, HpMultiplier = hp, DamageMultiplier = damage, PlayerCanDie = false, MaxSeconds = 400f });
         var alone = Solo(0); var withOne = Solo(1); var withTwo = Solo(2);
-        Console.WriteLine($"      strong enemy killed in {alone.Seconds:F1} s alone, {withOne.Seconds:F1} s with one companion, {withTwo.Seconds:F1} s with two");
-        Check(Within(withOne.Seconds, alone.Seconds / (1f + CombatBudgetModel.CompanionShare), 0.3f), "one companion");
-        Check(Within(withTwo.Seconds, alone.Seconds / (1f + 2f * CombatBudgetModel.CompanionShare), 0.3f), "two companions");
-        Check(withTwo.Seconds < withOne.Seconds && withOne.Seconds < alone.Seconds, "companions do not help");
+        Console.WriteLine($"      strong enemy killed in {alone.Seconds:F1} s alone, {withOne.Seconds:F1} s with one ally, {withTwo.Seconds:F1} s with two");
+        Check(withTwo.Seconds < withOne.Seconds && withOne.Seconds < 0.8f * alone.Seconds, "allies do not help");
         // The opening MP pool is spent once, so doubling a fight does not exactly double its length.
         var doubledHp = Solo(0, hp: 2f).Seconds; var doubledDamage = Solo(0, damage: 2f).Seconds;
         Console.WriteLine($"      HP x2: {doubledHp:F1} s; damage x2: {doubledDamage:F1} s");
@@ -413,24 +425,17 @@ var cases = new (string, Action)[]
         Check(calculator.Calculate(player, enemy, new ActionData { Potency = 0 }).Damage == 0, "a zero-potency action did damage");
         Check(calculator.CalculateNpcAutoAttack(new SimulatedEntityState { IsPlayer = true, MaxHp = 1 }, enemy, 1).Damage >= 1, "a landed hit did no damage");
     }),
-    ("tiers, legacy levels and enemy MP prices map as documented", () => {
+    ("tiers, legacy levels and MP prices map as documented", () => {
         Check(CombatBudgetModel.TierLabels.Length == tiers.Length, "tier labels");
         for (var i = 1; i < tiers.Length; i++)
-        {
             Check(CombatBudgetModel.SecondsToKill(tiers[i]) > CombatBudgetModel.SecondsToKill(tiers[i - 1]), "tiers must get tougher");
-            Check(CombatBudgetModel.FightCost(tiers[i]) > CombatBudgetModel.FightCost(tiers[i - 1]), "tiers must get more dangerous");
-        }
         Check(CombatBudgetModel.ClampTier(-3) == EnemyTier.Weak && CombatBudgetModel.ClampTier(99) == EnemyTier.Boss, "tier clamp");
         Check(CombatBudgetModel.TierForChoice(0) == null && CombatBudgetModel.TierForChoice(1) == EnemyTier.Weak && CombatBudgetModel.TierForChoice(5) == EnemyTier.Boss && CombatBudgetModel.TierForChoice(42) == EnemyTier.Boss, "strength choices");
         Check(CombatBudgetModel.StrengthChoices.Length == CombatBudgetModel.TierLabels.Length + 1, "one choice per tier plus Auto");
         Check(CombatBudgetModel.TierForRank(0) == EnemyTier.Normal && CombatBudgetModel.TierForRank(1) == EnemyTier.Strong && CombatBudgetModel.TierForRank(2) == EnemyTier.Boss && CombatBudgetModel.TierForRank(4) == EnemyTier.Elite, "rank detection");
-        Check(CombatBudgetModel.EnemySkillMpCost(1500, 5000) == 750 && CombatBudgetModel.EnemySkillMpCost(8500, 5000) == 2000 && CombatBudgetModel.EnemySkillMpCost(0, 5000) == 0, "enemy MP prices");
+        Check(CombatBudgetModel.EnemySkillMpCost(1500, 5000) == 750 && CombatBudgetModel.EnemySkillMpCost(8500, 5000) == 4250 && CombatBudgetModel.EnemySkillMpCost(0, 5000) == 0, "enemy MP prices");
         Check(CombatBudgetModel.EnemyMaxHp(180_000, EnemyTier.Normal, false, 1f) == (int)MathF.Round(180_000 * 10f / 11f), "normal enemy HP");
         Check(CombatBudgetModel.EnemyMaxHp(1, EnemyTier.Weak, true, 0.0001f) >= 1, "enemy HP floor");
-        // An idle kit (a training dummy) and an empty one never divide by zero.
-        var dummy = new SimulatedEntityState { MaxMp = EnemyMaxMp };
-        KitBudget.Measure(dummy, NpcBehavior.Create(NpcBehaviorType.TrainingDummy), Price, true);
-        Check(dummy.KitOutputClassic > 0 && float.IsFinite(dummy.KitOutputAction), "training dummy kit output");
     }),
 };
 

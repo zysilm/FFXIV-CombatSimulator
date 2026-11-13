@@ -875,7 +875,6 @@ public partial class CombatEngine : IDisposable
         var resolvedActionData = actionDataProvider.GetActionData(actionId);
 
         // The enemy's damage is budgeted against what its own kit sustains; measured once per kit.
-        Npcs.KitBudget.Measure(npc.State, npc.Behavior, PlayerMpPrice, usesMp: true);
         var damageType = resolvedActionData?.DamageType ?? SimDamageType.Physical;
         DamageResult dmgResult;
         if (potency > 0)
@@ -1094,8 +1093,6 @@ public partial class CombatEngine : IDisposable
         }
 
         var resolvedActionData = actionDataProvider.GetActionData(actionId);
-        // Companions pay MP for skills as enemies do, so their output is budgeted the same way.
-        Npcs.KitBudget.Measure(companion.State, companion.Behavior, PlayerMpPrice, usesMp: true);
         DamageResult dmgResult;
         if (potency > 0)
             dmgResult = damageCalculator.CalculateNpcAutoAttack(companion.State, targetNpc.State, potency);
@@ -2063,7 +2060,6 @@ public partial class CombatEngine : IDisposable
 
     public ActionData? GetActionData(uint actionId) => actionDataProvider.GetActionData(actionId);
 
-    private int PlayerMpPrice(uint actionId) => actionDataProvider.GetActionData(actionId)?.MpCost ?? 0;
 
     public ActionData GetActionDataOrFallback(uint actionId, float animationDuration = 0f)
     {

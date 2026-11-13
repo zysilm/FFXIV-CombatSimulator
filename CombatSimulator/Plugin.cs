@@ -205,7 +205,12 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         Animation.BodyTypeAnimationFallback.Initialize(pluginInterface, dataManager, log);
         var jobActionKitProvider = new JobActionKitProvider(actionDataProvider, dataManager, log);
         npcActionProfileProvider = new NpcActionProfileProvider(jobActionKitProvider, config, log);
-        damageCalculator = new DamageCalculator { IsActionMode = () => config.ActionMode };
+        damageCalculator = new DamageCalculator
+        {
+            IsActionMode = () => config.ActionMode,
+            // Everyone's damage is sized by the player's HP (see CombatBudgetModel.DamagePerPotency).
+            PlayerMaxHp = () => combatEngine?.State.PlayerState.MaxHp ?? 0f,
+        };
         glamourerIpc = new GlamourerIpc(pluginInterface, log);
         vnavmeshIpc = new VNavmeshIpc(pluginInterface, log);
         partyEngagePlanner = new PartyEngagePlanner(vnavmeshIpc);

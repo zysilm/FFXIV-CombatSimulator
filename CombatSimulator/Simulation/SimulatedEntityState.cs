@@ -13,12 +13,6 @@ public class SimulatedEntityState
     public string Name { get; set; } = string.Empty;
     public bool IsPlayer { get; set; }
     public bool IsCompanion { get; set; }
-    /// <summary>
-    /// The HP an enemy's hit is sized against, when it is not this one's own maximum (0). An enemy
-    /// takes a share of whoever it hits; an ally from the NPC catalog is sized against the player,
-    /// so one with more HP than the player stands that many more hits.
-    /// </summary>
-    public float HitReferenceHp { get; set; }
 
     /// <summary>
     /// Of the player's side: held at 1 HP, kneeling in the chosen emote, unable to act, until an
@@ -45,23 +39,6 @@ public class SimulatedEntityState
     public bool IsTank { get; set; }
     /// <summary>How strong an enemy is. Unused for the player and companions.</summary>
     public EnemyTier Tier { get; set; } = EnemyTier.Normal;
-    /// <summary>
-    /// Potency per second this entity's kit sustains, at classic pace and at Action Mode pace. Enemy and
-    /// companion damage is budgeted against it; 0 until the kit has been measured.
-    /// </summary>
-    public float KitOutputClassic { get; set; }
-    public float KitOutputAction { get; set; }
-    /// <summary>Identifies the kit the two outputs were measured for, so a changed kit is measured again.</summary>
-    public int KitSignature { get; set; }
-
-    public float KitOutput(bool actionMode)
-    {
-        var output = actionMode ? KitOutputAction : KitOutputClassic;
-        return output > 0f
-            ? output
-            : CombatBudgetModel.UnmeasuredKitOutput * (actionMode ? CombatBudgetModel.ActionModePace : 1f);
-    }
-
     // Combat state
     public float AnimationLock { get; set; }
     public float GcdRemaining { get; set; }

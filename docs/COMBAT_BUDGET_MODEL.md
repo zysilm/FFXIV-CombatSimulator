@@ -1,7 +1,28 @@
 # Combat numbers: the budget model
 
-Code: `CombatSimulator/Simulation/CombatBudgetModel.cs` (all numbers), `DamageCalculator.cs` (applies them),
-`Npcs/KitBudget.cs` (measures an enemy's kit). Test: `Tests/CombatBalance`.
+Code: `CombatSimulator/Simulation/CombatBudgetModel.cs` (all numbers), `DamageCalculator.cs` (applies them).
+Test: `Tests/CombatBalance`.
+
+## 2026-11-13: one set of numbers for everyone
+
+At the user's request ("同一套数值 公平计算") damage and MP are now the same for the player, allies and
+enemies. This replaces the per-tier damage budget described further down (kept for its history):
+
+- **Damage**: a point of potency does the same damage whoever spends it,
+  `CombatBudgetModel.DamagePerPotency` = the player's own rate (reference output deals the player's HP in
+  11 s), times the attacker's level worth against the player's. No per-kit normalisation (`KitBudget` is
+  gone), no companion share, no per-hit cap, no Action Mode threat factor. A kit with bigger skills hits
+  harder, from either side.
+- **MP**: a skill costs everyone the same share of their own pool as it costs the player of theirs
+  (`EnemySkillMpCost` = price / 10 000 of the pool). Allies pay MP now too.
+- **Tier = HP only**: an enemy's tier is how long the player needs to kill it (Weak 4 s, Normal 10 s,
+  about the player's HP, Strong 20, Elite 35, Boss 90). It no longer changes how hard it hits.
+
+Measured with `Tests/CombatBalance` (classic play, 180 000 HP player): a Normal enemy fighting with the
+player's own weaponskill is an even duel (the player wins with 24% HP left; two of them win every time);
+a Boss with that kit kills the player in 7 s. An enemy with a full job kit (big skills on cooldowns) deals
+152% of the player's HP per 10 s if unanswered, an auto-attack-only one 26%. In Action Mode the player's
+potency is worth a third (they swing every 0.4 s), and so is everyone's: 58% and 12%.
 
 ## Why
 

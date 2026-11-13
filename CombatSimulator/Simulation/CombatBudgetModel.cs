@@ -25,13 +25,14 @@ public readonly record struct KitSkill(int Potency, float Cooldown, int MpCost, 
 /// fight. The only thing read from the character is its maximum HP, and only to size the numbers shown;
 /// it cancels out of every outcome.
 ///
-/// The contract, per enemy tier: how many seconds a player needs to kill it at reference output, and
-/// what share of their HP that fight costs them when they do nothing to avoid damage.
-///   - Player damage per potency is set so reference output deals the player's own HP in
-///     <see cref="SelfKillSeconds"/>. That makes numbers look right for the character on screen.
-///   - Enemy HP is that output times the tier's time to kill.
-///   - Enemy damage is the tier's cost spread over the enemy's own kit, potency for potency, so every kit
-///     of a tier deals the same sustained damage and a big skill still hits harder than an auto-attack.
+/// One set of numbers for everyone: the player, allies and enemies.
+///   - A point of potency does the same damage whoever spends it (<see cref="DamagePerPotency"/>):
+///     reference output deals the player's own HP in <see cref="SelfKillSeconds"/>. A kit with bigger
+///     skills hits harder, from either side.
+///   - A skill costs everyone the same share of their own MP (<see cref="EnemySkillMpCost"/>).
+///   - What sets characters apart is HP. An enemy's tier is how many seconds the player needs to kill it
+///     at reference output; a Normal one has about the player's HP, so it is an even duel.
+///   - Level is the game's: a level gap scales an enemy's HP and its damage by what the gap is worth.
 /// </summary>
 public static class CombatBudgetModel
 {
@@ -88,14 +89,14 @@ public static class CombatBudgetModel
     public static float LevelFactor(int enemyLevel, int playerLevel)
         => LevelWorth(enemyLevel) / LevelWorth(playerLevel);
 
-    // (seconds to kill at reference output, share of the target's HP an unavoided fight costs)
-    private static readonly (float SecondsToKill, float Cost)[] Tiers =
+    // Seconds the player needs to kill one at reference output: the tier is its HP, nothing else.
+    private static readonly float[] Tiers =
     {
-        (4f, 0.05f),   // fodder
-        (10f, 0.20f),  // the fair fight: three at once is lethal without guarding or help
-        (20f, 0.50f),
-        (35f, 0.85f),  // needs guarding or a companion
-        (90f, 2.50f),  // cannot be out-raced
+        4f,    // fodder
+        10f,   // about the player's own HP: an even duel
+        20f,
+        35f,
+        90f,
     };
 
     /// <summary>Seconds of reference output that equal the attacker's own maximum HP. Display scale only.</summary>
@@ -109,13 +110,9 @@ public static class CombatBudgetModel
     public const float ActionModeOutput = 330f;
     public const float ClassicOutput = 110f;
 
-    /// <summary>In Action Mode a hit can be guarded, so an unguarded one costs this much more.</summary>
-    public const float ActionModeThreat = 2f;
-    /// <summary>The enemy attack pace Action Mode's normal difficulty runs at; kits are budgeted at it.</summary>
+    /// <summary>The enemy attack pace Action Mode's normal difficulty runs at.</summary>
     public const float ActionModePace = 1.6f;
 
-    /// <summary>A companion's sustained output as a share of the player's reference output.</summary>
-    public const float CompanionShare = 0.5f;
     /// <summary>Ranged and caster enemies attack from where they cannot be answered, so they are fragile.</summary>
     public const float RangedHpShare = 0.5f;
 
@@ -124,30 +121,19 @@ public static class CombatBudgetModel
     public const float DirectHitChance = 0.15f;
     public const float DirectHitBonus = 1.25f;
 
-    /// <summary>No single enemy hit takes more than this share of the target's HP.</summary>
-    public const float MaxHitShare = 0.35f;
-    public const float BossMaxHitShare = 0.5f;
-
-    /// <summary>Output assumed for a kit that has not been measured yet: an auto-attack alone.</summary>
+    /// <summary>Output assumed for a kit with nothing in it: an auto-attack alone.</summary>
     public const float UnmeasuredKitOutput = 110f / 3f;
 
-    // Enemy MP economy (NpcAiController spends it; the kit budget below predicts it).
+    // MP economy of enemies and allies (NpcAiController and CombatCompanionManager spend it).
     public const int EnemyMpRegenPerSecond = 134;
     public const int EnemyAutoAttackMpRestore = 600;
-    private const float EnemySkillMpCostMinFraction = 0.15f;
-    private const float EnemySkillMpCostMaxFraction = 0.40f;
-    private const float ActionCostFloor = 1500f;
-    private const float ActionCostCeiling = 8500f;
+    private const float PlayerMpPool = 10000f;
     private const float ActionLockSeconds = 0.6f; // every action holds the animation lock this long
     private const float KitStepSeconds = 0.05f;
-    private const float CompanionKitSeconds = 12f; // about one fight: the opening cooldowns count
 
     public static EnemyTier ClampTier(int tier) => (EnemyTier)Math.Clamp(tier, 0, Tiers.Length - 1);
 
-    public static float SecondsToKill(EnemyTier tier) => Tiers[(int)ClampTier((int)tier)].SecondsToKill;
-
-    /// <summary>Share of the target's HP one such enemy costs over its whole fight, unavoided, in classic play.</summary>
-    public static float FightCost(EnemyTier tier) => Tiers[(int)ClampTier((int)tier)].Cost;
+    public static float SecondsToKill(EnemyTier tier) => Tiers[(int)ClampTier((int)tier)];
 
     public static float ReferenceOutput(bool actionMode) => actionMode ? ActionModeOutput : ClassicOutput;
 
@@ -156,11 +142,12 @@ public static class CombatBudgetModel
         => MathF.Max(1f, playerMaxHp) / (SelfKillSeconds * ReferenceOutput(actionMode));
 
     /// <summary>
-    /// Damage one point of potency does for a companion: its kit, whatever it is, sustains
-    /// <see cref="CompanionShare"/> of the player's reference output.
+    /// Damage one point of potency does for anyone: the player's own rate (sized by the player's HP),
+    /// times what the attacker's level is worth against the player's (1 at equal levels). The same skill
+    /// hits as hard from an enemy or an ally as from the player.
     /// </summary>
-    public static float CompanionDamagePerPotency(float companionMaxHp, float kitOutput)
-        => CompanionShare * MathF.Max(1f, companionMaxHp) / (SelfKillSeconds * MathF.Max(1f, kitOutput));
+    public static float DamagePerPotency(float playerMaxHp, bool actionMode, float levelFactor = 1f)
+        => PlayerDamagePerPotency(playerMaxHp, actionMode) * MathF.Max(0.0001f, levelFactor);
 
     /// <summary>
     /// Maximum HP of an enemy. Independent of the play mode: the player's damage per potency carries the
@@ -174,27 +161,14 @@ public static class CombatBudgetModel
     }
 
     /// <summary>
-    /// Share of the target's maximum HP one enemy attack removes. The tier's cost is paid out over the
-    /// time the enemy is meant to live, in proportion to potency, against the output its kit sustains.
+    /// What an enemy or an ally pays for a skill priced against the player's 10 000 MP pool: the same
+    /// share of its own pool as the player pays of theirs. A spell that empties most of the player's MP
+    /// empties most of theirs.
     /// </summary>
-    public static float EnemyHitShare(int potency, EnemyTier tier, float kitOutput, bool actionMode, float levelFactor = 1f)
-    {
-        if (potency <= 0) return 0f;
-        levelFactor = MathF.Max(0.0001f, levelFactor);
-        var perPotency = FightCost(tier) * (actionMode ? ActionModeThreat : 1f) * levelFactor
-                         / (SecondsToKill(tier) * MathF.Max(1f, kitOutput));
-        // The cap keeps an even fight from ending in one blow. It is a cap on the enemy's own scale:
-        // an enemy far above the player does kill in one.
-        var cap = (tier == EnemyTier.Boss ? BossMaxHitShare : MaxHitShare) * levelFactor;
-        return MathF.Min(potency * perPotency, cap);
-    }
-
-    /// <summary>What an enemy pays for a skill priced against the player's 10 000 MP pool.</summary>
     public static int EnemySkillMpCost(int playerPrice, int enemyMaxMp)
     {
         if (playerPrice <= 0) return 0;
-        var t = Math.Clamp((playerPrice - ActionCostFloor) / (ActionCostCeiling - ActionCostFloor), 0f, 1f);
-        var fraction = EnemySkillMpCostMinFraction + t * (EnemySkillMpCostMaxFraction - EnemySkillMpCostMinFraction);
+        var fraction = Math.Clamp(playerPrice / PlayerMpPool, 0f, 1f);
         return Math.Max(1, (int)MathF.Round(MathF.Max(1f, enemyMaxMp) * fraction));
     }
 
@@ -255,9 +229,6 @@ public static class CombatBudgetModel
         var output = potency / seconds;
         return output > 1f ? output : UnmeasuredKitOutput * pace;
     }
-
-    /// <summary>How long a companion's kit is played out for when it is measured.</summary>
-    public static float CompanionKitWindow => CompanionKitSeconds;
 
     /// <summary>
     /// Critical and direct hits. The base is divided by their expected gain, so switching them on or off

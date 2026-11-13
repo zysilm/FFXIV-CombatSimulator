@@ -8,6 +8,5 @@
     <Compile Include="../../CombatSimulator/Simulation/DamageCalculator.cs" Link="Production/DamageCalculator.cs" />
     <Compile Include="../../CombatSimulator/Simulation/SimulatedEntityState.cs" Link="Production/SimulatedEntityState.cs" />
     <Compile Include="../../CombatSimulator/Npcs/NpcBehavior.cs" Link="Production/NpcBehavior.cs" />
-    <Compile Include="../../CombatSimulator/Npcs/KitBudget.cs" Link="Production/KitBudget.cs" />
   </ItemGroup>
 </Project>

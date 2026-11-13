@@ -226,9 +226,8 @@ public unsafe partial class CombatCompanionManager : IDisposable
         obj->EntityId = entityId;
         allocatedIndices.Add(npc.ObjectIndex);
 
-        // A Normal ally at the player's level is as tough and hits as hard as a clone of the
-        // player; its strength and level scale both together (a companion's damage goes with its
-        // HP, and an enemy's hit on it is sized against the player's HP, not its own).
+        // A Normal ally at the player's level is about as tough as the player; its strength scales its
+        // HP as it does an enemy's. Its hits are everyone's: the same skill does the same damage.
         combatEngine.EnsurePlayerInitialized();
         var playerHp = Math.Max(1, combatEngine.State.PlayerState.MaxHp);
         var state = npc.State;
@@ -239,7 +238,6 @@ public unsafe partial class CombatCompanionManager : IDisposable
         state.IsCompanion = true;
         state.MaxHp = (int)Math.Clamp(playerHp * (double)scale, 1, int.MaxValue);
         state.CurrentHp = state.MaxHp;
-        state.HitReferenceHp = playerHp;
 
         var companion = new CombatCompanion
         {

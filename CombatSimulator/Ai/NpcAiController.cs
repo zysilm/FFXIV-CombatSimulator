@@ -980,20 +980,14 @@ public unsafe partial class NpcAiController : IDisposable
     }
 
     /// <summary>
-    /// What an enemy pays for a skill, as a fraction of its OWN pool.
-    ///
-    /// Action prices are authored for the player's 10000 pool and scale with commit time, so every
-    /// cast-time spell prices 5096–8500 while a cast-less weaponskill prices 1988. Charging those
-    /// directly against an enemy's half-size pool made EVERY caster spell permanently unaffordable —
-    /// staff enemies silently never cast anything, while melee enemies behaved normally. Remapping
-    /// the authored band onto a fraction of the enemy's pool keeps skills affordable, keeps the
-    /// relative ordering (a big nuke still costs more than a filler), and keeps the intended rhythm:
-    /// cast a few, run dry, auto-attack to earn MP back.
+    /// What an enemy pays for a skill, as a fraction of its OWN pool: the same fraction the player pays
+    /// of theirs (prices are authored for the player's 10000 pool; a cast-time spell is 5096–8500).
+    /// Charging the raw price against an enemy's half-size pool made caster spells unaffordable; the
+    /// same share keeps them affordable and as dear as the player's: a big nuke, then auto-attacks to
+    /// earn MP back.
     /// </summary>
     private int SkillMpCost(SimulatedNpc npc, uint actionId)
     {
-        // Skill prices are authored against the player's 10000 pool; enemies pay a fraction of their own
-        // pool instead, cheapest about 15% of it and priciest about 40%.
         return CombatBudgetModel.EnemySkillMpCost(combatEngine.GetActionData(actionId)?.MpCost ?? 0, npc.State.MaxMp);
     }
 
