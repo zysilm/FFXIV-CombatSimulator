@@ -895,6 +895,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             // 1/60 made every AI behavior (movement, attack cadence, casts, cooldowns,
             // DPS) run fast above 60fps and slow below it. Clamp out loading/hitch gaps.
             var deltaTime = Math.Clamp((float)fw.UpdateDelta.TotalSeconds, 0f, 0.1f);
+            NoteFrameCost((float)fw.UpdateDelta.TotalSeconds);
 
             // Scan for hook conflicts once after all plugins have loaded
             if (!hookSafetyScanned)

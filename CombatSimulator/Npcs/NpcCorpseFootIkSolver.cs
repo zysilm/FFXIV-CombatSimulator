@@ -162,9 +162,32 @@ public sealed unsafe class NpcCorpseFootIkSolver : IDisposable
     public float GetPelvisOffset(nint actorAddress) =>
         actors.TryGetValue(actorAddress, out var state) ? state.PelvisOffsetY : 0f;
 
+    private static long costTicks;
+
+    /// <summary>Milliseconds spent placing feet on corpses since the last call.</summary>
+    public static double TakeCostMs()
+    {
+        var ms = costTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        costTicks = 0;
+        return ms;
+    }
+
     private void OnRenderFrame()
     {
         if (actors.Count == 0 || CorpseSupportHeightProvider == null) return;
+        var start = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            SolveAll();
+        }
+        finally
+        {
+            costTicks += System.Diagnostics.Stopwatch.GetTimestamp() - start;
+        }
+    }
+
+    private void SolveAll()
+    {
 
         foreach (var (address, state) in actors)
         {

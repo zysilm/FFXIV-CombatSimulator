@@ -2536,6 +2536,77 @@ public unsafe partial class RagdollController : IDisposable
     // the per-frame static update — it cannot contact the ragdoll, so tracking its bones
     // is wasted work. It still resumes updating if it moves back into range.
     private const float NpcCollisionUpdateRadius = 8f;
+    // Within that radius, a character is tracked only while its collision could touch the corpse:
+    // its root no farther from the corpse's bounds than the reach its capsules have shown, times
+    // this (a swing reaches farther than a stance), plus the margin. Everyone else is parked.
+    private const float NpcReachAllowance = 1.5f;
+    private const float NpcReachMargin = 1.0f;
+
+    // World bounds of this corpse's own bodies, refreshed once per frame before colliders move.
+    private Vector3 corpseBoundsMin;
+    private Vector3 corpseBoundsMax;
+    private bool hasCorpseBounds;
+
+    /// <summary>
+    /// Time spent by every ragdoll since the last <see cref="TakeFrameCost"/>: in all (render-frame
+    /// work), tracking living characters' collision, and stepping physics; and how many ragdoll
+    /// frames were stepped (not resting) and how many character collision sets were tracked.
+    /// </summary>
+    public readonly record struct FrameCost(int Frames, int SteppedFrames, long TrackedColliders,
+        double TotalMs, double CollidersMs, double PhysicsMs);
+
+    private static long costFrames, costStepped, costTracked, costTotalTicks, costColliderTicks, costPhysicsTicks;
+
+    public static FrameCost TakeFrameCost()
+    {
+        static double Ms(long ticks) => ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        var cost = new FrameCost((int)costFrames, (int)costStepped, costTracked,
+            Ms(costTotalTicks), Ms(costColliderTicks), Ms(costPhysicsTicks));
+        costFrames = costStepped = costTracked = costTotalTicks = costColliderTicks = costPhysicsTicks = 0;
+        return cost;
+    }
+
+    private void RefreshCorpseBounds()
+    {
+        hasCorpseBounds = false;
+        if (simulation == null || ragdollBones.Count == 0)
+            return;
+
+        var min = new Vector3(float.MaxValue);
+        var max = new Vector3(float.MinValue);
+        foreach (var rb in ragdollBones)
+        {
+            var box = simulation.Bodies.GetBodyReference(rb.BodyHandle).BoundingBox;
+            min = Vector3.Min(min, box.Min);
+            max = Vector3.Max(max, box.Max);
+        }
+        if (!(min.X <= max.X) || !float.IsFinite(min.X + min.Y + min.Z + max.X + max.Y + max.Z))
+            return;
+
+        corpseBoundsMin = min;
+        corpseBoundsMax = max;
+        hasCorpseBounds = true;
+    }
+
+    /// <summary>How far a point lies outside the corpse's bounds (0 inside).</summary>
+    private float DistanceToCorpseBounds(Vector3 point)
+    {
+        var outside = Vector3.Max(Vector3.Zero, Vector3.Max(corpseBoundsMin - point, point - corpseBoundsMax));
+        return outside.Length();
+    }
+
+    /// <summary>
+    /// Whether this character's collision could touch the corpse this frame, so is worth tracking.
+    /// Unknown reach (never tracked) falls back to the plain update radius.
+    /// </summary>
+    private bool NpcMayTouchCorpse(in NpcCollisionState state, Vector3 root)
+    {
+        if ((root - skelWorldPos).LengthSquared() > NpcCollisionUpdateRadius * NpcCollisionUpdateRadius)
+            return false;
+        if (!hasCorpseBounds || state.Reach <= 0f || state.IsMesh || state.IsFallback)
+            return true;
+        return DistanceToCorpseBounds(root) <= state.Reach * NpcReachAllowance + NpcReachMargin;
+    }
 
     // Per-NPC collision state (bone-based, skinned mesh, or single-capsule fallback)
     private struct NpcCollisionState
@@ -2567,6 +2638,9 @@ public unsafe partial class RagdollController : IDisposable
         // update radius. Prevents leaving them frozen on the corpse ("ghost" capsules) and
         // avoids re-parking every frame; cleared when it re-enters range.
         public bool Parked;
+        // How far from its root this character's collision has been seen to reach (metres, the
+        // largest over the frames it was tracked). 0 until it has been tracked once.
+        public float Reach;
         public TypedIndex FallbackShapeIndex;
         public float FallbackBaseRadius;
         public float FallbackBaseLength;
@@ -2920,7 +2994,10 @@ public unsafe partial class RagdollController : IDisposable
                 }
             }
 
+            var stepStart = System.Diagnostics.Stopwatch.GetTimestamp();
             StepAndApply(dt);
+            costTotalTicks += System.Diagnostics.Stopwatch.GetTimestamp() - stepStart;
+            costFrames++;
         }
         catch (Exception ex)
         {
@@ -8134,6 +8211,7 @@ public unsafe partial class RagdollController : IDisposable
         // radius dwarfs the rig's own extent.
         if (ragdollBones.Count > 0)
             corpseWakeCenter = simulation.Bodies.GetBodyReference(ragdollBones[0].BodyHandle).Pose.Position;
+        RefreshCorpseBounds();
 
         UpdateWaterProbe(dt);
         var activityBlocksRest = inWater || externalBodyAwake || HairNeedsStep || npcTraversalProxyActivityThisFrame ||
@@ -8143,6 +8221,9 @@ public unsafe partial class RagdollController : IDisposable
         // BEPU owns rest detection for the whole constraint island. No ground-height heuristic or
         // velocity zeroing may freeze a distal limb before contact has actually settled it.
         var resting = prevAllAsleep && !activityBlocksRest;
+        if (!resting)
+            costStepped++;
+        var colliderStart = System.Diagnostics.Stopwatch.GetTimestamp();
         npcColliderMovedNearCorpse = false; // re-armed by this frame's collider updates for the next decision
 
         // Collapse controllers restrength their servos before stepping so updated torque ceilings
@@ -8186,11 +8267,11 @@ public unsafe partial class RagdollController : IDisposable
                     continue;
                 }
 
-                // Distance gate: a character whose root is far from the corpse cannot
-                // contact it, so skip the expensive skeleton read + per-bone reposition.
+                // Distance gate: a character that cannot reach the corpse cannot contact it, so
+                // skip the expensive skeleton read + per-bone reposition.
                 var npcGo = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npcState.NpcAddress;
                 var npcRootPos = new Vector3(npcGo->Position.X, npcGo->Position.Y, npcGo->Position.Z);
-                if ((npcRootPos - skelWorldPos).LengthSquared() > NpcCollisionUpdateRadius * NpcCollisionUpdateRadius)
+                if (!NpcMayTouchCorpse(npcState, npcRootPos))
                 {
                     // Park its capsules far below ONCE on exit so a character that walks away
                     // from the corpse doesn't leave its body-shaped statics frozen on top of
@@ -8203,6 +8284,7 @@ public unsafe partial class RagdollController : IDisposable
                     }
                     continue;
                 }
+                costTracked++;
                 if (npcState.Parked)
                 {
                     // Back in range — the reposition below snaps the statics onto the skeleton.
@@ -8349,6 +8431,11 @@ public unsafe partial class RagdollController : IDisposable
                                             MathF.Pow(MathF.Max(2f, CollisionScale(npcVisualScale) * 2f), 2f);
                     MoveNpcBoneKinematic(ref bs, shapeCenter, capsuleRot, dt);
                     npcState.BoneStatics[b] = bs;
+                    var collisionScale = bs.AppliedCollisionScale > 0f ? bs.AppliedCollisionScale : 1f;
+                    var boneReach = Vector3.Distance(capsuleCenter, npcRootPos) +
+                                    (bs.BaseHalfLength + bs.BaseRadius) * collisionScale;
+                    if (boneReach > npcState.Reach && float.IsFinite(boneReach))
+                        npcState.Reach = boneReach;
 
                     // Monster strike: this collider bone moved from oldPos→capsuleCenter this frame.
                     // During the attack window, impart that swing velocity to nearby ragdoll bodies,
@@ -8367,6 +8454,9 @@ public unsafe partial class RagdollController : IDisposable
             }
             catch { }
         }
+
+        costColliderTicks += System.Diagnostics.Stopwatch.GetTimestamp() - colliderStart;
+        var physicsStart = System.Diagnostics.Stopwatch.GetTimestamp();
 
         // Ensure per-frame buffers exist (cur reconstruction + interpolation prev), sized to
         // the bone count. Allocated here (before stepping) so prev can be snapshotted in the loop.
@@ -8459,6 +8549,7 @@ public unsafe partial class RagdollController : IDisposable
         {
             physicsAccumulator = 0f;
         }
+        costPhysicsTicks += System.Diagnostics.Stopwatch.GetTimestamp() - physicsStart;
 
         CacheNpcTraversalProxyPoses();
 
