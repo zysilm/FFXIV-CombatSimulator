@@ -508,6 +508,13 @@ public unsafe partial class CombatCompanionManager : IDisposable
         if (candidates.Exists(c => !c.State.IsCaptive))
             candidates.RemoveAll(c => c.State.IsCaptive);
 
+        // Going for the lord's body: whoever stands over it, not whoever the spreading would pick.
+        if (LordSeizerTarget(enemy) is { } holder)
+        {
+            enemyTargetByEnemyId[enemy.SimulatedEntityId] = holder.SimulatedEntityId;
+            return holder.State;
+        }
+
         var validTargetIds = candidates.Select(c => c.EntityId).ToHashSet();
         foreach (var kv in enemyTargetByEnemyId.ToList())
         {
@@ -580,7 +587,6 @@ public unsafe partial class CombatCompanionManager : IDisposable
                 EnemyMeleePressureCap,
                 EnemyRangedPressureCap);
         score += TargetGraphScore(enemyId, candidate.EntityId);
-        score += LordSeizerTargetScore(enemyId, candidate.EntityId);
         return score;
     }
 

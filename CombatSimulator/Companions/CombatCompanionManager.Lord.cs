@@ -202,21 +202,31 @@ public unsafe partial class CombatCompanionManager
     }
 
     /// <summary>
-    /// Enemies going for the lord's body fight whoever stands over it: the one praying most of all (it
-    /// cannot fight back), then the guards nearest the body.
+    /// The one an enemy going for the lord's body must cut down: the one praying over it (it cannot
+    /// fight back), else the retainer nearest the body. Null for any other enemy, or when no retainer
+    /// is left. The ordinary target choice spreads enemies over targets, which kept a crowd of seizers
+    /// off the one retainer holding the body for good.
     /// </summary>
-    private float LordSeizerTargetScore(uint enemyId, uint candidateId)
+    private CombatCompanion? LordSeizerTarget(Npcs.SimulatedNpc enemy)
     {
-        if (!GuardingLord || !LordSeizers.Contains(enemyId) || !TryGetLordBody(out var body, out _))
-            return 0f;
-        var guard = GetCompanion(candidateId);
-        if (guard == null || guard.BattleChara == null)
-            return 0f;
-        var d = FlatDistance((Vector3)((GameObject*)guard.BattleChara)->Position, body);
-        var score = SeizerTargetBonus * Math.Clamp(1f - d / NearBodyTargetReach, 0f, 1f);
-        if (candidateId == prayerId)
-            score += SeizerTargetBonus;
-        return score;
+        if (!GuardingLord || !LordSeizers.Contains(enemy.SimulatedEntityId) || !TryGetLordBody(out var body, out _))
+            return null;
+        if (prayerId != 0 && GetCompanion(prayerId) is { } prayer && CanRescue(prayer))
+            return prayer;
+        CombatCompanion? nearest = null;
+        var best = float.MaxValue;
+        foreach (var companion in companions)
+        {
+            if (!CanRescue(companion))
+                continue;
+            var d = FlatDistance((Vector3)((GameObject*)companion.BattleChara)->Position, body);
+            if (d < best)
+            {
+                best = d;
+                nearest = companion;
+            }
+        }
+        return nearest;
     }
 
     /// <summary>A guard's place in the ring round the lord's body.</summary>
