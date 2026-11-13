@@ -71,6 +71,19 @@ public class HpBarOverlay : IDisposable
         this.config = config;
     }
 
+    /// <summary>Names and numbers on enemies' and allies' bars: only when asked for, never in Anonymous Mode.</summary>
+    private bool OthersLabelled => config.ShowAllBarLabels && !config.AnonymousMode;
+
+    /// <summary>
+    /// What a companion is doing, when it is something other than fighting (praying over the lord,
+    /// raising a friend, held captive): a short tag above its bar even with names and numbers off.
+    /// </summary>
+    private string? SpecialStatus(SimulatedEntityState state)
+    {
+        var status = companionManager.StatusOf(state);
+        return status is "Praying" or "Raising" or "Captive" ? status : null;
+    }
+
     public unsafe void Draw()
     {
         // Hide native HP/target bars when combat sim is active
@@ -222,7 +235,7 @@ public class HpBarOverlay : IDisposable
             barPos + new Vector2(BarWidth, BarHeight),
             ImGui.ColorConvertFloat4ToU32(new Vector4(0.6f, 0.6f, 0.6f, 0.8f)));
 
-        if (!config.AnonymousMode)
+        if (OthersLabelled)
         {
             // Name
             var nameText = $"Lv.{npc.State.Level} {npc.Name}";
@@ -231,15 +244,15 @@ public class HpBarOverlay : IDisposable
                 screenPos - new Vector2(nameSize.X / 2, nameSize.Y + 4),
                 ImGui.ColorConvertFloat4ToU32(new Vector4(1, 0.4f, 0.4f, 1)),
                 nameText);
-        }
 
-        // HP text
-        var hpText = $"{npc.State.CurrentHp:N0} / {npc.State.MaxHp:N0}";
-        var hpSize = ImGui.CalcTextSize(hpText);
-        drawList.AddText(
-            barPos + new Vector2((BarWidth - hpSize.X) / 2, (BarHeight - hpSize.Y) / 2),
-            0xFFFFFFFF,
-            hpText);
+            // HP text
+            var hpText = $"{npc.State.CurrentHp:N0} / {npc.State.MaxHp:N0}";
+            var hpSize = ImGui.CalcTextSize(hpText);
+            drawList.AddText(
+                barPos + new Vector2((BarWidth - hpSize.X) / 2, (BarHeight - hpSize.Y) / 2),
+                0xFFFFFFFF,
+                hpText);
+        }
 
         // Cast bar: the engine cast, or (Action Mode) a telegraph still in its cast lead-in.
         string? castName = null;
@@ -336,13 +349,16 @@ public class HpBarOverlay : IDisposable
                 nameText);
         }
 
-        // HP text
-        var hpText = $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
-        var hpSize = ImGui.CalcTextSize(hpText);
-        drawList.AddText(
-            barPos + new Vector2((BarWidth - hpSize.X) / 2, (BarHeight - hpSize.Y) / 2),
-            0xFFFFFFFF,
-            hpText);
+        // HP text (Anonymous Mode hides every number)
+        if (!config.AnonymousMode)
+        {
+            var hpText = $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
+            var hpSize = ImGui.CalcTextSize(hpText);
+            drawList.AddText(
+                barPos + new Vector2((BarWidth - hpSize.X) / 2, (BarHeight - hpSize.Y) / 2),
+                0xFFFFFFFF,
+                hpText);
+        }
 
         DrawMpBar(drawList, ps, barPos + new Vector2((BarWidth - MpBarWidth) / 2, BarHeight + ResourceBarGap), MpBarWidth);
 
@@ -418,22 +434,28 @@ public class HpBarOverlay : IDisposable
             barPos + new Vector2(BarWidth, BarHeight),
             ImGui.ColorConvertFloat4ToU32(new Vector4(0.6f, 0.6f, 0.6f, 0.8f)));
 
-        if (!config.AnonymousMode)
+        // Name and numbers only when asked for; otherwise just what it is doing when that matters.
+        var label = OthersLabelled
+            ? $"[{companionManager.StatusOf(state)}] Lv.{state.Level} {state.Name}"
+            : SpecialStatus(state) is { } special ? $"[{special}]" : null;
+        if (label != null)
         {
-            var nameText = $"[{companionManager.StatusOf(state)}] Lv.{state.Level} {state.Name}";
-            var nameSize = ImGui.CalcTextSize(nameText);
+            var nameSize = ImGui.CalcTextSize(label);
             drawList.AddText(
                 screenPos - new Vector2(nameSize.X / 2, nameSize.Y + 4),
                 ImGui.ColorConvertFloat4ToU32(new Vector4(0.4f, 0.7f, 1f, 1)),
-                nameText);
+                label);
         }
 
-        var hpText = $"{state.CurrentHp:N0} / {state.MaxHp:N0}";
-        var hpSize = ImGui.CalcTextSize(hpText);
-        drawList.AddText(
-            barPos + new Vector2((BarWidth - hpSize.X) / 2, (BarHeight - hpSize.Y) / 2),
-            0xFFFFFFFF,
-            hpText);
+        if (OthersLabelled)
+        {
+            var hpText = $"{state.CurrentHp:N0} / {state.MaxHp:N0}";
+            var hpSize = ImGui.CalcTextSize(hpText);
+            drawList.AddText(
+                barPos + new Vector2((BarWidth - hpSize.X) / 2, (BarHeight - hpSize.Y) / 2),
+                0xFFFFFFFF,
+                hpText);
+        }
 
         DrawMpBar(drawList, state, barPos + new Vector2((BarWidth - MpBarWidth) / 2, BarHeight + ResourceBarGap), MpBarWidth);
     }
@@ -491,12 +513,12 @@ public class HpBarOverlay : IDisposable
                         : new Vector4(0.8f, 0.1f, 0.1f, 1);
 
             ImGui.PushStyleColor(ImGuiCol.PlotHistogram, fillColor);
-            var hpText = $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
+            var hpText = config.AnonymousMode ? "" : $"{ps.CurrentHp:N0} / {ps.MaxHp:N0}";
             ImGui.ProgressBar(hpPercent, new Vector2(-1, 0), hpText);
             ImGui.PopStyleColor();
 
             ImGui.PushStyleColor(ImGuiCol.PlotHistogram, new Vector4(0.1f, 0.35f, 0.95f, 1f));
-            ImGui.ProgressBar(mpPercent, new Vector2(-1, 0), $"{displayedMp:N0} / {ps.MaxMp:N0} MP");
+            ImGui.ProgressBar(mpPercent, new Vector2(-1, 0), config.AnonymousMode ? "" : $"{displayedMp:N0} / {ps.MaxMp:N0} MP");
             ImGui.PopStyleColor();
         }
         ImGui.End();

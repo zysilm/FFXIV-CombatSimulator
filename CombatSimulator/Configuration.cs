@@ -140,6 +140,9 @@ public partial class Configuration : IPluginConfiguration
     public bool ShowPlayerHpBar { get; set; } = true;
     public bool ShowHudPlayerHpBar { get; set; } = false;
     public bool AnonymousMode { get; set; } = false;
+    // Names and numbers on the bars of enemies and allies too (the player's own bar always has them).
+    // Anonymous Mode hides every name and number, whatever this says.
+    public bool ShowAllBarLabels { get; set; } = false;
 
     // Simulation
     public float DamageMultiplier { get; set; } = 1.0f;

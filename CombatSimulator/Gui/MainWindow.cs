@@ -521,7 +521,7 @@ public partial class MainWindow : IDisposable
                 config.AnonymousMode = anonymousMode;
                 config.Save();
             }
-            HelpMarker("Hide character names and death labels in HP overlays.");
+            HelpMarker("Hide every name and number on the HP bars, your own included.");
         }
     }
 
@@ -3095,6 +3095,14 @@ public partial class MainWindow : IDisposable
                 config.Save();
             }
             HelpMarker("Display a floating HP bar above enemy targets during combat.");
+
+            var showAllLabels = config.ShowAllBarLabels;
+            if (ImGui.Checkbox("Show All Names and Numbers", ref showAllLabels))
+            {
+                config.ShowAllBarLabels = showAllLabels;
+                config.Save();
+            }
+            HelpMarker("Names and HP numbers on enemies' and allies' bars too. Off: only your own bar has them.\nAnonymous Mode hides every name and number regardless.");
 
             var damageNumbers = config.ShowDamageNumbers;
             if (ImGui.Checkbox("Show Damage Numbers", ref damageNumbers))
