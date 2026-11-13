@@ -1719,6 +1719,17 @@ public partial class MainWindow : IDisposable
         }
     }
 
+    // The field lists show this many rows; more scroll.
+    private const int WarFieldVisibleRows = 10;
+
+    /// <summary>Start the scrolling list of one side's HP bars; end it with ImGui.EndChild.</summary>
+    private static void BeginWarFieldList(string id, int rows)
+    {
+        var rowHeight = ImGui.GetFrameHeightWithSpacing();
+        var height = Math.Min(rows, WarFieldVisibleRows) * rowHeight + ImGui.GetStyle().WindowPadding.Y;
+        ImGui.BeginChild(id, new Vector2(0, height), false);
+    }
+
     /// <summary>One row of the field lists: an HP bar with the name on it, then the row's buttons.</summary>
     private static void DrawWarFieldHpBar(SimulatedEntityState state, string name, Vector4 color, float buttonsWidth)
     {
@@ -1739,8 +1750,15 @@ public partial class MainWindow : IDisposable
             return;
         }
 
+        if (allies.Count > 1 && ImGui.SmallButton("Despawn all allies##warAllies"))
+        {
+            companionManager.DespawnAll();
+            return;
+        }
+
         var despawnWidth = ImGui.CalcTextSize("Despawn").X + ImGui.GetStyle().FramePadding.X * 2 + ImGui.GetStyle().ItemSpacing.X;
         CombatCompanion? dismissed = null;
+        BeginWarFieldList("##warAllyList", allies.Count);
         for (int i = allies.Count - 1; i >= 0; i--)
         {
             var ally = allies[i];
@@ -1751,12 +1769,10 @@ public partial class MainWindow : IDisposable
                 dismissed = ally;
             ImGui.PopID();
         }
+        ImGui.EndChild();
 
         if (dismissed != null)
             companionManager.DespawnCompanion(dismissed);
-
-        if (allies.Count > 1 && ImGui.SmallButton("Despawn all allies##warAllies"))
-            companionManager.DespawnAll();
     }
 
     /// <summary>The opponents on the field: HP bars, the per-opponent ranged switch, despawn.</summary>
@@ -1769,9 +1785,19 @@ public partial class MainWindow : IDisposable
             return;
         }
 
+        if (opponents.Count > 1 && ImGui.SmallButton("Despawn all opponents##warOpponents"))
+        {
+            foreach (var npc in new List<SimulatedNpc>(npcSpawner.SpawnedNpcs))
+                npcSelector.UnregisterSpawnedNpc(npc);
+            npcSpawner.DespawnAll();
+            return;
+        }
+
         var style = ImGui.GetStyle();
         var buttonsWidth = ImGui.GetFrameHeight() + style.ItemSpacing.X +
                            ImGui.CalcTextSize("Despawn").X + style.FramePadding.X * 2 + style.ItemSpacing.X;
+        SimulatedNpc? sentAway = null;
+        BeginWarFieldList("##warOpponentList", opponents.Count);
         for (int i = opponents.Count - 1; i >= 0; i--)
         {
             var npc = opponents[i];
@@ -1794,19 +1820,17 @@ public partial class MainWindow : IDisposable
 
             ImGui.SameLine();
             if (ImGui.SmallButton("Despawn"))
-            {
-                npcSelector.UnregisterSpawnedNpc(npc);
-                npcSpawner.DespawnNpc(npc);
-            }
+                sentAway = npc;
 
             ImGui.PopID();
         }
+        ImGui.EndChild();
 
-        if (opponents.Count > 1 && ImGui.SmallButton("Despawn all opponents##warOpponents"))
+        // (After the list: despawning while walking it would change it under the loop.)
+        if (sentAway != null)
         {
-            foreach (var npc in new List<SimulatedNpc>(npcSpawner.SpawnedNpcs))
-                npcSelector.UnregisterSpawnedNpc(npc);
-            npcSpawner.DespawnAll();
+            npcSelector.UnregisterSpawnedNpc(sentAway);
+            npcSpawner.DespawnNpc(sentAway);
         }
     }
 
