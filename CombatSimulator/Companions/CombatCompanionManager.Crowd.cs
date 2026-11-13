@@ -34,6 +34,34 @@ public unsafe partial class CombatCompanionManager
     // A corpse lower than this under an ally's feet is stepped onto; a higher one is walked through.
     private const float CorpseStepLimit = 0.65f;
 
+    // What the allies did, counted per frame and written to the log every few seconds of a fight, so
+    // an ally standing about can be explained from the log.
+    private const int ActivityFighting = 0, ActivityWalkingIn = 1, ActivityNoTarget = 2, ActivityReturning = 3, ActivityOther = 4;
+    private static readonly string[] ActivityNames = { "in reach", "walking in", "no target", "back to the lord", "praying/raising/captive" };
+    private readonly long[] activityFrames = new long[5];
+    private readonly System.Diagnostics.Stopwatch activityClock = System.Diagnostics.Stopwatch.StartNew();
+
+    private void NoteActivity(int activity) => activityFrames[activity]++;
+
+    private void ReportActivity(System.Collections.Generic.IReadOnlyList<SimulatedNpc> enemies)
+    {
+        if (activityClock.Elapsed.TotalSeconds < 5)
+            return;
+        activityClock.Restart();
+        long total = 0;
+        foreach (var n in activityFrames) total += n;
+        if (total == 0)
+            return;
+        var parts = new System.Collections.Generic.List<string>();
+        for (var i = 0; i < activityFrames.Length; i++)
+            if (activityFrames[i] > 0)
+                parts.Add($"{ActivityNames[i]} {100.0 * activityFrames[i] / total:0}%");
+        var living = 0;
+        foreach (var e in enemies) if (e.IsSpawned && e.State.IsAlive) living++;
+        log.Info($"Allies (share of ally-frames over 5 s, {living} enemies alive): {string.Join(", ", parts)}.");
+        System.Array.Clear(activityFrames);
+    }
+
     private static float HitboxOf(GameObject* obj)
         => obj != null && obj->HitboxRadius > 0.01f ? obj->HitboxRadius : EnemyMovementMath.BaselineHitboxRadius;
 

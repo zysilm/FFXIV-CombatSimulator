@@ -390,6 +390,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
             TickCompanion(liveCompanions[i], deltaTime, enemies, i, liveCompanions.Count);
 
         TickPlayerRecentDps(deltaTime);
+        ReportActivity(enemies);
     }
 
     public void RegisterDamage(uint companionEntityId, int damage)
@@ -1113,15 +1114,17 @@ public unsafe partial class CombatCompanionManager : IDisposable
         // MP comes back as it does for enemies: steadily, and with each auto-attack.
         companion.State.RegenerateMp(CombatBudgetModel.EnemyMpRegenPerSecond, deltaTime);
 
-        if (TickCaptive(companion))
-            return;
-        if (TickPrayer(companion, deltaTime))
-            return;
-        if (TickRescuer(companion, deltaTime))
-            return;
-
-        if (!IsWithinCommandRange(companion))
+        if (TickCaptive(companion) || TickPrayer(companion, deltaTime) || TickRescuer(companion, deltaTime))
         {
+            NoteActivity(ActivityOther);
+            return;
+        }
+
+        // Only guarding the lord's body holds an ally to one place; otherwise it fights wherever the
+        // fight goes.
+        if (GuardingLord && !IsWithinCommandRange(companion))
+        {
+            NoteActivity(ActivityReturning);
             ClearCompanionActionState(companion);
             ClearCompanionTargetState(companion);
             EnterCompanionState(companion, CompanionAiState.ReturningToCommandRange, deltaTime);
@@ -1132,6 +1135,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         var target = GetCurrentCompanionTarget(companion, enemies);
         if (target == null || target.BattleChara == null)
         {
+            NoteActivity(ActivityNoTarget);
             ClearCompanionActionState(companion);
             ClearCompanionTargetState(companion);
             EnterCompanionState(companion, CompanionAiState.ReturningToCommandRange, deltaTime);
@@ -1139,15 +1143,23 @@ public unsafe partial class CombatCompanionManager : IDisposable
             return;
         }
 
-        // Out of reach: the crowd walks it in. In reach: it stands (held in the crowd) and fights.
-        if (CrowdApproach(companion, target, deltaTime))
-            return;
+        // Out of its standing spot: the crowd walks it in. It attacks whenever the target is within
+        // reach, as enemies do, walking or not: in a crush it may never reach its spot.
+        var walking = CrowdApproach(companion, target, deltaTime);
         var dist = CrowdGap(companion, target);
-        var targetPos = (Vector3)((GameObject*)target.BattleChara)->Position;
-
-        StopMove(companion);
-        EnterCompanionState(companion, CompanionAiState.CombatReady);
-        RotateToward(companion, targetPos, deltaTime);
+        if (walking && dist > CrowdReachNow(companion))
+        {
+            NoteActivity(ActivityWalkingIn);
+            return;
+        }
+        if (!walking)
+        {
+            var targetPos = (Vector3)((GameObject*)target.BattleChara)->Position;
+            StopMove(companion);
+            EnterCompanionState(companion, CompanionAiState.CombatReady);
+            RotateToward(companion, targetPos, deltaTime);
+        }
+        NoteActivity(ActivityFighting);
 
         if (companion.State.AnimationLock > 0)
         {
@@ -1237,7 +1249,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         if (!companion.IsSpawned || !companion.State.IsAlive || companion.BattleChara == null)
             return;
 
-        if (!IsWithinCommandRange(companion))
+        if (GuardingLord && !IsWithinCommandRange(companion))
         {
             ClearCompanionTargetState(companion);
             return;
@@ -1479,7 +1491,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         SimulatedNpc enemy)
     {
         var player = objectTable.LocalPlayer;
-        if (player == null || companion.BattleChara == null || enemy.BattleChara == null)
+        if (!GuardingLord || player == null || companion.BattleChara == null || enemy.BattleChara == null)
             return (true, 0f);
 
         var enemyPos = (Vector3)((GameObject*)enemy.BattleChara)->Position;
