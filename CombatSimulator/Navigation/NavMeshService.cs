@@ -206,11 +206,11 @@ public sealed class NavMeshService : IDisposable
     /// Switch on the piece of mesh under a point (within <paramref name="vertical"/> metres of it): someone
     /// stands there, so it is real ground. False when there is no mesh under the point.
     /// </summary>
-    public bool EnablePieceUnder(Vector3 point, float vertical)
+    public bool EnablePieceUnder(Vector3 point, float vertical, float sideways = 1.5f)
     {
         if (query == null || mesh == null || pieces == null)
             return false;
-        var status = query.FindNearestPoly(NavMeshBuild.ToRc(point), new RcVec3f(1.5f, vertical, 1.5f), anyPolygon,
+        var status = query.FindNearestPoly(NavMeshBuild.ToRc(point), new RcVec3f(sideways, vertical, sideways), anyPolygon,
             out var polyRef, out _, out _);
         if (status.Failed() || polyRef == 0 || !pieces.PieceOf.TryGetValue(polyRef, out var piece))
             return false;
@@ -227,12 +227,16 @@ public sealed class NavMeshService : IDisposable
     /// or below it (never a floor further up, so never the roof over a room).
     /// </summary>
     public bool TryFloor(Vector3 point, float vertical, out Vector3 floor, out long polyRef)
+        => TryFloor(point, vertical, 1.5f, out floor, out polyRef);
+
+    /// <summary>As <see cref="TryFloor(Vector3, float, out Vector3, out long)"/>, searching this far sideways.</summary>
+    public bool TryFloor(Vector3 point, float vertical, float sideways, out Vector3 floor, out long polyRef)
     {
         floor = point;
         polyRef = 0;
         if (query == null)
             return false;
-        var status = query.FindNearestPoly(NavMeshBuild.ToRc(point), new RcVec3f(1.5f, vertical, 1.5f), filter,
+        var status = query.FindNearestPoly(NavMeshBuild.ToRc(point), new RcVec3f(sideways, vertical, sideways), filter,
             out polyRef, out var nearest, out _);
         if (status.Failed() || polyRef == 0)
             return false;

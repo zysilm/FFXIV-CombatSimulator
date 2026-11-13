@@ -27,6 +27,13 @@ public sealed class CrowdMover
     private const float RegoalDistance = 1.0f;
     // How far above or below its own height an actor looks for the floor it stands on.
     private const float FloorSearch = 3f;
+    // An actor beside the mesh (it keeps clear of walls and drops ledge edges) steps onto it from this far.
+    private const float JoinSideways = 4f;
+    // The mesh's surface can sit a little above the real ground; the exact ground is looked for this
+    // far above and below it.
+    private const float GroundAbove = 0.6f;
+    private const float GroundBelow = 1.2f;
+    private const float ReportSeconds = 5f;
     private const float MaxAgentRadius = 1.5f;
     private const int AgentsWarmUp = 24;
 
@@ -82,8 +89,13 @@ public sealed class CrowdMover
             // Standing on a piece of mesh that was switched off (not connected to where the player
             // stood): it is real ground all the same, so switch it on.
             if (!navMesh.TryFloor(position, FloorSearch, out var floor, out _) &&
-                (!navMesh.EnablePieceUnder(position, FloorSearch) || !navMesh.TryFloor(position, FloorSearch, out floor, out _)))
+                (!navMesh.EnablePieceUnder(position, FloorSearch) || !navMesh.TryFloor(position, FloorSearch, out floor, out _)) &&
+                !navMesh.TryFloor(position, FloorSearch, JoinSideways, out floor, out _) &&
+                (!navMesh.EnablePieceUnder(position, FloorSearch, JoinSideways) || !navMesh.TryFloor(position, FloorSearch, JoinSideways, out floor, out _)))
+            {
+                NoteRefused(position);
                 return false;
+            }
             var p = AgentParams(radius, speed);
             var crowdAgent = crowd.AddAgent(NavMeshBuild.ToRc(floor), p);
             if (crowdAgent == null)
@@ -162,9 +174,13 @@ public sealed class CrowdMover
         if (agents.Count > 0 && deltaTime > 0f)
             crowd.Update(MathF.Min(deltaTime, 0.1f), null);
         frame++;
+        Report();
     }
 
-    /// <summary>Where the crowd has put this actor (on the floor), and how fast it is going.</summary>
+    /// <summary>
+    /// Where the crowd has put this actor, and how fast it is going. The height is the real ground there
+    /// (a short ray just around the mesh's surface), so feet stand on it rather than on the voxels.
+    /// </summary>
     public bool TryGetMotion(nint address, out Vector3 position, out Vector3 velocity)
     {
         position = velocity = default;
@@ -172,7 +188,35 @@ public sealed class CrowdMover
             return false;
         position = NavMeshBuild.ToVector(agent.Crowd.npos);
         velocity = NavMeshBuild.ToVector(agent.Crowd.vel);
-        return float.IsFinite(position.X + position.Y + position.Z);
+        if (!float.IsFinite(position.X + position.Y + position.Z))
+            return false;
+        if (Simulation.TerrainHeightService.TrySampleGroundNear(position, GroundAbove, GroundBelow, out var ground))
+            position.Y = ground;
+        return true;
+    }
+
+    // What the crowd did, written to the log every few seconds while it moves anyone.
+    private int refusedCount;
+    private Vector3 lastRefused;
+    private readonly System.Diagnostics.Stopwatch reportClock = System.Diagnostics.Stopwatch.StartNew();
+
+    private void NoteRefused(Vector3 position)
+    {
+        refusedCount++;
+        lastRefused = position;
+    }
+
+    private void Report()
+    {
+        if (reportClock.Elapsed.TotalSeconds < ReportSeconds)
+            return;
+        reportClock.Restart();
+        if (agents.Count == 0 && refusedCount == 0)
+            return;
+        log.Info(refusedCount == 0
+            ? $"Crowd: {agents.Count} actors on the mesh, none refused."
+            : $"Crowd: {agents.Count} actors on the mesh; {refusedCount} refusals in {ReportSeconds:0} s (no mesh within {JoinSideways:0} m), the last at {lastRefused}.");
+        refusedCount = 0;
     }
 
     public void Remove(nint address)
