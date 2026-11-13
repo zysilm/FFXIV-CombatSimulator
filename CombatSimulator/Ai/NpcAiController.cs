@@ -365,6 +365,12 @@ public unsafe partial class NpcAiController : IDisposable
                 if (npc.AiState == NpcAiState.Resetting)
                     npc.AiState = npc.State.IsAlive ? NpcAiState.Idle : NpcAiState.Dead;
 
+                if (npc.SeizeGoal is { } seizeGoal)
+                {
+                    TickSeizer(npc, seizeGoal, deltaTime);
+                    continue;
+                }
+
                 if (IsUnawareSentry(npc))
                 {
                     if (npc.Patrols)
@@ -613,6 +619,35 @@ public unsafe partial class NpcAiController : IDisposable
             ForceRotateToward(npc, moveTarget, deltaTime);
     }
 
+    /// <summary>Run to the fallen lord's body to carry it off; it is taken once there (Plugin.War).</summary>
+    private void TickSeizer(SimulatedNpc npc, Vector3 goal, float deltaTime)
+    {
+        if (npc.BattleChara == null)
+            return;
+
+        var gameObj = (GameObject*)npc.BattleChara;
+        var npcPos = (Vector3)gameObj->Position;
+        if (FlatDistance(npcPos, goal) <= 0.5f)
+        {
+            StopApproachMoveAnim(npc);
+            ForceRotateToward(npc, goal, deltaTime);
+            return;
+        }
+
+        var moveTarget = goal;
+        if (config.UseVNavmeshTargetApproach && vnavmeshIpc.CanPathfind &&
+            TryUpdateVNavmeshPath(npc, deltaTime, npcPos, goal, out var pathTarget, useLookahead: false))
+            moveTarget = pathTarget;
+
+        var speed = npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f;
+        var remaining = Vector3.Distance(npcPos, moveTarget);
+        var step = speed * deltaTime;
+        var newPos = remaining <= step ? moveTarget : npcPos + Vector3.Normalize(moveTarget - npcPos) * step;
+        StartApproachMoveAnim(npc, deltaTime);
+        movementBlockHook.SetApproachPosition(gameObj, newPos.X, newPos.Y, newPos.Z);
+        ForceRotateToward(npc, moveTarget, deltaTime);
+    }
+
     private void ClearPartyApproachState(SimulatedNpc npc)
     {
         StopApproachMoveAnim(npc);
@@ -680,8 +715,9 @@ public unsafe partial class NpcAiController : IDisposable
         switch (npc.AiState)
         {
             case NpcAiState.Idle:
-                // (A sentry walking its patrol keeps its walk: TickPatrol owns its look.)
-                if (npc.BattleChara != null && !(npc.IsSentry && npc.Patrols && npc.HasPatrolGoal))
+                // (A sentry walking its patrol, or an enemy going for the lord's body, keeps its
+                // stride: the approach pass owns its look.)
+                if (npc.BattleChara != null && !(npc.IsSentry && npc.Patrols && npc.HasPatrolGoal) && npc.SeizeGoal == null)
                     ActorVisualStateController.ApplyCombatIdle((Character*)npc.BattleChara, npc.VisualState);
                 break;
 

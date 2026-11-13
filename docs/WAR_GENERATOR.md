@@ -1,6 +1,6 @@
 # 战争生成器（War Generator）
 
-状态：需求已定（2026-11-13）。第一步已实现（待游戏内验证），第二、三步进行中。本文件是需求与方案的唯一依据，会话压缩后以此为准。
+状态：需求已定（2026-11-13）。三步均已实现，待游戏内验证。本文件是需求与方案的唯一依据，会话压缩后以此为准。
 
 ## 1. 背景
 
@@ -108,9 +108,17 @@
 
 **UI**（tab 改名 "War Generator"，选人部分原样保留）：选人列表下面依次是 Side（Opponent/Ally）、Count、Placement（Around me / In front / Across the map，仅对手）、Patrol（仅对手）、强度、等级、Spawn。已生成列表里同时列出队友和对手。
 
-### 4.3 第二、三步（待实现时细化）
+### 4.3 第二、三步（已实现）
 
-- 待戮：`SimulatedEntityState.IsCaptive`。在 `ApplyNpcHit` 把致死伤害截到 1 HP 并置位；`DamageCalculator.StatusModifier` 做 ×4；`ScoreEnemyTargetCandidate` 给待戮者大幅减分；待戮者再受击即 0 延迟布娃娃死亡。
-- 复活：队友新状态 `Reviving`（走到尸体旁、读条 8 秒），完成后 `RevivePlayerInPlace` / 单个队友复活（需新增）。
-- 战国：主公死 → 关撤退则全员待戮；开撤退则选祈祷者（emote 58）+ 其余守卫；敌人到达尸体即 `ControlKiller` + grab + 判负。
-- 显示：`HpBarOverlay` 固定前缀 + 结果 banner；删 `SimLabelText / DeadLabelText` 输入框。
+UI：War Generator tab → 折叠标题 "Battle Rules"：Hostages 勾选 + 表情下拉（默认 Kneel）；The fallen 下拉（Stay down / Spring and Autumn / Warring States，问号气泡解释）；选 Warring States 时出现 Retreat 勾选。
+
+- **待戮**（`SimulatedEntityState.IsCaptive`）：`CombatEngine.ApplyNpcHit` 把我方的致死一击截到 1 HP 并 `TakeCaptive`。玩家：`MovementBlockHook.IsBlocking` 锁移动，技能/自动攻击被拒，播放所选表情；队友：`CombatCompanionManager.TickCaptive`。敌人选目标时，只要还有非待戮目标就把待戮者剔除（`SelectEnemyTargetInternal`）。处刑前敌人第一次出手只起手（`ExecutionReady`，1.5 秒）；溅射伤害不会处刑。处刑一击置 `Executed` → 玩家走 0 延迟布娃娃，队友在 `Plugin.OnCompanionDeathRagdoll` 用 0 延迟。全歼敌人时释放所有待戮者。表情只对人形有效（非人形生物只是站着）。
+- **春秋**（`CombatCompanionManager.Rescue.cs`）：每帧给倒下/待戮的我方成员（玩家优先）分配最近的空闲队友；跑过去、跪地（Kneel）8 秒，期间 `IncomingDamageScale = 4`；离开或被打倒则中断、清零。完成后：死亡者 50% HP 复活（玩家 `RevivePlayerInPlace(0.5)`，队友 `ReviveCompanion` 并移除其布娃娃/掉落武器）；待戮者 25% HP 释放。
+- **战国**（`CombatCompanionManager.Lord.cs`、`Plugin.War.cs`）：没有任何复活。主公（玩家）死亡：Retreat 关 → 所有队友 `TakeCaptive`（不论 Hostages 是否勾选）；Retreat 开 → 最近的队友跑到主公身体正前方 1.3 m（按玩家朝向），播放 Pray（58），不攻击，受伤 ×4；死了由下一个接替；其他队友正常战斗即守护。夺尸：任一敌人在尸体 1 m 内停留 2 秒，或已无可祈祷的队友时最近的敌人跑去尸体（`SimulatedNpc.SeizeGoal`），到达即夺尸：剩余队友全部待戮，`ForceEnemyVictory`，并由 Enemy Control 接管该敌人、按当前设置 grab（需布娃娃已激活）。此模式下玩家死亡时不再触发 Enemy Control 的 "control killer / spawn on death"。
+- **显示**：`Gui/WarBanner.cs` 结果大字 6 秒：VICTORY / DEFEAT / BODY RECOVERED（战国且主公已死时取胜）。第一个结果为准。HP 条名字前缀固定为状态（`CombatCompanionManager.StatusOf`）：Fighting / Raising / Guarding / Praying / Captive / Fallen。Sim Label、Dead Label 输入框已删除（配置字段保留以兼容旧配置迁移，不再显示）。
+
+### 4.4 已知限制 / 待游戏内确认
+
+- 玩家待戮时只锁了位置写入和技能，按方向键可能仍会播放跑步动作。
+- 夺尸距离与时间（1 m / 2 s）、处刑起手（1.5 s）、祈祷站位（1.3 m）都是初值。
+- 地图小队岗位离玩家 20–200 yalms（默认 60），远处的哨兵不进地形高度网格，只靠 vnavmesh 贴地。

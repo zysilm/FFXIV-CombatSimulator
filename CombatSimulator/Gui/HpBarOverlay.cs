@@ -417,7 +417,7 @@ public class HpBarOverlay : IDisposable
 
         if (!config.AnonymousMode)
         {
-            var nameText = $"Lv.{state.Level} {state.Name}";
+            var nameText = $"[{companionManager.StatusOf(state)}] Lv.{state.Level} {state.Name}";
             var nameSize = ImGui.CalcTextSize(nameText);
             drawList.AddText(
                 screenPos - new Vector2(nameSize.X / 2, nameSize.Y + 4),
@@ -529,22 +529,14 @@ public class HpBarOverlay : IDisposable
             borderColor);
     }
 
+    /// <summary>The player's name with what they are doing in front: Fighting, Captive or Fallen.</summary>
     private string BuildPlayerNameLabel(bool isDead, string displayName)
     {
         var resolvedName = displayName;
-        if (isDead)
-        {
-            if (!string.IsNullOrWhiteSpace(config.DeathNameAlias))
-                resolvedName = config.DeathNameAlias.Trim();
+        if (isDead && !string.IsNullOrWhiteSpace(config.DeathNameAlias))
+            resolvedName = config.DeathNameAlias.Trim();
 
-            return !string.IsNullOrEmpty(config.DeadLabelText)
-                ? $"[{config.DeadLabelText}] {resolvedName}"
-                : resolvedName;
-        }
-
-        return !string.IsNullOrEmpty(config.SimLabelText)
-            ? $"[{config.SimLabelText}] {resolvedName}"
-            : resolvedName;
+        return $"[{companionManager.StatusOf(combatEngine.State.PlayerState)}] {resolvedName}";
     }
 
     private void DrawResetPopup()

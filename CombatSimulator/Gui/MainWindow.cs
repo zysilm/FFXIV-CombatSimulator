@@ -3000,21 +3000,7 @@ public partial class MainWindow : IDisposable
 
                 ImGui.Separator();
 
-                var simText = config.SimLabelText;
-                if (ImGui.InputTextWithHint("Sim Label", "empty = no label", ref simText, 32))
-                {
-                    config.SimLabelText = simText;
-                    config.Save();
-                }
-                HelpMarker("Prefix shown as [label] on the live HP bar. Leave empty to show none.");
-
-                var deadText = config.DeadLabelText;
-                if (ImGui.InputTextWithHint("Dead Label", "empty = no label", ref deadText, 32))
-                {
-                    config.DeadLabelText = deadText;
-                    config.Save();
-                }
-                HelpMarker("Prefix shown as [label] on the HP bar while you are defeated. Leave empty to show none.");
+                ImGui.TextDisabled("Name labels show what each of your side is doing: Fighting, Raising, Guarding, Praying, Captive, Fallen.");
 
                 var deathNameAlias = config.DeathNameAlias;
                 if (ImGui.InputTextWithHint("Death Name Alias", "empty = keep your name", ref deathNameAlias, 64))

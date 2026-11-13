@@ -1729,6 +1729,14 @@ public partial class CombatEngine : IDisposable
         if (HasLivingCompanions?.Invoke() == true)
             return;
 
+        ForceEnemyVictory();
+    }
+
+    /// <summary>The enemy has won, whoever of the player's side still stands (the lord's body taken).</summary>
+    public void ForceEnemyVictory()
+    {
+        if (enemyVictoryTriggered)
+            return;
         enemyVictoryTriggered = true;
 
         // Try cinematic victory sequence first; fall back to normal emotes.

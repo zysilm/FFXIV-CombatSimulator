@@ -541,7 +541,12 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             }
             devExperimental.OnPlayerDeath(addr);
 
-            if (config.EnemyControlControlKiller)
+            // Under Warring States with Retreat the lord's body is fought over: an enemy takes it with
+            // Enemy Control's grab only if it reaches it (Plugin.War), not the moment the lord falls.
+            var bodyFoughtOver = config.WarFallenRule == (int)Simulation.WarFallenRule.WarringStates && config.WarRetreat;
+            if (bodyFoughtOver)
+                log.Info("EnemyControl: the lord's body is fought over; nobody takes it yet.");
+            else if (config.EnemyControlControlKiller)
             {
                 var killer = FindNpcByAddress(combatEngine.LastPlayerKillerAddress);
                 if (killer != null) enemyControlController.ControlKiller(killer);
@@ -583,6 +588,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         InitPrivateDirectors();
         AttachPrivateEffects();
         hpBarOverlay = new HpBarOverlay(npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config);
+        WireWar();
         combatLogWindow = new CombatLogWindow(combatEngine);
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, dismembermentController, mainWindow, config, gameGui, clientState);
         combatLinkOverlay = new CombatLinkOverlay(npcSelector, playerTargetController, combatEngine, boneTransformService, gameGui, config);
@@ -828,6 +834,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         {
             if (config.ShowEnemyHpBar || config.ShowPlayerHpBar || config.ShowHudPlayerHpBar)
                 hpBarOverlay.Draw();
+            DrawWar();
 
             if (config.ShowCombatLog)
                 combatLogWindow.Draw();
@@ -986,6 +993,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             mapEnemyController.Tick(deltaTime);
             combatEngine.Tick(deltaTime);
             ProcessPendingNpcRagdolls(deltaTime);
+            TickWar(deltaTime);
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
             // After AI: its movement cleanup would otherwise erase celebration loops every frame.
             victoryCelebration?.Reassert();

@@ -64,6 +64,8 @@ public unsafe class SimulatedNpc
     /// the party comes within its sight, when a neighbour does, or when it is hit.
     /// </summary>
     public bool IsSentry { get; set; }
+    /// <summary>Where this enemy is going to carry off the fallen lord's body (Warring States), or null.</summary>
+    public Vector3? SeizeGoal { get; set; }
     /// <summary>A sentry that walks about its post while idle.</summary>
     public bool Patrols { get; set; }
     public Vector3 PatrolGoal { get; set; }

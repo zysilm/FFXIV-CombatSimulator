@@ -488,6 +488,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         }
 
         TickRescues(deltaTime);
+        TickLord();
         for (var i = 0; i < liveCompanions.Count; i++)
             TickCompanion(liveCompanions[i], deltaTime, enemies, i, liveCompanions.Count, terrainCache);
 
@@ -801,6 +802,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         lastFocusTargetId = 0;
 
         ClearRescues();
+        ResetLord();
         foreach (var companion in companions)
         {
             companion.State.CurrentHp = companion.State.MaxHp;
@@ -852,6 +854,9 @@ public unsafe partial class CombatCompanionManager : IDisposable
         allocatedIndices.Clear();
         pathStates.Clear();
         rescues.Clear();
+        prayerId = 0;
+        prayerAtPost = false;
+        lordFallHandled = false;
         enemyTargetByEnemyId.Clear();
         threatByEnemy.Clear();
         playerRecentDamage = 0;
@@ -1209,6 +1214,8 @@ public unsafe partial class CombatCompanionManager : IDisposable
         }
 
         if (TickCaptive(companion))
+            return;
+        if (TickPrayer(companion, deltaTime, terrainCache))
             return;
         if (TickRescuer(companion, deltaTime, terrainCache))
             return;
