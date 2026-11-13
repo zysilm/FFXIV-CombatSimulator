@@ -11,8 +11,8 @@ public partial class Configuration
     public bool WeaponBodyMeshContacts { get; set; } = true;
     public const float WeaponBodyMeshLodToleranceMm = 8f;
     public int RagdollMeshContactQuality { get; set; } = 50;
-    public bool RagdollMeshCollisionLod { get; set; } = false;
-    public float RagdollMeshLodToleranceMm { get; set; } = 3f;
+    public bool RagdollMeshCollisionLod { get; set; } = true;
+    public float RagdollMeshLodToleranceMm { get; set; } = 5.5f;
     [Newtonsoft.Json.JsonIgnore]
     public int RagdollMeshCacheRevision { get; private set; }
     public void RefreshRagdollMeshCache() => RagdollMeshCacheRevision = unchecked(RagdollMeshCacheRevision + 1);

@@ -320,11 +320,11 @@ public partial class Configuration : IPluginConfiguration
     public float CombatLinkFlowSpeed { get; set; } = 0.6f;    // flow cycles per second
 
     // Ragdoll physics (Experimental)
-    public bool EnableRagdoll { get; set; } = false;
+    public bool EnableRagdoll { get; set; } = true;
     public float RagdollActivationDelay { get; set; } = 1.0f;
     // When physics takes over from the death animation: index into RagdollTrigger.Labels. 0 waits
     // RagdollActivationDelay seconds; the others find the moment from the animation or the fall.
-    public int RagdollTriggerMode { get; set; }
+    public int RagdollTriggerMode { get; set; } = 5; // When the body has stopped moving
     // Extend terrain detection: also build ground collision patches under nearby
     // enemies (not just the death spot) so a victory-sequence grab that drags the
     // body onto an enemy doesn't fall through the floor on release. Costs extra
@@ -355,8 +355,8 @@ public partial class Configuration : IPluginConfiguration
     public List<string> DismemberPocBones { get; set; } = new();
     // When on, each hidden limb also spawns a clone that shows ONLY that limb and tumbles away (the
     // "rolls away" half). Off = just hide on the body. POC: local player only.
-    public bool EnableDismemberRollaway { get; set; } = true;
-    public bool EnableEnemyDismemberment { get; set; } = true;
+    public bool EnableDismemberRollaway { get; set; } = false;
+    public bool EnableEnemyDismemberment { get; set; } = false;
     public int EnemyHumanoidDismembermentCount { get; set; } = 0;
     public float EnemyMonsterDismembermentBonePercent { get; set; } = 100.0f;
 
@@ -412,9 +412,9 @@ public partial class Configuration : IPluginConfiguration
     /// Combat-recipe override for <see cref="RagdollNpcCollision"/>, live only while that recipe is
     /// running. Null = the user's own setting stands.
     ///
-    /// An override rather than a write to the setting itself, because the large recipes turn NPC
-    /// collision off for their own sake (see Imperial Assault / Combat of Baron) and must not
-    /// silently redefine what the user chose globally — nor leave it redefined after the fight.
+    /// An override rather than a write to the setting itself, so a recipe that turns NPC collision off
+    /// for its own sake (none of the built-in ones do any more) does not silently redefine what the
+    /// user chose globally — nor leave it redefined after the fight.
     /// </summary>
     [JsonIgnore]
     public bool? RecipeNpcCollisionOverride { get; set; }

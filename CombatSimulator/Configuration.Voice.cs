@@ -24,9 +24,9 @@ public partial class Configuration
     /// speaker and the line gate, and a killer that cannot speak hands it to the nearest enemy that can.</summary>
     [Newtonsoft.Json.JsonIgnore] public bool EnemyVoiceGuaranteeKills => true;
     /// <summary>After the party is wiped, surviving enemies keep taunting the fallen player.</summary>
-    public bool EnemyVoiceDefeatTaunts { get; set; } = false;
+    public bool EnemyVoiceDefeatTaunts { get; set; } = true;
     /// <summary>Seconds between taunts over the fallen player.</summary>
-    public float EnemyVoiceDefeatTauntInterval { get; set; } = 8f;
+    public float EnemyVoiceDefeatTauntInterval { get; set; } = 3f;
     /// <summary>Voiced-line personas that are named story characters (Alphinaud, Y'shtola...) may be
     /// given to ordinary enemies. Off: only the unnamed personas are assigned. Not in the UI.</summary>
     public bool EnemyVoiceAllowStoryCharacters { get; set; } = true;

@@ -27,6 +27,12 @@ public sealed class CombatRecipe
     /// product, and a wipe is exactly when it is highest and least noticed.
     /// </summary>
     public bool? NpcCollision { get; set; }
+    /// <summary>The battle rule this profile is fought under (what becomes of the fallen); unset keeps the user's.</summary>
+    public CombatSimulator.Simulation.WarFallenRule? FallenRule { get; set; }
+    /// <summary>Warring States: whether the fallen are taken hostage; unset keeps the user's.</summary>
+    public bool? Hostages { get; set; }
+    /// <summary>Warring States: whether the army guards the fallen lord's body and the enemy tries to carry it off; unset keeps the user's.</summary>
+    public bool? CorpseSeizure { get; set; }
     /// <summary>Allies cloned from players: the ones in sight, or the player's own character.</summary>
     public List<CombatRecipeCompanionGroup> Companions { get; set; } = new();
     /// <summary>Allies from the NPC catalog: any creature.</summary>

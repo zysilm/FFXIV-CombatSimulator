@@ -3,12 +3,24 @@
     "name": "Field Combat",
     "description": "Up to 9 visible players against nearby map enemies.",
     "companions": [
-      { "type": "VisiblePlayers", "count": 9 }
+      {
+        "type": "VisiblePlayers",
+        "count": 9
+      }
     ],
     "enemies": [],
     "mapEnemies": [
-      { "enabled": true, "maxCount": 15, "senseRange": 18.0, "level": 90, "hpMultiplier": 1.0, "behavior": "BasicMelee" }
-    ]
+      {
+        "enabled": true,
+        "maxCount": 15,
+        "senseRange": 18,
+        "level": 90,
+        "hpMultiplier": 1,
+        "behavior": "BasicMelee"
+      }
+    ],
+    "fallenRule": "SpringAndAutumn",
+    "hostages": false
   },
   {
     "name": "Solo",
@@ -16,8 +28,17 @@
     "companions": [],
     "enemies": [],
     "mapEnemies": [
-      { "enabled": true, "maxCount": 15, "senseRange": 18.0, "level": 90, "hpMultiplier": 1.0, "behavior": "BasicMelee" }
-    ]
+      {
+        "enabled": true,
+        "maxCount": 15,
+        "senseRange": 18,
+        "level": 90,
+        "hpMultiplier": 1,
+        "behavior": "BasicMelee"
+      }
+    ],
+    "fallenRule": "SpringAndAutumn",
+    "hostages": false
   },
   {
     "name": "PvP mode",
@@ -25,56 +46,272 @@
     "companions": [],
     "enemies": [],
     "mapEnemies": [
-      { "enabled": true, "includeBattleNpcs": false, "includePlayers": true, "maxCount": 15, "senseRange": 18.0, "level": 90, "hpMultiplier": 1.0, "behavior": "BasicMelee" }
-    ]
+      {
+        "enabled": true,
+        "includeBattleNpcs": false,
+        "includePlayers": true,
+        "maxCount": 15,
+        "senseRange": 18,
+        "level": 90,
+        "hpMultiplier": 1,
+        "behavior": "BasicMelee"
+      }
+    ],
+    "fallenRule": "SpringAndAutumn",
+    "hostages": false
   },
   {
     "name": "Player Brawl",
     "description": "Up to 10v10 using only nearby visible players: you plus up to 9 allies against up to 10 map-player enemies.",
     "companions": [
-      { "type": "VisiblePlayers", "count": 9 }
+      {
+        "type": "VisiblePlayers",
+        "count": 9
+      }
     ],
     "enemies": [],
     "mapEnemies": [
-      { "enabled": true, "includeBattleNpcs": false, "includePlayers": true, "maxCount": 10, "senseRange": 18.0, "level": 90, "hpMultiplier": 1.0, "behavior": "BasicMelee" }
-    ]
+      {
+        "enabled": true,
+        "includeBattleNpcs": false,
+        "includePlayers": true,
+        "maxCount": 10,
+        "senseRange": 18,
+        "level": 90,
+        "hpMultiplier": 1,
+        "behavior": "BasicMelee"
+      }
+    ],
+    "fallenRule": "SpringAndAutumn",
+    "hostages": false
   },
   {
     "name": "Imperial Assault",
     "description": "10 randomized self companions, up to 10 visible players, 14 imperial patrol enemies, and Livia sas Junius.",
-    "npcCollision": false,
     "companions": [
-      { "type": "SelfRandomized", "count": 10 },
-      { "type": "VisiblePlayers", "count": 10 }
+      {
+        "type": "SelfRandomized",
+        "count": 10
+      },
+      {
+        "type": "VisiblePlayers",
+        "count": 10
+      }
     ],
     "enemies": [
-      { "type": "Human", "id": 0, "name": "imperial patrol", "occurrence": 2, "description": "Imperial patrol, second catalog match", "count": 14 },
-      { "type": "Human", "id": 0, "name": "Livia sas Junius", "occurrence": 2, "description": "Livia sas Junius, second catalog match", "count": 1, "hpMultiplier": 2.0 }
-    ]
+      {
+        "type": "Human",
+        "id": 0,
+        "name": "imperial patrol",
+        "occurrence": 2,
+        "description": "Imperial patrol, second catalog match",
+        "count": 14
+      },
+      {
+        "type": "Human",
+        "id": 0,
+        "name": "Livia sas Junius",
+        "occurrence": 2,
+        "description": "Livia sas Junius, second catalog match",
+        "count": 1,
+        "hpMultiplier": 2
+      }
+    ],
+    "fallenRule": "SpringAndAutumn",
+    "hostages": false
   },
   {
     "name": "Imperial Decisive Battle",
-    "description": "Solo (you alone) against imperial commanders (2x HP) and Zenos (8x HP).",
+    "description": "You and the Scions of the Seventh Dawn against the imperial commanders and Zenos.",
     "companions": [],
     "enemies": [
-      { "type": "Human", "id": 0, "name": "Nael deus Darnus", "occurrence": 1, "description": "Nael deus Darnus, first catalog match", "count": 1, "hpMultiplier": 2.0 },
-      { "type": "Human", "id": 0, "name": "Noah van Gabranth", "occurrence": 1, "description": "Noah van Gabranth, first catalog match", "count": 1, "hpMultiplier": 2.0 },
-      { "type": "Human", "id": 0, "name": "Livia sas Junius", "occurrence": 2, "description": "Livia sas Junius, second catalog match", "count": 1, "hpMultiplier": 2.0 },
-      { "type": "Human", "id": 0, "name": "Fordola", "occurrence": 2, "description": "Fordola, second catalog match", "count": 1, "hpMultiplier": 2.0 },
-      { "type": "Human", "id": 0, "name": "Asahi", "occurrence": 1, "description": "Asahi, first catalog match", "count": 1, "hpMultiplier": 2.0 },
-      { "type": "Human", "id": 1018510, "name": "Zenos Yae Galvus (No Helm)", "occurrence": 1, "description": "Zenos Yae Galvus (No Helm)", "count": 1, "hpMultiplier": 8.0, "behavior": "Boss" }
+      {
+        "type": "Human",
+        "id": 0,
+        "name": "Nael deus Darnus",
+        "occurrence": 1,
+        "description": "Nael deus Darnus, first catalog match",
+        "count": 1,
+        "level": 100,
+        "strength": "Strong"
+      },
+      {
+        "type": "Human",
+        "id": 0,
+        "name": "Noah van Gabranth",
+        "occurrence": 1,
+        "description": "Noah van Gabranth, first catalog match",
+        "count": 1,
+        "level": 100,
+        "strength": "Strong"
+      },
+      {
+        "type": "Human",
+        "id": 0,
+        "name": "Livia sas Junius",
+        "occurrence": 2,
+        "description": "Livia sas Junius, second catalog match",
+        "count": 1,
+        "level": 100,
+        "strength": "Strong"
+      },
+      {
+        "type": "Human",
+        "id": 0,
+        "name": "Fordola",
+        "occurrence": 2,
+        "description": "Fordola, second catalog match",
+        "count": 1,
+        "level": 100,
+        "strength": "Strong"
+      },
+      {
+        "type": "Human",
+        "id": 0,
+        "name": "Asahi",
+        "occurrence": 1,
+        "description": "Asahi, first catalog match",
+        "count": 1,
+        "level": 100,
+        "strength": "Strong"
+      },
+      {
+        "type": "Human",
+        "id": 1018510,
+        "name": "Zenos Yae Galvus (No Helm)",
+        "occurrence": 1,
+        "description": "Zenos Yae Galvus (No Helm)",
+        "count": 1,
+        "level": 100,
+        "strength": "Strong"
+      }
+    ],
+    "fallenRule": "WarringStates",
+    "hostages": false,
+    "corpseSeizure": true,
+    "allies": [
+      {
+        "type": "Human",
+        "source": "ENpcBase",
+        "id": 1044281,
+        "name": "Alphinaud",
+        "occurrence": 1,
+        "description": "Alphinaud",
+        "count": 1,
+        "level": 90,
+        "strength": "Normal"
+      },
+      {
+        "type": "Human",
+        "source": "ENpcBase",
+        "id": 1044285,
+        "name": "Alisaie",
+        "occurrence": 1,
+        "description": "Alisaie",
+        "count": 1,
+        "level": 90,
+        "strength": "Normal"
+      },
+      {
+        "type": "Human",
+        "source": "ENpcBase",
+        "id": 1044286,
+        "name": "Y'shtola",
+        "occurrence": 1,
+        "description": "Y'shtola",
+        "count": 1,
+        "level": 90,
+        "strength": "Normal"
+      },
+      {
+        "type": "Human",
+        "source": "ENpcBase",
+        "id": 1044163,
+        "name": "Thancred",
+        "occurrence": 1,
+        "description": "Thancred",
+        "count": 1,
+        "level": 90,
+        "strength": "Normal"
+      },
+      {
+        "type": "Human",
+        "source": "ENpcBase",
+        "id": 1042213,
+        "name": "Urianger",
+        "occurrence": 1,
+        "description": "Urianger",
+        "count": 1,
+        "level": 90,
+        "strength": "Normal"
+      },
+      {
+        "type": "Human",
+        "source": "ENpcBase",
+        "id": 1044452,
+        "name": "G'raha Tia",
+        "occurrence": 1,
+        "description": "G'raha Tia",
+        "count": 1,
+        "level": 90,
+        "strength": "Normal"
+      },
+      {
+        "type": "Human",
+        "source": "ENpcBase",
+        "id": 1044287,
+        "name": "Estinien",
+        "occurrence": 1,
+        "description": "Estinien",
+        "count": 1,
+        "level": 90,
+        "strength": "Normal"
+      },
+      {
+        "type": "Human",
+        "source": "ENpcBase",
+        "id": 1040273,
+        "name": "Krile",
+        "occurrence": 1,
+        "description": "Krile",
+        "count": 1,
+        "level": 90,
+        "strength": "Normal"
+      }
     ]
   },
   {
-    "name": "Combat of Baron",
-    "description": "10 randomized self companions against 7 Memoriate of Darkness and 3 Blackguard.",
-    "npcCollision": false,
-    "companions": [
-      { "type": "SelfRandomized", "count": 10 }
-    ],
+    "name": "Defense of the Imperial Palace",
+    "description": "20 Baron knights hold the palace against 20 Baron knights.",
+    "companions": [],
     "enemies": [
-      { "type": "BNpc", "id": 0, "name": "Memoriate of Darkness", "occurrence": 1, "description": "Memoriate of Darkness, first catalog match", "count": 7 },
-      { "type": "Human", "id": 0, "name": "Blackguard", "occurrence": 1, "description": "Blackguard, first catalog match", "count": 3 }
+      {
+        "type": "Human",
+        "source": "BNpcBase",
+        "id": 16635,
+        "name": "Baron knight",
+        "occurrence": 1,
+        "description": "Baron knight (attacker)",
+        "count": 20,
+        "level": 100,
+        "strength": "Normal"
+      }
+    ],
+    "fallenRule": "WarringStates",
+    "hostages": false,
+    "corpseSeizure": true,
+    "allies": [
+      {
+        "type": "Human",
+        "source": "BNpcBase",
+        "id": 16410,
+        "name": "Baron knight",
+        "occurrence": 1,
+        "description": "Baron knight (palace guard)",
+        "count": 20,
+        "level": 100,
+        "strength": "Normal"
+      }
     ]
   }
 ]

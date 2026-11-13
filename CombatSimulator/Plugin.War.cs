@@ -91,16 +91,16 @@ public sealed unsafe partial class CombatSimulatorPlugin
         if (!playerWon)
         {
             if (bodySeized)
-                return ("DEFEAT", "Your lord's corpse has been captured. Your army is executed.");
+                return ("DISGRACED", "Your corpse has been dragged off as a trophy. Your army is executed.");
             if (anyExecuted)
-                return ("DEFEAT", warringStates
-                    ? "Your lord has fallen and the captives have been executed."
+                return ("ROUTED", warringStates
+                    ? "You have fallen and your captured soldiers have been executed."
                     : "Your party has been executed.");
-            return ("DEFEAT", "Every member of your party lies dead on the field.");
+            return ("ANNIHILATED", "Every member of your party lies dead on the field.");
         }
 
         if (!lordAlive && warringStates)
-            return ("BODY RECOVERED", "Your lord is dead, but the corpse is secured and will be carried back to Eorzea.");
+            return ("REMAINS SECURED", "You fell, but your remains are secured and will be carried back to Eorzea.");
         if (!lordAlive)
             return ("VICTORY", "Every enemy has been slain, though you fell in the battle.");
         return ("VICTORY", "Every enemy has been slain. Your army is victorious.");

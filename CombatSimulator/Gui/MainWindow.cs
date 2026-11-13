@@ -233,6 +233,14 @@ public partial class MainWindow : IDisposable
         }
         HelpMarker("Open the detailed configuration and advanced tools window.");
 
+        if (ImGui.Button("War Generator"))
+        {
+            config.ShowProfessionalWindow = true;
+            selectedTab = TabIndex("War Generator");
+            config.Save();
+        }
+        HelpMarker("Open the War Generator: build a battle, choose its rules, and save it as a profile.");
+
         if (ImGui.Button("Controls"))
             showControlsPopup = true;
         HelpMarker("Show the combat targeting controls used by Combat Simulator.");
@@ -452,8 +460,6 @@ public partial class MainWindow : IDisposable
             ImGui.SetTooltip("Choose the battle profile used by Start and Reset.");
 
         var recipe = recipes.Count > 0 ? recipes[selectedRecipeIndex] : null;
-        if (!compact && recipe != null && !string.IsNullOrWhiteSpace(recipe.Description))
-            ImGui.TextWrapped(recipe.Description);
 
         if (!compact)
         {
@@ -780,6 +786,16 @@ public partial class MainWindow : IDisposable
         // StopFastCombat above has already cleared any previous recipe's override.
         config.RecipeNpcCollisionOverride = recipe.NpcCollision;
 
+        // The profile's battle rules become the War Generator's (they show there, and stay).
+        if (recipe.FallenRule is { } rule)
+            config.WarFallenRule = (int)rule;
+        if (recipe.Hostages is { } hostages)
+            config.WarCaptives = hostages;
+        if (recipe.CorpseSeizure is { } seizure)
+            config.WarRetreat = seizure;
+        if (recipe.FallenRule != null || recipe.Hostages != null || recipe.CorpseSeizure != null)
+            config.Save();
+
         config.EnableCombatCompanions = true;
         config.SensePartyMembers = recipe.Companions.Exists(c => c.Type == CompanionRecipeType.VisiblePlayers);
         config.EnableMapPlayerEnemySensing = recipe.MapEnemies.Exists(g => g.Enabled && g.IncludePlayers);
@@ -891,6 +907,9 @@ public partial class MainWindow : IDisposable
         {
             Name = name,
             Description = "Saved from the War Generator.",
+            FallenRule = (CombatSimulator.Simulation.WarFallenRule)config.WarFallenRule,
+            Hostages = config.WarCaptives,
+            CorpseSeizure = config.WarRetreat,
         };
 
         static NpcCatalogSource SourceOf(NpcSpawnRequest r)
@@ -1340,12 +1359,6 @@ public partial class MainWindow : IDisposable
 
             if (!string.IsNullOrEmpty(warProfileNote))
                 ImGui.TextDisabled(warProfileNote);
-            else if (recipe != null && !string.IsNullOrWhiteSpace(recipe.Description))
-            {
-                ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - WarCardPad);
-                ImGui.TextDisabled(recipe.Description);
-                ImGui.PopTextWrapPos();
-            }
 
             ImGui.Spacing();
             using (ImRaii.Disabled(recipe == null))

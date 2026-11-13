@@ -34,6 +34,13 @@ public sealed unsafe class DamageNumberOverlay
     private static readonly Vector4 OnEnemy = new(1f, 1f, 1f, 1f);
     private static readonly Vector4 OnFriend = new(1f, 0.35f, 0.3f, 1f);
     private static readonly Vector4 Critical = new(1f, 0.8f, 0.25f, 1f);
+    // The player's own: what the player lands in orange-gold, what lands on the player in bright red
+    // with a minus; both with a heavy outline, rising straight up without drifting.
+    private static readonly Vector4 OwnDealt = new(1f, 0.62f, 0.1f, 1f);
+    private static readonly Vector4 OwnDealtCritical = new(1f, 0.9f, 0.2f, 1f);
+    private static readonly Vector4 OwnTaken = new(1f, 0.15f, 0.12f, 1f);
+    // What lands on the player shows at the chest, apart from what the player lands on others.
+    private const float ChestDrop = 0.75f;
 
     private readonly IGameGui gameGui;
     private readonly Configuration config;
@@ -51,6 +58,8 @@ public sealed unsafe class DamageNumberOverlay
         public string Text = string.Empty;
         public Vector4 Color;
         public float Scale;
+        public bool Own;
+        public float Lower;         // metres below the head it starts (the player's chest)
     }
 
     public DamageNumberOverlay(IGameGui gameGui, Configuration config, Func<SimulatedEntityState, nint> resolveAddress)
@@ -71,7 +80,9 @@ public sealed unsafe class DamageNumberOverlay
             return;
 
         var friend = target.IsPlayer || target.IsCompanion;
-        var own = target.IsPlayer || source?.IsPlayer == true;
+        var taken = target.IsPlayer;
+        var dealt = !taken && source?.IsPlayer == true;
+        var own = taken || dealt;
         if (numbers.Count >= MaxNumbers)
             numbers.RemoveAt(0);
         numbers.Add(new Number
@@ -79,9 +90,13 @@ public sealed unsafe class DamageNumberOverlay
             Address = address,
             Anchor = head,
             Born = (float)clock.Elapsed.TotalSeconds,
-            Drift = (float)(random.NextDouble() * 2 - 1) * (own ? 0.6f : 1f),
-            Text = hit.IsDirectHit ? $"{hit.Damage:N0}!" : $"{hit.Damage:N0}",
-            Color = hit.IsCritical ? Critical : friend ? OnFriend : OnEnemy,
+            Drift = own ? 0f : (float)(random.NextDouble() * 2 - 1),
+            Text = (taken ? "-" : "") + (hit.IsDirectHit ? $"{hit.Damage:N0}!" : $"{hit.Damage:N0}"),
+            Color = taken ? OwnTaken
+                : dealt ? hit.IsCritical ? OwnDealtCritical : OwnDealt
+                : hit.IsCritical ? Critical : friend ? OnFriend : OnEnemy,
+            Own = own,
+            Lower = taken ? ChestDrop : 0f,
             Scale = own
                 ? hit.IsCritical ? OwnCriticalScale : OwnScale
                 : hit.IsCritical ? BattleCriticalScale : BattleScale,
@@ -113,7 +128,7 @@ public sealed unsafe class DamageNumberOverlay
             var t = age / LifeSeconds;
             // The actor may have moved (or fallen): follow it while it is there.
             var head = TryHead(n.Address, out var live) ? live : n.Anchor;
-            var world = head + new Vector3(0f, RiseMeters * (1f - (1f - t) * (1f - t)), 0f);
+            var world = head + new Vector3(0f, RiseMeters * (1f - (1f - t) * (1f - t)) - n.Lower, 0f);
             if (!gameGui.WorldToScreen(world, out var screen))
                 continue;
 
@@ -124,7 +139,19 @@ public sealed unsafe class DamageNumberOverlay
             var extent = ImGui.CalcTextSize(n.Text) * (n.Scale * pop);
             var pos = screen + new Vector2(n.Drift * 28f - extent.X / 2f, -extent.Y / 2f);
 
-            drawList.AddText(font, size, pos + new Vector2(2f, 2f), ImGui.ColorConvertFloat4ToU32(shadow with { W = shadow.W * alpha }), n.Text);
+            var shadowColor = ImGui.ColorConvertFloat4ToU32(shadow with { W = shadow.W * alpha });
+            if (n.Own)
+            {
+                // A heavy outline all round, so the player's own numbers read over anything.
+                var thick = MathF.Max(2f, size * 0.06f);
+                for (var k = 0; k < 8; k++)
+                {
+                    var a = k * MathF.PI / 4f;
+                    drawList.AddText(font, size, pos + new Vector2(MathF.Cos(a), MathF.Sin(a)) * thick, shadowColor, n.Text);
+                }
+            }
+            else
+                drawList.AddText(font, size, pos + new Vector2(2f, 2f), shadowColor, n.Text);
             drawList.AddText(font, size, pos, ImGui.ColorConvertFloat4ToU32(n.Color with { W = alpha }), n.Text);
         }
     }
