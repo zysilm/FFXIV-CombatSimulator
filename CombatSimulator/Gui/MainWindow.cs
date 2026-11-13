@@ -1882,12 +1882,15 @@ public partial class MainWindow : IDisposable
     private static readonly string[] WarFallenRuleNames = { "Stay down", "Spring and Autumn", "Warring States" };
     private string warCaptiveEmoteFilter = string.Empty;
 
-    /// <summary>What becomes of your side's fallen: who may be raised, and under Warring States, hostages.</summary>
+    /// <summary>
+    /// What becomes of your side's fallen. One card picks the rule; under Warring States a second
+    /// card holds its own options, split by when they apply: while you stand, and when you fall.
+    /// </summary>
     private void DrawWarRules()
     {
+        var rule = Math.Clamp(config.WarFallenRule, 0, WarFallenRuleNames.Length - 1);
         WarCard("The fallen", () =>
         {
-            var rule = Math.Clamp(config.WarFallenRule, 0, WarFallenRuleNames.Length - 1);
             ImGui.SetNextItemWidth(MathF.Min(260f, ImGui.GetContentRegionAvail().X - WarCardPad - 30f));
             if (ImGui.Combo("##warFallen", ref rule, WarFallenRuleNames, WarFallenRuleNames.Length))
             {
@@ -1898,48 +1901,71 @@ public partial class MainWindow : IDisposable
                        "Spring and Autumn: an ally runs to a fallen friend (you first) and kneels there " +
                        $"for {CombatCompanionManager.RaiseSeconds:0} seconds to raise them; while at it, that ally takes " +
                        $"{CombatCompanionManager.RaiserDamageScale:0} times the damage. Killing it first stops the raise.\n\n" +
-                       "Warring States: you are the lord, and nobody is raised, you included. When you fall, your allies are taken captive " +
-                       "to be executed; or, with Retreat, one prays over your body while the others guard it.");
+                       "Warring States: you are the lord, and nobody is raised, you included.");
 
             // The rule in one line, so the choice reads without opening the help.
-            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - WarCardPad);
-            ImGui.TextDisabled(rule switch
+            WarNote(rule switch
             {
                 (int)WarFallenRule.SpringAndAutumn => "Allies raise the fallen.",
-                (int)WarFallenRule.WarringStates => "You are the lord: nobody is raised.",
+                (int)WarFallenRule.WarringStates => "You are the lord: nobody is raised, you included.",
                 _ => "The fallen stay down.",
             });
-            ImGui.PopTextWrapPos();
-
-            if (rule == (int)WarFallenRule.WarringStates)
-            {
-                var captives = config.WarCaptives;
-                if (ImGui.Checkbox("Hostages##warCaptives", ref captives))
-                {
-                    config.WarCaptives = captives;
-                    config.Save();
-                }
-                HelpMarker("While you stand, a blow that would fell you or an ally leaves them at 1 HP instead, taken captive: " +
-                           "they hold the emote below and cannot move or act. An enemy with nobody else left to fight walks over, " +
-                           "stands over the captive a moment and executes them: the body drops at once. Winning the battle frees every captive.\n" +
-                           "Off: they fall at once.\n" +
-                           "Either way, once you fall your allies are taken captive (without Retreat, or when your body is carried off).");
-
-                WarLabel("Captive emote");
-                DrawWarCaptiveEmotePicker();
-
-                var retreat = config.WarRetreat;
-                if (ImGui.Checkbox("Retreat##warRetreat", ref retreat))
-                {
-                    config.WarRetreat = retreat;
-                    config.Save();
-                }
-                HelpMarker("When you fall, one ally goes to stand before your body and prays: it cannot raise you or fight, " +
-                           "and takes 4 times the damage. If it falls, the next ally takes its place. The others guard it.\n" +
-                           "Drive the enemy off to the last and the body is recovered. If an enemy reaches the body, " +
-                           "it carries it off (Enemy Control's grab, with its current settings) and the battle is lost.");
-            }
         });
+
+        if (rule != (int)WarFallenRule.WarringStates)
+            return;
+
+        WarCard("Warring States", () =>
+        {
+            ImGui.TextUnformatted("While you stand");
+            ImGui.Indent();
+            var captives = config.WarCaptives;
+            if (ImGui.Checkbox("Hostages##warCaptives", ref captives))
+            {
+                config.WarCaptives = captives;
+                config.Save();
+            }
+            HelpMarker("A blow that would fell you or an ally leaves them at 1 HP instead, taken captive. " +
+                       "An enemy with nobody else left to fight walks over, stands over the captive a moment and executes them: " +
+                       "the body drops at once. Winning the battle frees every captive.");
+            WarNote(captives
+                ? "A felling blow takes the victim captive instead."
+                : "A felling blow kills.");
+            ImGui.Unindent();
+
+            ImGui.Spacing();
+            ImGui.TextUnformatted("When you fall");
+            ImGui.Indent();
+            var retreat = config.WarRetreat;
+            if (ImGui.Checkbox("Retreat##warRetreat", ref retreat))
+            {
+                config.WarRetreat = retreat;
+                config.Save();
+            }
+            HelpMarker("One ally goes to stand before your body and prays: it cannot raise you or fight, " +
+                       "and takes 4 times the damage. If it falls, the next ally takes its place. The others guard it.\n" +
+                       "Drive the enemy off to the last and the body is recovered. If an enemy reaches the body, " +
+                       "it carries it off (Enemy Control's grab, with its current settings) and the battle is lost.");
+            WarNote(retreat
+                ? "One ally prays over your body, the rest guard it. If an enemy reaches it, the battle is lost and your allies are taken captive."
+                : "Your allies are taken captive, to be executed.");
+            ImGui.Unindent();
+
+            ImGui.Spacing();
+            ImGui.TextUnformatted("Captives");
+            ImGui.Indent();
+            WarLabel("Emote they hold");
+            DrawWarCaptiveEmotePicker();
+            ImGui.Unindent();
+        });
+    }
+
+    /// <summary>A muted line of explanation that wraps inside the card.</summary>
+    private static void WarNote(string text)
+    {
+        ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - WarCardPad);
+        ImGui.TextDisabled(text);
+        ImGui.PopTextWrapPos();
     }
 
     private void DrawWarCaptiveEmotePicker()
