@@ -20,14 +20,18 @@ namespace CombatSimulator;
 public sealed unsafe partial class CombatSimulatorPlugin
 {
     // Half the living enemies (the nearest to the body, at least one) go for the lord's body; the rest
-    // fight on. One that stands at the body this long, with no retainer within the contest radius,
-    // carries it off.
-    private const float SeizeReach = 1.0f;
+    // fight on. The seizing fills while any of them is within reach of the body (its own body's edge
+    // within SeizeReach of it) and no retainer stands within the contest radius, and drains at half
+    // that rate otherwise: a shove in the crush does not start it over. Full: the body is carried off.
+    private const float SeizeReach = 1.5f;
     private const float SeizeSeconds = 2f;
+    private const float SeizeDrainRate = 0.5f;
     private const float SeizerShare = 0.5f;
+    private const float SeizeReportSeconds = 2f;
 
     private readonly WarBanner warBanner = new();
-    private readonly Dictionary<uint, float> nearBodySeconds = new();
+    private float seizeProgress;
+    private float seizeReportTimer;
     private readonly List<SimulatedNpc> bodySeizers = new();
     private readonly List<(SimulatedNpc Npc, float Distance)> seizerCandidates = new();
     private bool bodyContested;
@@ -62,7 +66,7 @@ public sealed unsafe partial class CombatSimulatorPlugin
 
     private void ResetWar()
     {
-        nearBodySeconds.Clear();
+        seizeProgress = 0f;
         ReleaseSeizers();
         bodySeized = false;
         outcomeShown = false;
@@ -87,14 +91,14 @@ public sealed unsafe partial class CombatSimulatorPlugin
         {
             if (bodySeizers.Count > 0)
                 ReleaseSeizers();
-            nearBodySeconds.Clear();
+            seizeProgress = 0f;
             return;
         }
 
         var player = Core.Services.ObjectTable.LocalPlayer;
         if (player == null)
             return;
-        var body = player.Position;
+        var body = LordBodyPosition() ?? player.Position;
 
         // Who goes for the body: those already going (while they live), then the nearest others,
         // until half the living enemies are on it.
@@ -137,7 +141,8 @@ public sealed unsafe partial class CombatSimulatorPlugin
         }
 
         // While a retainer stands over the body, nobody can carry it off.
-        var contested = companionManager.LordBodyContested(body, Companions.CombatCompanionManager.LordContestRadius);
+        var contested = companionManager.LordBodyContested(body, Companions.CombatCompanionManager.LordContestRadius,
+            out var guardName, out var guardDistance);
         if (contested != bodyContested)
         {
             bodyContested = contested;
@@ -145,24 +150,40 @@ public sealed unsafe partial class CombatSimulatorPlugin
                 combatEngine.AddLogEntry("Nobody stands over the lord's body!", CombatLogType.Death);
         }
 
+        SimulatedNpc? closest = null;
+        var closestGap = float.MaxValue;
         foreach (var npc in bodySeizers)
         {
             var pos = (Vector3)((GameObject*)npc.BattleChara)->Position;
-            var d = new Vector2(pos.X - body.X, pos.Z - body.Z).Length();
-            if (contested || d > SeizeReach + npc.HitboxRadius)
+            var gap = new Vector2(pos.X - body.X, pos.Z - body.Z).Length() - npc.HitboxRadius;
+            if (gap < closestGap)
             {
-                nearBodySeconds.Remove(npc.SimulatedEntityId);
-                continue;
-            }
-            var held = nearBodySeconds.GetValueOrDefault(npc.SimulatedEntityId) + deltaTime;
-            nearBodySeconds[npc.SimulatedEntityId] = held;
-            if (held >= SeizeSeconds)
-            {
-                SeizeBody(npc);
-                return;
+                closestGap = gap;
+                closest = npc;
             }
         }
+
+        var atBody = closest != null && closestGap <= SeizeReach;
+        seizeProgress = atBody && !contested
+            ? seizeProgress + deltaTime
+            : MathF.Max(0f, seizeProgress - deltaTime * SeizeDrainRate);
+
+        seizeReportTimer -= deltaTime;
+        if (seizeReportTimer <= 0f)
+        {
+            seizeReportTimer = SeizeReportSeconds;
+            log.Info($"War: lord's body at {body:F1}; {bodySeizers.Count} going for it, the closest {(closest == null ? "none" : $"{closest.Name} {closestGap:F1} m from it")}; " +
+                     (contested ? $"held off by {guardName} {guardDistance:F1} m from it" : guardName == null ? "no retainer left" : $"nearest retainer {guardName} {guardDistance:F1} m away") +
+                     $"; seized {seizeProgress / SeizeSeconds:P0}.");
+        }
+
+        if (closest != null && seizeProgress >= SeizeSeconds)
+            SeizeBody(closest);
     }
+
+    /// <summary>Where the lord's body lies: its ragdoll pelvis once it falls, else where the lord died.</summary>
+    private Vector3? LordBodyPosition()
+        => config.EnableRagdoll && ragdollController.IsActive ? ragdollController.GetBodyWorldPosition("j_kosi") : null;
 
     private void SeizeBody(SimulatedNpc npc)
     {

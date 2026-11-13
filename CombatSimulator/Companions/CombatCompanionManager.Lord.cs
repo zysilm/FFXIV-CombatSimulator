@@ -32,6 +32,11 @@ public unsafe partial class CombatCompanionManager
     private const float NearBodyTargetBonus = 200f;
     private const float NearBodyTargetReach = 12f;
 
+    /// <summary>Where the lord's body actually lies (the ragdoll, once it falls); null: where the lord died.</summary>
+    public Func<Vector3?>? LordBodyPosition { private get; set; }
+
+    private Vector3 LordBodyAt(Vector3 playerPosition) => LordBodyPosition?.Invoke() ?? playerPosition;
+
     /// <summary>The enemies sent to carry off the lord's body (set by the battle each frame).</summary>
     public HashSet<uint> LordSeizers { get; } = new();
 
@@ -68,7 +73,7 @@ public unsafe partial class CombatCompanionManager
         var player = objectTable.LocalPlayer;
         if (player == null)
             return false;
-        body = player.Position;
+        body = LordBodyAt(player.Position);
         var facing = new Vector3(MathF.Sin(player.Rotation), 0f, MathF.Cos(player.Rotation));
         post = body + facing * PrayerStandOff;
         return true;
@@ -164,23 +169,30 @@ public unsafe partial class CombatCompanionManager
     /// Whether a retainer who can still fight for it (alive, not captive) stands within
     /// <paramref name=radius/> of the lord's body: while one does, nobody can carry it off.
     /// </summary>
-    public bool LordBodyContested(Vector3 body, float radius)
+    public bool LordBodyContested(Vector3 body, float radius, out string? nearestGuard, out float nearestDistance)
     {
+        nearestGuard = null;
+        nearestDistance = float.MaxValue;
         foreach (var companion in companions)
         {
             if (!CanRescue(companion))
                 continue;
-            if (FlatDistance((Vector3)((GameObject*)companion.BattleChara)->Position, body) <= radius)
-                return true;
+            var d = FlatDistance((Vector3)((GameObject*)companion.BattleChara)->Position, body);
+            if (d < nearestDistance)
+            {
+                nearestDistance = d;
+                nearestGuard = companion.Name;
+            }
         }
-        return false;
+        return nearestDistance <= radius;
     }
 
     /// <summary>Guarding the body: the enemies going for it first, then those nearest it.</summary>
-    private float LordGuardScore(Npcs.SimulatedNpc enemy, float distanceToBody)
+    private float LordGuardScore(Npcs.SimulatedNpc enemy)
     {
-        if (!GuardingLord)
+        if (!GuardingLord || enemy.BattleChara == null || !TryGetLordBody(out var body, out _))
             return 0f;
+        var distanceToBody = FlatDistance((Vector3)((GameObject*)enemy.BattleChara)->Position, body);
         var score = 0f;
         if (LordSeizers.Contains(enemy.SimulatedEntityId))
             score += SeizerTargetBonus;

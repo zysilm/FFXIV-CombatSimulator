@@ -1297,7 +1297,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
     /// began (or the player).
     /// </summary>
     private Vector3 CommandAnchor(Vector3 playerPosition)
-        => GuardingLord || !combatAnchorActive ? playerPosition : combatAnchorPosition;
+        => GuardingLord ? LordBodyAt(playerPosition) : !combatAnchorActive ? playerPosition : combatAnchorPosition;
 
     /// <summary>
     /// How far from the command anchor this ally may go: the party range (the guard range around the
@@ -1447,7 +1447,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         var distance = DistanceToPlayer(enemy);
         if (!float.IsInfinity(distance) && !float.IsNaN(distance))
             score -= distance * DistancePenaltyPerYalm;
-        score += LordGuardScore(enemy, distance);
+        score += LordGuardScore(enemy);
 
         return score;
     }
