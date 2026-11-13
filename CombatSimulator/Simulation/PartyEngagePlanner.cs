@@ -350,6 +350,9 @@ public sealed unsafe class PartyEngagePlanner
         {
             if (!enemy.IsSpawned || !enemy.State.IsAlive || enemy.BattleChara == null)
                 continue;
+            // A sentry that has not noticed the party is not part of the fight yet.
+            if (enemy.IsSentry && enemy.AiState == Ai.NpcAiState.Idle)
+                continue;
 
             var position = (Vector3)((GameObject*)enemy.BattleChara)->Position;
             // Action-Mode dynamic positioning: place the enemy by the action it intends to use next

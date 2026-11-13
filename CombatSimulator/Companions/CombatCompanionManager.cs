@@ -148,6 +148,19 @@ public unsafe class CombatCompanionManager : IDisposable
     };
 
     public IReadOnlyList<CombatCompanion> Companions => companions;
+
+    /// <summary>Where the living party stands: the player and every living companion.</summary>
+    public void CollectPartyPositions(List<Vector3> into)
+    {
+        var player = objectTable.LocalPlayer;
+        if (player != null && combatEngine.State.PlayerState.IsAlive)
+            into.Add(player.Position);
+        if (!config.EnableCombatCompanions)
+            return;
+        foreach (var companion in companions)
+            if (companion.IsSpawned && companion.State.IsAlive && companion.BattleChara != null)
+                into.Add((Vector3)((GameObject*)companion.BattleChara)->Position);
+    }
     public Func<bool>? SuspendCombat { get; set; }
     public int PendingCount => pendingSpawns.Count + spawnQueue.Count;
     public bool HasActiveCompanions => config.EnableCombatCompanions && companions.Any(c => c.IsSpawned && c.State.IsAlive);
@@ -184,6 +197,83 @@ public unsafe class CombatCompanionManager : IDisposable
         this.partyEngagePlanner = partyEngagePlanner;
         this.terrainHeightService = terrainHeightService;
         this.log = log;
+    }
+
+    /// <summary>
+    /// Take over a creature the NPC spawner made as an ally (any model, not only a humanoid): from
+    /// here on it is a companion like the cloned ones, fighting with its own kit and with the HP
+    /// its strength and level gave it. The actor and its slot become this manager's.
+    /// </summary>
+    public bool AdoptNpc(SimulatedNpc npc, NpcSpawnRequest request)
+    {
+        if (npc.BattleChara == null)
+            return false;
+
+        var obj = (GameObject*)npc.BattleChara;
+        if (companions.Count + PendingCount >= MaxCompanionCap)
+        {
+            var clientObjMgr = ClientObjectManager.Instance();
+            if (clientObjMgr != null && npc.ObjectIndex >= 0)
+            {
+                obj->DisableDraw();
+                clientObjMgr->DeleteObjectByIndex((ushort)npc.ObjectIndex, 0);
+            }
+            OnSpawnError?.Invoke($"Cannot add {npc.Name}: the party is full ({MaxCompanionCap}).");
+            return false;
+        }
+
+        var entityId = nextEntityId++;
+        obj->EntityId = entityId;
+        allocatedIndices.Add(npc.ObjectIndex);
+
+        // A Normal ally at the player's level is as tough and hits as hard as a clone of the
+        // player; its strength and level scale both together (a companion's damage goes with its
+        // HP, and an enemy's hit on it is sized against the player's HP, not its own).
+        combatEngine.EnsurePlayerInitialized();
+        var playerHp = Math.Max(1, combatEngine.State.PlayerState.MaxHp);
+        var state = npc.State;
+        var scale = CombatBudgetModel.SecondsToKill(state.Tier) / CombatBudgetModel.SecondsToKill(EnemyTier.Normal)
+                    * MathF.Max(0.0001f, state.LevelFactor);
+        state.EntityId = entityId;
+        state.IsPlayer = false;
+        state.IsCompanion = true;
+        state.MaxHp = (int)Math.Clamp(playerHp * (double)scale, 1, int.MaxValue);
+        state.CurrentHp = state.MaxHp;
+        state.HitReferenceHp = playerHp;
+
+        var companion = new CombatCompanion
+        {
+            SimulatedEntityId = entityId,
+            ObjectIndex = npc.ObjectIndex,
+            SourceEntityId = 0,
+            Name = npc.Name,
+            BattleChara = npc.BattleChara,
+            GameObjectRef = npc.GameObjectRef,
+            SpawnPosition = npc.SpawnPosition,
+            Behavior = npc.Behavior,
+            IsRanged = npc.IsRanged,
+            IsSpawned = true,
+            AutoAttackTimer = Random.Shared.NextSingle() * MathF.Max(0.1f, npc.Behavior.AutoAttackDelay),
+            State = state,
+            IsCatalogNpc = true,
+            CatalogRequest = request,
+        };
+        foreach (var skill in companion.Behavior.Skills)
+            skill.CooldownRemaining = Random.Shared.NextSingle() * skill.Cooldown;
+
+        companions.Add(companion);
+        combatEngine.RegisterCompanionEntity(companion);
+        log.Info($"Ally '{companion.Name}' joined the party at index {companion.ObjectIndex}, entityId={entityId:X}.");
+        return true;
+    }
+
+    /// <summary>Remove one companion from the world.</summary>
+    public void DespawnCompanion(CombatCompanion companion)
+    {
+        if (!companions.Contains(companion))
+            return;
+        pathStates.Remove(companion.Address);
+        Despawn(companion);
     }
 
     public int SpawnFromVisiblePlayers(int maxToQueue = int.MaxValue)
@@ -335,6 +425,9 @@ public unsafe class CombatCompanionManager : IDisposable
         foreach (var enemy in enemies)
         {
             if (!enemy.IsSpawned || !enemy.State.IsAlive)
+                continue;
+            // A sentry that has not noticed the party presses on nobody.
+            if (enemy.IsSentry && enemy.AiState == Ai.NpcAiState.Idle)
                 continue;
 
             var target = SelectEnemyTargetInternal(enemy, enemyPressure);
@@ -940,6 +1033,7 @@ public unsafe class CombatCompanionManager : IDisposable
                 SpawnPosition = spawnPos,
                 Behavior = behavior,
                 IsRanged = weaponStyle == NpcAttackStyle.Ranged,
+                RandomizedLook = sourceInfo.RandomizeAppearance,
                 IsSpawned = false,
                 AutoAttackTimer = Random.Shared.NextSingle() * behavior.AutoAttackDelay,
                 State = new SimulatedEntityState
@@ -1402,8 +1496,10 @@ public unsafe class CombatCompanionManager : IDisposable
         Dictionary<uint, int> assignedTargets,
         IReadOnlyDictionary<PressureKey, int> pressureMap)
     {
+        // (A sentry that has not noticed the party is left alone: it may be far off on the map.)
         var aliveEnemies = enemies
-            .Where(e => e.IsSpawned && e.State.IsAlive && e.BattleChara != null)
+            .Where(e => e.IsSpawned && e.State.IsAlive && e.BattleChara != null &&
+                        !(e.IsSentry && e.AiState == Ai.NpcAiState.Idle))
             .ToList();
         if (aliveEnemies.Count == 0)
             return null;
@@ -2186,6 +2282,7 @@ public unsafe class CombatCompanionManager : IDisposable
     private void ApplyCompanionDefeatAppearance(CombatCompanion companion)
     {
         if (!config.DevCompanionAppearanceVariant ||
+            companion.IsCatalogNpc ||
             companion.BattleChara == null ||
             companion.EquipmentVariantApplied)
         {
@@ -2323,6 +2420,9 @@ public unsafe class CombatCompanionManager : IDisposable
         foreach (var enemy in enemies)
         {
             if (enemy.BattleChara == null || !enemy.State.IsAlive)
+                continue;
+            // (Not a sentry far off on the map: it would stretch the height grid thin.)
+            if (enemy.IsSentry && enemy.AiState == Ai.NpcAiState.Idle)
                 continue;
             Include((Vector3)((GameObject*)enemy.BattleChara)->Position, TargetRange + 2f);
         }

@@ -58,6 +58,18 @@ public unsafe class SimulatedNpc
     public float EngageDelayTimer { get; set; }
     public float DeadTimer { get; set; }
     public bool IsEngaged => AiState is NpcAiState.Engaging or NpcAiState.Combat or NpcAiState.Chasing;
+
+    /// <summary>
+    /// Holds its post while idle instead of joining the fight with everyone else: it engages when
+    /// the party comes within its sight, when a neighbour does, or when it is hit.
+    /// </summary>
+    public bool IsSentry { get; set; }
+    /// <summary>A sentry that walks about its post while idle.</summary>
+    public bool Patrols { get; set; }
+    public Vector3 PatrolGoal { get; set; }
+    public bool HasPatrolGoal { get; set; }
+    /// <summary>Seconds left standing at the patrol point reached; then, seconds allowed to reach the next.</summary>
+    public float PatrolTimer { get; set; }
     public ActorVisualState VisualState { get; set; } = new();
 
     // True when this enemy is engaged and its resolved combat target is the local

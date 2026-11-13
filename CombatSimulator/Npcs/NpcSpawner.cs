@@ -54,8 +54,39 @@ public unsafe class NpcSpawner : IDisposable
     public int PendingCount => pendingSpawns.Count + spawnQueue.Count;
     public int TotalCount => spawnedNpcs.Count + pendingSpawns.Count + spawnQueue.Count;
     public int MaxNpcs => 150;
+    /// <summary>Of the pending and queued, those that are to be allies.</summary>
+    public int PendingAllyCount
+    {
+        get
+        {
+            var n = 0;
+            foreach (var request in spawnQueue)
+                if (request.Ally) n++;
+            foreach (var pending in pendingSpawns)
+                if (requestByObjectIndex.TryGetValue(pending.Npc.ObjectIndex, out var request) && request.Ally) n++;
+            return n;
+        }
+    }
 
     public Action<SimulatedNpc>? OnNpcSpawnComplete { get; set; }
+    /// <summary>
+    /// An ally (<see cref="NpcSpawnRequest.Ally"/>) has been drawn. The spawner lets go of it here:
+    /// whoever takes it owns the actor and its slot from now on.
+    /// </summary>
+    public Action<SimulatedNpc, NpcSpawnRequest>? OnAllySpawnComplete { get; set; }
+    /// <summary>The navigation mesh, for putting opponents on the map (<see cref="SpawnPlacement.Map"/>).</summary>
+    public Integration.VNavmeshIpc? Navmesh { private get; set; }
+
+    /// <summary>Whether opponents can be placed on the map here: it takes a navigation mesh to find ground.</summary>
+    public bool CanPlaceOnMap
+    {
+        get
+        {
+            if (Navmesh == null) return false;
+            Navmesh.RefreshStatus();
+            return Navmesh.CanPathfind;
+        }
+    }
     public Action<string>? OnSpawnError { get; set; }
 
     /// <summary>Dev-experimental seam: when true, every spawned humanoid virtual enemy has body + legs
@@ -80,12 +111,18 @@ public unsafe class NpcSpawner : IDisposable
     /// </summary>
     public SimulatedNpc? GetLastAliveSpawnedNpc()
     {
+        // A sentry that has not noticed the party yet may be far off on the map: only when nothing
+        // else is left.
+        SimulatedNpc? unaware = null;
         for (int i = spawnedNpcs.Count - 1; i >= 0; i--)
         {
-            if (spawnedNpcs[i].IsSpawned && spawnedNpcs[i].IsAlive)
+            if (!spawnedNpcs[i].IsSpawned || !spawnedNpcs[i].IsAlive)
+                continue;
+            if (!spawnedNpcs[i].IsSentry || spawnedNpcs[i].AiState != Ai.NpcAiState.Idle)
                 return spawnedNpcs[i];
+            unaware ??= spawnedNpcs[i];
         }
-        return null;
+        return unaware;
     }
 
     public NpcSpawner(
@@ -163,9 +200,23 @@ public unsafe class NpcSpawner : IDisposable
             var npcName = GetNpcName(request);
             // Slot = how many are already placed, so a queue drained in one Tick fans out rather
             // than stacking (this method adds to pendingSpawns before the next request is handled).
-            var spawnPos = request.Position
-                           ?? CalculateSpawnPosition(spawnedNpcs.Count + pendingSpawns.Count);
-            var spawnRot = request.Rotation ?? CalculateSpawnRotation(spawnPos);
+            Vector3 spawnPos;
+            float? facing = request.Rotation;
+            if (request.Position is { } given)
+                spawnPos = given;
+            else if (request.Ally)
+                spawnPos = CalculateAllyPosition();
+            else if (request.Placement == SpawnPlacement.Map)
+            {
+                if (ResolveMapPosition(request) is not { } post)
+                    return;
+                spawnPos = post;
+                // A post faces wherever, not the player far away.
+                facing ??= Random.Shared.NextSingle() * MathF.Tau - MathF.PI;
+            }
+            else
+                spawnPos = CalculateSpawnPosition(spawnedNpcs.Count + pendingSpawns.Count, request.Placement);
+            var spawnRot = facing ?? CalculateSpawnRotation(spawnPos);
 
             var clientObjMgr = ClientObjectManager.Instance();
             if (clientObjMgr == null)
@@ -407,6 +458,8 @@ public unsafe class NpcSpawner : IDisposable
                 Behavior = behavior,
                 IsSpawned = false, // Will become true when draw is enabled
                 IsRanged = request.IsRanged || behavior.AutoAttackStyle == NpcAttackStyle.Ranged,
+                IsSentry = !request.Ally && (request.Placement == SpawnPlacement.Map || request.Patrol),
+                Patrols = !request.Ally && request.Patrol,
                 State = new SimulatedEntityState
                 {
                     EntityId = entityId,
@@ -480,13 +533,9 @@ public unsafe class NpcSpawner : IDisposable
                     var obj = (GameObject*)chara;
                     obj->TargetableStatus = ObjectTargetableFlags.IsTargetable;
 
-                    npc.IsSpawned = true;
-                    npc.SpawnPlacementFrames = SpawnPlacementEnforceFrames;
-                    spawnedNpcs.Add(npc);
                     pendingSpawns.RemoveAt(i);
-
                     log.Info($"[SpawnDbg] '{npc.Name}' draw enabled after {pending.FramesWaited} frames.");
-                    OnNpcSpawnComplete?.Invoke(npc);
+                    CompleteSpawn(npc);
                 }
                 else if (pending.FramesWaited >= MaxPendingFrames)
                 {
@@ -499,12 +548,8 @@ public unsafe class NpcSpawner : IDisposable
                     var obj = (GameObject*)chara;
                     obj->TargetableStatus = ObjectTargetableFlags.IsTargetable;
 
-                    npc.IsSpawned = true;
-                    npc.SpawnPlacementFrames = SpawnPlacementEnforceFrames;
-                    spawnedNpcs.Add(npc);
                     pendingSpawns.RemoveAt(i);
-
-                    OnNpcSpawnComplete?.Invoke(npc);
+                    CompleteSpawn(npc);
                 }
             }
             catch (Exception ex)
@@ -515,6 +560,28 @@ public unsafe class NpcSpawner : IDisposable
             }
         }
     }
+
+    private void CompleteSpawn(SimulatedNpc npc)
+    {
+        npc.IsSpawned = true;
+        if (requestByObjectIndex.TryGetValue(npc.ObjectIndex, out var request) && request.Ally &&
+            OnAllySpawnComplete != null)
+        {
+            // Handed over: the actor and its slot are no longer this spawner's.
+            requestByObjectIndex.Remove(npc.ObjectIndex);
+            allocatedIndices.Remove(npc.ObjectIndex);
+            OnAllySpawnComplete.Invoke(npc, request);
+            return;
+        }
+
+        npc.SpawnPlacementFrames = SpawnPlacementEnforceFrames;
+        spawnedNpcs.Add(npc);
+        OnNpcSpawnComplete?.Invoke(npc);
+    }
+
+    /// <summary>The request a live opponent was spawned from (a copy), or null.</summary>
+    public NpcSpawnRequest? RequestOf(SimulatedNpc npc)
+        => requestByObjectIndex.TryGetValue(npc.ObjectIndex, out var request) ? CloneRequest(request) : null;
 
     public void DespawnNpc(SimulatedNpc npc)
     {
@@ -577,6 +644,8 @@ public unsafe class NpcSpawner : IDisposable
         pendingSpawns.Clear();
         allocatedIndices.Clear();
         requestByObjectIndex.Clear();
+        mapSquads.Clear();
+        alliesPlaced = 0;
 
         var npcsToRemove = new List<SimulatedNpc>(spawnedNpcs);
         foreach (var npc in npcsToRemove)
@@ -600,6 +669,7 @@ public unsafe class NpcSpawner : IDisposable
         // (not captured) so they respawn scattered around the player; rotation is
         // left null so the spawner makes each face the player, like a fresh spawn.
         var toRespawn = new List<NpcSpawnRequest>();
+        var slot = 0;
         foreach (var npc in spawnedNpcs)
         {
             if (!requestByObjectIndex.TryGetValue(npc.ObjectIndex, out var orig))
@@ -608,7 +678,10 @@ public unsafe class NpcSpawner : IDisposable
             var cloned = CloneRequest(orig);
             // Positions are resolved BEFORE DespawnAll, so the live/pending counts are still the old
             // group's and useless as a slot. The index within this batch is the slot.
-            cloned.Position = CalculateSpawnPosition(toRespawn.Count);
+            // An opponent posted on the map goes back to its post.
+            cloned.Position = orig.Placement == SpawnPlacement.Map
+                ? npc.SpawnPosition
+                : CalculateSpawnPosition(slot++, orig.Placement);
             cloned.Rotation = null;
             // Capture the live ranged-toggle state so a user-set "Ranged"
             // flag survives the reset's despawn → respawn cycle.
@@ -616,8 +689,7 @@ public unsafe class NpcSpawner : IDisposable
             toRespawn.Add(cloned);
         }
 
-        log.Info($"[SpawnDbg] RegenerateAll: regenerating {toRespawn.Count} virtual enemies " +
-                 $"({(config.SpawnInFront ? "in front of player" : "at random positions")}).");
+        log.Info($"[SpawnDbg] RegenerateAll: regenerating {toRespawn.Count} virtual enemies.");
 
         DespawnAll();
 
@@ -639,6 +711,10 @@ public unsafe class NpcSpawner : IDisposable
             Position = src.Position,
             Rotation = src.Rotation,
             IsRanged = src.IsRanged,
+            Ally = src.Ally,
+            Placement = src.Placement,
+            Patrol = src.Patrol,
+            Squad = src.Squad,
         };
     }
 
@@ -1129,6 +1205,104 @@ public unsafe class NpcSpawner : IDisposable
     // Seed of the current surround group — see SurroundSpawnLayout.
     private int surroundSeed;
 
+    private int alliesPlaced;
+
+    /// <summary>An ally arrives at the player's back, in rows of seven.</summary>
+    private Vector3 CalculateAllyPosition()
+    {
+        var player = objectTable.LocalPlayer;
+        if (player == null)
+            return Vector3.Zero;
+
+        var k = alliesPlaced++;
+        var angle = player.Rotation + MathF.PI + ((k % 7) - 3) * 0.45f;
+        var radius = 3f + 1.5f * (k / 7 % 4);
+        return player.Position + new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle)) * radius;
+    }
+
+    // Posts on the map: one per squad, the members spread about it.
+    private const float SquadSpacing = 2.2f;
+    private const int MapPostTries = 24;
+    private readonly Dictionary<int, MapSquad> mapSquads = new();
+    private int loneSquad;
+
+    private sealed class MapSquad
+    {
+        public Vector3? Post;
+        public int Members;
+        public int Seed;
+    }
+
+    /// <summary>
+    /// Where an opponent placed on the map stands: its squad's post (found once, on walkable ground
+    /// away from the player), stepped aside for each further member. Null when no ground was found;
+    /// that is reported once per squad.
+    /// </summary>
+    private Vector3? ResolveMapPosition(NpcSpawnRequest request)
+    {
+        var key = request.Squad != 0 ? request.Squad : --loneSquad;
+        if (!mapSquads.TryGetValue(key, out var squad))
+        {
+            // (Squads are few; the table is cleared when everything is despawned.)
+            squad = new MapSquad { Post = FindMapPost(), Seed = Random.Shared.Next() };
+            mapSquads[key] = squad;
+            if (squad.Post == null)
+                OnSpawnError?.Invoke("No walkable ground found on the map nearby (is vnavmesh ready?).");
+        }
+
+        if (squad.Post is not { } post)
+            return null;
+
+        var member = squad.Members++;
+        if (member == 0)
+            return post;
+
+        var aside = post + SurroundSpawnLayout.Offset(member - 1, SquadSpacing, squad.Seed);
+        try
+        {
+            if (Navmesh?.NearestPointReachable(aside, 3f, 5f) is { } ground)
+                return ground;
+        }
+        catch (Exception ex)
+        {
+            log.Verbose($"vnavmesh snap failed for a squad member: {ex.Message}");
+        }
+        return aside with { Y = post.Y };
+    }
+
+    private Vector3? FindMapPost()
+    {
+        var player = objectTable.LocalPlayer;
+        if (player == null || Navmesh == null || !CanPlaceOnMap)
+            return null;
+
+        var radius = Math.Clamp(config.MapSpawnRadius, 20f, 200f);
+        var nearest = MathF.Min(15f, 0.3f * radius);
+        for (var attempt = 0; attempt < MapPostTries; attempt++)
+        {
+            var angle = Random.Shared.NextSingle() * MathF.Tau;
+            var distance = radius * (0.35f + 0.65f * Random.Shared.NextSingle());
+            var wanted = player.Position + new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle)) * distance;
+            try
+            {
+                var ground = Navmesh.NearestPointReachable(wanted, 8f, 30f)
+                             ?? Navmesh.PointOnFloor(wanted + new Vector3(0, 30f, 0), false, 8f);
+                if (ground is not { } found)
+                    continue;
+                var off = new Vector2(found.X - wanted.X, found.Z - wanted.Z).Length();
+                var fromPlayer = new Vector2(found.X - player.Position.X, found.Z - player.Position.Z).Length();
+                if (off <= 10f && fromPlayer >= nearest)
+                    return found;
+            }
+            catch (Exception ex)
+            {
+                log.Verbose($"vnavmesh query failed while looking for a post: {ex.Message}");
+                return null;
+            }
+        }
+        return null;
+    }
+
     /// <summary>
     /// Where the next virtual enemy goes. <paramref name="slot"/> is its index within the group
     /// being placed, so a batch fans out instead of stacking.
@@ -1140,7 +1314,7 @@ public unsafe class NpcSpawner : IDisposable
     /// opens further out rather than widening past the point where "in front" stops being true.
     /// Slot 0 is exactly the old position, so a single enemy is placed exactly as before.
     /// </summary>
-    private Vector3 CalculateSpawnPosition(int slot)
+    private Vector3 CalculateSpawnPosition(int slot, SpawnPlacement placement)
     {
         // LocalPlayer, not objectTable[0]: the latter can be null during a reset teardown and drop
         // the spawn at world origin (the likely cause of "front failing on reset"). Otherwise this
@@ -1153,7 +1327,7 @@ public unsafe class NpcSpawner : IDisposable
 
             // Spawn in front of the player using the character's real in-game facing (yaw), with no
             // randomness — enemies spawn AND regenerate to the same formation.
-            if (config.SpawnInFront)
+            if (placement == SpawnPlacement.Front)
             {
                 var remaining = Math.Max(0, slot);
                 var radius = MathF.Max(0.5f, distance);

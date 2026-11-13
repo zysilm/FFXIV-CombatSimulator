@@ -25,9 +25,14 @@ public sealed class ActorVisualState
 public static unsafe class ActorVisualStateController
 {
     public const ushort NormalRunTimelineId = 22;
+    public const ushort NormalWalkTimelineId = 13;
     private const float MovementReassertInterval = 0.25f;
 
     public static void ApplyMoving(Character* character, ActorVisualState state, float deltaTime)
+        => ApplyMoving(character, state, deltaTime, NormalRunTimelineId);
+
+    /// <summary>Moving, with the given locomotion loop (run, or walk for an unhurried patrol).</summary>
+    public static void ApplyMoving(Character* character, ActorVisualState state, float deltaTime, ushort timelineId)
     {
         if (character == null)
             return;
@@ -36,12 +41,14 @@ public static unsafe class ActorVisualStateController
 
         state.MovementReassertTimer = MathF.Max(0, state.MovementReassertTimer - deltaTime);
         var entering = state.Kind != ActorVisualStateKind.Moving;
-        var shouldReassert = entering || state.MovementReassertTimer <= 0;
+        // (A change of gait, walk to run, is taken up at once.)
+        var shouldReassert = entering || state.MovementReassertTimer <= 0 ||
+                             character->Timeline.BaseOverride != timelineId;
 
-        character->Timeline.BaseOverride = NormalRunTimelineId;
+        character->Timeline.BaseOverride = timelineId;
         if (shouldReassert && character->Timeline.TimelineSequencer.Parent != null)
         {
-            character->Timeline.PlayActionTimeline(NormalRunTimelineId);
+            character->Timeline.PlayActionTimeline(timelineId);
             state.MovementReassertTimer = MovementReassertInterval;
         }
 
@@ -77,7 +84,7 @@ public static unsafe class ActorVisualStateController
     public static void ClearMovement(Character* character, ActorVisualState state)
     {
         if (character != null &&
-            (state.Kind == ActorVisualStateKind.Moving || character->Timeline.BaseOverride == NormalRunTimelineId))
+            (state.Kind == ActorVisualStateKind.Moving || character->Timeline.BaseOverride is NormalRunTimelineId or NormalWalkTimelineId))
         {
             character->Timeline.BaseOverride = 0;
         }

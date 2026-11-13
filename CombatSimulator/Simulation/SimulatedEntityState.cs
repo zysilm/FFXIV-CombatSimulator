@@ -13,6 +13,12 @@ public class SimulatedEntityState
     public string Name { get; set; } = string.Empty;
     public bool IsPlayer { get; set; }
     public bool IsCompanion { get; set; }
+    /// <summary>
+    /// The HP an enemy's hit is sized against, when it is not this one's own maximum (0). An enemy
+    /// takes a share of whoever it hits; an ally from the NPC catalog is sized against the player,
+    /// so one with more HP than the player stands that many more hits.
+    /// </summary>
+    public float HitReferenceHp { get; set; }
 
     // Vitals
     public int CurrentHp { get; set; }

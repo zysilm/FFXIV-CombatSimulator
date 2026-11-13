@@ -43,4 +43,13 @@ public unsafe class CombatCompanion
     public ulong[]? OriginalEquipment { get; set; }
     public bool EquipmentVariantApplied { get; set; }
     public bool IsAlive => State.IsAlive;
+    /// <summary>
+    /// Spawned from the NPC catalog (any creature) rather than cloned from a player: it has no
+    /// player equipment to capture, strip or glamour.
+    /// </summary>
+    public bool IsCatalogNpc { get; set; }
+    /// <summary>A clone given a random hairstyle and face.</summary>
+    public bool RandomizedLook { get; set; }
+    /// <summary>The request it was spawned from, when it came from the NPC catalog.</summary>
+    public NpcSpawnRequest? CatalogRequest { get; set; }
 }

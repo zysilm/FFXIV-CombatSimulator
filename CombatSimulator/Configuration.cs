@@ -474,6 +474,14 @@ public partial class Configuration : IPluginConfiguration
     // Spawn Enemy defaults
     public int SpawnDirection { get; set; } = 0;       // 0=Front, 1=Behind, 2=Left, 3=Right
     public float SpawnDistance { get; set; } = 5.0f;    // yalms from player
+    // War Generator. Placement: null = not chosen yet, taken from SpawnInFront (0 around, 1 in front, 2 map).
+    public int? SpawnPlacementMode { get; set; }
+    public bool SpawnAsAlly { get; set; } = false;
+    public bool SpawnPatrol { get; set; } = false;
+    public int SpawnCount { get; set; } = 1;
+    public int AllyStrength { get; set; } = 0;          // as EnemyStrength, for allies from the NPC catalog
+    public int AllyLevel { get; set; } = 0;
+    public float MapSpawnRadius { get; set; } = 60.0f;  // yalms from player, opponents placed on the map
     // When true, virtual enemies spawn directly in front of the player using the character's real
     // in-game facing (GameObject.Rotation, NOT any ragdoll/visual facing), instead of a random
     // direction around the player. Also governs regenerate/refresh on combat reset. Default off.

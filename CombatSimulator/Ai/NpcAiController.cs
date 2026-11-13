@@ -150,6 +150,9 @@ public unsafe partial class NpcAiController : IDisposable
         combatEngine.OnSimulationReset += OnSimulationResetOrStop;
     }
 
+    /// <summary>Fills a list with where the living party stands (player and companions); sentries watch for them.</summary>
+    public Action<List<Vector3>>? CollectPartyPositions { private get; set; }
+
     /// <summary>Where telegraphed casts register their snapshotted area (null = none drawn).</summary>
     public CombatSimulator.ActionCombat.EnemyAreaMarkers? AreaMarkers { private get; set; }
 
@@ -226,7 +229,8 @@ public unsafe partial class NpcAiController : IDisposable
             {
                 pendingAutoEngageDelay = -1f;
                 foreach (var npc in npcs)
-                    EngageNpc(npc);
+                    if (!npc.IsSentry)
+                        EngageNpc(npc);
             }
         }
 
@@ -240,7 +244,8 @@ public unsafe partial class NpcAiController : IDisposable
         if (partyMode && !config.TacticsRespectEngage)
         {
             foreach (var npc in npcs)
-                EngageNpc(npc);
+                if (!npc.IsSentry)
+                    EngageNpc(npc);
         }
 
         var playerPos = player.Position;
@@ -297,6 +302,7 @@ public unsafe partial class NpcAiController : IDisposable
         }
 
         TickCallForHelp(npcs);
+        TickSentries(npcs);
 
         // In solo play this is controlled by EnableTargetApproach. In party
         // mode, enemy movement is always needed because real NPCs have no
@@ -322,6 +328,11 @@ public unsafe partial class NpcAiController : IDisposable
                 if (npc.AiState != NpcAiState.Dead)
                     approachNpcs.Add(npc);
             }
+            // Sentries that have not noticed the party may be far off on the map: they keep out of
+            // the height grid (it would be stretched thin) and are walked on the navigation mesh.
+            var heightNpcs = approachNpcs;
+            if (approachNpcs.Exists(IsUnawareSentry))
+                heightNpcs = approachNpcs.FindAll(n => !IsUnawareSentry(n));
 
             var liveAddresses = new HashSet<nint>(approachNpcs.Select(n => n.Address));
             foreach (var address in approachPaths.Keys.ToList())
@@ -338,7 +349,7 @@ public unsafe partial class NpcAiController : IDisposable
                     approachLockedGoals.Remove(address);
             }
 
-            var terrainCache = BuildTerrainHeightCache(playerPos, approachNpcs);
+            var terrainCache = BuildTerrainHeightCache(playerPos, heightNpcs);
             if (partyMode)
                 UpdateMeleeAdmission(approachNpcs, targetByNpcId);
 
@@ -353,6 +364,15 @@ public unsafe partial class NpcAiController : IDisposable
                 // Prevent Resetting state when approach is active
                 if (npc.AiState == NpcAiState.Resetting)
                     npc.AiState = npc.State.IsAlive ? NpcAiState.Idle : NpcAiState.Dead;
+
+                if (IsUnawareSentry(npc))
+                {
+                    if (npc.Patrols)
+                        TickPatrol(npc, deltaTime);
+                    else
+                        StopApproachMoveAnim(npc);
+                    continue;
+                }
 
                 // An enemy that has not been engaged yet holds its ground instead of walking into
                 // the fight on its own.
@@ -451,6 +471,148 @@ public unsafe partial class NpcAiController : IDisposable
         passiveEnemyAddresses.RemoveWhere(address => !liveAddresses.Contains(address));
     }
 
+    private static bool IsUnawareSentry(SimulatedNpc npc)
+        => npc.IsSentry && npc.AiState == NpcAiState.Idle;
+
+    // A sentry notices the party within sight, or a neighbour that is already fighting.
+    private const float SentrySightRange = 14f;
+    private const float SentryAlertRadius = 10f;
+    private const float SentrySightHeight = 8f;
+    private readonly List<Vector3> partyPositions = new();
+
+    private void TickSentries(IReadOnlyList<SimulatedNpc> npcs)
+    {
+        var gathered = false;
+        foreach (var npc in npcs)
+        {
+            if (!IsUnawareSentry(npc) || !npc.IsSpawned || !npc.State.IsAlive || isExternallyControlled(npc.Address))
+                continue;
+
+            if (!gathered)
+            {
+                partyPositions.Clear();
+                if (CollectPartyPositions != null)
+                    CollectPartyPositions(partyPositions);
+                else if (Core.Services.ObjectTable.LocalPlayer is { } player && combatEngine.State.PlayerState.IsAlive)
+                    partyPositions.Add(player.Position);
+                gathered = true;
+            }
+
+            var pos = GetNpcPosition(npc);
+            var sight = npc.Behavior.AggroRange > 0f ? MathF.Max(8f, npc.Behavior.AggroRange) : SentrySightRange;
+            var noticed = false;
+            foreach (var friend in partyPositions)
+            {
+                if (MathF.Abs(friend.Y - pos.Y) <= SentrySightHeight && FlatDistance(friend, pos) <= sight)
+                {
+                    noticed = true;
+                    break;
+                }
+            }
+
+            if (!noticed)
+            {
+                foreach (var other in npcs)
+                {
+                    if (other == npc || !other.IsSpawned || !other.State.IsAlive || !other.IsEngaged)
+                        continue;
+                    if (FlatDistance(GetNpcPosition(other), pos) <= SentryAlertRadius)
+                    {
+                        noticed = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!noticed)
+                continue;
+
+            npc.HasPatrolGoal = false;
+            npc.PatrolTimer = 0f;
+            EngageNpc(npc);
+        }
+    }
+
+    // A patrol: walk to a point near the post, stand a while, walk to another.
+    private const float PatrolWalkSpeed = 2.0f;
+    private const float PatrolNearest = 4f;
+    private const float PatrolFurthest = 9f;
+    private const float PatrolReach = 0.5f;
+    private const float PatrolLegSeconds = 25f;
+
+    private void TickPatrol(SimulatedNpc npc, float deltaTime)
+    {
+        if (npc.BattleChara == null)
+            return;
+
+        var gameObj = (GameObject*)npc.BattleChara;
+        var npcPos = (Vector3)gameObj->Position;
+        npc.PatrolTimer -= deltaTime;
+
+        if (!npc.HasPatrolGoal)
+        {
+            StopApproachMoveAnim(npc);
+            if (npc.PatrolTimer > 0f)
+                return;
+
+            var angle = Random.Shared.NextSingle() * MathF.Tau;
+            var onMesh = config.UseVNavmeshTargetApproach && vnavmeshIpc.CanPathfind;
+            // (Without a mesh to keep it on the ground and out of walls, it only paces.)
+            var reach = onMesh ? PatrolNearest + (PatrolFurthest - PatrolNearest) * Random.Shared.NextSingle() : 2.5f;
+            var wanted = npc.SpawnPosition + new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle)) * reach;
+            if (onMesh)
+            {
+                if (SnapToNavmesh(wanted) is not { } ground || MathF.Abs(ground.Y - npc.SpawnPosition.Y) > 4f)
+                {
+                    npc.PatrolTimer = 1f;
+                    return;
+                }
+                wanted = ground;
+            }
+            else
+                wanted.Y = npcPos.Y;
+
+            npc.PatrolGoal = wanted;
+            npc.HasPatrolGoal = true;
+            npc.PatrolTimer = PatrolLegSeconds;
+        }
+
+        if (FlatDistance(npcPos, npc.PatrolGoal) <= PatrolReach || npc.PatrolTimer <= 0f)
+        {
+            npc.HasPatrolGoal = false;
+            npc.PatrolTimer = 2f + 4f * Random.Shared.NextSingle();
+            StopApproachMoveAnim(npc);
+            return;
+        }
+
+        var moveTarget = npc.PatrolGoal;
+        if (config.UseVNavmeshTargetApproach && vnavmeshIpc.CanPathfind)
+        {
+            // Along the path only: it waits for one instead of walking straight at the goal.
+            if (!TryUpdateVNavmeshPath(npc, deltaTime, npcPos, npc.PatrolGoal, out moveTarget, useLookahead: false))
+            {
+                StopApproachMoveAnim(npc);
+                return;
+            }
+        }
+
+        var remaining = Vector3.Distance(npcPos, moveTarget);
+        var step = PatrolWalkSpeed * deltaTime;
+        var newPos = remaining <= step ? moveTarget : npcPos + Vector3.Normalize(moveTarget - npcPos) * step;
+
+        if (!approachPaths.TryGetValue(npc.Address, out var state))
+        {
+            state = new ApproachPathState { VisualState = npc.VisualState };
+            approachPaths[npc.Address] = state;
+        }
+        state.VisualState = npc.VisualState;
+        ActorVisualStateController.ApplyMoving((Character*)npc.BattleChara, npc.VisualState, deltaTime,
+            ActorVisualStateController.NormalWalkTimelineId);
+        movementBlockHook.SetApproachPosition(gameObj, newPos.X, newPos.Y, newPos.Z);
+        if (FlatDistance(npcPos, moveTarget) > 0.05f)
+            ForceRotateToward(npc, moveTarget, deltaTime);
+    }
+
     private void ClearPartyApproachState(SimulatedNpc npc)
     {
         StopApproachMoveAnim(npc);
@@ -518,7 +680,8 @@ public unsafe partial class NpcAiController : IDisposable
         switch (npc.AiState)
         {
             case NpcAiState.Idle:
-                if (npc.BattleChara != null)
+                // (A sentry walking its patrol keeps its walk: TickPatrol owns its look.)
+                if (npc.BattleChara != null && !(npc.IsSentry && npc.Patrols && npc.HasPatrolGoal))
                     ActorVisualStateController.ApplyCombatIdle((Character*)npc.BattleChara, npc.VisualState);
                 break;
 

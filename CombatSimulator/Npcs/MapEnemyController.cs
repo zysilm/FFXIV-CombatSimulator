@@ -31,6 +31,7 @@ public sealed unsafe class MapEnemyController
     private readonly IPluginLog log;
 
     private MapEnemySettings? recipeSettings;
+    private bool recipeActive;
     private float senseTimer;
 
     public MapEnemyController(
@@ -60,12 +61,14 @@ public sealed unsafe class MapEnemyController
     public void SetRecipeSettings(MapEnemySettings? settings)
     {
         recipeSettings = settings;
+        recipeActive = true;
         senseTimer = 0;
     }
 
     public void ClearRecipeSettings()
     {
         recipeSettings = null;
+        recipeActive = false;
         senseTimer = 0;
     }
 
@@ -128,7 +131,9 @@ public sealed unsafe class MapEnemyController
 
     private MapEnemySettings? CurrentSettings()
     {
-        if (isRecipeBattle())
+        // A battle profile brings its own map settings (none: the map stays out of it). A battle
+        // put together by hand in the War Generator goes by the user's settings, like any other.
+        if (recipeActive && isRecipeBattle())
             return recipeSettings;
 
         return new MapEnemySettings

@@ -84,7 +84,7 @@ public class DamageCalculator
         {
             // An enemy: a share of whoever it hits, so a companion with less HP is hurt as much as the player.
             damage = CombatBudgetModel.EnemyHitShare(potency, source.Tier, source.KitOutput(actionMode), actionMode, source.LevelFactor)
-                     * MathF.Max(1f, target.MaxHp);
+                     * MathF.Max(1f, target.HitReferenceHp > 0f ? target.HitReferenceHp : target.MaxHp);
         }
 
         damage *= CombatBudgetModel.RollModifier(rng.NextDouble(), rng.NextDouble(), enableCrit, enableDh,

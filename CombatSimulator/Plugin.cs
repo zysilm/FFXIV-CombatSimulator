@@ -354,6 +354,14 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             // double-swing where the old 0.6s animation lock expired mid-animation).
             telegraphSystem.IsBusy);
         npcAiController.AreaMarkers = enemyAreaMarkers;
+        npcAiController.CollectPartyPositions = companionManager.CollectPartyPositions;
+        npcSpawner.Navmesh = vnavmeshIpc;
+        npcSpawner.OnAllySpawnComplete = (npc, request) =>
+        {
+            // An ally counts as a companion, so the party features have to be on for it to fight.
+            config.EnableCombatCompanions = true;
+            companionManager.AdoptNpc(npc, request);
+        };
         combatEngine.InterruptTelegraphCast = telegraphSystem.TryInterrupt;
         npcCorpseFootIkSolver.CorpseSupportHeightProvider = ResolveCorpseTraversalHeight;
         enemyControlController.FootIkSolver = npcCorpseFootIkSolver;
