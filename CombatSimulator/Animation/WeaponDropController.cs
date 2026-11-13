@@ -562,6 +562,10 @@ public unsafe class WeaponDropController : IDisposable
     private static void MoveKinematicCollider(ref BodyKinematicCollider collider, BodyReference bodyRef,
         Vector3 targetPosition, Quaternion targetOrientation)
     {
+        // Parked colliders each get their own spot below the world: piled on one point they all
+        // overlap and the broad phase pairs every one with every other (see RagdollController.ParkingSpot).
+        if (targetPosition.Y < -9000f)
+            targetPosition = new Vector3((bodyRef.Handle.Value & 255) * 8f, targetPosition.Y, ((bodyRef.Handle.Value >> 8) & 1023) * 8f);
         collider.PreviousPosition = bodyRef.Pose.Position;
         collider.TargetPosition = targetPosition;
         WeaponReleaseContacts.MoveKinematic(bodyRef, targetPosition, targetOrientation, 1f / 60f);

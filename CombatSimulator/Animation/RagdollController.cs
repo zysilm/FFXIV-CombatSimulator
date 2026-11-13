@@ -6071,6 +6071,12 @@ public unsafe partial class RagdollController : IDisposable
                 new CollidableDescription(shapeIndex, 0.04f),
                 new BodyActivityDescription(0.01f)));
             npcCollisionKinematicBodyHandles.Add(bodyHandle.Value);
+            if (inactiveLightweightProxy)
+            {
+                // Born parked: at its own spot, not on top of every other parked capsule.
+                bodyCenter = ParkingSpot(bodyCenter, bodyHandle.Value);
+                simulation.Bodies.GetBodyReference(bodyHandle).Pose.Position = bodyCenter;
+            }
             boneStatics.Add(new NpcBoneStatic
             {
                 Handle = bodyHandle,
@@ -7478,10 +7484,25 @@ public unsafe partial class RagdollController : IDisposable
         }
     }
 
+    // Parking: a collider that is out of play is sent far below the world. Each one goes to its own
+    // spot there, spaced apart: parked at one shared point, every parked capsule of every character
+    // overlapped every other, and the broad phase produced (and the callback rejected) each of those
+    // pairs on every substep. Measured offline on one corpse with 40 characters' capsules: 32.7 ms a
+    // frame at one point, 0.3 ms spread (scratchpad parkbench); in game 20 such corpses ran at 1-2 fps.
+    private const float ParkingDepth = -9000f;
+    private const float ParkingSpacing = 8f;
+
+    /// <summary>The target as given, or, when it is the parking depth, this body's own spot there.</summary>
+    private static Vector3 ParkingSpot(Vector3 target, int key)
+        => target.Y > ParkingDepth
+            ? target
+            : new Vector3((key & 255) * ParkingSpacing, target.Y, ((key >> 8) & 1023) * ParkingSpacing);
+
     private void MoveNpcKinematic(ref NpcCollisionState state, BodyHandle handle,
         Vector3 targetPosition, Quaternion targetOrientation, float dt)
     {
         if (simulation == null) return;
+        targetPosition = ParkingSpot(targetPosition, handle.Value);
         var body = simulation.Bodies.GetBodyReference(handle);
         if (MoveKinematicBody(body, targetPosition, targetOrientation,
                 ref state.PreviousPosition, ref state.PreviousOrientation, ref state.HasPreviousPose, dt))
@@ -7505,6 +7526,7 @@ public unsafe partial class RagdollController : IDisposable
     private void MoveNpcBoneKinematic(ref NpcBoneStatic bone, Vector3 targetPosition, Quaternion targetOrientation, float dt)
     {
         if (simulation == null) return;
+        targetPosition = ParkingSpot(targetPosition, bone.Handle.Value);
         var body = simulation.Bodies.GetBodyReference(bone.Handle);
         if (MoveKinematicBody(body, targetPosition, targetOrientation,
                 ref bone.PreviousPosition, ref bone.PreviousOrientation, ref bone.HasPreviousPose, dt))

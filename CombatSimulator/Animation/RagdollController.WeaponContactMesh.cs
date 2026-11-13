@@ -106,7 +106,7 @@ public unsafe partial class RagdollController
             if (!TryFindRagdollBone(proxy.RagdollBody, proxy.BoneListIndex, out var rb))
             {
                 // Its body was removed (e.g. a severed limb): retire the twin without a launch velocity.
-                twin.Pose = new RigidPose(WeaponContactProxyParking, Quaternion.Identity);
+                twin.Pose = new RigidPose(ParkingSpot(WeaponContactProxyParking, proxy.Body.Value), Quaternion.Identity);
                 twin.Velocity = default;
                 continue;
             }
