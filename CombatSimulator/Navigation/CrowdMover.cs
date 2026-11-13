@@ -75,7 +75,7 @@ public sealed class CrowdMover
     /// <summary>
     /// Ask this actor to walk to <paramref name="goal"/> (or stand where it is, when null) this frame.
     /// The actor joins the crowd at <paramref name="position"/>, snapped to the floor under it, the
-    /// first time. False when it is not over the mesh (the caller moves it the old way).
+    /// first time. False when it is not over the mesh (it then stands).
     /// </summary>
     public bool Drive(nint address, Vector3 position, float radius, float speed, Vector3? goal)
     {

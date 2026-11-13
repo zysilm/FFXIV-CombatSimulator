@@ -53,8 +53,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     private readonly ActionDataProvider actionDataProvider;
     private readonly NpcActionProfileProvider npcActionProfileProvider;
     private readonly DamageCalculator damageCalculator;
-    private readonly PartyEngagePlanner partyEngagePlanner;
-    private readonly TerrainHeightService terrainHeightService;
     private readonly GlamourerIpc glamourerIpc;
     private readonly VNavmeshIpc vnavmeshIpc;
     private readonly AnimationController animationController;
@@ -216,8 +214,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         };
         glamourerIpc = new GlamourerIpc(pluginInterface, log);
         vnavmeshIpc = new VNavmeshIpc(pluginInterface, log);
-        partyEngagePlanner = new PartyEngagePlanner(vnavmeshIpc);
-        terrainHeightService = new TerrainHeightService();
         movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
         animationController = new AnimationController(log, clientState, dataManager, gameInterop, sigScanner, config);
         npcActionProfileProvider.MonsterKits = new MonsterActionKitProvider(
@@ -339,7 +335,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         npcSpawner.StripAccessories = () => devExperimental.VirtualEnemyStripAccessories;
         companionManager = new CombatCompanionManager(
             objectTable, clientState, config, combatEngine, animationController,
-            movementBlockHook, vnavmeshIpc, targetManager, partyEngagePlanner, terrainHeightService, log);
+            movementBlockHook, targetManager, log);
         combatEngine.ResolveNpcTarget = companionManager.SelectEnemyTarget;
         combatEngine.ResolveExternalEntityAddress = companionManager.ResolveAddress;
         combatEngine.HasLivingCompanions = () => companionManager.HasLivingCompanions;
@@ -354,8 +350,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             log);
         npcCorpseFootIkSolver = new NpcCorpseFootIkSolver(boneTransformService, log);
         npcAiController = new NpcAiController(
-            combatEngine, animationController, movementBlockHook, vnavmeshIpc,
-            clientState, config, partyEngagePlanner, terrainHeightService, log,
+            combatEngine, animationController, movementBlockHook, config, log,
             combatModeRouter, npcCorpseFootIkSolver,
             // Deferred: fightingModeController is constructed later in this ctor; the
             // AI only queries during framework ticks.

@@ -13,13 +13,13 @@ using FFXIVClientStructs.FFXIV.Client.Game.Object;
 namespace CombatSimulator.Companions;
 
 /// <summary>
-/// Allies on the plugin's navigation mesh (phase C of docs/AI_MOVEMENT_REWRITE.md): when the mesh is
-/// there, every move and stop goes through the same DetourCrowd as the enemies, and an ally fights by
-/// the same reach and gap as they do.
+/// Allies on the plugin's navigation mesh (docs/AI_MOVEMENT_REWRITE.md): every move and stop goes
+/// through the same DetourCrowd as the enemies, and an ally fights by the same reach and gap as they
+/// do. There is no other mover: off the mesh an ally stands where it is.
 /// </summary>
 public unsafe partial class CombatCompanionManager
 {
-    /// <summary>The crowd on the navigation mesh; null or not ready: allies move the old way.</summary>
+    /// <summary>The crowd on the navigation mesh; null or not ready: allies stand.</summary>
     public Navigation.CrowdMover? Crowd { private get; set; }
 
     private bool CrowdReady => Crowd is { Ready: true };
@@ -31,6 +31,8 @@ public unsafe partial class CombatCompanionManager
     private const float CrowdStopTolerance = 0.25f;
     private const float CrowdMeleeReachLimit = 5f;
     private const float CrowdMagicAutoReach = 3.5f;
+    // A corpse lower than this under an ally's feet is stepped onto; a higher one is walked through.
+    private const float CorpseStepLimit = 0.65f;
 
     private static float HitboxOf(GameObject* obj)
         => obj != null && obj->HitboxRadius > 0.01f ? obj->HitboxRadius : EnemyMovementMath.BaselineHitboxRadius;
@@ -73,7 +75,7 @@ public unsafe partial class CombatCompanionManager
     /// Decide whether to close in on the target: true (and the ally walks) while it is out of reach,
     /// false once it is close enough to fight, with the same hysteresis as enemies.
     /// </summary>
-    private bool CrowdApproach(CombatCompanion companion, SimulatedNpc target, float deltaTime, TerrainHeightCache? terrainCache)
+    private bool CrowdApproach(CombatCompanion companion, SimulatedNpc target, float deltaTime)
     {
         var reach = CrowdReachNow(companion);
         var gap = CrowdGap(companion, target);
@@ -93,13 +95,13 @@ public unsafe partial class CombatCompanionManager
         var away = new Vector3(self.X - targetPos.X, 0f, self.Z - targetPos.Z);
         away = away.LengthSquared() > 1e-6f ? Vector3.Normalize(away) : Vector3.UnitZ;
         var goal = targetPos + away * (stand + HitboxOf((GameObject*)companion.BattleChara) + target.HitboxRadius);
-        MoveToward(companion, goal, deltaTime, terrainCache);
+        MoveToward(companion, goal, deltaTime);
         return true;
     }
 
     /// <summary>
     /// Move (or, with no goal, hold) this ally with the crowd, and put it where the crowd has it. False
-    /// when there is no mesh, or the ally is not on it: the caller moves it the old way.
+    /// when there is no mesh, or the ally is not on it: it then stands.
     /// </summary>
     private bool TryCrowdMove(CombatCompanion companion, Vector3? goal, float deltaTime)
     {
@@ -113,6 +115,12 @@ public unsafe partial class CombatCompanionManager
             return false;
         if (!crowd.TryGetMotion(companion.Address, out var position, out var velocity))
             return true;
+
+        // Standing on a corpse: up onto it when it is low enough to step on.
+        if (config.NpcCollisionActive &&
+            CorpseSupportHeightProvider?.Invoke(companion.Address, position) is { } support &&
+            support > position.Y && support - position.Y <= CorpseStepLimit)
+            position.Y = support;
 
         movementBlockHook.AddApproachNpc(companion.Address);
         movementBlockHook.SetApproachPosition(obj, position.X, position.Y, position.Z);

@@ -275,10 +275,6 @@ public partial class Configuration : IPluginConfiguration
 
     // Target Formation
     public bool EnableNpcTargetPlayer { get; set; } = true;
-    public bool EnableTargetApproach { get; set; } = true;
-    public bool UseSoloTargetFormationWhenNoCompanions { get; set; } = false;
-    public float TargetApproachDistance { get; set; } = 1.5f;
-    public bool UseVNavmeshTargetApproach { get; set; } = true;
     // Explicit gameplay range override. Visual NPC Scale still supplies the model-relative melee
     // baseline; this multiplier lets users restore or enlarge reach for very small actors.
     public float NpcAttackRangeScale { get; set; } = 1.0f;
@@ -754,6 +750,9 @@ public partial class Configuration : IPluginConfiguration
         "EnemyTelegraphedCasts", "EnemyMaxCastSeconds", "EnemyKitIncludeAoe", "EnemyHpPhaseSkills",
         "KeepCompanionsOnReset", "PartyCommandRange", "PartyCommandRangeRandomness",
         "PartyMeleeAttackRange", "PartyRangedAttackRange",
+        // The old movers, replaced by the crowd on the plugin's navigation mesh (2026-11-13).
+        "EnableTargetApproach", "UseSoloTargetFormationWhenNoCompanions", "TargetApproachDistance",
+        "UseVNavmeshTargetApproach",
         "SpectatorChatterBubbleDuration", "SpectatorChatterMaxConcurrent",
         // Effects, Enemy Control, Camera and Settings tabs, simplified 2026-11.
         "NpcSkillVfxMaxDistance", "HitVfxPath", "HitFeedbackDelay", "HitVfxDefaultMigrated20260830",

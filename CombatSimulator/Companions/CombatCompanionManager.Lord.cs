@@ -121,7 +121,7 @@ public unsafe partial class CombatCompanionManager
     /// Drive the companion praying over the lord: to its post before the body, then praying there,
     /// taking <see cref="PrayerDamageScale"/> times the damage. True when this is that companion.
     /// </summary>
-    private bool TickPrayer(CombatCompanion companion, float deltaTime, TerrainHeightCache? terrainCache)
+    private bool TickPrayer(CombatCompanion companion, float deltaTime)
     {
         if (prayerId == 0 || companion.SimulatedEntityId != prayerId || !TryGetLordBody(out var body, out var post))
             return false;
@@ -131,7 +131,7 @@ public unsafe partial class CombatCompanionManager
         if (!prayerAtPost && FlatDistance(self, post) > PrayerReach)
         {
             EnterCompanionState(companion, CompanionAiState.MovingToTarget, deltaTime);
-            MoveToward(companion, post, deltaTime, terrainCache);
+            MoveToward(companion, post, deltaTime);
             return true;
         }
 

@@ -297,9 +297,6 @@ public partial class CombatEngine : IDisposable
             npc.EngageDelayTimer = 0;
             npc.DeadTimer = 0;
             npc.CurrentCastSkill = null;
-            npc.DesiredEngageRange = 0;
-            npc.IsRangedIntent = false;
-            npc.IntentDwellTimer = 0;
             foreach (var skill in npc.Behavior.Skills)
                 skill.CooldownRemaining = 0;
 

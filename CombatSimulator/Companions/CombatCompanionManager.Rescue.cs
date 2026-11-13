@@ -133,7 +133,7 @@ public unsafe partial class CombatCompanionManager
     /// <see cref="RaiseSeconds"/>, taking <see cref="RaiserDamageScale"/> times the damage. True
     /// when this companion is so engaged (its fighting is skipped).
     /// </summary>
-    private bool TickRescuer(CombatCompanion companion, float deltaTime, TerrainHeightCache? terrainCache)
+    private bool TickRescuer(CombatCompanion companion, float deltaTime)
     {
         Rescue? rescue = null;
         foreach (var r in rescues.Values)
@@ -165,7 +165,7 @@ public unsafe partial class CombatCompanionManager
             if (rescue.Channelling)
                 StopChannelling(companion, rescue);
             EnterCompanionState(companion, CompanionAiState.MovingToTarget, deltaTime);
-            MoveToward(companion, at, deltaTime, terrainCache);
+            MoveToward(companion, at, deltaTime);
             return true;
         }
 

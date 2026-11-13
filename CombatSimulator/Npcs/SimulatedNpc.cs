@@ -71,6 +71,8 @@ public unsafe class SimulatedNpc
     public bool CrowdDriven { get; set; }
     /// <summary>Close enough to stand and fight (with hysteresis: see NpcAiController.TryCrowdApproach).</summary>
     public bool InReach { get; set; }
+    /// <summary>Moving at a walk (a patrol), not a run.</summary>
+    public bool WalkPace { get; set; }
     /// <summary>Where this enemy is going to carry off the fallen lord's body (Warring States), or null.</summary>
     public Vector3? SeizeGoal { get; set; }
     /// <summary>A sentry that walks about its post while idle.</summary>
@@ -107,12 +109,4 @@ public unsafe class SimulatedNpc
     // default melee animation. Per-NPC override so e.g. an archer model
     // never plays a sword swing.
     public bool IsRanged { get; set; }
-
-    // Action-Mode dynamic positioning: the engage distance + role the enemy wants right now, based
-    // on the action it intends to use next. Updated each frame by NpcAiController; the approach
-    // logic and PartyEngagePlanner read these instead of a fixed weapon-style range.
-    // DesiredEngageRange == 0 means "not computed yet" (callers fall back to the style range).
-    public float DesiredEngageRange { get; set; }
-    public bool IsRangedIntent { get; set; }
-    public float IntentDwellTimer { get; set; }
 }

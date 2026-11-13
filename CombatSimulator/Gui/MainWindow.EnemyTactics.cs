@@ -23,9 +23,9 @@ public partial class MainWindow
             config.EnhancedEnemyTactics = master;
             config.Save();
         }
-        HelpMarker("Enemies spread around you, keep body-size aware spacing, circle and reposition while holding range,\n" +
-                   "pick targets by threat, take turns in melee, call for help or flee at low HP, and big monsters turn slowly.\n" +
-                   "Off = enemies move exactly as before.");
+        HelpMarker("Enemies circle and reposition while holding range, pick targets by threat, take turns in melee,\n" +
+                   "call for help or flee at low HP, and big monsters turn slowly.\n" +
+                   "Off = enemies walk straight into reach and fight.");
 
         using (ImRaii.Disabled(!config.EnhancedEnemyTactics))
         {

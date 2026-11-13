@@ -4,11 +4,10 @@
 
 namespace CombatSimulator;
 
-// Enhanced enemy tactics: movement, spacing and target-selection behaviours layered on the enemy
-// approach and the party engage planner. With the master switch on, enemies spread around the player,
-// keep body-size aware spacing, circle and reposition while holding range, pick targets by threat,
-// take turns in melee, call for help / flee at low HP and (when big) turn slowly. Off = enemies move
-// exactly as before.
+// Enhanced enemy tactics: where enemies choose to stand and whom they fight. The crowd on the
+// navigation mesh does the moving. With the master switch on, enemies circle and reposition while
+// holding range, pick targets by threat, take turns in melee, call for help / flee at low HP and (when
+// big) turn slowly. Off = they walk straight to their reach and fight.
 public partial class Configuration
 {
     public bool EnhancedEnemyTactics { get; set; } = true;

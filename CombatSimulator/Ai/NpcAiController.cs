@@ -25,35 +25,15 @@ public unsafe partial class NpcAiController : IDisposable
     private readonly CombatEngine combatEngine;
     private readonly AnimationController animationController;
     private readonly MovementBlockHook movementBlockHook;
-    private readonly VNavmeshIpc vnavmeshIpc;
-    private readonly IClientState clientState;
     private readonly Configuration config;
-    private readonly PartyEngagePlanner partyEngagePlanner;
-    private readonly TerrainHeightService terrainHeightService;
     private readonly IPluginLog log;
     private readonly CombatSimulator.ActionCombat.CombatModeRouter combatModeRouter;
     private readonly NpcCorpseFootIkSolver footIkSolver;
     private readonly Func<nint, bool> isExternallyControlled;
     private readonly Func<uint, bool> isTelegraphBusy;
-    private readonly Dictionary<nint, ApproachPathState> approachPaths = new();
-    private readonly Dictionary<uint, float> partyApproachDebugNextLogAt = new();
-    private readonly Dictionary<uint, string> lastApproachDebugRoute = new();
-    // Per-enemy locked standing position (world-space). While far, an enemy walks
-    // straight in toward the player; once it reaches the keep-distance ring it locks
-    // a fixed world spot (de-stacked) and holds it — it does NOT glide along with
-    // the player. The lock only releases when the player wanders far enough away
-    // that the enemy must walk in again.
-    private readonly Dictionary<nint, Vector3> approachLockedGoals = new();
-    private float lastNpcMeleeRangeScale = float.NaN;
+    // Enemies the crowd has set running, with the look to clear when they stop.
+    private readonly Dictionary<nint, ActorVisualState> movingNpcs = new();
     private readonly HashSet<nint> passiveEnemyAddresses = new();
-    private const float VNavmeshRepathDistance = 1.5f;
-    private const float VNavmeshRepathInterval = 1.0f;
-    private const float VNavmeshPathTolerance = 0.5f;
-    private const float VNavmeshFloorResnapInterval = 0.25f;
-    private const float VNavmeshWaypointReachDistance = 0.45f;
-    private const float VNavmeshLookaheadDistance = 1.25f;
-    private const float PartyMeleeAttackRangeBuffer = 0.25f;
-    private const float PartyAttackRangeHysteresis = 0.4f;
     // Caster/magic enemies auto-attack at melee reach (their spells are ranged, the basic swing is not).
     private const float MagicAutoAttackMeleeRange = 3.5f;
     // Enemy MP economy: enemies have half the player's max MP (set at spawn) but recover at double
@@ -62,70 +42,16 @@ public unsafe partial class NpcAiController : IDisposable
     // The numbers live in CombatBudgetModel, which also predicts what a kit sustains from them.
     private const int EnemyMpRegenPerSecond = CombatBudgetModel.EnemyMpRegenPerSecond;       // 2× the player's ~67/s natural regen
     private const int EnemyAutoAttackMpRestore = CombatBudgetModel.EnemyAutoAttackMpRestore; // 2× the player's 300 basic-attack restore
-    // Dynamic positioning: dwell damps intent flicker (front/back thrash).
-    private const float IntentMinDwell = 0.6f;
-    // Anti-orbit: within this distance of its assigned slot the enemy heads straight in, ignoring
-    // crowd separation, so it can pack into attack range instead of being pushed around the cluster.
-    private const float CommitToSlotRadius = 3.8f;
-    // Once holding in range, only re-approach when the target moves beyond this wider band (so the
-    // enemy settles instead of re-chasing every small slot/target jitter).
-    private const float PartyHoldReleaseBuffer = 1.5f;
-    // Below this fraction of the desired ranged hold, a ranged-intent enemy drifts back out.
-    private const float PartyApproachMovementEpsilon = 0.02f;
-    private const float PartyApproachDebugInterval = 0.5f;
-    // Low-pass time constant (seconds) for the steered enemy approach heading.
-    // The per-frame steered direction can flip when enemies crowd a shared
-    // target; blending toward it filters that jitter while still turning within
-    // a few frames. Smaller = snappier/jitterier, larger = smoother/laggier.
-    private const float ApproachHeadingSmoothingTau = 0.16f;
-    // Within (approach distance + lock buffer) an enemy locks its angle and stops;
-    // it only unlocks to re-approach if pushed beyond (approach distance + unlock).
-    private const float ApproachLockBuffer = 1.5f;
-    private const float ApproachUnlockBuffer = 1.5f;
-    // Solo ring: keep the hold spot this far inside the melee swing reach so a small player drift
-    // does not leave a locked enemy just out of range.
-    private const float SoloReachMargin = 0.25f;
 
     // Auto-engage countdown: when >= 0, every Tick decrements; on reaching
     // 0 we call EngageNpc on each selected NPC. Negative = inactive.
     private float pendingAutoEngageDelay = -1f;
 
-    private class ApproachPathState
-    {
-        public List<Vector3> Waypoints { get; set; } = new();
-        public int WaypointIndex { get; set; }
-        public Vector3 RequestedTarget { get; set; }
-        public float RepathTimer { get; set; }
-        public Task<List<Vector3>>? PendingPath { get; set; }
-        public Vector3 PendingTarget { get; set; }
-        public string LastError { get; set; } = "";
-        public float FloorYOffset { get; set; }
-        public float ConfiguredHeightOffset { get; set; }
-        public bool HasFloorYOffset { get; set; }
-        public float FloorResnapTimer { get; set; }
-        public float LastFloorY { get; set; }
-        public bool HasLastFloorY { get; set; }
-        public int LastCorrectedWaypointIndex { get; set; } = -1;
-        public ActorVisualState VisualState { get; set; } = new();
-        public float StableRootTerrainClearance { get; set; }
-        public bool HasStableRootTerrainClearance { get; set; }
-        public float LastMoveRootY { get; set; }
-        public bool HasLastMoveRootY { get; set; }
-        public uint TargetEntityId { get; set; }
-        public Vector3 SmoothedMoveDir { get; set; }
-        public bool HasSmoothedMoveDir { get; set; }
-        public bool WasHoldingRange { get; set; }
-    }
-
     public NpcAiController(
         CombatEngine combatEngine,
         AnimationController animationController,
         MovementBlockHook movementBlockHook,
-        VNavmeshIpc vnavmeshIpc,
-        IClientState clientState,
         Configuration config,
-        PartyEngagePlanner partyEngagePlanner,
-        TerrainHeightService terrainHeightService,
         IPluginLog log,
         CombatSimulator.ActionCombat.CombatModeRouter combatModeRouter,
         NpcCorpseFootIkSolver footIkSolver,
@@ -135,11 +61,7 @@ public unsafe partial class NpcAiController : IDisposable
         this.combatEngine = combatEngine;
         this.animationController = animationController;
         this.movementBlockHook = movementBlockHook;
-        this.vnavmeshIpc = vnavmeshIpc;
-        this.clientState = clientState;
         this.config = config;
-        this.partyEngagePlanner = partyEngagePlanner;
-        this.terrainHeightService = terrainHeightService;
         this.log = log;
         this.combatModeRouter = combatModeRouter;
         this.footIkSolver = footIkSolver;
@@ -150,7 +72,7 @@ public unsafe partial class NpcAiController : IDisposable
         combatEngine.OnSimulationReset += OnSimulationResetOrStop;
     }
 
-    /// <summary>The crowd on the plugin's navigation mesh; null or not ready: enemies move the old way.</summary>
+    /// <summary>The crowd on the plugin's navigation mesh: the only thing that moves enemies. Null or not ready: they stand.</summary>
     public CombatSimulator.Navigation.CrowdMover? Crowd { private get; set; }
     private readonly List<SimulatedNpc> crowdDriven = new();
 
@@ -172,11 +94,7 @@ public unsafe partial class NpcAiController : IDisposable
 
     private void OnSimulationResetOrStop()
     {
-        StopAllApproachMoveAnims();
-        approachPaths.Clear();
-        approachLockedGoals.Clear();
-        partyApproachDebugNextLogAt.Clear();
-        lastApproachDebugRoute.Clear();
+        StopAllMoveAnims();
         tacticsStates.Clear();
 
         // OnSimulationReset fires from both StopSimulation and ResetState.
@@ -212,7 +130,6 @@ public unsafe partial class NpcAiController : IDisposable
         if (player == null)
             return;
 
-        RefreshScaleDependentApproachState();
         tickNpcs = npcs;
 
         skillTokens = MathF.Min(SkillTokenBurst, skillTokens + MathF.Max(0f, config.NpcSkillRateLimit) * deltaTime);
@@ -307,141 +224,39 @@ public unsafe partial class NpcAiController : IDisposable
 
         TickCallForHelp(npcs);
         TickSentries(npcs);
+        UpdateMeleeAdmission(npcs, targetByNpcId);
 
-        // In solo play this is controlled by EnableTargetApproach. In party
-        // mode, enemy movement is always needed because real NPCs have no
-        // natural client-side chase path in our simulation; TickApproach uses
-        // the resolved combat target instead of the solo player ring.
-        if (config.EnableTargetApproach || partyMode)
+        // Movement: every enemy is moved by the crowd on the plugin's navigation mesh
+        // (docs/AI_MOVEMENT_REWRITE.md); there is no other mover. Without a mesh under it (the first
+        // moment of a battle, before the mesh is built) an enemy stands where it is.
+        crowdDriven.Clear();
+        var crowd = Crowd;
+        var crowdReady = crowd is { Ready: true };
+        // The player is in the crowd as something to walk round.
+        if (crowdReady && combatEngine.State.PlayerState.IsAlive)
+            crowd!.SetObstacle(player.Address, playerPos, ((GameObject*)player.Address)->HitboxRadius);
+        foreach (var npc in npcs)
         {
-            if (config.UseVNavmeshTargetApproach)
-                vnavmeshIpc.RefreshStatus();
+            npc.CrowdDriven = false;
+            if (!npc.IsSpawned || npc.BattleChara == null || isExternallyControlled(npc.Address))
+                continue;
+            // Freshly spawned clones are pinned to their spawn placement by NpcSpawner for a moment.
+            if (npc.SpawnPlacementFrames > 0 || npc.AiState == NpcAiState.Dead)
+                continue;
+            // Real NPCs of the map: keep the server from moving them under us.
+            if (!npc.IsClientControlled)
+                movementBlockHook.AddApproachNpc(npc.Address);
+            if (npc.AiState == NpcAiState.Resetting)
+                npc.AiState = npc.State.IsAlive ? NpcAiState.Idle : NpcAiState.Dead;
 
-            // Count live approach-eligible NPCs for spread calculation
-            var approachNpcs = new List<SimulatedNpc>();
-            foreach (var npc in npcs)
+            if (crowdReady && TryCrowdMove(npc, deltaTime))
             {
-                if (!npc.IsSpawned || npc.BattleChara == null)
-                    continue;
-                if (isExternallyControlled(npc.Address))
-                    continue;
-                // Freshly spawned clones are being pinned to their spawn placement by NpcSpawner;
-                // don't fight it — approach takes over once the enforcement window ends.
-                if (npc.SpawnPlacementFrames > 0)
-                    continue;
-                if (npc.AiState != NpcAiState.Dead)
-                    approachNpcs.Add(npc);
+                crowdDriven.Add(npc);
+                continue;
             }
-            // Sentries that have not noticed the party may be far off on the map: they keep out of
-            // the height grid (it would be stretched thin) and are walked on the navigation mesh.
-            var heightNpcs = approachNpcs;
-            if (approachNpcs.Exists(IsUnawareSentry))
-                heightNpcs = approachNpcs.FindAll(n => !IsUnawareSentry(n));
-
-            var liveAddresses = new HashSet<nint>(approachNpcs.Select(n => n.Address));
-            foreach (var address in approachPaths.Keys.ToList())
-            {
-                if (!liveAddresses.Contains(address))
-                {
-                    StopApproachMoveAnim(address, approachPaths[address]);
-                    approachPaths.Remove(address);
-                }
-            }
-            foreach (var address in approachLockedGoals.Keys.ToList())
-            {
-                if (!liveAddresses.Contains(address))
-                    approachLockedGoals.Remove(address);
-            }
-
-            var terrainCache = BuildTerrainHeightCache(playerPos, heightNpcs);
-            if (partyMode)
-                UpdateMeleeAdmission(approachNpcs, targetByNpcId);
-
-            crowdDriven.Clear();
-            foreach (var npc in approachNpcs)
-                npc.CrowdDriven = false;
-            // The player is in the crowd as something to walk round.
-            if (Crowd is { Ready: true } playerCrowd && combatEngine.State.PlayerState.IsAlive)
-                playerCrowd.SetObstacle(player.Address, playerPos, ((GameObject*)player.Address)->HitboxRadius);
-            for (int i = 0; i < approachNpcs.Count; i++)
-            {
-                var npc = approachNpcs[i];
-
-                // Register NPC in the SetPosition block list so server can't override us
-                if (!npc.IsClientControlled)
-                    movementBlockHook.AddApproachNpc(npc.Address);
-
-                // Prevent Resetting state when approach is active
-                if (npc.AiState == NpcAiState.Resetting)
-                    npc.AiState = npc.State.IsAlive ? NpcAiState.Idle : NpcAiState.Dead;
-
-                if (npc.SeizeGoal is { } seizeGoal)
-                {
-                    TickSeizer(npc, seizeGoal, deltaTime);
-                    continue;
-                }
-
-                if (IsUnawareSentry(npc))
-                {
-                    if (npc.Patrols)
-                        TickPatrol(npc, deltaTime);
-                    else
-                        StopApproachMoveAnim(npc);
-                    continue;
-                }
-
-                if (TryCrowdApproach(npc))
-                {
-                    crowdDriven.Add(npc);
-                    continue;
-                }
-
-                // An enemy that has not been engaged yet holds its ground instead of walking into
-                // the fight on its own.
-                if (config.TacticsRespectEngage && npc.AiState == NpcAiState.Idle)
-                {
-                    StopApproachMoveAnim(npc);
-                    continue;
-                }
-
-                // A caster channelling a snapshotted area stands still: its hit area was frozen at
-                // cast start, so walking (approach, strafe, charge) would carry it off its own marker.
-                if (npc.CastArea != null && npc.State.IsCasting)
-                {
-                    StopApproachMoveAnim(npc);
-                    continue;
-                }
-
-                if (!partyMode || (!hasLivingCompanions && config.UseSoloTargetFormationWhenNoCompanions))
-                {
-                    LogApproachRouteDebug(npc, "solo", partyMode, hasLivingCompanions);
-                    TickSoloApproach(npc, deltaTime, playerPos, terrainCache);
-                    continue;
-                }
-
-                if (!targetByNpcId.TryGetValue(npc.SimulatedEntityId, out var target))
-                {
-                    var state = combatEngine.GetNpcTarget(npc);
-                    target = (state, combatEngine.GetSimulatedEntityPosition(state));
-                }
-
-                LogApproachRouteDebug(npc, "party", partyMode, hasLivingCompanions);
-                TickPartyApproach(npc, deltaTime, playerPos, target.State, target.Position, terrainCache);
-            }
-
-            ApplyCrowdMotion(deltaTime);
+            StopApproachMoveAnim(npc);
         }
-        else
-        {
-            // Clear this controller's approach blocks when feature is disabled, but leave dev
-            // controllers (Monster/Victory/Hold) alone; they share MovementBlockHook for their
-            // own explicitly-driven actors.
-            movementBlockHook.ClearApproachNpcsExcept(isExternallyControlled);
-            StopAllApproachMoveAnims();
-            approachPaths.Clear();
-            approachLockedGoals.Clear();
-        }
-
+        ApplyCrowdMotion(deltaTime);
     }
 
     /// <summary>
@@ -450,9 +265,7 @@ public unsafe partial class NpcAiController : IDisposable
     public void ClearApproachState()
     {
         movementBlockHook.ClearApproachNpcs();
-        StopAllApproachMoveAnims();
-        approachPaths.Clear();
-        approachLockedGoals.Clear();
+        StopAllMoveAnims();
         passiveEnemyAddresses.Clear();
     }
 
@@ -460,9 +273,7 @@ public unsafe partial class NpcAiController : IDisposable
     {
         pendingAutoEngageDelay = -1f;
         movementBlockHook.ClearApproachNpcsExcept(isExternallyControlled);
-        StopAllApproachMoveAnims();
-        approachPaths.Clear();
-        approachLockedGoals.Clear();
+        StopAllMoveAnims();
 
         var liveAddresses = new HashSet<nint>();
         foreach (var npc in npcs)
@@ -561,109 +372,27 @@ public unsafe partial class NpcAiController : IDisposable
     private const float PatrolWalkSpeed = 2.0f;
     private const float PatrolNearest = 4f;
     private const float PatrolFurthest = 9f;
-    private const float PatrolReach = 0.5f;
+    private const float PatrolReach = 0.6f;
     private const float PatrolLegSeconds = 25f;
 
-    private void TickPatrol(SimulatedNpc npc, float deltaTime)
+    /// <summary>Where a patrolling sentry is walking now, or null while it stands between legs.</summary>
+    private Vector3? PatrolGoal(SimulatedNpc npc, Vector3 npcPos, float deltaTime)
     {
-        if (npc.BattleChara == null)
-            return;
-
-        var gameObj = (GameObject*)npc.BattleChara;
-        var npcPos = (Vector3)gameObj->Position;
         npc.PatrolTimer -= deltaTime;
-
-        if (!npc.HasPatrolGoal)
-        {
-            StopApproachMoveAnim(npc);
-            if (npc.PatrolTimer > 0f)
-                return;
-
-            var angle = Random.Shared.NextSingle() * MathF.Tau;
-            var onMesh = config.UseVNavmeshTargetApproach && vnavmeshIpc.CanPathfind;
-            // (Without a mesh to keep it on the ground and out of walls, it only paces.)
-            var reach = onMesh ? PatrolNearest + (PatrolFurthest - PatrolNearest) * Random.Shared.NextSingle() : 2.5f;
-            var wanted = npc.SpawnPosition + new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle)) * reach;
-            if (onMesh)
-            {
-                if (SnapToNavmesh(wanted) is not { } ground || MathF.Abs(ground.Y - npc.SpawnPosition.Y) > 4f)
-                {
-                    npc.PatrolTimer = 1f;
-                    return;
-                }
-                wanted = ground;
-            }
-            else
-                wanted.Y = npcPos.Y;
-
-            npc.PatrolGoal = wanted;
-            npc.HasPatrolGoal = true;
-            npc.PatrolTimer = PatrolLegSeconds;
-        }
-
-        if (FlatDistance(npcPos, npc.PatrolGoal) <= PatrolReach || npc.PatrolTimer <= 0f)
+        if (npc.HasPatrolGoal && (FlatDistance(npcPos, npc.PatrolGoal) <= PatrolReach || npc.PatrolTimer <= 0f))
         {
             npc.HasPatrolGoal = false;
             npc.PatrolTimer = 2f + 4f * Random.Shared.NextSingle();
-            StopApproachMoveAnim(npc);
-            return;
         }
-
-        var moveTarget = npc.PatrolGoal;
-        if (config.UseVNavmeshTargetApproach && vnavmeshIpc.CanPathfind)
+        if (!npc.HasPatrolGoal && npc.PatrolTimer <= 0f)
         {
-            // Along the path only: it waits for one instead of walking straight at the goal.
-            if (!TryUpdateVNavmeshPath(npc, deltaTime, npcPos, npc.PatrolGoal, out moveTarget, useLookahead: false))
-            {
-                StopApproachMoveAnim(npc);
-                return;
-            }
+            var angle = Random.Shared.NextSingle() * MathF.Tau;
+            var reach = PatrolNearest + (PatrolFurthest - PatrolNearest) * Random.Shared.NextSingle();
+            npc.PatrolGoal = npc.SpawnPosition + new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle)) * reach;
+            npc.HasPatrolGoal = true;
+            npc.PatrolTimer = PatrolLegSeconds;
         }
-
-        var remaining = Vector3.Distance(npcPos, moveTarget);
-        var step = PatrolWalkSpeed * deltaTime;
-        var newPos = remaining <= step ? moveTarget : npcPos + Vector3.Normalize(moveTarget - npcPos) * step;
-
-        if (!approachPaths.TryGetValue(npc.Address, out var state))
-        {
-            state = new ApproachPathState { VisualState = npc.VisualState };
-            approachPaths[npc.Address] = state;
-        }
-        state.VisualState = npc.VisualState;
-        ActorVisualStateController.ApplyMoving((Character*)npc.BattleChara, npc.VisualState, deltaTime,
-            ActorVisualStateController.NormalWalkTimelineId);
-        movementBlockHook.SetApproachPosition(gameObj, newPos.X, newPos.Y, newPos.Z);
-        if (FlatDistance(npcPos, moveTarget) > 0.05f)
-            ForceRotateToward(npc, moveTarget, deltaTime);
-    }
-
-    /// <summary>Run to the fallen lord's body to carry it off; it is taken once there (Plugin.War).</summary>
-    private void TickSeizer(SimulatedNpc npc, Vector3 goal, float deltaTime)
-    {
-        if (npc.BattleChara == null)
-            return;
-
-        var gameObj = (GameObject*)npc.BattleChara;
-        var npcPos = (Vector3)gameObj->Position;
-        if (FlatDistance(npcPos, goal) <= 0.5f)
-        {
-            StopApproachMoveAnim(npc);
-            ForceRotateToward(npc, goal, deltaTime);
-            return;
-        }
-
-        var moveTarget = goal;
-        if (config.UseVNavmeshTargetApproach && vnavmeshIpc.CanPathfind &&
-            TryUpdateVNavmeshPath(npc, deltaTime, npcPos, goal, out var pathTarget, useLookahead: false))
-            moveTarget = pathTarget;
-
-        var speed = npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f;
-        var remaining = Vector3.Distance(npcPos, moveTarget);
-        var step = speed * deltaTime;
-        var newPos = remaining <= step ? moveTarget : npcPos + Vector3.Normalize(moveTarget - npcPos) * step;
-        StartApproachMoveAnim(npc, deltaTime);
-        movementBlockHook.SetApproachPosition(gameObj, newPos.X, newPos.Y, newPos.Z);
-        ForceRotateToward(npc, moveTarget, deltaTime);
+        return npc.HasPatrolGoal ? npc.PatrolGoal : null;
     }
 
     // --- Movement on the navigation mesh (phase B of docs/AI_MOVEMENT_REWRITE.md) --------------------
@@ -701,32 +430,43 @@ public unsafe partial class NpcAiController : IDisposable
                 continue;
             if (npc.State.CurrentMp < SkillMpCost(npc, skill.ActionId))
                 continue;
-            var style = skill.AttackStyle == NpcAttackStyle.Auto ? npc.Behavior.AutoAttackStyle : skill.AttackStyle;
-            var range = style == NpcAttackStyle.Melee ? ScaleNpcMeleeRange(skill.Range) : ScaleNpcNonMeleeRange(skill.Range);
-            reach = MathF.Max(reach, range);
+            reach = MathF.Max(reach, SkillReach(npc, skill));
         }
         return reach;
     }
 
     /// <summary>
-    /// Hand this enemy to the crowd: stand and fight when the target is within reach, otherwise walk to
-    /// the nearest point at its standing gap. False when there is no mesh here, or the enemy is not on
-    /// it: it then moves the old way.
+    /// Decide where this enemy goes and hand it to the crowd. Going for the lord's body: there. A sentry
+    /// that has not noticed the party: its patrol, at a walk, or nowhere. Fighting: stand when the target
+    /// is within reach, otherwise the nearest point at its standing gap. Casting: stand (its area was
+    /// fixed when the cast began). False when the enemy is not on the mesh.
     /// </summary>
-    private bool TryCrowdApproach(SimulatedNpc npc)
+    private bool TryCrowdMove(SimulatedNpc npc, float deltaTime)
     {
-        var crowd = Crowd;
-        if (crowd == null || !crowd.Ready || npc.BattleChara == null)
-            return false;
-
+        var crowd = Crowd!;
         var npcPos = GetNpcPosition(npc);
         var speed = npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f;
         Vector3? goal = null;
+        npc.WalkPace = false;
 
         var target = combatEngine.GetNpcTarget(npc);
         var fighting = npc.AiState is NpcAiState.Engaging or NpcAiState.Combat or NpcAiState.Chasing;
-        // (A caster channelling stands: its area was fixed when the cast began.)
-        if (fighting && target is { IsAlive: true } && !npc.State.IsCasting)
+        if (npc.SeizeGoal is { } seize)
+        {
+            goal = seize;
+            npc.InReach = false;
+        }
+        else if (IsUnawareSentry(npc))
+        {
+            npc.InReach = false;
+            if (npc.Patrols && PatrolGoal(npc, npcPos, deltaTime) is { } patrol)
+            {
+                goal = patrol;
+                speed = PatrolWalkSpeed;
+                npc.WalkPace = true;
+            }
+        }
+        else if (fighting && target is { IsAlive: true } && !npc.State.IsCasting)
         {
             var targetPos = combatEngine.GetSimulatedEntityPosition(target);
             var reach = ReachNow(npc);
@@ -740,12 +480,18 @@ public unsafe partial class NpcAiController : IDisposable
             else if (!npc.InReach && gap <= stand + StopTolerance)
                 npc.InReach = true;
 
-            if (!npc.InReach)
+            var bodies = npc.HitboxRadius + EntityHitboxRadius(target);
+            if (TacticsGoal(npc, npcPos, targetPos, stand, bodies, deltaTime, out var tacticsSpeed) is { } tactic)
+            {
+                goal = tactic;
+                speed *= tacticsSpeed;
+            }
+            else if (!npc.InReach)
             {
                 var away = new Vector3(npcPos.X - targetPos.X, 0f, npcPos.Z - targetPos.Z);
                 away = away.LengthSquared() > 1e-6f ? Vector3.Normalize(away) : Vector3.UnitZ;
-                var centres = stand + npc.HitboxRadius + EntityHitboxRadius(target);
-                goal = targetPos + away * centres;
+                goal = targetPos + away * (stand + bodies);
+                speed *= ChargeScale(npc, gap);
             }
         }
         else
@@ -773,13 +519,17 @@ public unsafe partial class NpcAiController : IDisposable
                 continue;
 
             var gameObj = (GameObject*)npc.BattleChara;
-            position.Y += config.DefaultNpcHeightOffset;
+            // Standing on a corpse: the foot solver asks the body up by what both legs agree on.
+            var lift = config.NpcCollisionActive ? MathF.Max(0f, footIkSolver.GetPelvisOffset(npc.Address)) : 0f;
+            if (config.NpcCollisionActive)
+                footIkSolver.ReportRootLift(npc.Address, lift);
+            position.Y += lift + config.DefaultNpcHeightOffset;
             movementBlockHook.SetApproachPosition(gameObj, position.X, position.Y, position.Z);
 
             var flat = new Vector3(velocity.X, 0f, velocity.Z);
             if (flat.LengthSquared() > 0.3f * 0.3f)
             {
-                StartApproachMoveAnim(npc, deltaTime);
+                StartApproachMoveAnim(npc, deltaTime, npc.WalkPace ? ActorVisualStateController.NormalWalkTimelineId : (ushort)0);
                 ForceRotateToward(npc, position + flat, deltaTime);
             }
             else
@@ -789,12 +539,6 @@ public unsafe partial class NpcAiController : IDisposable
                     ForceRotateToward(npc, combatEngine.GetSimulatedEntityPosition(target), deltaTime);
             }
         }
-    }
-
-    private void ClearPartyApproachState(SimulatedNpc npc)
-    {
-        StopApproachMoveAnim(npc);
-        approachPaths.Remove(npc.Address);
     }
 
     public void EngageNpc(SimulatedNpc npc)
@@ -865,7 +609,7 @@ public unsafe partial class NpcAiController : IDisposable
                 break;
 
             case NpcAiState.Engaging:
-                if (npc.IsClientControlled && !ApproachOwnsRotation(npc))
+                if (!npc.CrowdDriven)
                     RotateTowardPlayer(npc, playerPos, deltaTime);
                 if (npc.EngageDelayTimer > 0)
                 {
@@ -880,16 +624,8 @@ public unsafe partial class NpcAiController : IDisposable
                 break;
 
             case NpcAiState.Chasing:
-                if (ApproachOwnsMovement)
-                {
-                    npc.AiState = NpcAiState.Combat;
-                    TickCombat(npc, deltaTime, playerPos, playerEntityId, npcPos, distToPlayer);
-                }
-                else if (npc.IsClientControlled)
-                    TickChasing(npc, deltaTime, playerPos, playerEntityId, npcPos, distToPlayer);
-                else
-                    // Real NPCs don't chase — just keep trying combat from current pos
-                    TickCombat(npc, deltaTime, playerPos, playerEntityId, npcPos, distToPlayer);
+                npc.AiState = NpcAiState.Combat;
+                TickCombat(npc, deltaTime, playerPos, playerEntityId, npcPos, distToPlayer);
                 break;
 
             case NpcAiState.Dead:
@@ -899,14 +635,8 @@ public unsafe partial class NpcAiController : IDisposable
                 break;
 
             case NpcAiState.Resetting:
-                if (npc.IsClientControlled)
-                    TickResetting(npc, deltaTime, npcPos);
-                else
-                {
-                    // Real NPCs don't reset — just go idle and restore HP
-                    npc.State.CurrentHp = npc.State.MaxHp;
-                    npc.AiState = NpcAiState.Idle;
-                }
+                npc.State.CurrentHp = npc.State.MaxHp;
+                npc.AiState = NpcAiState.Idle;
                 break;
         }
     }
@@ -928,18 +658,12 @@ public unsafe partial class NpcAiController : IDisposable
             return;
         }
 
-        UpdateDesiredEngageRange(npc, deltaTime);
-
         // Enhanced tactics: a fleeing enemy holds its attacks until it has regrouped.
         if (IsTacticsFleeing(npc))
             return;
 
         var targetPos = combatEngine.GetSimulatedEntityPosition(simulatedTarget);
-        var distToTarget = npc.CrowdDriven
-            ? CrowdGap(npc, simulatedTarget, npcPos, targetPos)
-            : (UsesPartyConfiguredRange(npc, simulatedTarget)
-                ? FlatDistance(npcPos, targetPos)
-                : Vector3.Distance(npcPos, targetPos)) - HitboxSpacingExtra(npc, simulatedTarget);
+        var distToTarget = CrowdGap(npc, simulatedTarget, npcPos, targetPos);
         var targetEntityId = simulatedTarget.EntityId;
 
         if (npc.State.IsCasting && npc.State.CastTargetId != targetEntityId)
@@ -949,21 +673,9 @@ public unsafe partial class NpcAiController : IDisposable
                 ActorVisualStateController.ApplyCombatIdle((Character*)npc.BattleChara, npc.VisualState);
         }
 
-        // Only rotate client-controlled NPCs (and only when the approach pass is not the facing owner)
-        if (npc.IsClientControlled && !ApproachOwnsRotation(npc))
+        // The crowd pass faces the enemies it moves; one standing off the mesh faces its target here.
+        if (!npc.CrowdDriven)
             ForceRotateToward(npc, targetPos, deltaTime);
-
-        // Skip leash check for real NPCs (they don't move) and when formation approach is active.
-        if (npc.IsClientControlled && !config.EnableTargetApproach && !config.EnableCombatCompanions)
-        {
-            float distFromSpawn = Vector3.Distance(npcPos, npc.SpawnPosition);
-            if (distFromSpawn > npc.Behavior.LeashDistance)
-            {
-                npc.AiState = NpcAiState.Resetting;
-                combatEngine.AddLogEntry($"{npc.Name} is resetting.", CombatLogType.Info);
-                return;
-            }
-        }
 
         // A telegraphed cast runs to completion wherever its target goes: the area is fixed, so
         // walking out of it is the dodge. Letting the range gate below pause it would let the
@@ -971,20 +683,9 @@ public unsafe partial class NpcAiController : IDisposable
         if (npc.CastArea != null && TickSnapshotCast(npc, deltaTime))
             return;
 
-        float effectiveRange = npc.CrowdDriven ? ReachNow(npc) : GetEffectiveNpcAttackRange(npc, simulatedTarget);
-
-        if (distToTarget > effectiveRange)
-        {
-            // When the approach pass owns movement it already closes the distance; chasing here too
-            // moved the enemy twice per frame and its leash dropped the enemy into a silent Idle.
-            if (npc.IsClientControlled && !UsesPartyConfiguredRange(npc, simulatedTarget) && !ApproachOwnsMovement)
-                npc.AiState = NpcAiState.Chasing;
-            // Real NPCs just wait
+        // Out of reach: the crowd is walking it in.
+        if (distToTarget > ReachNow(npc))
             return;
-        }
-
-        if (UsesPartyConfiguredRange(npc, simulatedTarget) && !ApproachOwnsRotation(npc))
-            ForceRotateToward(npc, targetPos, deltaTime);
 
         // Handle casting
         if (npc.State.IsCasting)
@@ -1046,8 +747,7 @@ public unsafe partial class NpcAiController : IDisposable
         {
             if (skill.CooldownRemaining > 0)
                 continue;
-            var skillRange = GetEffectiveNpcSkillRange(npc, simulatedTarget, skill);
-            if ((npc.IsClientControlled || ApproachOwnsMovement || UsesPartyConfiguredRange(npc, simulatedTarget)) && distToTarget > skillRange)
+            if (distToTarget > SkillReach(npc, skill))
                 continue;
             if (hpPercent > skill.HpThreshold)
                 continue;
@@ -1223,31 +923,6 @@ public unsafe partial class NpcAiController : IDisposable
         return true;
     }
 
-    private void TickChasing(
-        SimulatedNpc npc, float deltaTime,
-        Vector3 playerPos, uint playerEntityId,
-        Vector3 npcPos, float distToPlayer)
-    {
-        RotateTowardPlayer(npc, playerPos, deltaTime);
-
-        var direction = Vector3.Normalize(playerPos - npcPos);
-        var newPos = npcPos + direction * npc.Behavior.MoveSpeed * deltaTime;
-        if (npc.BattleChara != null)
-            ActorVisualStateController.ApplyMoving((Character*)npc.BattleChara, npc.VisualState, deltaTime);
-        SetNpcPosition(npc, newPos);
-
-        float newDist = Vector3.Distance(newPos, playerPos);
-        if (newDist <= GetNpcAutoAttackEngageRange(npc))
-            npc.AiState = NpcAiState.Combat;
-
-        float distFromSpawn = Vector3.Distance(newPos, npc.SpawnPosition);
-        if (distFromSpawn > npc.Behavior.LeashDistance)
-        {
-            npc.AiState = NpcAiState.Resetting;
-            combatEngine.AddLogEntry($"{npc.Name} is resetting.", CombatLogType.Info);
-        }
-    }
-
     private static void ClearNpcActionState(SimulatedNpc npc)
     {
         npc.State.IsCasting = false;
@@ -1283,32 +958,6 @@ public unsafe partial class NpcAiController : IDisposable
         ClearNpcActionState(npc);
         if (npc.BattleChara != null && npc.AiState != NpcAiState.Dead)
             ActorVisualStateController.ApplyCombatIdle((Character*)npc.BattleChara, npc.VisualState);
-    }
-
-    private void TickResetting(SimulatedNpc npc, float deltaTime, Vector3 npcPos)
-    {
-        var direction = Vector3.Normalize(npc.SpawnPosition - npcPos);
-        var newPos = npcPos + direction * npc.Behavior.MoveSpeed * 1.5f * deltaTime;
-        if (npc.BattleChara != null)
-            ActorVisualStateController.ApplyMoving((Character*)npc.BattleChara, npc.VisualState, deltaTime);
-        SetNpcPosition(npc, newPos);
-
-        npc.State.CurrentHp = npc.State.MaxHp;
-
-        if (Vector3.Distance(newPos, npc.SpawnPosition) < 0.5f)
-        {
-            SetNpcPosition(npc, npc.SpawnPosition);
-            npc.AiState = NpcAiState.Idle;
-
-            if (npc.BattleChara != null)
-            {
-                var character = (Character*)npc.BattleChara;
-                ActorVisualStateController.ApplyCombatIdle(character, npc.VisualState);
-                character->Mode = CharacterModes.Normal;
-            }
-
-            combatEngine.AddLogEntry($"{npc.Name} has reset.", CombatLogType.Info);
-        }
     }
 
     private void RotateTowardPlayer(SimulatedNpc npc, Vector3 playerPos, float deltaTime)
@@ -1351,570 +1000,11 @@ public unsafe partial class NpcAiController : IDisposable
         return npc.SpawnPosition;
     }
 
-    private void SetNpcPosition(SimulatedNpc npc, Vector3 position)
-    {
-        if (npc.BattleChara == null || !npc.IsClientControlled)
-            return;
-
-        var gameObj = (GameObject*)npc.BattleChara;
-        gameObj->Position = position;
-    }
-
-    /// <summary>
-    /// Returns the standing goal for an approaching enemy. While farther than the
-    /// keep-distance ring it heads straight in along its current direction (the
-    /// goal is dynamic). Once it reaches the ring its angle is locked and de-stacked
-    /// from neighbours so it settles and stops; the lock only releases if it gets
-    /// pushed well outside again. Independent of the player's facing.
-    /// </summary>
-    private Vector3 ComputeApproachGoal(SimulatedNpc npc, Vector3 npcPos, Vector3 playerPos)
-    {
-        // Solo path: keep distance at the enemy's intended engage range (caster stands at spell
-        // range, melee comes in) instead of one fixed ring for everyone.
-        var targetDist = MathF.Max(
-            0.001f,
-            npc.DesiredEngageRange > 0f
-                ? npc.DesiredEngageRange
-                : ScaleNpcMeleeRange(config.TargetApproachDistance));
-
-        // A melee enemy must stand where its swing reaches. With a raised hold distance (~2.5y+)
-        // the hold ring plus the unlock buffer sat beyond attack range, so an enemy could keep a
-        // spot it could never attack from. Cap both the ring and the release band at the reach.
-        var bodyExtra = HitboxSpacingExtra(npc, combatEngine.State.PlayerState);
-        targetDist += bodyExtra;
-        var unlockRadius = targetDist + ApproachUnlockBuffer;
-        if (HasMeleePositioningIntent(npc))
-        {
-            var reach = GetEffectiveNpcAttackRange(npc, combatEngine.State.PlayerState) + bodyExtra - SoloReachMargin;
-            if (reach > 0.5f)
-            {
-                targetDist = MathF.Min(targetDist, reach);
-                unlockRadius = MathF.Min(unlockRadius, MathF.Max(targetDist, reach));
-            }
-        }
-
-        // Hold a locked world spot — the enemy stands its ground and does NOT glide
-        // with the player. Re-approach when the player has wandered away from that spot by
-        // more than the unlock buffer, OR when the spot sits far INSIDE the desired hold
-        // distance — an archer/caster that locked a near spot before combat computed its real
-        // engage range (DesiredEngageRange starts at 0) would otherwise stay glued at point-
-        // blank forever, firing from 0y.
-        if (approachLockedGoals.TryGetValue(npc.Address, out var lockedGoal))
-        {
-            var ldx = lockedGoal.X - playerPos.X;
-            var ldz = lockedGoal.Z - playerPos.Z;
-            var lockedDistSq = ldx * ldx + ldz * ldz;
-            var unlock = unlockRadius;
-            var tooClose = targetDist - ApproachUnlockBuffer;
-            if (lockedDistSq <= unlock * unlock &&
-                (tooClose <= 0f || lockedDistSq >= tooClose * tooClose))
-                return lockedGoal;
-            approachLockedGoals.Remove(npc.Address);
-        }
-
-        // Reserve a de-stacked world spot before arrival so pathing is planned
-        // toward different ring positions instead of funneling every enemy into
-        // the same point and separating only at the end.
-        var flat = npcPos - playerPos;
-        flat.Y = 0;
-        var distToPlayer = flat.Length();
-        var angle = distToPlayer < 0.1f
-            ? Core.Services.ObjectTable.LocalPlayer?.Rotation ?? 0f
-            : MathF.Atan2(flat.X, flat.Z);
-
-        var goal = ResolveFreeApproachGoal(npc.Address, playerPos, angle, targetDist);
-        approachLockedGoals[npc.Address] = goal;
-        return goal;
-    }
-
-    /// <summary>
-    /// Finds a standing spot near the enemy's natural approach angle that clears
-    /// every other enemy's locked spot by a minimum distance, so a newly-arriving
-    /// enemy fans out instead of stacking. Searched once, at lock time, so locked
-    /// spots never shuffle frame to frame.
-    /// </summary>
-    private Vector3 ResolveFreeApproachGoal(nint self, Vector3 playerPos, float desiredAngle, float targetDist)
-    {
-        const float minSpacing = 2.0f;
-        var minGap = Math.Clamp(minSpacing / targetDist, 0.2f, MathF.PI / 2f);
-
-        Vector3 At(float a) => playerPos + new Vector3(MathF.Sin(a), 0, MathF.Cos(a)) * targetDist;
-
-        bool Clear(Vector3 p)
-        {
-            foreach (var (addr, g) in approachLockedGoals)
-            {
-                if (addr == self) continue;
-                var dx = p.X - g.X;
-                var dz = p.Z - g.Z;
-                if (dx * dx + dz * dz < minSpacing * minSpacing)
-                    return false;
-            }
-            return true;
-        }
-
-        var at = At(desiredAngle);
-        if (Clear(at)) return at;
-
-        for (int i = 1; i <= 18; i++)
-        {
-            var plus = At(desiredAngle + i * minGap);
-            if (Clear(plus)) return plus;
-            var minus = At(desiredAngle - i * minGap);
-            if (Clear(minus)) return minus;
-        }
-
-        return at; // fully crowded -> accept overlap rather than loop forever
-    }
-
-    private void TickSoloApproach(
-        SimulatedNpc npc,
-        float deltaTime,
-        Vector3 playerPos,
-        TerrainHeightCache? terrainCache)
-    {
-        if (npc.BattleChara == null) return;
-        if (npc.AiState == NpcAiState.Dead)
-        {
-            StopApproachMoveAnim(npc);
-            return;
-        }
-
-        if (!combatEngine.State.PlayerState.IsAlive)
-        {
-            StopApproachMoveAnim(npc);
-            return;
-        }
-
-        var gameObj = (GameObject*)npc.BattleChara;
-        var npcPos = (Vector3)gameObj->Position;
-
-        if (TryTickFlee(npc, gameObj, npcPos, playerPos, tickNpcs, deltaTime, terrainCache))
-            return;
-
-        var targetPos = ComputeApproachGoal(npc, npcPos, playerPos);
-        targetPos.Y = playerPos.Y + config.DefaultNpcHeightOffset;
-
-        var moveTarget = targetPos;
-        var hasVnavmeshTarget = TryUpdateVNavmeshPath(npc, deltaTime, npcPos, targetPos, out var pathTarget, useLookahead: false);
-        if (hasVnavmeshTarget)
-            moveTarget = pathTarget;
-
-        // vnavmesh requested but no usable path (plugin unavailable, navmesh not built, path still
-        // pending). Walk straight at the goal like the party path does. Holding still here used to be
-        // covered by the Chasing state; now that the approach pass owns movement, freezing would leave
-        // the enemy standing out of range for good.
-        if (config.UseVNavmeshTargetApproach && !hasVnavmeshTarget)
-            moveTarget = targetPos;
-
-        if (Vector3.Distance(npcPos, moveTarget) <= 0.3f)
-        {
-            if ((hasVnavmeshTarget || (config.NpcCollisionActive)) && terrainCache != null &&
-                TryGetOrCreateApproachPathState(npc, out var arrivedPathState))
-                CorrectStableRootHeight(gameObj, npcPos, terrainCache, arrivedPathState, deltaTime, preserveInitialClearance: true);
-
-            StopApproachMoveAnim(npc);
-            ForceRotateToward(npc, playerPos, deltaTime);
-            return;
-        }
-
-        float speed = (npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f)
-                      * ApproachSpeedScale(npc, FlatDistance(npcPos, playerPos));
-        float remainingDist = Vector3.Distance(npcPos, moveTarget);
-        float moveDist = speed * deltaTime;
-
-        Vector3 newPos = remainingDist <= moveDist
-            ? moveTarget
-            : npcPos + Vector3.Normalize(moveTarget - npcPos) * moveDist;
-
-        if ((hasVnavmeshTarget || (config.NpcCollisionActive)) && terrainCache != null &&
-            TryGetOrCreateApproachPathState(npc, out var pathState))
-        {
-            newPos = CorrectMovingRootHeight(npc.Address, newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: true,
-                horizontalStep: FlatDistance(npcPos, newPos));
-        }
-
-        StartApproachMoveAnim(npc, deltaTime);
-        movementBlockHook.SetApproachPosition(gameObj, newPos.X, newPos.Y, newPos.Z);
-        ForceRotateToward(npc, playerPos, deltaTime);
-    }
-
-    /// <summary>
-    /// Party-mode target-aware enemy movement. Solo/no-party movement is kept in
-    /// TickSoloApproach as the pre-party baseline.
-    /// </summary>
-    private void TickPartyApproach(
-        SimulatedNpc npc,
-        float deltaTime,
-        Vector3 playerPos,
-        SimulatedEntityState npcTarget,
-        Vector3 npcTargetPos,
-        TerrainHeightCache? terrainCache)
-    {
-        if (npc.BattleChara == null) return;
-        if (npc.AiState == NpcAiState.Dead)
-        {
-            ClearPartyApproachState(npc);
-            return;
-        }
-
-        // Party mode continues after player death while companions are alive.
-        if (!npcTarget.IsAlive)
-        {
-            ClearPartyApproachState(npc);
-            return;
-        }
-
-        var gameObj = (GameObject*)npc.BattleChara;
-        var npcPos = (Vector3)gameObj->Position;
-
-        if (approachPaths.TryGetValue(npc.Address, out var existingPathState) &&
-            existingPathState.TargetEntityId != 0 &&
-            existingPathState.TargetEntityId != npcTarget.EntityId)
-        {
-            existingPathState.Waypoints.Clear();
-            existingPathState.WaypointIndex = 0;
-            existingPathState.PendingPath = null;
-        }
-
-        if (TryTickFlee(npc, gameObj, npcPos, npcTargetPos, tickNpcs, deltaTime, terrainCache))
-            return;
-
-        if (!partyEngagePlanner.TryGetPlan(npc.SimulatedEntityId, out var partyPlan))
-        {
-            if (terrainCache != null && approachPaths.TryGetValue(npc.Address, out var holdPathState))
-                CorrectStableRootHeight(gameObj, npcPos, terrainCache, holdPathState, deltaTime, preserveInitialClearance: false);
-
-            LogPartyApproachDebug(npc, "no-plan", npcPos, npcTargetPos, null, npcPos, false,
-                distToTarget: FlatDistance(npcPos, npcTargetPos), attackRange: PartyHoldRange(npc));
-            StopApproachMoveAnim(npc);
-            // The approach pass is the facing owner (see ApproachOwnsRotation), so keep facing the
-            // target while the planner has not produced a plan yet.
-            ForceRotateToward(npc, npcTargetPos, deltaTime);
-            return;
-        }
-
-        var targetPos = partyPlan.Goal;
-        var facePos = partyPlan.HasFaceTarget ? partyPlan.FaceTarget : npcPos;
-        // Measured past the body-size excess so a big body is neither walked into nor fought from inside.
-        var distToTarget = FlatDistance(npcPos, npcTargetPos) - HitboxSpacingExtra(npc, npcTarget);
-        var partyAttackRange = PartyHoldRange(npc);
-        var partyAttackEnvelope = PartyAttackEnvelope(npc);
-        var rangeStateAvailable = TryGetOrCreateApproachPathState(npc, out var rangeState);
-        var outerEdge = rangeStateAvailable && rangeState.WasHoldingRange
-            ? MathF.Min(partyAttackRange + PartyHoldReleaseBuffer, partyAttackEnvelope)
-            : partyAttackRange;
-        // Ranged enemies hold exactly like melee ones — same rule, bigger radius: once inside their
-        // attack range they stop and fight from where they stand, and only give chase again when the
-        // target leaves that range. They deliberately do NOT kite: an enemy that backed away every
-        // time you closed in was untouchable, and being able to strike from range it never has to
-        // pay for is already advantage enough.
-        // Enhanced tactics: a melee enemy without an attacker place waits on the outer ring.
-        if (TryTickMeleeWait(npc, gameObj, npcPos, npcTargetPos, partyAttackRange, FlatDistance(npcPos, npcTargetPos) - distToTarget, deltaTime, terrainCache))
-            return;
-
-        var shouldHoldRange = distToTarget <= outerEdge;
-        if (shouldHoldRange)
-        {
-            if (TryTickHoldStrafe(npc, gameObj, npcPos, npcTargetPos, partyAttackRange, FlatDistance(npcPos, npcTargetPos) - distToTarget, deltaTime, terrainCache))
-            {
-                if (rangeStateAvailable)
-                    rangeState.WasHoldingRange = true;
-                return;
-            }
-
-            if (rangeStateAvailable)
-            {
-                rangeState.WasHoldingRange = true;
-                if (terrainCache != null)
-                    CorrectStableRootHeight(gameObj, npcPos, terrainCache, rangeState, deltaTime, preserveInitialClearance: false);
-            }
-
-            LogPartyApproachDebug(npc, "in-range", npcPos, npcTargetPos, partyPlan, npcPos, false, distToTarget, partyAttackRange);
-            StopApproachMoveAnim(npc);
-            ForceRotateToward(npc, npcTargetPos, deltaTime);
-            return;
-        }
-        if (rangeStateAvailable)
-            rangeState.WasHoldingRange = false;
-
-        var moveTarget = targetPos;
-        var hasVnavmeshTarget = TryUpdateVNavmeshPath(
-            npc,
-            deltaTime,
-            npcPos,
-            targetPos,
-            out var pathTarget,
-            discardStalePendingPath: true);
-        if (approachPaths.TryGetValue(npc.Address, out var pathStateForTarget))
-            pathStateForTarget.TargetEntityId = npcTarget.EntityId;
-        if (hasVnavmeshTarget)
-            moveTarget = pathTarget;
-
-        // vnavmesh requested but no usable path (plugin unavailable, navmesh not
-        // built for this zone, or the async path is still pending). Fall back to
-        // direct movement toward the player instead of freezing in place — Y just
-        // tracks the player's height, same as the pre-vnavmesh approximation.
-        if (config.UseVNavmeshTargetApproach && !hasVnavmeshTarget)
-            moveTarget = targetPos;
-
-        if (FlatDistance(npcPos, moveTarget) <= 0.3f)
-        {
-            if (partyPlan.Kind == PartyEngagePlanKind.EngagePoint &&
-                FlatDistance(npcPos, npcTargetPos) > 0.3f)
-            {
-                moveTarget = npcTargetPos;
-                hasVnavmeshTarget = false;
-            }
-            else
-            {
-                if (terrainCache != null &&
-                    TryGetOrCreateApproachPathState(npc, out var arrivedPathState))
-                    CorrectStableRootHeight(gameObj, npcPos, terrainCache, arrivedPathState, deltaTime, preserveInitialClearance: false);
-
-                LogPartyApproachDebug(npc, "arrived-move-target", npcPos, npcTargetPos, partyPlan, moveTarget, hasVnavmeshTarget, distToTarget, partyAttackRange);
-                StopApproachMoveAnim(npc);
-                ForceRotateToward(npc, facePos, deltaTime);
-                return;
-            }
-        }
-
-        // Smooth movement toward the target position
-        float speed = (npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f)
-                      * ApproachSpeedScale(npc, distToTarget);
-        var flatMove = moveTarget - npcPos;
-        flatMove.Y = 0;
-        float remainingDist = flatMove.Length();
-        float moveDist = speed * deltaTime;
-
-        Vector3 newPos;
-        Vector3 moveDir;
-        if (remainingDist <= moveDist)
-        {
-            newPos = npcPos with { X = moveTarget.X, Z = moveTarget.Z };
-            moveDir = flatMove.LengthSquared() > 0.000001f ? Vector3.Normalize(flatMove) : Vector3.Zero;
-        }
-        else
-        {
-            // Near its slot, commit straight in (ignore crowd separation) so it can reach attack
-            // range instead of orbiting the cluster; farther out, steer around allies/enemies.
-            var rawDir = remainingDist <= CommitToSlotRadius
-                ? (flatMove.LengthSquared() > 0.000001f ? Vector3.Normalize(flatMove) : Vector3.Zero)
-                : GetSteeredMoveDirection(
-                    npc.SimulatedEntityId,
-                    LocalSteeringFaction.Enemy,
-                    npcPos,
-                    flatMove,
-                    npcTarget.EntityId);
-            if (rawDir == Vector3.Zero)
-            {
-                LogPartyApproachDebug(npc, "steering-blocked", npcPos, npcTargetPos, partyPlan, moveTarget, hasVnavmeshTarget, distToTarget, partyAttackRange);
-                StopApproachMoveAnim(npc);
-                ForceRotateToward(npc, facePos, deltaTime);
-                return;
-            }
-            moveDir = SmoothApproachHeading(npc, rawDir, deltaTime);
-            newPos = npcPos + moveDir * moveDist;
-        }
-
-        if (terrainCache != null &&
-            TryGetOrCreateApproachPathState(npc, out var pathState))
-        {
-            newPos = CorrectMovingRootHeight(npc.Address, newPos, terrainCache, pathState, deltaTime, preserveInitialClearance: false,
-                horizontalStep: FlatDistance(npcPos, newPos));
-        }
-        else if (vnavmeshIpc.CanPathfind)
-        {
-            var floor = vnavmeshIpc.PointOnFloor(newPos, false, 3f);
-            if (floor.HasValue)
-                newPos.Y = floor.Value.Y + config.DefaultNpcHeightOffset;
-        }
-        else
-        {
-            newPos.Y = targetPos.Y;
-        }
-
-        if (FlatDistance(npcPos, newPos) <= PartyApproachMovementEpsilon)
-        {
-            LogPartyApproachDebug(npc, "settled-no-move", npcPos, npcTargetPos, partyPlan, moveTarget, hasVnavmeshTarget, distToTarget, partyAttackRange, moveDir, newPos);
-            StopApproachMoveAnim(npc);
-            ForceRotateToward(npc, facePos, deltaTime);
-            return;
-        }
-
-        // Call the real SetPosition via the hook bypass — this updates both
-        // the struct field AND the DrawObject (3D model position).
-        movementBlockHook.AddApproachNpc(npc.Address);
-        StartApproachMoveAnim(npc, deltaTime);
-        movementBlockHook.SetApproachPosition(gameObj, newPos.X, newPos.Y, newPos.Z);
-
-        LogPartyApproachDebug(npc, "move", npcPos, npcTargetPos, partyPlan, moveTarget, hasVnavmeshTarget, distToTarget, partyAttackRange, moveDir, newPos);
-        ForceRotateToward(npc, moveTarget, deltaTime);
-    }
-
-    private void LogPartyApproachDebug(
-        SimulatedNpc npc,
-        string state,
-        Vector3 npcPos,
-        Vector3 targetPos,
-        PartyEngagePlan? plan,
-        Vector3 moveTarget,
-        bool hasVnavmeshTarget,
-        float distToTarget,
-        float attackRange,
-        Vector3? moveDir = null,
-        Vector3? nextPos = null)
-    {
-        if (!config.DevPartyApproachDebugLog)
-            return;
-
-        var now = combatEngine.State.SimulationTime;
-        if (partyApproachDebugNextLogAt.TryGetValue(npc.SimulatedEntityId, out var nextLogAt) && now < nextLogAt)
-            return;
-
-        partyApproachDebugNextLogAt[npc.SimulatedEntityId] = now + PartyApproachDebugInterval;
-        var planText = plan == null
-            ? "none"
-            : $"{plan.Kind}/target=0x{plan.TargetId:X}/goal={FormatFlat(plan.Goal)}/face={FormatFlat(plan.FaceTarget)}";
-        var dirText = moveDir.HasValue ? FormatFlat(moveDir.Value) : "-";
-        var nextText = nextPos.HasValue ? FormatFlat(nextPos.Value) : "-";
-        var goalToMove = plan == null ? 0f : FlatDistance(plan.Goal, moveTarget);
-
-        log.Info(
-            $"[PartyApproachDbg] {npc.Name} 0x{npc.SimulatedEntityId:X} {state} " +
-            $"dist={distToTarget:F2}/range={attackRange:F2} npc={FormatFlat(npcPos)} target={FormatFlat(targetPos)} " +
-            $"plan={planText} moveTarget={FormatFlat(moveTarget)} goalToMove={goalToMove:F2} " +
-            $"vnav={hasVnavmeshTarget} dir={dirText} next={nextText}");
-    }
-
-    private static string FormatFlat(Vector3 value)
-        => $"({value.X:F2},{value.Z:F2})";
-
-    private void LogApproachRouteDebug(SimulatedNpc npc, string route, bool partyMode, bool hasLivingCompanions)
-    {
-        if (!config.DevPartyApproachDebugLog)
-            return;
-
-        var routeKey = $"{route}:{partyMode}:{hasLivingCompanions}:{config.UseSoloTargetFormationWhenNoCompanions}";
-        if (lastApproachDebugRoute.TryGetValue(npc.SimulatedEntityId, out var lastRoute) && lastRoute == routeKey)
-            return;
-
-        lastApproachDebugRoute[npc.SimulatedEntityId] = routeKey;
-        log.Info(
-            $"[ApproachRouteDbg] {npc.Name} 0x{npc.SimulatedEntityId:X} route={route} " +
-            $"partyMode={partyMode} hasCompanions={hasLivingCompanions} " +
-            $"soloWhenNoCompanions={config.UseSoloTargetFormationWhenNoCompanions}");
-    }
-
-    private Vector3 GetSteeredMoveDirection(
-        uint actorId,
-        LocalSteeringFaction faction,
-        Vector3 actorPosition,
-        Vector3 goalFlatDirection,
-        uint ignoredObstacleId = 0)
-    {
-        var actor = new LocalSteeringActor(actorId, faction, actorPosition, IsPc: false);
-        return LocalSteering.SteerFlatDirection(actor, goalFlatDirection, BuildLocalSteeringActors(actor), ignoredObstacleId);
-    }
-
-    /// <summary>
-    /// Exponential low-pass on a steered approach heading. Filters the
-    /// frame-to-frame direction flips that crowding produces (which show up as
-    /// in-place jitter) while still turning toward a genuinely new heading within
-    /// a few frames. State is reset when the NPC stops moving.
-    /// </summary>
-    private Vector3 SmoothApproachHeading(SimulatedNpc npc, Vector3 rawDir, float deltaTime)
-    {
-        if (!TryGetOrCreateApproachPathState(npc, out var state))
-            return rawDir;
-
-        if (!state.HasSmoothedMoveDir)
-        {
-            state.SmoothedMoveDir = rawDir;
-            state.HasSmoothedMoveDir = true;
-            return rawDir;
-        }
-
-        var alpha = 1f - MathF.Exp(-deltaTime / MathF.Max(0.0001f, ApproachHeadingSmoothingTau));
-        var blended = Vector3.Lerp(state.SmoothedMoveDir, rawDir, alpha);
-        blended.Y = 0;
-        if (blended.LengthSquared() < 0.000001f)
-            blended = rawDir;
-
-        var smoothed = Vector3.Normalize(blended);
-        state.SmoothedMoveDir = smoothed;
-        return smoothed;
-    }
-
-    private List<LocalSteeringActor> BuildLocalSteeringActors(LocalSteeringActor currentActor)
-    {
-        var actors = new List<LocalSteeringActor>();
-        var player = Core.Services.ObjectTable.LocalPlayer;
-        var playerState = combatEngine.State.PlayerState;
-        if (player != null && playerState.IsAlive)
-        {
-            actors.Add(new LocalSteeringActor(
-                playerState.EntityId,
-                LocalSteeringFaction.Party,
-                player.Position,
-                IsPc: true));
-        }
-
-        actors.Add(currentActor);
-
-        foreach (var entity in combatEngine.State.Entities.Values)
-        {
-            if (!entity.IsAlive || entity.EntityId == currentActor.Id)
-                continue;
-
-            var position = combatEngine.GetSimulatedEntityPosition(entity);
-            if (position == Vector3.Zero)
-                continue;
-
-            actors.Add(new LocalSteeringActor(
-                entity.EntityId,
-                entity.IsCompanion ? LocalSteeringFaction.Party : LocalSteeringFaction.Enemy,
-                position,
-                IsPc: false));
-        }
-
-        return actors;
-    }
-
-    private bool TryGetOrCreateApproachPathState(SimulatedNpc npc, out ApproachPathState state)
-    {
-        if (approachPaths.TryGetValue(npc.Address, out state!))
-            return true;
-
-        state = new ApproachPathState
-        {
-            ConfiguredHeightOffset = config.DefaultNpcHeightOffset,
-            VisualState = npc.VisualState,
-        };
-        approachPaths[npc.Address] = state;
-        return true;
-    }
-
     private static float FlatDistance(Vector3 a, Vector3 b)
     {
         var delta = a - b;
         delta.Y = 0;
         return delta.Length();
-    }
-
-    private float GetEffectiveNpcAttackRange(SimulatedNpc npc, SimulatedEntityState target)
-    {
-        if (UsesPartyConfiguredRange(npc, target))
-            return PartyAttackEnvelope(npc);
-
-        // Real NPCs get a generous range only when nothing moves them. With the approach pass active
-        // they are walked into range like any other enemy, so the +30y reach let them hit from afar.
-        if (!npc.IsClientControlled && !ApproachOwnsMovement)
-            return ScaleNpcNonMeleeRange(npc.Behavior.AutoAttackRange + 30.0f);
-
-        return npc.Behavior.AutoAttackStyle == NpcAttackStyle.Melee
-            ? ScaleNpcMeleeRange(npc.Behavior.AutoAttackRange + 1.0f)
-            : ScaleNpcNonMeleeRange(npc.Behavior.AutoAttackRange + 1.0f);
     }
 
     /// <summary>
@@ -1937,165 +1027,18 @@ public unsafe partial class NpcAiController : IDisposable
     private float ScaleNpcNonMeleeRange(float range)
         => MathF.Max(0.001f, MathF.Max(0f, range) * NpcAttackRangeScale());
 
-    private void RefreshScaleDependentApproachState()
-    {
-        var scale = NpcMeleeRangeScale();
-        if (float.IsNaN(lastNpcMeleeRangeScale))
-        {
-            lastNpcMeleeRangeScale = scale;
-            return;
-        }
-
-        if (MathF.Abs(scale - lastNpcMeleeRangeScale) < 0.0001f)
-            return;
-
-        lastNpcMeleeRangeScale = scale;
-
-        // Locked goals and cached paths were authored in the old reach circle. Keeping them would
-        // make a down-scaled NPC stand at its former distance indefinitely even though its attack
-        // check has correctly become shorter. Preserve terrain/animation state, but force every
-        // range-derived horizontal route and party slot to be planned again.
-        approachLockedGoals.Clear();
-        foreach (var state in approachPaths.Values)
-        {
-            state.Waypoints.Clear();
-            state.WaypointIndex = 0;
-            state.PendingPath = null;
-            state.RequestedTarget = default;
-            state.HasSmoothedMoveDir = false;
-            state.WasHoldingRange = false;
-        }
-        partyEngagePlanner.InvalidateRangeDependentPlans();
-    }
-
     private float ScaleNpcMeleeRange(float range)
         => MathF.Max(0.001f, MathF.Max(0f, range) * NpcMeleeRangeScale());
 
-    private float GetNpcAutoAttackEngageRange(SimulatedNpc npc)
-        => npc.Behavior.AutoAttackStyle == NpcAttackStyle.Melee
-            ? ScaleNpcMeleeRange(npc.Behavior.AutoAttackRange)
-            : ScaleNpcNonMeleeRange(npc.Behavior.AutoAttackRange);
-
-    private bool HasMeleePositioningIntent(SimulatedNpc npc)
-        => npc.DesiredEngageRange > 0f
-            ? !npc.IsRangedIntent
-            : npc.Behavior.AutoAttackStyle != NpcAttackStyle.Ranged;
-
-    private float ScalePartyRangePadding(SimulatedNpc npc, float padding)
-        => HasMeleePositioningIntent(npc)
-            ? padding * NpcMeleeRangeScale()
-            : padding * NpcAttackRangeScale();
-
-    // The enemy's current desired engage distance (driven by the action it intends to use next),
-    // falling back to the fixed weapon-style range until it has been computed this combat.
-    private float DynamicHoldRange(SimulatedNpc npc)
-        => npc.DesiredEngageRange > 0f
-            ? npc.DesiredEngageRange
-            : GetPartyAttackRange(npc.Behavior.AutoAttackStyle);
-
-    private float PartyHoldRange(SimulatedNpc npc)
-        => DynamicHoldRange(npc) + ScalePartyRangePadding(npc, PartyMeleeAttackRangeBuffer);
-
-    private float PartyAttackEnvelope(SimulatedNpc npc)
-        => DynamicHoldRange(npc) +
-           ScalePartyRangePadding(npc, PartyMeleeAttackRangeBuffer + PartyAttackRangeHysteresis);
-
-    // Prefer-ranged with lookahead + dwell: a caster stays at spell range while it has any ranged
-    // skill ready or coming soon, and only falls to its (melee) auto when it has no ranged option
-    // for a while. Updated every combat frame; the approach + planner read the result.
-    private void UpdateDesiredEngageRange(SimulatedNpc npc, float deltaTime)
-    {
-        if (npc.IntentDwellTimer > 0f)
-            npc.IntentDwellTimer = MathF.Max(0f, npc.IntentDwellTimer - deltaTime);
-
-        var meleeHold = ScaleNpcMeleeRange(config.PartyMeleeAttackRange);
-        // Solo play: the user-tuned Target Approach Distance is the authoritative standing
-        // distance. PartyMeleeAttackRange is a party-formation value (1.5y, body-to-body) — letting
-        // it override the solo hold made every engaged melee enemy walk right onto the player the
-        // moment it entered combat (DesiredEngageRange trumps TargetApproachDistance in
-        // ComputeApproachGoal). Respect the solo setting outside party mode.
-        if (!config.EnableCombatCompanions)
-            meleeHold = MathF.Max(
-                meleeHold,
-                ScaleNpcMeleeRange(MathF.Max(0.5f, config.TargetApproachDistance)));
-        var rangedHold = ScaleNpcNonMeleeRange(config.PartyRangedAttackRange);
-        var hpPercent = npc.State.MaxHp > 0 ? (float)npc.State.CurrentHp / npc.State.MaxHp : 1f;
-
-        // Physical ranged (bow/gun) auto-attacks at range. A caster fights at range whenever it OWNS
-        // a usable ranged/magic skill — it WAITS at range for the cooldown instead of walking in
-        // (cooldown-driven walk-in left it in melee most of the time, standing too close). Only a
-        // pure-melee enemy with no ranged option engages in melee.
-        var wantRanged = npc.Behavior.AutoAttackStyle == NpcAttackStyle.Ranged;
-        var maxRangedSkillRange = 0f;
-        foreach (var skill in npc.Behavior.Skills)
-        {
-            if (skill.AttackStyle is not (NpcAttackStyle.Ranged or NpcAttackStyle.Magic))
-                continue;
-            if (hpPercent > skill.HpThreshold)
-                continue; // HP-gated — not part of its usable kit yet
-            wantRanged = true;
-            maxRangedSkillRange = MathF.Max(maxRangedSkillRange, ScaleNpcNonMeleeRange(skill.Range));
-        }
-        // Stand off at the configured ranged distance, capped by the best spell's reach.
-        var rangedTarget = maxRangedSkillRange > 0f
-            ? MathF.Min(rangedHold, MathF.Max(meleeHold, maxRangedSkillRange))
-            : rangedHold;
-
-        // Only flip intent once the dwell has elapsed, to avoid front/back thrash.
-        if (wantRanged != npc.IsRangedIntent && npc.IntentDwellTimer <= 0f)
-        {
-            npc.IsRangedIntent = wantRanged;
-            npc.IntentDwellTimer = IntentMinDwell;
-        }
-
-        npc.DesiredEngageRange = npc.IsRangedIntent ? rangedTarget : meleeHold;
-    }
-
-    private float GetEffectiveNpcSkillRange(SimulatedNpc npc, SimulatedEntityState target, NpcSkill skill)
+    /// <summary>A skill's authored range (measured between the bodies), times the range scale.</summary>
+    private float SkillReach(SimulatedNpc npc, NpcSkill skill)
     {
         var style = skill.AttackStyle == NpcAttackStyle.Auto
             ? npc.Behavior.AutoAttackStyle
             : skill.AttackStyle;
-        var authoredRange = style == NpcAttackStyle.Melee
+        return style == NpcAttackStyle.Melee
             ? ScaleNpcMeleeRange(skill.Range)
             : ScaleNpcNonMeleeRange(skill.Range);
-        if (npc.CrowdDriven)
-            return authoredRange;
-
-        if (UsesPartyConfiguredRange(npc, target))
-        {
-            // Casters stand in melee (their auto is a melee swing) but their SPELLS keep full
-            // range — don't clamp spell range down to the melee auto range.
-            if (style is NpcAttackStyle.Magic or NpcAttackStyle.Ranged)
-                return authoredRange;
-            return MathF.Min(
-                authoredRange,
-                GetPartyAttackRange(NpcAttackStyle.Melee) +
-                PartyMeleeAttackRangeBuffer * NpcMeleeRangeScale());
-        }
-
-        return authoredRange;
-    }
-
-    /// <summary>The approach pass in <see cref="Tick"/> moves every enemy (solo ring or party planner).</summary>
-    private bool ApproachOwnsMovement => config.EnableTargetApproach || config.EnableCombatCompanions;
-
-    /// <summary>
-    /// True when the approach pass will tick this enemy this frame and therefore writes its facing.
-    /// Combat/Engaging used to rotate it too, so a moving enemy was turned 2–3 times per frame toward
-    /// different points (target vs. path) and the writes fought. Mirrors the approach eligibility
-    /// filter in <see cref="Tick"/>.
-    /// </summary>
-    /// <summary>
-    /// Body-size excess (Enhanced tactics > hitbox spacing) subtracted from centre distance in every
-    /// range test and added to every stand-off, so they stay consistent: an enemy never holds a spot
-    /// its attack check calls out of range. 0 when off or for humanoid pairs.
-    /// </summary>
-    private float HitboxSpacingExtra(SimulatedNpc npc, SimulatedEntityState? target)
-    {
-        if (!config.EnhancedEnemyTactics || target == null)
-            return 0f;
-        return EnemyMovementMath.HitboxSpacingExtra(npc.HitboxRadius, EntityHitboxRadius(target));
     }
 
     private float EntityHitboxRadius(SimulatedEntityState entity)
@@ -2111,402 +1054,35 @@ public unsafe partial class NpcAiController : IDisposable
         return r > 0.01f ? r : EnemyMovementMath.BaselineHitboxRadius;
     }
 
-    private bool ApproachOwnsRotation(SimulatedNpc npc)
-        => ApproachOwnsMovement &&
-           npc.IsSpawned &&
-           npc.BattleChara != null &&
-           npc.SpawnPlacementFrames <= 0 &&
-           npc.AiState != NpcAiState.Dead;
 
-    private bool UsesPartyConfiguredRange(SimulatedNpc npc, SimulatedEntityState target)
-        => config.EnableCombatCompanions &&
-           (combatEngine.HasLivingCompanions?.Invoke() == true ||
-            !config.UseSoloTargetFormationWhenNoCompanions);
-
-    // Only physical ranged (bow/gun) holds at range. Casters/magic hold at MELEE — their basic
-    // auto-attack is a melee swing in FFXIV; their spells (full range) still fire from up close.
-    private float GetPartyAttackRange(NpcAttackStyle style)
-        => style is NpcAttackStyle.Ranged
-            ? ScaleNpcNonMeleeRange(config.PartyRangedAttackRange)
-            : ScaleNpcMeleeRange(config.PartyMeleeAttackRange);
-
-    private bool TryUpdateVNavmeshPath(
-        SimulatedNpc npc,
-        float deltaTime,
-        Vector3 npcPos,
-        Vector3 targetPos,
-        out Vector3 moveTarget,
-        bool useLookahead = true,
-        bool discardStalePendingPath = false)
-    {
-        moveTarget = targetPos;
-
-        if (!config.UseVNavmeshTargetApproach)
-        {
-            approachPaths.Remove(npc.Address);
-            return false;
-        }
-
-        if (!vnavmeshIpc.CanPathfind)
-            return false;
-
-        if (!approachPaths.TryGetValue(npc.Address, out var state))
-        {
-            state = new ApproachPathState();
-            approachPaths[npc.Address] = state;
-        }
-        state.ConfiguredHeightOffset = config.DefaultNpcHeightOffset;
-
-        state.RepathTimer = Math.Max(0, state.RepathTimer - deltaTime);
-
-        if (discardStalePendingPath &&
-            state.PendingPath != null &&
-            !state.PendingPath.IsCompleted &&
-            FlatDistance(state.PendingTarget, targetPos) >= VNavmeshRepathDistance)
-        {
-            state.PendingPath = null;
-            state.RepathTimer = 0;
-        }
-
-        if (state.PendingPath != null && state.PendingPath.IsCompleted)
-        {
-            try
-            {
-                var completedTarget = state.PendingTarget;
-                var completedPath = state.PendingPath.GetAwaiter().GetResult();
-                if (discardStalePendingPath &&
-                    FlatDistance(completedTarget, targetPos) >= VNavmeshRepathDistance)
-                {
-                    state.Waypoints.Clear();
-                    state.WaypointIndex = 0;
-                    state.RepathTimer = 0;
-                    return false;
-                }
-
-                state.Waypoints = completedPath;
-                state.RequestedTarget = completedTarget;
-                if (!state.HasFloorYOffset)
-                {
-                    var floor = SnapToNavmesh(npcPos);
-                    state.FloorYOffset = floor.HasValue ? npcPos.Y - floor.Value.Y : 0f;
-                    state.HasFloorYOffset = true;
-                    state.HasLastFloorY = false;
-                    state.LastCorrectedWaypointIndex = -1;
-                    state.FloorResnapTimer = 0;
-                }
-                state.ConfiguredHeightOffset = config.DefaultNpcHeightOffset;
-                state.WaypointIndex = SelectInitialWaypoint(state, npcPos);
-                state.LastCorrectedWaypointIndex = -1;
-                state.LastError = "";
-                state.HasLastMoveRootY = false;
-            }
-            catch (Exception ex)
-            {
-                log.Verbose($"vnavmesh path request failed for '{npc.Name}': {ex.Message}");
-                state.Waypoints.Clear();
-                state.WaypointIndex = 0;
-                state.LastError = ex.Message;
-            }
-            finally
-            {
-                state.PendingPath = null;
-            }
-        }
-
-        var targetMoved = state.Waypoints.Count == 0 ||
-                          Vector3.Distance(state.RequestedTarget, targetPos) >= VNavmeshRepathDistance;
-
-        if (targetMoved && state.PendingPath == null && state.RepathTimer <= 0)
-        {
-            try
-            {
-                var from = SnapToNavmesh(npcPos) ?? npcPos;
-                var to = SnapToNavmesh(targetPos) ?? targetPos;
-
-                state.PendingTarget = to;
-                state.PendingPath = vnavmeshIpc.Pathfind(from, to, VNavmeshPathTolerance);
-                state.RepathTimer = VNavmeshRepathInterval;
-            }
-            catch (Exception ex)
-            {
-                log.Verbose($"vnavmesh unavailable while requesting path for '{npc.Name}': {ex.Message}");
-                state.PendingPath = null;
-                state.LastError = ex.Message;
-                return false;
-            }
-        }
-
-        while (state.WaypointIndex < state.Waypoints.Count &&
-               Vector3.Distance(npcPos, ApplyFloorYOffset(state, state.Waypoints[state.WaypointIndex])) <= VNavmeshWaypointReachDistance)
-        {
-            state.WaypointIndex++;
-        }
-
-        if (state.WaypointIndex >= state.Waypoints.Count)
-            return false;
-
-        if (useLookahead)
-        {
-            var lookaheadIndex = SelectLookaheadWaypoint(state, npcPos);
-            state.WaypointIndex = lookaheadIndex;
-        }
-
-        moveTarget = ApplyFloorYOffset(state, state.Waypoints[state.WaypointIndex]);
-        moveTarget = CorrectMoveTargetFloor(state, moveTarget, deltaTime);
-        return true;
-    }
-
-    private static int SelectInitialWaypoint(ApproachPathState state, Vector3 current)
-    {
-        if (state.Waypoints.Count == 0)
-            return 0;
-
-        if (state.Waypoints.Count == 1)
-            return FlatDistanceSquared(current, ApplyFloorYOffset(state, state.Waypoints[0])) <=
-                   VNavmeshWaypointReachDistance * VNavmeshWaypointReachDistance
-                ? 1
-                : 0;
-
-        var bestSegmentEnd = 1;
-        var bestDistSq = float.MaxValue;
-        var foundSegment = false;
-
-        for (var i = 0; i < state.Waypoints.Count - 1; i++)
-        {
-            var a = ApplyFloorYOffset(state, state.Waypoints[i]);
-            var b = ApplyFloorYOffset(state, state.Waypoints[i + 1]);
-            a.Y = 0;
-            b.Y = 0;
-            var c = current;
-            c.Y = 0;
-
-            var ab = b - a;
-            var lenSq = ab.LengthSquared();
-            if (lenSq <= 0.0001f)
-                continue;
-
-            var t = Math.Clamp(Vector3.Dot(c - a, ab) / lenSq, 0f, 1f);
-            var closest = a + ab * t;
-            var distSq = Vector3.DistanceSquared(c, closest);
-            if (distSq >= bestDistSq)
-                continue;
-
-            bestDistSq = distSq;
-            bestSegmentEnd = i + 1;
-            foundSegment = true;
-        }
-
-        if (!foundSegment)
-            return 0;
-
-        while (bestSegmentEnd < state.Waypoints.Count &&
-               FlatDistanceSquared(current, ApplyFloorYOffset(state, state.Waypoints[bestSegmentEnd])) <=
-               VNavmeshWaypointReachDistance * VNavmeshWaypointReachDistance)
-        {
-            bestSegmentEnd++;
-        }
-
-        return bestSegmentEnd;
-    }
-
-    private static float FlatDistanceSquared(Vector3 a, Vector3 b)
-    {
-        var delta = a - b;
-        delta.Y = 0;
-        return delta.LengthSquared();
-    }
-
-    private static int SelectLookaheadWaypoint(ApproachPathState state, Vector3 current)
-    {
-        var selected = state.WaypointIndex;
-        var accumulated = 0f;
-        var previous = current;
-
-        for (var i = state.WaypointIndex; i < state.Waypoints.Count; i++)
-        {
-            var point = ApplyFloorYOffset(state, state.Waypoints[i]);
-            accumulated += Vector3.Distance(previous, point);
-            selected = i;
-            if (accumulated >= VNavmeshLookaheadDistance)
-                break;
-            previous = point;
-        }
-
-        return selected;
-    }
-
-    private static Vector3 ApplyFloorYOffset(ApproachPathState state, Vector3 point)
-    {
-        return state.HasFloorYOffset
-            ? point with { Y = point.Y + state.FloorYOffset + state.ConfiguredHeightOffset }
-            : point;
-    }
-
-    private Vector3 CorrectMoveTargetFloor(ApproachPathState state, Vector3 moveTarget, float deltaTime)
-    {
-        if (!state.HasFloorYOffset)
-            return moveTarget;
-
-        state.FloorResnapTimer = Math.Max(0, state.FloorResnapTimer - deltaTime);
-        var waypointChanged = state.LastCorrectedWaypointIndex != state.WaypointIndex;
-
-        if (waypointChanged || !state.HasLastFloorY || state.FloorResnapTimer <= 0)
-        {
-            var floor = SnapToNavmesh(moveTarget);
-            if (floor.HasValue)
-            {
-                state.LastFloorY = floor.Value.Y;
-                state.HasLastFloorY = true;
-                state.LastCorrectedWaypointIndex = state.WaypointIndex;
-                state.FloorResnapTimer = VNavmeshFloorResnapInterval;
-            }
-        }
-
-        return state.HasLastFloorY
-            ? moveTarget with { Y = state.LastFloorY + state.FloorYOffset + state.ConfiguredHeightOffset }
-            : moveTarget;
-    }
-
-    private Vector3? SnapToNavmesh(Vector3 point)
-    {
-        try
-        {
-            return vnavmeshIpc.NearestPointReachable(point)
-                   ?? vnavmeshIpc.PointOnFloor(point + new Vector3(0, 10f, 0));
-        }
-        catch (Exception ex)
-        {
-            log.Verbose($"vnavmesh snap failed: {ex.Message}");
-            return null;
-        }
-    }
-
-    private TerrainHeightCache? BuildTerrainHeightCache(Vector3 playerPos, IReadOnlyList<SimulatedNpc> npcs)
-    {
-        if (npcs.Count == 0)
-            return null;
-
-        var minX = playerPos.X - config.TargetApproachDistance - 2f;
-        var maxX = playerPos.X + config.TargetApproachDistance + 2f;
-        var minZ = playerPos.Z - config.TargetApproachDistance - 2f;
-        var maxZ = playerPos.Z + config.TargetApproachDistance + 2f;
-        var maxY = playerPos.Y;
-
-        foreach (var npc in npcs)
-        {
-            if (npc.BattleChara == null)
-                continue;
-
-            var pos = (Vector3)((GameObject*)npc.BattleChara)->Position;
-            minX = MathF.Min(minX, pos.X - 2f);
-            maxX = MathF.Max(maxX, pos.X + 2f);
-            minZ = MathF.Min(minZ, pos.Z - 2f);
-            maxZ = MathF.Max(maxZ, pos.Z + 2f);
-            maxY = MathF.Max(maxY, pos.Y);
-        }
-
-        return terrainHeightService.EnsureCoverage(
-            new TerrainHeightBounds(minX, maxX, minZ, maxZ, maxY),
-            combatEngine.State.SimulationTime);
-    }
-
-    private Vector3 CorrectMovingRootHeight(
-        nint actorAddress,
-        Vector3 rootPosition,
-        TerrainHeightCache terrainCache,
-        ApproachPathState state,
-        float deltaTime,
-        bool preserveInitialClearance,
-        float horizontalStep = 0f)
-    {
-        if (!terrainCache.TrySample(rootPosition.X, rootPosition.Z, out var terrainY))
-            return rootPosition;
-
-        if (!state.HasStableRootTerrainClearance)
-        {
-            state.StableRootTerrainClearance = preserveInitialClearance
-                ? rootPosition.Y - terrainY - config.DefaultNpcHeightOffset
-                : 0f;
-            state.HasStableRootTerrainClearance = true;
-        }
-
-        // Root takes only the SHARED part of a corpse contact — whatever height both of footIkSolver's
-        // legs agree on (0 when only one foot is on the corpse, which is also the ordinary case: that
-        // leg's own IK does all the work and root never moves for it). Each leg's own IK then only
-        // has to close whatever its own requirement still exceeds this shared amount by. An earlier
-        // version tried to detect "both feet on the corpse" here itself with two probes either side of
-        // centre, but a corpse is almost always wider than the probe spacing, so it still lifted root
-        // for a single foot near the edge too — the exact float this was meant to fix.
-        var pelvisOffset = config.NpcCollisionActive
-            ? footIkSolver.GetPelvisOffset(actorAddress)
-            : 0f;
-        var desiredY = terrainY + pelvisOffset + state.StableRootTerrainClearance + config.DefaultNpcHeightOffset;
-        var fromY = state.HasLastMoveRootY ? state.LastMoveRootY : rootPosition.Y;
-        var y = EnemyMovementMath.FollowTerrainY(fromY, desiredY, deltaTime, horizontalStep);
-
-        state.LastMoveRootY = y;
-        state.HasLastMoveRootY = true;
-        // The lift actually applied for the corpse (clearance and the plain height offset excluded),
-        // so the solver's stance height holds still while the root rises to it (see ReportRootLift).
-        footIkSolver.ReportRootLift(actorAddress, y - terrainY - state.StableRootTerrainClearance - config.DefaultNpcHeightOffset);
-        return rootPosition with { Y = y };
-    }
-
-    private void CorrectStableRootHeight(
-        GameObject* gameObj,
-        Vector3 rootPosition,
-        TerrainHeightCache terrainCache,
-        ApproachPathState state,
-        float deltaTime,
-        bool preserveInitialClearance)
-    {
-        var corrected = CorrectMovingRootHeight((nint)gameObj, rootPosition, terrainCache, state, deltaTime, preserveInitialClearance);
-        if (MathF.Abs(corrected.Y - rootPosition.Y) < 0.001f)
-            return;
-
-        movementBlockHook.SetApproachPosition(gameObj, corrected.X, corrected.Y, corrected.Z);
-    }
-
-
-    private void StartApproachMoveAnim(SimulatedNpc npc, float deltaTime)
+    private void StartApproachMoveAnim(SimulatedNpc npc, float deltaTime, ushort timelineId = 0)
     {
         if (npc.BattleChara == null)
             return;
-
-        if (!approachPaths.TryGetValue(npc.Address, out var state))
-        {
-            state = new ApproachPathState { VisualState = npc.VisualState };
-            approachPaths[npc.Address] = state;
-        }
-        state.VisualState = npc.VisualState;
-
+        movingNpcs[npc.Address] = npc.VisualState;
         var character = (Character*)npc.BattleChara;
-        ActorVisualStateController.ApplyMoving(character, npc.VisualState, deltaTime);
+        if (timelineId != 0)
+            ActorVisualStateController.ApplyMoving(character, npc.VisualState, deltaTime, timelineId);
+        else
+            ActorVisualStateController.ApplyMoving(character, npc.VisualState, deltaTime);
     }
 
     private void StopApproachMoveAnim(SimulatedNpc npc)
     {
-        if (!approachPaths.TryGetValue(npc.Address, out var state))
+        if (!movingNpcs.Remove(npc.Address, out var visual))
             return;
-
-        StopApproachMoveAnim(npc.Address, state);
-    }
-
-    private void StopApproachMoveAnim(nint address, ApproachPathState state)
-    {
-        state.HasSmoothedMoveDir = false;
-        try
-        {
-            var character = (Character*)address;
-            ActorVisualStateController.ClearMovement(character, state.VisualState);
-        }
+        try { ActorVisualStateController.ClearMovement((Character*)npc.Address, visual); }
         catch { }
     }
 
-    private void StopAllApproachMoveAnims()
+    private void StopAllMoveAnims()
     {
-        foreach (var pair in approachPaths)
-            StopApproachMoveAnim(pair.Key, pair.Value);
+        foreach (var (address, visual) in movingNpcs)
+        {
+            try { ActorVisualStateController.ClearMovement((Character*)address, visual); }
+            catch { }
+        }
+        movingNpcs.Clear();
     }
 
     /// <summary>
@@ -2545,8 +1121,6 @@ public unsafe partial class NpcAiController : IDisposable
         combatEngine.OnSimulationStarted -= ScheduleAutoEngage;
         combatEngine.OnSimulationReset -= OnSimulationResetOrStop;
         movementBlockHook.ClearApproachNpcs();
-        StopAllApproachMoveAnims();
-        approachPaths.Clear();
-        approachLockedGoals.Clear();
+        StopAllMoveAnims();
     }
 }

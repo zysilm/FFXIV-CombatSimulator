@@ -34,8 +34,6 @@ public unsafe class CombatCompanion
     // (heavy) target-selection scoring. Reselection happens early if the current
     // target dies or is lost; see CombatCompanionManager.Tick.
     public float NextTargetSelectAt { get; set; }
-    public uint UnreachableTargetId { get; set; }
-    public float UnreachableTimer { get; set; }
     public float RecentDamage { get; set; }
     public float RecentDps { get; set; }
     public ActorVisualState VisualState { get; set; } = new();

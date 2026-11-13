@@ -31,17 +31,13 @@ public unsafe partial class CombatCompanionManager : IDisposable
     private readonly CombatEngine combatEngine;
     private readonly AnimationController animationController;
     private readonly MovementBlockHook movementBlockHook;
-    private readonly VNavmeshIpc vnavmeshIpc;
     private readonly ITargetManager targetManager;
-    private readonly PartyEngagePlanner partyEngagePlanner;
-    private readonly TerrainHeightService terrainHeightService;
     private readonly IPluginLog log;
 
     private readonly List<CombatCompanion> companions = new();
     private readonly List<PendingSpawn> pendingSpawns = new();
     private readonly ConcurrentQueue<CompanionSpawnSource> spawnQueue = new();
     private readonly HashSet<int> allocatedIndices = new();
-    private readonly Dictionary<nint, PathState> pathStates = new();
     private readonly Dictionary<uint, uint> enemyTargetByEnemyId = new();
     // Enhanced tactics threat table: enemy id -> (attacker id -> decaying threat).
     private readonly Dictionary<uint, Dictionary<uint, float>> threatByEnemy = new();
@@ -51,18 +47,6 @@ public unsafe partial class CombatCompanionManager : IDisposable
     private const float ThreatSwitchThreshold = 60f;
     private uint nextEntityId = 0xF1000001;
 
-    // Reachability is expensive (rebuilds the full engage-graph per probe) and is queried
-    // O(companions x enemies) per frame for target scoring. Cache results keyed by the
-    // hypothesis "companion targets enemy", with a short TTL so positions can drift a
-    // little before we recompute. Cleared whenever the alive roster changes.
-    private readonly Dictionary<(uint Companion, uint Enemy), (bool Reachable, float Overflow, float ExpiresAt)> reachabilityCache = new();
-    private readonly List<(uint Companion, uint Enemy)> expiredReachabilityKeys = new();
-    // Tracks the set of alive actors (companions + enemies) so cross-frame caches can be
-    // invalidated on any death/spawn. -1 = never computed.
-    private int lastAliveSignature = -1;
-    // Engage-planner rebuild pacing (see Tick).
-    private float plannerBuildTimer;
-    private float plannerAccumulatedDt;
 
     // Floor for plugin-synthesised entity IDs. Spawned virtual enemies start at
     // 0xF0000001 and companion clones at 0xF1000001; no real player's EntityId
@@ -86,23 +70,13 @@ public unsafe partial class CombatCompanionManager : IDisposable
 
     private const int MaxPendingFrames = 120;
     private const float TargetRange = 3.0f;
-    private const float RepathInterval = 1.0f;
-    private const float RepathDistance = 1.5f;
-    private const float VNavmeshFloorResnapInterval = 0.25f;
-    private const float VNavmeshWaypointReachDistance = 0.5f;
-    private const float VNavmeshLookaheadDistance = 1.25f;
-    private const float CompanionMovementEpsilon = 0.02f;
     private const float RecentDpsWindowSeconds = 8.0f;
     private const float RetargetDpsLead = 1.20f;
     private const float FollowDistance = 3.0f;
     private const float FollowStopDistance = 0.6f;
     private const float CombatAnchorRelocateDistance = 10.0f;
-    private const float MeleeAttackRangeBuffer = 0.25f;
-    private const float PartyAttackRangeHysteresis = 0.4f;
     private const float SenseInterval = 1.0f;
-    private const float ReachabilityCacheTtl = 0.5f;
     private const float TargetSelectInterval = 0.25f;
-    private const float PlannerBuildInterval = 0.2f;
     private const float SelectedTargetBonus = 130f;
     private const float LastPlayerTargetBonus = 95f;
     private const float AttackingPlayerBonus = 120f;
@@ -130,9 +104,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
     private const float TargetGraphBreakLongChainBonus = 30f;
     private const float ReachabilitySoftPenaltyWeight = 55f;
     private const float ReachabilityHardPenalty = 220f;
-    private const float ReachabilityUnreachableDelay = 0.95f;
     private const float ReachabilityRecoveryDistance = 0.75f;
-    private const float ReachabilityCurrentStickySuppression = 0.25f;
     private static readonly DrawDataContainer.EquipmentSlot[] AppearanceEquipmentSlots =
     {
         DrawDataContainer.EquipmentSlot.Head,
@@ -180,10 +152,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         CombatEngine combatEngine,
         AnimationController animationController,
         MovementBlockHook movementBlockHook,
-        VNavmeshIpc vnavmeshIpc,
         ITargetManager targetManager,
-        PartyEngagePlanner partyEngagePlanner,
-        TerrainHeightService terrainHeightService,
         IPluginLog log)
     {
         this.objectTable = objectTable;
@@ -192,10 +161,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         this.combatEngine = combatEngine;
         this.animationController = animationController;
         this.movementBlockHook = movementBlockHook;
-        this.vnavmeshIpc = vnavmeshIpc;
         this.targetManager = targetManager;
-        this.partyEngagePlanner = partyEngagePlanner;
-        this.terrainHeightService = terrainHeightService;
         this.log = log;
     }
 
@@ -270,7 +236,6 @@ public unsafe partial class CombatCompanionManager : IDisposable
     {
         if (!companions.Contains(companion))
             return;
-        pathStates.Remove(companion.Address);
         Despawn(companion);
     }
 
@@ -367,8 +332,6 @@ public unsafe partial class CombatCompanionManager : IDisposable
         TickSensing(deltaTime);
         DecayThreat(deltaTime);
 
-        vnavmeshIpc.RefreshStatus();
-        var terrainCache = BuildTerrainHeightCache(enemies);
         var assignedTargets = new Dictionary<uint, int>();
         var companionPressure = new Dictionary<PressureKey, int>();
         TickCombatAnchor(enemies);
@@ -376,21 +339,6 @@ public unsafe partial class CombatCompanionManager : IDisposable
 
         var now = combatEngine.State.SimulationTime;
         var liveCompanions = companions.ToList();
-
-        // Cross-frame caches (reachability, engage plans) assume a stable roster. When
-        // anyone dies or spawns, invalidate them so a stale entry can't keep a companion
-        // attacking a corpse or holding a slot that no longer exists.
-        var aliveSignature = ComputeAliveSignature(liveCompanions, enemies);
-        if (aliveSignature != lastAliveSignature)
-        {
-            reachabilityCache.Clear();
-            plannerBuildTimer = 0f; // force a planner rebuild this frame
-            lastAliveSignature = aliveSignature;
-        }
-        else if (reachabilityCache.Count > 0)
-        {
-            RemoveExpiredReachabilityEntries(now);
-        }
 
         for (var i = 0; i < liveCompanions.Count; i++)
         {
@@ -436,59 +384,10 @@ public unsafe partial class CombatCompanionManager : IDisposable
             }
         }
 
-        var companionTargets = liveCompanions
-            .Where(c => c.IsSpawned && c.State.IsAlive && c.CurrentTargetId != 0)
-            .ToDictionary(c => c.SimulatedEntityId, c => c.CurrentTargetId);
-
-        var player = objectTable.LocalPlayer;
-        plannerBuildTimer -= deltaTime;
-        plannerAccumulatedDt += deltaTime;
-        if (player != null)
-        {
-            // The engage planner is slow-varying by design (0.75s repath, sticky slots),
-            // so rebuilding its full node/slot/min-cost-flow graph every frame is wasted
-            // work. Rebuild a few times a second; a roster change forced plannerBuildTimer
-            // to 0 above so deaths/spawns rebuild immediately. Movement still executes
-            // every frame off the cached plans. Build gets the accumulated dt so its
-            // internal repath timers advance in real time despite the throttle.
-            if (plannerBuildTimer <= 0)
-            {
-                var commandAnchorPos = combatAnchorActive ? combatAnchorPosition : player.Position;
-                var commandAnchorRot = combatAnchorActive ? combatAnchorRotation : player.Rotation;
-                partyEngagePlanner.Build(
-                    plannerAccumulatedDt,
-                    player.Position,
-                    player.Rotation,
-                    commandAnchorPos,
-                    commandAnchorRot,
-                    liveCompanions,
-                    enemies,
-                    companionTargets,
-                    enemyTargets,
-                    combatEngine.State.PlayerState.EntityId,
-                    config.PartyCommandRange,
-                    config.PartyCommandRangeRandomness,
-                    config.PartyMeleeAttackRange + MeleeAttackRangeBuffer,
-                    config.PartyRangedAttackRange + MeleeAttackRangeBuffer,
-                    new PartyEngagePlannerOptions(
-                        PlayerAsNode: config.EnhancedEnemyTactics,
-                        PreferFlanks: config.EnhancedEnemyTactics,
-                        HitboxSpacing: config.EnhancedEnemyTactics,
-                        PlayerHitboxRadius: ((GameObject*)player.Address)->HitboxRadius));
-                plannerBuildTimer = PlannerBuildInterval;
-                plannerAccumulatedDt = 0f;
-            }
-        }
-        else
-        {
-            partyEngagePlanner.Clear();
-            plannerAccumulatedDt = 0f;
-        }
-
         TickRescues(deltaTime);
         TickLord();
         for (var i = 0; i < liveCompanions.Count; i++)
-            TickCompanion(liveCompanions[i], deltaTime, enemies, i, liveCompanions.Count, terrainCache);
+            TickCompanion(liveCompanions[i], deltaTime, enemies, i, liveCompanions.Count);
 
         TickPlayerRecentDps(deltaTime);
     }
@@ -851,7 +750,6 @@ public unsafe partial class CombatCompanionManager : IDisposable
             Despawn(companion);
 
         allocatedIndices.Clear();
-        pathStates.Clear();
         rescues.Clear();
         prayerId = 0;
         prayerAtPost = false;
@@ -1184,8 +1082,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         float deltaTime,
         IReadOnlyList<SimulatedNpc> enemies,
         int companionIndex,
-        int companionCount,
-        TerrainHeightCache? terrainCache)
+        int companionCount)
     {
         if (SuspendCombat?.Invoke() == true || !companion.IsSpawned || companion.BattleChara == null)
             return;
@@ -1217,9 +1114,9 @@ public unsafe partial class CombatCompanionManager : IDisposable
 
         if (TickCaptive(companion))
             return;
-        if (TickPrayer(companion, deltaTime, terrainCache))
+        if (TickPrayer(companion, deltaTime))
             return;
-        if (TickRescuer(companion, deltaTime, terrainCache))
+        if (TickRescuer(companion, deltaTime))
             return;
 
         if (!IsWithinCommandRange(companion))
@@ -1227,7 +1124,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
             ClearCompanionActionState(companion);
             ClearCompanionTargetState(companion);
             EnterCompanionState(companion, CompanionAiState.ReturningToCommandRange, deltaTime);
-            MoveToCommandRange(companion, deltaTime, companionIndex, companionCount, terrainCache);
+            MoveToCommandRange(companion, deltaTime, companionIndex, companionCount);
             return;
         }
 
@@ -1237,65 +1134,15 @@ public unsafe partial class CombatCompanionManager : IDisposable
             ClearCompanionActionState(companion);
             ClearCompanionTargetState(companion);
             EnterCompanionState(companion, CompanionAiState.ReturningToCommandRange, deltaTime);
-            MoveToCommandRange(companion, deltaTime, companionIndex, companionCount, terrainCache);
+            MoveToCommandRange(companion, deltaTime, companionIndex, companionCount);
             return;
         }
 
-        var targetObj = (GameObject*)target.BattleChara;
-        var sourceObj = (GameObject*)companion.BattleChara;
-        var targetPos = (Vector3)targetObj->Position;
-        var sourcePos = (Vector3)sourceObj->Position;
-        var onMesh = CrowdReady;
-        if (onMesh && CrowdApproach(companion, target, deltaTime, terrainCache))
+        // Out of reach: the crowd walks it in. In reach: it stands (held in the crowd) and fights.
+        if (CrowdApproach(companion, target, deltaTime))
             return;
-        var dist = onMesh ? CrowdGap(companion, target) : FlatDistance(sourcePos, targetPos);
-        // Enhanced tactics: measure past the body-size excess so a companion stops at a big monster's
-        // surface instead of walking into its centre.
-        if (config.EnhancedEnemyTactics)
-            dist -= EnemyMovementMath.HitboxSpacingExtra(sourceObj->HitboxRadius > 0.01f ? sourceObj->HitboxRadius : EnemyMovementMath.BaselineHitboxRadius, target.HitboxRadius);
-        var effectiveRange = GetPartyAttackRange(companion.Behavior.AutoAttackStyle) + MeleeAttackRangeBuffer;
-        var reachability = EvaluateCompanionReachability(companion, target, enemies);
-        if (reachability.Reachable || dist <= effectiveRange)
-        {
-            companion.UnreachableTargetId = 0;
-            companion.UnreachableTimer = 0;
-        }
-        else if (companion.UnreachableTargetId == target.SimulatedEntityId)
-        {
-            companion.UnreachableTimer += deltaTime;
-        }
-        else
-        {
-            companion.UnreachableTargetId = target.SimulatedEntityId;
-            companion.UnreachableTimer = deltaTime;
-        }
-
-        var currentUnreachable = companion.UnreachableTargetId == target.SimulatedEntityId &&
-                                 companion.UnreachableTimer >= ReachabilityUnreachableDelay;
-
-        var wasHoldingRange = companion.AiState is CompanionAiState.CombatReady or CompanionAiState.ActionLocked;
-        var resumeRange = effectiveRange + PartyAttackRangeHysteresis;
-        // (On the mesh, CrowdApproach has already decided: the ally is in reach.)
-        var shouldMove = !onMesh && (wasHoldingRange ? dist > resumeRange : dist > effectiveRange);
-        if (shouldMove)
-        {
-            if (MoveByPartyPlan(companion, deltaTime, targetPos, terrainCache))
-                return;
-
-            if (currentUnreachable)
-            {
-                EnterCompanionState(companion, CompanionAiState.ReturningToCommandRange, deltaTime);
-                MoveToCommandRange(companion, deltaTime, companionIndex, companionCount, terrainCache);
-                RotateToward(companion, targetPos, deltaTime);
-            }
-            else
-            {
-                StopMove(companion);
-                EnterCompanionState(companion, CompanionAiState.CombatReady);
-                RotateToward(companion, targetPos, deltaTime);
-            }
-            return;
-        }
+        var dist = CrowdGap(companion, target);
+        var targetPos = (Vector3)((GameObject*)target.BattleChara)->Position;
 
         StopMove(companion);
         EnterCompanionState(companion, CompanionAiState.CombatReady);
@@ -1311,7 +1158,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         {
             if (skill.CooldownRemaining > 0)
                 continue;
-            if (dist > (onMesh ? SkillReach(companion, skill) : GetPartySkillRange(skill.Range, skill.AttackStyle)))
+            if (dist > SkillReach(companion, skill))
                 continue;
             // A skill costs MP as it does an enemy: a share of the companion's own pool. Out of MP,
             // it auto-attacks until it has earned enough back.
@@ -1336,7 +1183,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         if (companion.AutoAttackTimer <= 0)
         {
             // A caster's auto-attack is a melee swing, as an enemy's: held until it is in melee.
-            if (onMesh && companion.Behavior.AutoAttackStyle == NpcAttackStyle.Magic && dist > CrowdMagicAutoReach)
+            if (companion.Behavior.AutoAttackStyle == NpcAttackStyle.Magic && dist > CrowdMagicAutoReach)
                 return;
             companion.AutoAttackTimer = companion.Behavior.AutoAttackDelay / ActionPace();
             var result = combatEngine.ProcessCompanionAction(
@@ -1378,9 +1225,6 @@ public unsafe partial class CombatCompanionManager : IDisposable
     private void ClearCompanionTargetState(CombatCompanion companion)
     {
         companion.CurrentTargetId = 0;
-        companion.UnreachableTargetId = 0;
-        companion.UnreachableTimer = 0;
-        partyEngagePlanner.ClearSlotReservation(companion.SimulatedEntityId);
     }
 
     private void AssignCompanionTarget(
@@ -1398,17 +1242,11 @@ public unsafe partial class CombatCompanionManager : IDisposable
             return;
         }
 
-        var previousTargetId = companion.CurrentTargetId;
         var target = SelectCompanionTarget(companion, enemies, assignedTargets, pressureMap);
         if (target == null)
         {
             ClearCompanionTargetState(companion);
             return;
-        }
-        else if (previousTargetId != target.SimulatedEntityId)
-        {
-            companion.UnreachableTargetId = 0;
-            companion.UnreachableTimer = 0;
         }
 
         companion.CurrentTargetId = target?.SimulatedEntityId ?? 0;
@@ -1439,90 +1277,52 @@ public unsafe partial class CombatCompanionManager : IDisposable
         var commandAnchor = combatAnchorActive ? combatAnchorPosition : player.Position;
         var delta = current - commandAnchor;
         delta.Y = 0;
-        var limit = partyEngagePlanner.GetCommandLimit(
-            companion.SimulatedEntityId,
-            config.PartyCommandRange,
-            config.PartyCommandRangeRandomness);
-        return delta.Length() <= limit;
+        return delta.Length() <= CommandLimit(companion.SimulatedEntityId);
+    }
+
+    /// <summary>How far from the command anchor this ally may go: the party range, a little less for some.</summary>
+    private float CommandLimit(uint actorId)
+    {
+        var jitter = StableUnit(actorId ^ 0xC001u);
+        var factor = 1.0f - Math.Clamp(config.PartyCommandRangeRandomness, 0, 0.8f) * jitter;
+        return MathF.Max(1.0f, config.PartyCommandRange * factor);
+    }
+
+    private static float StableUnit(uint x)
+    {
+        x ^= x >> 16;
+        x *= 0x7feb352du;
+        x ^= x >> 15;
+        x *= 0x846ca68bu;
+        x ^= x >> 16;
+        return (x & 0xFFFFFF) / 16777216.0f;
     }
 
     private void MoveToCommandRange(
         CombatCompanion companion,
         float deltaTime,
         int companionIndex,
-        int companionCount,
-        TerrainHeightCache? terrainCache)
+        int companionCount)
     {
         var player = objectTable.LocalPlayer;
         if (player == null || companion.BattleChara == null)
             return;
 
+        // Its place in the formation behind the anchor (the player, or where the fight began).
         var obj = (GameObject*)companion.BattleChara;
         var current = (Vector3)obj->Position;
-        var plan = partyEngagePlanner.BuildReturnPlan(
-            companion.SimulatedEntityId,
-            current,
-            combatAnchorActive ? combatAnchorPosition : player.Position,
-            combatAnchorActive ? combatAnchorRotation : player.Rotation,
-            companionIndex,
-            companionCount,
-            config.PartyCommandRange,
-            config.PartyCommandRangeRandomness);
-
-        MoveByPlan(companion, plan, deltaTime, terrainCache);
-    }
-
-    private bool MoveByPartyPlan(
-        CombatCompanion companion,
-        float deltaTime,
-        Vector3 fallbackFaceTarget,
-        TerrainHeightCache? terrainCache)
-    {
-        if (!partyEngagePlanner.TryGetPlan(companion.SimulatedEntityId, out var plan))
+        var anchor = combatAnchorActive ? combatAnchorPosition : player.Position;
+        var anchorRotation = combatAnchorActive ? combatAnchorRotation : player.Rotation;
+        var goal = CalculateFollowPosition(anchor, anchorRotation, companionIndex, companionCount);
+        if (FlatDistance(current, goal) > FollowStopDistance)
         {
-            StopMove(companion);
-            EnterCompanionState(companion, CompanionAiState.CombatReady);
-            RotateToward(companion, fallbackFaceTarget, deltaTime);
-            return false;
+            MoveToward(companion, goal, deltaTime);
+            return;
         }
-
-        return MoveByPlan(companion, plan, deltaTime, terrainCache);
-    }
-
-    private bool MoveByPlan(
-        CombatCompanion companion,
-        PartyEngagePlan plan,
-        float deltaTime,
-        TerrainHeightCache? terrainCache)
-    {
-        if (companion.BattleChara == null)
-            return false;
-
-        var obj = (GameObject*)companion.BattleChara;
-        var current = (Vector3)obj->Position;
-        var distance = FlatDistance(current, plan.Goal);
-        if (distance > FollowStopDistance)
-        {
-            MoveToward(companion, plan.Goal, deltaTime, terrainCache);
-            return true;
-        }
-
         StopMove(companion);
-        EnterCompanionState(
-            companion,
-            companion.CurrentTargetId == 0 ? CompanionAiState.Idle : CompanionAiState.CombatReady);
-        if (plan.HasFaceTarget)
-            RotateToward(companion, plan.FaceTarget, deltaTime);
-        return false;
+        EnterCompanionState(companion, companion.CurrentTargetId == 0 ? CompanionAiState.Idle : CompanionAiState.CombatReady);
+        RotateToward(companion, player.Position, deltaTime);
     }
-
-    private float GetPartyAttackRange(NpcAttackStyle style)
-        => style is NpcAttackStyle.Ranged or NpcAttackStyle.Magic
-            ? config.PartyRangedAttackRange
-            : config.PartyMeleeAttackRange;
-
-    private float GetPartySkillRange(float skillRange, NpcAttackStyle style)
-        => MathF.Min(skillRange, GetPartyAttackRange(style) + MeleeAttackRangeBuffer);
 
     private static float FlatDistance(Vector3 a, Vector3 b)
     {
@@ -1560,13 +1360,8 @@ public unsafe partial class CombatCompanionManager : IDisposable
         if (current != null)
         {
             var currentScore = scoredTargets.First(t => t.Enemy.SimulatedEntityId == current.SimulatedEntityId).Score;
-            var currentUnreachable = companion.UnreachableTargetId == companion.CurrentTargetId &&
-                                     companion.UnreachableTimer >= ReachabilityUnreachableDelay;
-            var switchThreshold = currentUnreachable
-                ? TargetSwitchThreshold * ReachabilityCurrentStickySuppression
-                : TargetSwitchThreshold;
             if (best.Enemy.SimulatedEntityId != current.SimulatedEntityId &&
-                best.Score < currentScore + switchThreshold)
+                best.Score < currentScore + TargetSwitchThreshold)
             {
                 best = (current, currentScore);
             }
@@ -1600,10 +1395,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
             score += AttackingPlayerBonus;
         if (companion.CurrentTargetId == enemyId)
         {
-            score += companion.UnreachableTargetId == enemyId &&
-                     companion.UnreachableTimer >= ReachabilityUnreachableDelay
-                ? PreviousTargetBonus * ReachabilityCurrentStickySuppression
-                : PreviousTargetBonus;
+            score += PreviousTargetBonus;
         }
 
         var hpPercent = enemy.State.MaxHp > 0
@@ -1646,7 +1438,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
 
     private float ReachabilityScore(CombatCompanion companion, SimulatedNpc enemy, IReadOnlyList<SimulatedNpc> enemies)
     {
-        var reachability = EvaluateCompanionReachability(companion, enemy, enemies);
+        var reachability = ComputeCompanionReachability(companion, enemy);
         if (reachability.Reachable)
             return 0f;
 
@@ -1664,83 +1456,23 @@ public unsafe partial class CombatCompanionManager : IDisposable
         return false;
     }
 
-    // Order-independent hash of the alive-actor set. Changes only when an actor enters or
-    // leaves combat (death/spawn), not when they move — so position-driven caches survive
-    // frame to frame but are dropped the moment the roster changes.
-    private static int ComputeAliveSignature(IReadOnlyList<CombatCompanion> liveCompanions, IReadOnlyList<SimulatedNpc> enemies)
-    {
-        var sig = 0;
-        foreach (var c in liveCompanions)
-            if (c.IsSpawned && c.State.IsAlive)
-                sig ^= (int)(c.SimulatedEntityId * 2654435761u);
-        foreach (var e in enemies)
-            if (e.IsSpawned && e.State.IsAlive)
-                sig ^= (int)(e.SimulatedEntityId * 40503u + 0x9E37u);
-        return sig;
-    }
-
-    private void RemoveExpiredReachabilityEntries(float now)
-    {
-        expiredReachabilityKeys.Clear();
-        foreach (var kv in reachabilityCache)
-        {
-            if (now >= kv.Value.ExpiresAt)
-                expiredReachabilityKeys.Add(kv.Key);
-        }
-        for (var i = 0; i < expiredReachabilityKeys.Count; i++)
-            reachabilityCache.Remove(expiredReachabilityKeys[i]);
-    }
-
-    private (bool Reachable, float Overflow) EvaluateCompanionReachability(
-        CombatCompanion companion,
-        SimulatedNpc enemy,
-        IReadOnlyList<SimulatedNpc> enemies)
-    {
-        var key = (companion.SimulatedEntityId, enemy.SimulatedEntityId);
-        var now = combatEngine.State.SimulationTime;
-        if (reachabilityCache.TryGetValue(key, out var cached) && now < cached.ExpiresAt)
-            return (cached.Reachable, cached.Overflow);
-
-        var result = ComputeCompanionReachability(companion, enemy, enemies);
-        reachabilityCache[key] = (result.Reachable, result.Overflow, now + ReachabilityCacheTtl);
-        return result;
-    }
-
+    /// <summary>
+    /// Whether this ally can stand within reach of the enemy and still be inside its command range,
+    /// and by how much it would overshoot.
+    /// </summary>
     private (bool Reachable, float Overflow) ComputeCompanionReachability(
         CombatCompanion companion,
-        SimulatedNpc enemy,
-        IReadOnlyList<SimulatedNpc> enemies)
+        SimulatedNpc enemy)
     {
         var player = objectTable.LocalPlayer;
         if (player == null || companion.BattleChara == null || enemy.BattleChara == null)
             return (true, 0f);
 
-        var companionPos = (Vector3)((GameObject*)companion.BattleChara)->Position;
         var enemyPos = (Vector3)((GameObject*)enemy.BattleChara)->Position;
-        var companionTargets = companions
-            .Where(c => c.IsSpawned && c.State.IsAlive && c.CurrentTargetId != 0)
-            .ToDictionary(c => c.SimulatedEntityId, c => c.SimulatedEntityId == companion.SimulatedEntityId
-                ? enemy.SimulatedEntityId
-                : c.CurrentTargetId);
-        var enemyTargets = enemyTargetByEnemyId
-            .Where(kv => kv.Value != 0)
-            .ToDictionary(kv => kv.Key, kv => kv.Value);
-
-        return partyEngagePlanner.EvaluateCompanionReachability(
-            companion.SimulatedEntityId,
-            companionPos,
-            enemyPos,
-            companions,
-            enemies,
-            companionTargets,
-            enemyTargets,
-            combatAnchorActive ? combatAnchorPosition : player.Position,
-            companion.Behavior.AutoAttackStyle,
-            config.PartyCommandRange,
-            config.PartyCommandRangeRandomness,
-            config.PartyMeleeAttackRange + MeleeAttackRangeBuffer,
-            config.PartyRangedAttackRange + MeleeAttackRangeBuffer,
-            ReachabilityRecoveryDistance);
+        var anchor = combatAnchorActive ? combatAnchorPosition : player.Position;
+        var standOff = CrowdReachNow(companion) + HitboxOf((GameObject*)companion.BattleChara) + enemy.HitboxRadius;
+        var overflow = FlatDistance(enemyPos, anchor) - standOff - CommandLimit(companion.SimulatedEntityId);
+        return (overflow <= ReachabilityRecoveryDistance, MathF.Max(0f, overflow));
     }
 
     private void UpdateFocusTarget(IReadOnlyList<SimulatedNpc> enemies)
@@ -1772,71 +1504,15 @@ public unsafe partial class CombatCompanionManager : IDisposable
         return 0;
     }
 
-    private void MoveToward(
-        CombatCompanion companion,
-        Vector3 targetPos,
-        float deltaTime,
-        TerrainHeightCache? terrainCache)
+    /// <summary>
+    /// Walk this ally toward a point with the crowd on the navigation mesh. Off the mesh (no mesh yet,
+    /// or none near it) it stands where it is.
+    /// </summary>
+    private void MoveToward(CombatCompanion companion, Vector3 targetPos, float deltaTime)
     {
         if (TryCrowdMove(companion, targetPos, deltaTime))
             return;
-        var obj = (GameObject*)companion.BattleChara;
-        var current = (Vector3)obj->Position;
-        var moveTarget = GetPathMoveTarget(companion, current, targetPos, deltaTime);
-        var dir = moveTarget - current;
-        dir.Y = 0;
-        if (dir.LengthSquared() < 0.01f)
-        {
-            StopCompanionAtMoveTarget(companion, moveTarget, deltaTime);
-            return;
-        }
-
-        dir = GetSteeredMoveDirection(
-            companion.SimulatedEntityId,
-            LocalSteeringFaction.Party,
-            current,
-            dir,
-            companion.CurrentTargetId);
-        if (dir == Vector3.Zero)
-        {
-            StopCompanionAtMoveTarget(companion, moveTarget, deltaTime);
-            return;
-        }
-        var speed = companion.Behavior.MoveSpeed > 0 ? companion.Behavior.MoveSpeed : 6f;
-        var remainingDist = Vector3.Distance(new Vector3(current.X, 0, current.Z), new Vector3(moveTarget.X, 0, moveTarget.Z));
-        var moveDist = speed * deltaTime;
-        var next = remainingDist <= moveDist
-            ? moveTarget
-            : current + dir * moveDist;
-
-        RotateToward(companion, moveTarget, deltaTime);
-        if (terrainCache != null && TryGetCorpseTraversalPathState(companion.Address, out var terrainState))
-        {
-            next = CorrectMovingRootHeight(companion.Address, next, terrainCache, terrainState, deltaTime, FlatDistance(current, next));
-        }
-        else if (vnavmeshIpc.CanPathfind)
-        {
-            var floor = vnavmeshIpc.PointOnFloor(next, false, 3f);
-            if (floor.HasValue)
-                next.Y = floor.Value.Y;
-        }
-        else
-        {
-            next.Y = targetPos.Y;
-        }
-
-        if (FlatDistance(current, next) <= CompanionMovementEpsilon)
-        {
-            StopCompanionAtMoveTarget(companion, moveTarget, deltaTime);
-            return;
-        }
-
-        movementBlockHook.AddApproachNpc(companion.Address);
-        EnterCompanionState(
-            companion,
-            companion.CurrentTargetId == 0 ? CompanionAiState.ReturningToCommandRange : CompanionAiState.MovingToTarget,
-            deltaTime);
-        movementBlockHook.SetApproachPosition(obj, next.X, next.Y, next.Z);
+        StopCompanionAtMoveTarget(companion, targetPos, deltaTime);
     }
 
     private void StopCompanionAtMoveTarget(CombatCompanion companion, Vector3 faceTarget, float deltaTime)
@@ -1846,84 +1522,6 @@ public unsafe partial class CombatCompanionManager : IDisposable
             companion,
             companion.CurrentTargetId == 0 ? CompanionAiState.Idle : CompanionAiState.CombatReady);
         RotateToward(companion, faceTarget, deltaTime);
-    }
-
-    private Vector3 GetSteeredMoveDirection(
-        uint actorId,
-        LocalSteeringFaction faction,
-        Vector3 actorPosition,
-        Vector3 goalFlatDirection,
-        uint ignoredObstacleId = 0)
-    {
-        var actor = new LocalSteeringActor(actorId, faction, actorPosition, IsPc: false);
-        return LocalSteering.SteerFlatDirection(actor, goalFlatDirection, BuildLocalSteeringActors(actor), ignoredObstacleId);
-    }
-
-    private List<LocalSteeringActor> BuildLocalSteeringActors(LocalSteeringActor currentActor)
-    {
-        var actors = new List<LocalSteeringActor>();
-        var player = objectTable.LocalPlayer;
-        var playerState = combatEngine.State.PlayerState;
-        if (player != null && playerState.IsAlive)
-        {
-            actors.Add(new LocalSteeringActor(
-                playerState.EntityId,
-                LocalSteeringFaction.Party,
-                player.Position,
-                IsPc: true));
-        }
-
-        actors.Add(currentActor);
-
-        foreach (var entity in combatEngine.State.Entities.Values)
-        {
-            if (!entity.IsAlive || entity.EntityId == currentActor.Id)
-                continue;
-
-            var position = combatEngine.GetSimulatedEntityPosition(entity);
-            if (position == Vector3.Zero)
-                continue;
-
-            actors.Add(new LocalSteeringActor(
-                entity.EntityId,
-                entity.IsCompanion ? LocalSteeringFaction.Party : LocalSteeringFaction.Enemy,
-                position,
-                IsPc: false));
-        }
-
-        return actors;
-    }
-
-    private void FollowPlayer(
-        CombatCompanion companion,
-        float deltaTime,
-        int companionIndex,
-        int companionCount,
-        TerrainHeightCache? terrainCache)
-    {
-        var player = objectTable.LocalPlayer;
-        if (player == null || companion.BattleChara == null)
-        {
-            StopMove(companion);
-            EnterCompanionState(companion, CompanionAiState.Idle);
-            return;
-        }
-
-        var obj = (GameObject*)companion.BattleChara;
-        var current = (Vector3)obj->Position;
-        var target = CalculateFollowPosition(player.Position, player.Rotation, companionIndex, companionCount);
-        var distance = Vector3.Distance(current, target);
-        if (distance <= FollowStopDistance)
-        {
-            if (terrainCache != null && TryGetCorpseTraversalPathState(companion.Address, out var stableState))
-                CorrectStableRootHeight(obj, current, terrainCache, stableState, deltaTime);
-            StopMove(companion);
-            EnterCompanionState(companion, CompanionAiState.Idle);
-            RotateToward(companion, player.Position, deltaTime);
-            return;
-        }
-
-        MoveToward(companion, target, deltaTime, terrainCache);
     }
 
     private void TickCombatAnchor(IReadOnlyList<SimulatedNpc> enemies)
@@ -1955,41 +1553,6 @@ public unsafe partial class CombatCompanionManager : IDisposable
         }
     }
 
-    private void MoveToCombatFormation(
-        CombatCompanion companion,
-        float deltaTime,
-        int companionIndex,
-        int companionCount,
-        Vector3 facePos,
-        TerrainHeightCache? terrainCache)
-    {
-        var player = objectTable.LocalPlayer;
-        if (player == null || companion.BattleChara == null)
-        {
-            StopMove(companion);
-            EnterCompanionState(companion, CompanionAiState.Idle);
-            return;
-        }
-
-        var obj = (GameObject*)companion.BattleChara;
-        var current = (Vector3)obj->Position;
-        var anchorPos = combatAnchorActive ? combatAnchorPosition : player.Position;
-        var anchorRot = combatAnchorActive ? combatAnchorRotation : player.Rotation;
-        var target = CalculateFollowPosition(anchorPos, anchorRot, companionIndex, companionCount);
-        var distance = Vector3.Distance(current, target);
-        if (distance <= FollowStopDistance)
-        {
-            if (terrainCache != null && TryGetCorpseTraversalPathState(companion.Address, out var stableState))
-                CorrectStableRootHeight(obj, current, terrainCache, stableState, deltaTime);
-            StopMove(companion);
-            EnterCompanionState(companion, CompanionAiState.CombatReady);
-            RotateToward(companion, facePos, deltaTime);
-            return;
-        }
-
-        MoveToward(companion, target, deltaTime, terrainCache);
-    }
-
     private static Vector3 CalculateFollowPosition(Vector3 playerPos, float playerRot, int index, int count)
     {
         var clampedCount = Math.Max(1, count);
@@ -2002,205 +1565,6 @@ public unsafe partial class CombatCompanionManager : IDisposable
         var back = new Vector3(MathF.Sin(playerRot + MathF.PI), 0, MathF.Cos(playerRot + MathF.PI));
         var right = new Vector3(MathF.Sin(playerRot - MathF.PI / 2f), 0, MathF.Cos(playerRot - MathF.PI / 2f));
         return playerPos + back * backward + right * lateral;
-    }
-
-    private Vector3 GetPathMoveTarget(CombatCompanion companion, Vector3 current, Vector3 target, float deltaTime)
-    {
-        if (!vnavmeshIpc.CanPathfind)
-            return target;
-
-        if (!pathStates.TryGetValue(companion.Address, out var state))
-        {
-            state = new PathState();
-            pathStates[companion.Address] = state;
-        }
-
-        state.RepathTimer = Math.Max(0, state.RepathTimer - deltaTime);
-        if (state.PendingPath != null && state.PendingPath.IsCompleted)
-        {
-            try
-            {
-                state.Waypoints = state.PendingPath.GetAwaiter().GetResult();
-                state.RequestedTarget = state.PendingTarget;
-                if (!state.HasFloorYOffset)
-                {
-                    var floor = SnapToNavmesh(current);
-                    state.FloorYOffset = floor.HasValue ? current.Y - floor.Value.Y : 0f;
-                    state.HasFloorYOffset = true;
-                    state.HasLastFloorY = false;
-                    state.LastCorrectedWaypointIndex = -1;
-                    state.FloorResnapTimer = 0;
-                }
-                state.WaypointIndex = SelectInitialWaypoint(state, current);
-                state.LastCorrectedWaypointIndex = -1;
-                state.HasLastMoveRootY = false;
-            }
-            catch (Exception ex)
-            {
-                log.Verbose($"Companion path failed: {ex.Message}");
-                state.Waypoints.Clear();
-            }
-            state.PendingPath = null;
-        }
-
-        // Repath only when the path is stale, NOT merely because the interval elapsed —
-        // an idle timer firing every second forced a Pathfind + two synchronous navmesh
-        // snaps even when the target had not moved. The exhausted-but-not-arrived clause
-        // keeps the self-heal: if the path ran out before reaching the target (blocked,
-        // straight line won't do), we still re-request.
-        var pathExhausted = state.WaypointIndex >= state.Waypoints.Count;
-        var shouldRepath = state.PendingPath == null &&
-            state.RepathTimer <= 0 &&
-            (state.Waypoints.Count == 0 ||
-             Vector3.Distance(state.RequestedTarget, target) > RepathDistance ||
-             (pathExhausted && FlatDistance(current, target) > 2f));
-
-        if (shouldRepath)
-        {
-            state.RepathTimer = RepathInterval;
-            var from = SnapToNavmesh(current) ?? current;
-            var to = SnapToNavmesh(target) ?? target;
-            state.PendingTarget = to;
-            state.PendingPath = vnavmeshIpc.Pathfind(from, to, 0.75f);
-        }
-
-        while (state.WaypointIndex < state.Waypoints.Count &&
-               Vector3.Distance(current, ApplyFloorYOffset(state, state.Waypoints[state.WaypointIndex])) < VNavmeshWaypointReachDistance)
-            state.WaypointIndex++;
-
-        Vector3 moveTarget;
-        if (state.WaypointIndex < state.Waypoints.Count)
-        {
-            var lookaheadIndex = SelectLookaheadWaypoint(state, current);
-            state.WaypointIndex = lookaheadIndex;
-            moveTarget = ApplyFloorYOffset(state, state.Waypoints[lookaheadIndex]);
-        }
-        else
-        {
-            moveTarget = target;
-        }
-
-        return CorrectMoveTargetFloor(state, moveTarget, deltaTime);
-    }
-
-    private static int SelectInitialWaypoint(PathState state, Vector3 current)
-    {
-        if (state.Waypoints.Count == 0)
-            return 0;
-
-        if (state.Waypoints.Count == 1)
-            return FlatDistanceSquared(current, ApplyFloorYOffset(state, state.Waypoints[0])) <=
-                   VNavmeshWaypointReachDistance * VNavmeshWaypointReachDistance
-                ? 1
-                : 0;
-
-        var bestSegmentEnd = 1;
-        var bestDistSq = float.MaxValue;
-        var foundSegment = false;
-
-        for (var i = 0; i < state.Waypoints.Count - 1; i++)
-        {
-            var a = ApplyFloorYOffset(state, state.Waypoints[i]);
-            var b = ApplyFloorYOffset(state, state.Waypoints[i + 1]);
-            a.Y = 0;
-            b.Y = 0;
-            var c = current;
-            c.Y = 0;
-
-            var ab = b - a;
-            var lenSq = ab.LengthSquared();
-            if (lenSq <= 0.0001f)
-                continue;
-
-            var t = Math.Clamp(Vector3.Dot(c - a, ab) / lenSq, 0f, 1f);
-            var closest = a + ab * t;
-            var distSq = Vector3.DistanceSquared(c, closest);
-            if (distSq >= bestDistSq)
-                continue;
-
-            bestDistSq = distSq;
-            bestSegmentEnd = i + 1;
-            foundSegment = true;
-        }
-
-        if (!foundSegment)
-            return 0;
-
-        while (bestSegmentEnd < state.Waypoints.Count &&
-               FlatDistanceSquared(current, ApplyFloorYOffset(state, state.Waypoints[bestSegmentEnd])) <=
-               VNavmeshWaypointReachDistance * VNavmeshWaypointReachDistance)
-        {
-            bestSegmentEnd++;
-        }
-
-        return bestSegmentEnd;
-    }
-
-    private static float FlatDistanceSquared(Vector3 a, Vector3 b)
-    {
-        var delta = a - b;
-        delta.Y = 0;
-        return delta.LengthSquared();
-    }
-
-    private static int SelectLookaheadWaypoint(PathState state, Vector3 current)
-    {
-        var selected = state.WaypointIndex;
-        var accumulated = 0f;
-        var previous = current;
-
-        for (var i = state.WaypointIndex; i < state.Waypoints.Count; i++)
-        {
-            var point = ApplyFloorYOffset(state, state.Waypoints[i]);
-            accumulated += Vector3.Distance(previous, point);
-            selected = i;
-            if (accumulated >= VNavmeshLookaheadDistance)
-                break;
-            previous = point;
-        }
-
-        return selected;
-    }
-
-    private static Vector3 ApplyFloorYOffset(PathState state, Vector3 point)
-        => state.HasFloorYOffset ? point with { Y = point.Y + state.FloorYOffset } : point;
-
-    private Vector3 CorrectMoveTargetFloor(PathState state, Vector3 moveTarget, float deltaTime)
-    {
-        if (!state.HasFloorYOffset)
-            return moveTarget;
-
-        state.FloorResnapTimer = Math.Max(0, state.FloorResnapTimer - deltaTime);
-        var waypointChanged = state.LastCorrectedWaypointIndex != state.WaypointIndex;
-        if (waypointChanged || !state.HasLastFloorY || state.FloorResnapTimer <= 0)
-        {
-            var floor = SnapToNavmesh(moveTarget);
-            if (floor.HasValue)
-            {
-                state.LastFloorY = floor.Value.Y;
-                state.HasLastFloorY = true;
-                state.LastCorrectedWaypointIndex = state.WaypointIndex;
-                state.FloorResnapTimer = VNavmeshFloorResnapInterval;
-            }
-        }
-
-        return state.HasLastFloorY
-            ? moveTarget with { Y = state.LastFloorY + state.FloorYOffset }
-            : moveTarget;
-    }
-
-    private Vector3? SnapToNavmesh(Vector3 point)
-    {
-        try
-        {
-            return vnavmeshIpc.NearestPointReachable(point)
-                   ?? vnavmeshIpc.PointOnFloor(point + new Vector3(0, 10f, 0));
-        }
-        catch (Exception ex)
-        {
-            log.Verbose($"Companion vnavmesh snap failed: {ex.Message}");
-            return null;
-        }
     }
 
     private Vector3? SnapToTerrain(Vector3 point)
@@ -2221,94 +1585,15 @@ public unsafe partial class CombatCompanionManager : IDisposable
             log.Verbose($"Companion terrain snap failed: {ex.Message}");
         }
 
-        return SnapToNavmesh(point);
-    }
-
-    private Vector3 CorrectMovingRootHeight(
-        nint actorAddress,
-        Vector3 rootPosition,
-        TerrainHeightCache terrainCache,
-        PathState state,
-        float deltaTime,
-        float horizontalStep = 0f)
-    {
-        if (!terrainCache.TrySample(rootPosition.X, rootPosition.Z, out var terrainY))
-            return rootPosition;
-
-        if (!state.HasStableRootTerrainClearance)
-        {
-            state.StableRootTerrainClearance = 0f;
-            state.HasStableRootTerrainClearance = true;
-        }
-
-        var supportY = CorpseSupportHeightProvider?.Invoke(actorAddress, rootPosition);
-        var maxCorpseStepHeight = 0.65f * MathF.Max(1f, GetVisualScale(actorAddress));
-        var walkableY = supportY.HasValue && supportY.Value <= terrainY + maxCorpseStepHeight
-            ? MathF.Max(terrainY, supportY.Value)
-            : terrainY;
-        var desiredY = walkableY + state.StableRootTerrainClearance;
-        var fromY = state.HasLastMoveRootY ? state.LastMoveRootY : rootPosition.Y;
-        var y = EnemyMovementMath.FollowTerrainY(fromY, desiredY, deltaTime, horizontalStep);
-
-        state.LastMoveRootY = y;
-        state.HasLastMoveRootY = true;
-        return rootPosition with { Y = y };
-    }
-
-    private bool TryGetCorpseTraversalPathState(nint address, out PathState state)
-    {
-        if (pathStates.TryGetValue(address, out state!))
-            return true;
-
-        // vnavmesh normally creates this state. Corpse support needs the same vertical history
-        // even without vnavmesh, otherwise companions never consult the bone-volume surface.
-        if (!config.NpcCollisionActive)
-            return false;
-
-        state = new PathState();
-        pathStates[address] = state;
-        return true;
-    }
-
-    private void CorrectStableRootHeight(
-        GameObject* gameObj,
-        Vector3 rootPosition,
-        TerrainHeightCache terrainCache,
-        PathState state,
-        float deltaTime)
-    {
-        var corrected = CorrectMovingRootHeight((nint)gameObj, rootPosition, terrainCache, state, deltaTime);
-        if (MathF.Abs(corrected.Y - rootPosition.Y) < 0.001f)
-            return;
-
-        movementBlockHook.SetApproachPosition(gameObj, corrected.X, corrected.Y, corrected.Z);
-    }
-
-    private static float GetVisualScale(nint actorAddress)
-    {
-        if (actorAddress == nint.Zero)
-            return 1f;
-
-        var gameObject = (GameObject*)actorAddress;
-        if (gameObject->DrawObject == null)
-            return 1f;
-
-        var scale = gameObject->DrawObject->Scale;
-        var max = MathF.Max(scale.X, MathF.Max(scale.Y, scale.Z));
-        return float.IsFinite(max) && max > 0f ? max : 1f;
+        return null;
     }
 
     private void StopMove(CombatCompanion companion)
     {
         // On the mesh it holds its place in the crowd (and is nudged aside by those passing).
         if (TryCrowdMove(companion, null, 0f))
-        {
-            pathStates.Remove(companion.Address);
             return;
-        }
-        movementBlockHook.RemoveApproachNpc(companion.Address);
         StopMoveAnim(companion);
-        pathStates.Remove(companion.Address);
     }
 
     private void StopMoveAnim(CombatCompanion companion)
@@ -2421,67 +1706,6 @@ public unsafe partial class CombatCompanionManager : IDisposable
         var decayPerSecond = companion.RecentDamage / RecentDpsWindowSeconds;
         companion.RecentDamage = Math.Max(0, companion.RecentDamage - decayPerSecond * deltaTime);
         companion.RecentDps = companion.RecentDamage / RecentDpsWindowSeconds;
-    }
-
-    private TerrainHeightCache? BuildTerrainHeightCache(IReadOnlyList<SimulatedNpc> enemies)
-    {
-        if (companions.Count == 0)
-            return null;
-
-        var player = objectTable.LocalPlayer;
-        var hasBounds = false;
-        var minX = 0f;
-        var maxX = 0f;
-        var minZ = 0f;
-        var maxZ = 0f;
-        var maxY = 0f;
-
-        void Include(Vector3 pos, float pad)
-        {
-            if (!hasBounds)
-            {
-                minX = pos.X - pad;
-                maxX = pos.X + pad;
-                minZ = pos.Z - pad;
-                maxZ = pos.Z + pad;
-                maxY = pos.Y;
-                hasBounds = true;
-                return;
-            }
-
-            minX = MathF.Min(minX, pos.X - pad);
-            maxX = MathF.Max(maxX, pos.X + pad);
-            minZ = MathF.Min(minZ, pos.Z - pad);
-            maxZ = MathF.Max(maxZ, pos.Z + pad);
-            maxY = MathF.Max(maxY, pos.Y);
-        }
-
-        if (player != null)
-            Include(player.Position, FollowDistance + 2f);
-
-        foreach (var companion in companions)
-        {
-            if (companion.BattleChara == null)
-                continue;
-            Include((Vector3)((GameObject*)companion.BattleChara)->Position, 2f);
-        }
-
-        foreach (var enemy in enemies)
-        {
-            if (enemy.BattleChara == null || !enemy.State.IsAlive)
-                continue;
-            // (Not a sentry far off on the map: it would stretch the height grid thin.)
-            if (enemy.IsSentry && enemy.AiState == Ai.NpcAiState.Idle)
-                continue;
-            Include((Vector3)((GameObject*)enemy.BattleChara)->Position, TargetRange + 2f);
-        }
-
-        if (!hasBounds)
-            return null;
-
-        return terrainHeightService.EnsureCoverage(
-            new TerrainHeightBounds(minX, maxX, minZ, maxZ, maxY),
-            combatEngine.State.SimulationTime);
     }
 
     private void TickPlayerRecentDps(float deltaTime)
@@ -2598,26 +1822,6 @@ public unsafe partial class CombatCompanionManager : IDisposable
                 classJobId,
                 randomizeAppearance);
         }
-    }
-
-    private class PathState
-    {
-        public List<Vector3> Waypoints { get; set; } = new();
-        public int WaypointIndex { get; set; }
-        public Vector3 RequestedTarget { get; set; }
-        public Vector3 PendingTarget { get; set; }
-        public float RepathTimer { get; set; }
-        public Task<List<Vector3>>? PendingPath { get; set; }
-        public float FloorYOffset { get; set; }
-        public bool HasFloorYOffset { get; set; }
-        public float FloorResnapTimer { get; set; }
-        public float LastFloorY { get; set; }
-        public bool HasLastFloorY { get; set; }
-        public int LastCorrectedWaypointIndex { get; set; } = -1;
-        public float StableRootTerrainClearance { get; set; }
-        public bool HasStableRootTerrainClearance { get; set; }
-        public float LastMoveRootY { get; set; }
-        public bool HasLastMoveRootY { get; set; }
     }
 
     private readonly record struct PressureKey(uint TargetId, bool Ranged);
