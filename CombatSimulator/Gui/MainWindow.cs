@@ -1228,21 +1228,219 @@ public partial class MainWindow : IDisposable
                    "very small NPC Scale values may need a large multiplier to restore usable melee reach.");
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // War Generator tab. Six blocks, each under its own header: the battle profile, spawning (the
+    // creature picker beside its spawn settings), what is on the field, who joins from the map, the
+    // battle rules, and how opponents behave. Inside a block, related controls sit on a card.
+    // ---------------------------------------------------------------------------------------------
+
+    private const float WarCardPad = 8f;
+    private const float WarTwoColumnMinWidth = 640f;
+    private static readonly Vector4 WarCardTitleColor = new(0.85f, 0.75f, 0.45f, 1f);
+
+    /// <summary>
+    /// A titled card: the body drawn inside a rounded border, padded from it. Widgets inside that
+    /// fill the width should use <see cref="WarFill"/> so they stop short of the border.
+    /// </summary>
+    private static void WarCard(string title, Action body)
+    {
+        var drawList = ImGui.GetWindowDrawList();
+        var start = ImGui.GetCursorScreenPos();
+        var right = start.X + ImGui.GetContentRegionAvail().X;
+
+        ImGui.Dummy(new Vector2(0, WarCardPad * 0.5f));
+        ImGui.Indent(WarCardPad);
+        if (title.Length > 0)
+        {
+            ImGui.TextColored(WarCardTitleColor, title);
+            ImGui.Spacing();
+        }
+        body();
+        ImGui.Unindent(WarCardPad);
+        ImGui.Dummy(new Vector2(0, WarCardPad * 0.5f));
+
+        var end = new Vector2(right, ImGui.GetCursorScreenPos().Y - ImGui.GetStyle().ItemSpacing.Y * 0.5f);
+        drawList.AddRect(start, end, ImGui.GetColorU32(ImGuiCol.Border), 5f);
+        ImGui.Spacing();
+    }
+
+    /// <summary>Item width that fills a card up to its padding.</summary>
+    private static float WarFill => -WarCardPad;
+
+    /// <summary>A label on its own line above the control it names (keeps narrow columns tidy).</summary>
+    private static void WarLabel(string text) => ImGui.TextUnformatted(text);
+
     private void DrawVirtualEnemiesTab()
     {
         // Lazy-load catalog on first open
         npcCatalog ??= new NpcCatalog(dataManager, log);
 
-        DrawWarProfileBar();
-        ImGui.Separator();
-        ImGui.TextWrapped("Search a creature by name, choose its side, then Spawn. Spawning starts the combat simulation automatically.");
-        ImGui.TextColored(new Vector4(1f, 0.2f, 0.2f, 1f), "Warning: Spawning certain enemies may cause the game to crash. Use with caution.");
+        if (ImGui.CollapsingHeader("Battle Profile##warProfileHeader", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            ImGui.Indent();
+            DrawWarProfileSection();
+            ImGui.Unindent();
+        }
+
+        if (ImGui.CollapsingHeader("Spawn##warSpawnHeader", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            ImGui.Indent();
+            DrawWarSpawnSection();
+            ImGui.Unindent();
+        }
+
+        var allyCount = companionManager.Companions.Count;
+        var opponentCount = npcSpawner.SpawnedNpcs.Count;
+        if (ImGui.CollapsingHeader($"On the Field ({allyCount} allies, {opponentCount} opponents)###warFieldHeader",
+                ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            ImGui.Indent();
+            DrawWarFieldSection();
+            ImGui.Unindent();
+        }
+
+        if (ImGui.CollapsingHeader("Joining from the Map##warMapHeader"))
+        {
+            ImGui.Indent();
+            DrawWarMapSection();
+            ImGui.Unindent();
+        }
+
+        if (ImGui.CollapsingHeader("Battle Rules##warRules"))
+        {
+            ImGui.Indent();
+            DrawWarRules();
+            ImGui.Unindent();
+        }
+
+        if (ImGui.CollapsingHeader("Opponent Behaviour##warBehaviourHeader"))
+        {
+            ImGui.Indent();
+            DrawVirtualEnemyLookAtSection();
+            ImGui.Unindent();
+        }
+    }
+
+    /// <summary>The battle profile in use: choose, start and stop one, and save the battle on the field as one.</summary>
+    private void DrawWarProfileSection()
+    {
+        var recipes = recipeBook.Recipes;
+        SyncSelectedRecipeFromConfig(recipes);
+        var recipe = recipes.Count > 0 ? recipes[selectedRecipeIndex] : null;
+
+        WarCard("Run a profile", () =>
+        {
+            DrawRecipeCombo("##warProfile", MathF.Max(160f, ImGui.GetContentRegionAvail().X - WarCardPad - 30f));
+            HelpMarker("A battle profile is a whole battle: both sides, where the opponents stand, and who joins from the map.\n" +
+                       "Start runs the chosen one. Your own profiles are JSON files in the plugin's configuration folder " +
+                       "(BattleProfiles) and can be edited or shared.");
+
+            if (!string.IsNullOrEmpty(warProfileNote))
+                ImGui.TextDisabled(warProfileNote);
+            else if (recipe != null && !string.IsNullOrWhiteSpace(recipe.Description))
+            {
+                ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - WarCardPad);
+                ImGui.TextDisabled(recipe.Description);
+                ImGui.PopTextWrapPos();
+            }
+
+            ImGui.Spacing();
+            using (ImRaii.Disabled(recipe == null))
+            {
+                if (ImGui.Button("Start##warProfile", new Vector2(90, 0)) && recipe != null)
+                    StartRecipe(recipe);
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("Stop##warProfile", new Vector2(90, 0)))
+                StopFastCombat();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Stop the battle and remove everyone spawned, on both sides.");
+
+            if (recipe is { IsUser: true })
+            {
+                ImGui.SameLine();
+                if (ImGui.Button("Delete##warProfile", new Vector2(90, 0)))
+                {
+                    if (recipeBook.Delete(recipe))
+                    {
+                        warProfileNote = $"Deleted '{recipe.Name}'.";
+                        selectedRecipeIndex = -1;
+                        config.FastCombatRecipeName = string.Empty;
+                        config.Save();
+                    }
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Delete this profile of yours.");
+            }
+        });
+
+        WarCard("Save the battle on the field", () =>
+        {
+            var onField = npcSpawner.SpawnedNpcs.Count + companionManager.Companions.Count > 0;
+            ImGui.SetNextItemWidth(MathF.Max(120f, ImGui.GetContentRegionAvail().X - WarCardPad - 98f));
+            ImGui.InputTextWithHint("##warProfileName", "Profile name", ref warProfileName, 48);
+            ImGui.SameLine();
+            using (ImRaii.Disabled(!recipeBook.CanSave || !onField || string.IsNullOrWhiteSpace(warProfileName)))
+            {
+                if (ImGui.Button("Save##warProfile", new Vector2(90, 0)))
+                {
+                    var saved = BuildProfileFromField(warProfileName.Trim());
+                    if (recipeBook.Save(saved, out var error))
+                    {
+                        config.FastCombatRecipeName = saved.Name;
+                        config.Save();
+                        selectedRecipeIndex = -1;
+                        warProfileNote = $"Saved '{saved.Name}'.";
+                        warProfileName = string.Empty;
+                    }
+                    else
+                        warProfileNote = error;
+                }
+            }
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip("Save the battle now on the field (both sides as they stand, and who joins from the map) " +
+                                 "as a profile of your own.");
+            if (!onField)
+                ImGui.TextDisabled("Spawn someone first.");
+        });
+    }
+
+    private void DrawWarSpawnSection()
+    {
+        ImGui.TextColored(new Vector4(1f, 0.35f, 0.3f, 1f), "Spawning certain creatures may crash the game. Use with caution.");
+        ImGui.TextDisabled("Spawning starts the battle at once.");
         ImGui.Spacing();
 
-        // Category tabs: Popular / Recent / All
+        if (ImGui.GetContentRegionAvail().X >= WarTwoColumnMinWidth &&
+            ImGui.BeginTable("##warSpawnColumns", 2, ImGuiTableFlags.SizingStretchProp))
+        {
+            ImGui.TableSetupColumn("Choose", ImGuiTableColumnFlags.WidthStretch, 1.25f);
+            ImGui.TableSetupColumn("Settings", ImGuiTableColumnFlags.WidthStretch, 1f);
+            ImGui.TableNextColumn();
+            WarCard("1. Choose a creature", DrawWarPicker);
+            ImGui.TableNextColumn();
+            WarCard("2. Spawn it", DrawWarSpawnSettings);
+            ImGui.EndTable();
+        }
+        else
+        {
+            WarCard("1. Choose a creature", DrawWarPicker);
+            WarCard("2. Spawn it", DrawWarSpawnSettings);
+        }
+    }
+
+    private void DrawWarPicker()
+    {
+        // Category tabs: Popular / Recent / Human / DemiHuman / Monster / All
         for (int c = 0; c < SpawnCategoryNames.Length; c++)
         {
-            if (c > 0) ImGui.SameLine();
+            if (c > 0)
+            {
+                // Wrap the row when the next button would run past the card.
+                var next = ImGui.CalcTextSize(SpawnCategoryNames[c]).X + ImGui.GetStyle().FramePadding.X * 2;
+                if (ImGui.GetContentRegionAvail().X - ImGui.GetItemRectMax().X + ImGui.GetCursorScreenPos().X > next + WarCardPad + 8f)
+                    ImGui.SameLine();
+            }
             bool selected = spawnCategoryIndex == c;
             if (selected) ImGui.PushStyleColor(ImGuiCol.Button, ImGui.GetStyle().Colors[(int)ImGuiCol.ButtonActive]);
             if (ImGui.SmallButton(SpawnCategoryNames[c]))
@@ -1253,28 +1451,26 @@ public partial class MainWindow : IDisposable
             if (selected) ImGui.PopStyleColor();
         }
 
-        // Search filter (Human / Monsters / All)
+        // Search filter (Human / DemiHuman / Monster / All)
         if (spawnCategoryIndex >= 2)
         {
-            ImGui.SetNextItemWidth(-1);
-            ImGui.InputTextWithHint("##npcSearch", "Search NPC name...", ref spawnSearchFilter, 256);
+            ImGui.SetNextItemWidth(WarFill);
+            ImGui.InputTextWithHint("##npcSearch", "Search by name...", ref spawnSearchFilter, 256);
         }
 
-        // Get entries for current category
         IReadOnlyList<NpcCatalogEntry> entries = spawnCategoryIndex switch
         {
-            0 => npcCatalog.GetPopularEntries(),
-            1 => npcCatalog.GetRecentEntries(config.RecentNpcEntries),
-            2 => npcCatalog.Search(spawnSearchFilter, NpcCatalogType.Human),
-            3 => npcCatalog.Search(spawnSearchFilter, NpcCatalogType.DemiHuman),
-            4 => npcCatalog.Search(spawnSearchFilter, NpcCatalogType.Monster),
-            5 => npcCatalog.Search(spawnSearchFilter),
+            0 => npcCatalog!.GetPopularEntries(),
+            1 => npcCatalog!.GetRecentEntries(config.RecentNpcEntries),
+            2 => npcCatalog!.Search(spawnSearchFilter, NpcCatalogType.Human),
+            3 => npcCatalog!.Search(spawnSearchFilter, NpcCatalogType.DemiHuman),
+            4 => npcCatalog!.Search(spawnSearchFilter, NpcCatalogType.Monster),
+            5 => npcCatalog!.Search(spawnSearchFilter),
             _ => Array.Empty<NpcCatalogEntry>(),
         };
 
-        // NPC list box
         var listHeight = ImGui.GetTextLineHeightWithSpacing() * 15;
-        if (ImGui.BeginListBox("##npcList", new Vector2(-1, listHeight)))
+        if (ImGui.BeginListBox("##npcList", new Vector2(WarFill, listHeight)))
         {
             if (entries.Count == 0)
             {
@@ -1308,54 +1504,65 @@ public partial class MainWindow : IDisposable
                 $"{selectedCatalogEntry.Type} | {selectedCatalogEntry.Source} #{selectedCatalogEntry.Id} | " +
                 $"ModelChara #{selectedCatalogEntry.ModelCharaId}");
             if (!selectedCatalogEntry.IsSpawnable)
+            {
+                ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - WarCardPad);
                 ImGui.TextColored(
                     new Vector4(1f, 0.65f, 0.2f, 1f),
                     "This ModelChara-only DemiHuman lacks the required customize/equipment source data.");
+                ImGui.PopTextWrapPos();
+            }
         }
+        else
+            ImGui.TextDisabled("Nothing chosen.");
+    }
 
-        // Spawn settings: which side, how many, and (opponents) where and whether they patrol.
-        ImGui.Spacing();
+    private void DrawWarSpawnSettings()
+    {
+        // Which side and how many.
         var asAlly = config.SpawnAsAlly;
         var side = asAlly ? 1 : 0;
-        ImGui.SetNextItemWidth(200);
-        if (ImGui.Combo("Side##warSide", ref side, WarSideNames, WarSideNames.Length))
+        WarLabel("Side");
+        HelpMarker("Opponent: fights your side.\nAlly: fights at your side, with its own attacks. Any creature can be one.");
+        ImGui.SetNextItemWidth(WarFill);
+        if (ImGui.Combo("##warSide", ref side, WarSideNames, WarSideNames.Length))
         {
             config.SpawnAsAlly = asAlly = side == 1;
             config.Save();
         }
-        HelpMarker("Opponent: fights your side.\nAlly: fights at your side, with its own attacks. Any creature can be one.");
 
-        ImGui.SameLine();
+        WarLabel("How many");
         var count = Math.Clamp(config.SpawnCount, 1, WarMaxSpawnCount);
-        ImGui.SetNextItemWidth(120);
-        if (ImGui.SliderInt("Count##warCount", ref count, 1, WarMaxSpawnCount))
+        ImGui.SetNextItemWidth(WarFill);
+        if (ImGui.SliderInt("##warCount", ref count, 1, WarMaxSpawnCount))
         {
             config.SpawnCount = count;
             config.Save();
         }
 
+        // Where (opponents only), and whether they patrol.
         var placement = CurrentSpawnPlacement();
         var patrol = !asAlly && config.SpawnPatrol;
         if (!asAlly)
         {
+            ImGui.Spacing();
+            WarLabel("Placement");
+            HelpMarker("Around me: a loose, layered ring around you.\n" +
+                       "In front of me: fanned out ahead of your character.\n" +
+                       "Across the map: each Spawn puts one squad at a random post away from you. " +
+                       "It holds the post until your side comes within sight, or a neighbour is attacked. Needs vnavmesh.");
             // The map is offered only where there is a navigation mesh to find ground on.
             var mapOffered = npcSpawner.CanPlaceOnMap;
             var placementIndex = (int)placement;
-            ImGui.SetNextItemWidth(200);
-            if (ImGui.Combo("Placement##warPlacement", ref placementIndex, WarPlacementNames, mapOffered ? 3 : 2))
+            ImGui.SetNextItemWidth(WarFill);
+            if (ImGui.Combo("##warPlacement", ref placementIndex, WarPlacementNames, mapOffered ? 3 : 2))
             {
                 placement = (SpawnPlacement)placementIndex;
                 config.SpawnPlacementMode = placementIndex;
                 config.SpawnInFront = placement == SpawnPlacement.Front;
                 config.Save();
             }
-            HelpMarker("Around me: a loose, layered ring around you.\n" +
-                       "In front of me: fanned out ahead of your character.\n" +
-                       "Across the map: each Spawn puts one squad at a random post away from you. " +
-                       "It holds the post until your side comes within sight, or a neighbour is attacked. Needs vnavmesh.");
 
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(-1);
+            ImGui.SetNextItemWidth(WarFill);
             if (placement == SpawnPlacement.Map)
             {
                 var radius = Math.Clamp(config.MapSpawnRadius, 20f, 200f);
@@ -1386,11 +1593,12 @@ public partial class MainWindow : IDisposable
 
         // Strength + level. The opponents' apply to every enemy: spawned, map-sensed, auto-selected
         // and a profile's. Allies from the catalog have their own.
+        ImGui.Spacing();
         if (asAlly)
         {
             var allyStrength = config.AllyStrength;
             var allyLevel = config.AllyLevel;
-            if (DrawEnemyStrengthAndLevel("warAllies", "Ally strength", "Ally level", ref allyStrength, ref allyLevel,
+            if (DrawEnemyStrengthAndLevel("warAllies", "Strength", "Level", ref allyStrength, ref allyLevel,
                     AllyStrengthHelp, AllyLevelHelp))
             {
                 config.AllyStrength = allyStrength;
@@ -1402,7 +1610,7 @@ public partial class MainWindow : IDisposable
         {
             var enemyStrength = config.EnemyStrength;
             var enemyLevel = config.EnemyLevel;
-            if (DrawEnemyStrengthAndLevel("virtualEnemies", "Enemy strength", "Enemy level", ref enemyStrength, ref enemyLevel))
+            if (DrawEnemyStrengthAndLevel("virtualEnemies", "Strength", "Level", ref enemyStrength, ref enemyLevel))
             {
                 config.EnemyStrength = enemyStrength;
                 config.EnemyLevel = enemyLevel;
@@ -1410,135 +1618,247 @@ public partial class MainWindow : IDisposable
             }
         }
 
-        // Spawn button + counter
+        // The Spawn button, as wide as the card.
         ImGui.Spacing();
         var room = asAlly
             ? CombatCompanionManager.MaxCompanionCap - companionManager.Companions.Count - companionManager.PendingCount - PendingAllies()
             : npcSpawner.MaxNpcs - npcSpawner.TotalCount;
         bool canSpawn = selectedCatalogEntry is { IsSpawnable: true } && room > 0;
-        if (!canSpawn) ImGui.BeginDisabled();
-        if (ImGui.Button("Spawn", new Vector2(80, 0)))
+        var spawnLabel = selectedCatalogEntry == null
+            ? "Spawn"
+            : count > 1 ? $"Spawn {count} x {selectedCatalogEntry.Name}" : $"Spawn {selectedCatalogEntry.Name}";
+        using (ImRaii.Disabled(!canSpawn))
         {
-            var entry = selectedCatalogEntry!;
-
-            // Always available: activate spawn mode and start the simulation on demand so the
-            // user can just search and spawn.
-            npcSpawner.SpawnModeActive = true;
-            if (!combatEngine.IsActive)
-            {
-                combatEngine.StartSimulation();
-                chatGui.Print("[CombatSim] War Generator: combat simulation started.");
-            }
-            if (asAlly && !config.EnableCombatCompanions)
-            {
-                // An ally is a companion: the party has to be on for it to fight.
-                config.EnableCombatCompanions = true;
-            }
-
-            // One Spawn on the map is one squad at one post.
-            var squad = !asAlly && placement == SpawnPlacement.Map ? nextSquadId++ : 0;
-            var tier = CombatBudgetModel.TierForChoice(asAlly ? config.AllyStrength : config.EnemyStrength);
-            var level = asAlly ? config.AllyLevel : config.EnemyLevel;
-            var queued = Math.Min(count, room);
-            for (var i = 0; i < queued; i++)
-                npcSpawner.QueueSpawn(BuildSpawnRequest(entry, asAlly, placement, patrol, squad, tier, level));
-
-            // Track in recent list (avoid duplicates, keep last 20)
-            config.RecentNpcEntries.RemoveAll(r => r.BNpcBaseId == entry.Id && r.Source == entry.Source);
-            config.RecentNpcEntries.Insert(0, new RecentNpcEntry
-            {
-                BNpcBaseId = entry.Id,
-                BNpcNameId = entry.BNpcNameId,
-                ModelCharaId = entry.ModelCharaId,
-                Type = entry.Type,
-                Source = entry.Source,
-            });
-            if (config.RecentNpcEntries.Count > 20)
-                config.RecentNpcEntries.RemoveRange(20, config.RecentNpcEntries.Count - 20);
-            config.Save();
-
-            chatGui.Print(queued > 1
-                ? $"[CombatSim] Spawning {queued} x {entry.Name}..."
-                : $"[CombatSim] Spawning {entry.Name}...");
+            if (ImGui.Button($"{spawnLabel}###warSpawn", new Vector2(MathF.Max(80f, ImGui.GetContentRegionAvail().X - WarCardPad), 0)))
+                SpawnChosen(asAlly, count, room, placement, patrol);
         }
-        if (!canSpawn) ImGui.EndDisabled();
-
-        ImGui.SameLine();
-        ImGui.TextDisabled($"{npcSpawner.SpawnedNpcs.Count}/{npcSpawner.MaxNpcs} opponents, " +
-                           $"{companionManager.Companions.Count}/{CombatCompanionManager.MaxCompanionCap} allies");
+        if (selectedCatalogEntry == null)
+            ImGui.TextDisabled("Choose a creature first.");
+        else if (room <= 0)
+            ImGui.TextDisabled(asAlly ? "The party is full." : "No room for more opponents.");
 
         if (npcSpawner.PendingCount > 0)
+            ImGui.TextColored(new Vector4(1f, 0.8f, 0f, 1f), $"{npcSpawner.PendingCount} on the way...");
+    }
+
+    private void SpawnChosen(bool asAlly, int count, int room, SpawnPlacement placement, bool patrol)
+    {
+        var entry = selectedCatalogEntry!;
+
+        // Always available: activate spawn mode and start the simulation on demand so the user
+        // can just search and spawn.
+        npcSpawner.SpawnModeActive = true;
+        if (!combatEngine.IsActive)
         {
+            combatEngine.StartSimulation();
+            chatGui.Print("[CombatSim] War Generator: combat simulation started.");
+        }
+        if (asAlly && !config.EnableCombatCompanions)
+        {
+            // An ally is a companion: the party has to be on for it to fight.
+            config.EnableCombatCompanions = true;
+        }
+
+        // One Spawn on the map is one squad at one post.
+        var squad = !asAlly && placement == SpawnPlacement.Map ? nextSquadId++ : 0;
+        var tier = CombatBudgetModel.TierForChoice(asAlly ? config.AllyStrength : config.EnemyStrength);
+        var level = asAlly ? config.AllyLevel : config.EnemyLevel;
+        var queued = Math.Min(count, room);
+        for (var i = 0; i < queued; i++)
+            npcSpawner.QueueSpawn(BuildSpawnRequest(entry, asAlly, placement, patrol, squad, tier, level));
+
+        // Track in recent list (avoid duplicates, keep last 20)
+        config.RecentNpcEntries.RemoveAll(r => r.BNpcBaseId == entry.Id && r.Source == entry.Source);
+        config.RecentNpcEntries.Insert(0, new RecentNpcEntry
+        {
+            BNpcBaseId = entry.Id,
+            BNpcNameId = entry.BNpcNameId,
+            ModelCharaId = entry.ModelCharaId,
+            Type = entry.Type,
+            Source = entry.Source,
+        });
+        if (config.RecentNpcEntries.Count > 20)
+            config.RecentNpcEntries.RemoveRange(20, config.RecentNpcEntries.Count - 20);
+        config.Save();
+
+        chatGui.Print(queued > 1
+            ? $"[CombatSim] Spawning {queued} x {entry.Name}..."
+            : $"[CombatSim] Spawning {entry.Name}...");
+    }
+
+    /// <summary>Both sides as they stand: allies and opponents, each on its own card.</summary>
+    private void DrawWarFieldSection()
+    {
+        var allies = companionManager.Companions.Count;
+        var opponents = npcSpawner.SpawnedNpcs.Count;
+        if (allies == 0 && opponents == 0)
+        {
+            ImGui.TextDisabled("Nobody spawned yet.");
+            return;
+        }
+
+        if (ImGui.GetContentRegionAvail().X >= WarTwoColumnMinWidth &&
+            ImGui.BeginTable("##warFieldColumns", 2, ImGuiTableFlags.SizingStretchSame))
+        {
+            ImGui.TableNextColumn();
+            WarCard($"Allies  {allies}/{CombatCompanionManager.MaxCompanionCap}", DrawWarAllies);
+            ImGui.TableNextColumn();
+            WarCard($"Opponents  {opponents}/{npcSpawner.MaxNpcs}", DrawWarOpponents);
+            ImGui.EndTable();
+        }
+        else
+        {
+            WarCard($"Allies  {allies}/{CombatCompanionManager.MaxCompanionCap}", DrawWarAllies);
+            WarCard($"Opponents  {opponents}/{npcSpawner.MaxNpcs}", DrawWarOpponents);
+        }
+    }
+
+    /// <summary>One row of the field lists: an HP bar with the name on it, then the row's buttons.</summary>
+    private static void DrawWarFieldHpBar(SimulatedEntityState state, string name, Vector4 color, float buttonsWidth)
+    {
+        var hp = state.MaxHp > 0 ? (float)state.CurrentHp / state.MaxHp : 0f;
+        ImGui.PushStyleColor(ImGuiCol.PlotHistogram, state.IsAlive ? color : new Vector4(0.4f, 0.4f, 0.4f, 1));
+        var width = MathF.Max(60f, ImGui.GetContentRegionAvail().X - WarCardPad - buttonsWidth);
+        ImGui.ProgressBar(hp, new Vector2(width, 0), state.IsAlive ? $"{name}  {state.CurrentHp:N0}/{state.MaxHp:N0}" : $"{name}  (down)");
+        ImGui.PopStyleColor();
+    }
+
+    /// <summary>The allies on the field, with HP bars and a way to send each away.</summary>
+    private void DrawWarAllies()
+    {
+        var allies = companionManager.Companions;
+        if (allies.Count == 0)
+        {
+            ImGui.TextDisabled("None.");
+            return;
+        }
+
+        var despawnWidth = ImGui.CalcTextSize("Despawn").X + ImGui.GetStyle().FramePadding.X * 2 + ImGui.GetStyle().ItemSpacing.X;
+        CombatCompanion? dismissed = null;
+        for (int i = allies.Count - 1; i >= 0; i--)
+        {
+            var ally = allies[i];
+            ImGui.PushID($"ally_{i}");
+            DrawWarFieldHpBar(ally.State, ally.Name, new Vector4(0.25f, 0.55f, 0.95f, 1), despawnWidth);
             ImGui.SameLine();
-            ImGui.TextColored(new Vector4(1f, 0.8f, 0f, 1f), $"({npcSpawner.PendingCount} pending...)");
+            if (ImGui.SmallButton("Despawn"))
+                dismissed = ally;
+            ImGui.PopID();
         }
 
-        DrawWarRules();
-        DrawWarAllies();
+        if (dismissed != null)
+            companionManager.DespawnCompanion(dismissed);
 
-        // Spawned NPCs list with HP bars and despawn buttons
-        if (npcSpawner.SpawnedNpcs.Count > 0)
+        if (allies.Count > 1 && ImGui.SmallButton("Despawn all allies##warAllies"))
+            companionManager.DespawnAll();
+    }
+
+    /// <summary>The opponents on the field: HP bars, the per-opponent ranged switch, despawn.</summary>
+    private void DrawWarOpponents()
+    {
+        var opponents = npcSpawner.SpawnedNpcs;
+        if (opponents.Count == 0)
         {
-            ImGui.Separator();
-            ImGui.TextDisabled("Opponents:");
-
-            for (int i = npcSpawner.SpawnedNpcs.Count - 1; i >= 0; i--)
-            {
-                var npc = npcSpawner.SpawnedNpcs[i];
-                ImGui.PushID($"spawned_{i}");
-
-                // HP bar
-                if (npc.State.MaxHp > 0)
-                {
-                    float hp = (float)npc.State.CurrentHp / npc.State.MaxHp;
-                    var hpColor = hp > 0.5f ? new Vector4(0, 0.8f, 0, 1)
-                        : hp > 0.25f ? new Vector4(0.8f, 0.8f, 0, 1)
-                        : new Vector4(0.8f, 0, 0, 1);
-                    if (!npc.IsAlive) hpColor = new Vector4(0.4f, 0.4f, 0.4f, 1);
-                    ImGui.PushStyleColor(ImGuiCol.PlotHistogram, hpColor);
-                    // 75% of the leftover row width — leaves a clear gap before
-                    // the name / ranged checkbox / despawn cluster on the right.
-                    float hpBarWidth = (ImGui.GetContentRegionAvail().X - 120) * 0.75f;
-                    ImGui.ProgressBar(hp, new Vector2(hpBarWidth, 0),
-                        $"{npc.State.CurrentHp:N0}/{npc.State.MaxHp:N0}");
-                    ImGui.PopStyleColor();
-                    ImGui.SameLine();
-                }
-
-                ImGui.Text(npc.Name);
-
-                // Ranged toggle — when on, this NPC's actions play the ranged
-                // attack motion (bow/gun draw + projectile) instead of melee.
-                // Label hidden via ##id; tooltip on hover explains what it does.
-                ImGui.SameLine(ImGui.GetContentRegionAvail().X - 145);
-                bool ranged = npc.IsRanged;
-                if (ImGui.Checkbox("##ranged", ref ranged))
-                    npc.IsRanged = ranged;
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Ranged: force ranged attack animation for this NPC (use for archers / casters whose default action animation is melee).");
-
-                ImGui.SameLine(ImGui.GetContentRegionAvail().X - 55);
-                if (ImGui.SmallButton("Despawn"))
-                {
-                    npcSelector.UnregisterSpawnedNpc(npc);
-                    npcSpawner.DespawnNpc(npc);
-                }
-
-                ImGui.PopID();
-            }
-
-            if (npcSpawner.SpawnedNpcs.Count > 1)
-            {
-                if (ImGui.SmallButton("Despawn All"))
-                {
-                    foreach (var npc in new List<SimulatedNpc>(npcSpawner.SpawnedNpcs))
-                        npcSelector.UnregisterSpawnedNpc(npc);
-                    npcSpawner.DespawnAll();
-                }
-            }
+            ImGui.TextDisabled("None.");
+            return;
         }
 
-        DrawVirtualEnemyLookAtSection();
+        var style = ImGui.GetStyle();
+        var buttonsWidth = ImGui.GetFrameHeight() + style.ItemSpacing.X +
+                           ImGui.CalcTextSize("Despawn").X + style.FramePadding.X * 2 + style.ItemSpacing.X;
+        for (int i = opponents.Count - 1; i >= 0; i--)
+        {
+            var npc = opponents[i];
+            ImGui.PushID($"spawned_{i}");
+
+            var hp = npc.State.MaxHp > 0 ? (float)npc.State.CurrentHp / npc.State.MaxHp : 0f;
+            var hpColor = hp > 0.5f ? new Vector4(0, 0.7f, 0.1f, 1)
+                : hp > 0.25f ? new Vector4(0.8f, 0.7f, 0, 1)
+                : new Vector4(0.8f, 0.1f, 0.1f, 1);
+            DrawWarFieldHpBar(npc.State, npc.Name, hpColor, buttonsWidth);
+
+            // Ranged toggle: this opponent's actions play the ranged attack motion (bow/gun draw +
+            // projectile) instead of melee.
+            ImGui.SameLine();
+            bool ranged = npc.IsRanged;
+            if (ImGui.Checkbox("##ranged", ref ranged))
+                npc.IsRanged = ranged;
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Ranged: force ranged attack animation for this NPC (use for archers / casters whose default action animation is melee).");
+
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Despawn"))
+            {
+                npcSelector.UnregisterSpawnedNpc(npc);
+                npcSpawner.DespawnNpc(npc);
+            }
+
+            ImGui.PopID();
+        }
+
+        if (opponents.Count > 1 && ImGui.SmallButton("Despawn all opponents##warOpponents"))
+        {
+            foreach (var npc in new List<SimulatedNpc>(npcSpawner.SpawnedNpcs))
+                npcSelector.UnregisterSpawnedNpc(npc);
+            npcSpawner.DespawnAll();
+        }
+    }
+
+    /// <summary>Who of the map joins a battle put together here: creatures, and other players.</summary>
+    private void DrawWarMapSection()
+    {
+        ImGui.TextDisabled("For a battle put together here; a profile brings its own.");
+        WarCard("Creatures of the map", () =>
+        {
+            var creatures = config.EnableMapEnemySensing ? 1 : 0;
+            ImGui.SetNextItemWidth(MathF.Min(260f, ImGui.GetContentRegionAvail().X - WarCardPad - 30f));
+            if (ImGui.Combo("##warMapCreatures", ref creatures, WarMapCreatureNames, WarMapCreatureNames.Length))
+            {
+                config.EnableMapEnemySensing = creatures == 1;
+                config.Save();
+            }
+            HelpMarker("Real creatures of the map near your side join the opponents.");
+        });
+
+        WarCard("Other players in sight", () =>
+        {
+            var players = config.EnableMapPlayerEnemySensing
+                ? (config.SensePartyMembers ? 3 : 2)
+                : (config.SensePartyMembers ? 1 : 0);
+            ImGui.SetNextItemWidth(MathF.Min(260f, ImGui.GetContentRegionAvail().X - WarCardPad - 30f));
+            if (ImGui.Combo("##warMapPlayers", ref players, WarMapPlayerNames, WarMapPlayerNames.Length))
+            {
+                config.SensePartyMembers = players is 1 or 3;
+                config.EnableMapPlayerEnemySensing = players is 2 or 3;
+                if (config.SensePartyMembers)
+                    config.EnableCombatCompanions = true;
+                config.Save();
+            }
+            HelpMarker("Other players in sight are copied into the battle (only you see it): at your side, against you, or split between both.");
+        });
+
+        if (config.EnableMapEnemySensing || config.EnableMapPlayerEnemySensing)
+        {
+            WarCard("Who joins the opponents", () =>
+            {
+                var range = Math.Clamp(config.MapEnemySenseRange, 1.0f, 80.0f);
+                ImGui.SetNextItemWidth(MathF.Min(260f, ImGui.GetContentRegionAvail().X - WarCardPad - 120f));
+                if (ImGui.SliderFloat("Joins within##warMapRange", ref range, 1.0f, 80.0f, "%.0f yalms"))
+                {
+                    config.MapEnemySenseRange = range;
+                    config.Save();
+                }
+                HelpMarker("A creature or player of the map joins the opponents when it is this close to anyone on your side.");
+
+                var maxMapEnemies = Math.Clamp(config.MapEnemyMaxCount, 0, 100);
+                ImGui.SetNextItemWidth(MathF.Min(260f, ImGui.GetContentRegionAvail().X - WarCardPad - 120f));
+                if (ImGui.SliderInt("At most##warMapMax", ref maxMapEnemies, 0, 100))
+                {
+                    config.MapEnemyMaxCount = maxMapEnemies;
+                    config.Save();
+                }
+            });
+        }
     }
 
     private static readonly string[] WarSideNames = { "Opponent", "Ally" };
@@ -1559,181 +1879,72 @@ public partial class MainWindow : IDisposable
     private int PendingAllies()
         => npcSpawner.PendingAllyCount;
 
-    /// <summary>The battle profile in use: choose, start and stop one, and save the battle on the field as one.</summary>
-    private void DrawWarProfileBar()
-    {
-        var recipes = recipeBook.Recipes;
-        SyncSelectedRecipeFromConfig(recipes);
-        var recipe = recipes.Count > 0 ? recipes[selectedRecipeIndex] : null;
-
-        DrawRecipeCombo("Battle profile##warProfile", 240f);
-        HelpMarker("A battle profile is a whole battle: both sides, where the opponents stand, and who joins from the map.\n" +
-                   "Start runs the chosen one. Save keeps the battle now on the field under the name you type; " +
-                   "your own profiles are JSON files in the plugin's configuration folder (BattleProfiles) and can be edited or shared.");
-
-        using (ImRaii.Disabled(recipe == null))
-        {
-            if (ImGui.Button("Start##warProfile", new Vector2(70, 0)) && recipe != null)
-                StartRecipe(recipe);
-        }
-        ImGui.SameLine();
-        if (ImGui.Button("Stop##warProfile", new Vector2(70, 0)))
-            StopFastCombat();
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Stop the battle and remove everyone spawned, on both sides.");
-
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(170f);
-        ImGui.InputTextWithHint("##warProfileName", "Name to save as", ref warProfileName, 48);
-        ImGui.SameLine();
-        var onField = npcSpawner.SpawnedNpcs.Count + companionManager.Companions.Count > 0;
-        using (ImRaii.Disabled(!recipeBook.CanSave || !onField || string.IsNullOrWhiteSpace(warProfileName)))
-        {
-            if (ImGui.Button("Save##warProfile"))
-            {
-                var saved = BuildProfileFromField(warProfileName.Trim());
-                if (recipeBook.Save(saved, out var error))
-                {
-                    config.FastCombatRecipeName = saved.Name;
-                    config.Save();
-                    selectedRecipeIndex = -1;
-                    warProfileNote = $"Saved '{saved.Name}'.";
-                    warProfileName = string.Empty;
-                }
-                else
-                    warProfileNote = error;
-            }
-        }
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Save the battle now on the field (both sides as they stand) as a profile of your own.");
-
-        if (recipe is { IsUser: true })
-        {
-            ImGui.SameLine();
-            if (ImGui.Button("Delete##warProfile"))
-            {
-                if (recipeBook.Delete(recipe))
-                {
-                    warProfileNote = $"Deleted '{recipe.Name}'.";
-                    selectedRecipeIndex = -1;
-                    config.FastCombatRecipeName = string.Empty;
-                    config.Save();
-                }
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Delete this profile of yours.");
-        }
-
-        if (!string.IsNullOrEmpty(warProfileNote))
-            ImGui.TextDisabled(warProfileNote);
-        else if (recipe != null && !string.IsNullOrWhiteSpace(recipe.Description))
-            ImGui.TextDisabled(recipe.Description);
-
-        // Who joins from the map, on either side.
-        var creatures = config.EnableMapEnemySensing ? 1 : 0;
-        ImGui.SetNextItemWidth(200);
-        if (ImGui.Combo("Map creatures##warMapCreatures", ref creatures, WarMapCreatureNames, WarMapCreatureNames.Length))
-        {
-            config.EnableMapEnemySensing = creatures == 1;
-            config.Save();
-        }
-        HelpMarker("Real creatures of the map near your side join the opponents.");
-
-        ImGui.SameLine();
-        var players = config.EnableMapPlayerEnemySensing
-            ? (config.SensePartyMembers ? 3 : 2)
-            : (config.SensePartyMembers ? 1 : 0);
-        ImGui.SetNextItemWidth(200);
-        if (ImGui.Combo("Map players##warMapPlayers", ref players, WarMapPlayerNames, WarMapPlayerNames.Length))
-        {
-            config.SensePartyMembers = players is 1 or 3;
-            config.EnableMapPlayerEnemySensing = players is 2 or 3;
-            if (config.SensePartyMembers)
-                config.EnableCombatCompanions = true;
-            config.Save();
-        }
-        HelpMarker("Other players in sight are copied into the battle (only you see it): at your side, against you, or split between both.\n" +
-                   "These apply to a battle you put together here; a profile brings its own.");
-
-        if (config.EnableMapEnemySensing || config.EnableMapPlayerEnemySensing)
-        {
-            var range = Math.Clamp(config.MapEnemySenseRange, 1.0f, 80.0f);
-            ImGui.SetNextItemWidth(200);
-            if (ImGui.SliderFloat("Joins within##warMapRange", ref range, 1.0f, 80.0f, "%.0f yalms"))
-            {
-                config.MapEnemySenseRange = range;
-                config.Save();
-            }
-            HelpMarker("A creature or player of the map joins the opponents when it is this close to anyone on your side.");
-
-            ImGui.SameLine();
-            var maxMapEnemies = Math.Clamp(config.MapEnemyMaxCount, 0, 100);
-            ImGui.SetNextItemWidth(120);
-            if (ImGui.SliderInt("At most##warMapMax", ref maxMapEnemies, 0, 100))
-            {
-                config.MapEnemyMaxCount = maxMapEnemies;
-                config.Save();
-            }
-        }
-    }
-
     private static readonly string[] WarFallenRuleNames = { "Stay down", "Spring and Autumn", "Warring States" };
     private string warCaptiveEmoteFilter = string.Empty;
 
     /// <summary>What becomes of your side's fallen: hostages, and who may be raised.</summary>
     private void DrawWarRules()
     {
-        ImGui.Spacing();
-        if (!ImGui.CollapsingHeader("Battle Rules##warRules"))
-            return;
-        ImGui.Indent();
-
-        var captives = config.WarCaptives;
-        if (ImGui.Checkbox("Hostages##warCaptives", ref captives))
+        WarCard("Hostages", () =>
         {
-            config.WarCaptives = captives;
-            config.Save();
-        }
-        HelpMarker("Your side only. A blow that would fell you or an ally leaves them at 1 HP instead, taken captive: " +
-                   "they hold the emote chosen here and cannot move or act.\n" +
-                   "An enemy with nobody else left to fight walks over, stands over the captive a moment and executes them: " +
-                   "the body drops at once.\nWinning the battle frees every captive.");
-
-        if (captives)
-        {
-            ImGui.SameLine();
-            DrawWarCaptiveEmotePicker();
-        }
-
-        var rule = Math.Clamp(config.WarFallenRule, 0, WarFallenRuleNames.Length - 1);
-        ImGui.SetNextItemWidth(200);
-        if (ImGui.Combo("The fallen##warFallen", ref rule, WarFallenRuleNames, WarFallenRuleNames.Length))
-        {
-            config.WarFallenRule = rule;
-            config.Save();
-        }
-        HelpMarker("Stay down: the fallen of your side stay down.\n\n" +
-                   "Spring and Autumn: an ally runs to a fallen or captive friend (you first) and kneels there " +
-                   $"for {CombatCompanionManager.RaiseSeconds:0} seconds to raise or free them; while at it, that ally takes " +
-                   $"{CombatCompanionManager.RaiserDamageScale:0} times the damage. Killing it first stops the raise.\n\n" +
-                   "Warring States: you are the lord, and nobody is raised, you included. When you fall, your allies are taken captive " +
-                   "to be executed; or, with Retreat, one prays over your body while the others guard it.");
-
-        if (rule == (int)WarFallenRule.WarringStates)
-        {
-            var retreat = config.WarRetreat;
-            if (ImGui.Checkbox("Retreat##warRetreat", ref retreat))
+            var captives = config.WarCaptives;
+            if (ImGui.Checkbox("Take the fallen hostage##warCaptives", ref captives))
             {
-                config.WarRetreat = retreat;
+                config.WarCaptives = captives;
                 config.Save();
             }
-            HelpMarker("When you fall, one ally goes to stand before your body and prays: it cannot raise you or fight, " +
-                       "and takes 4 times the damage. If it falls, the next ally takes its place. The others guard it.\n" +
-                       "Drive the enemy off to the last and the body is recovered. If an enemy reaches the body, " +
-                       "it carries it off (Enemy Control's grab, with its current settings) and the battle is lost.");
-        }
+            HelpMarker("Your side only. A blow that would fell you or an ally leaves them at 1 HP instead, taken captive: " +
+                       "they hold the emote chosen here and cannot move or act.\n" +
+                       "An enemy with nobody else left to fight walks over, stands over the captive a moment and executes them: " +
+                       "the body drops at once.\nWinning the battle frees every captive.");
 
-        ImGui.Unindent();
+            using (ImRaii.Disabled(!captives))
+            {
+                WarLabel("Captive emote");
+                DrawWarCaptiveEmotePicker();
+            }
+        });
+
+        WarCard("The fallen", () =>
+        {
+            var rule = Math.Clamp(config.WarFallenRule, 0, WarFallenRuleNames.Length - 1);
+            ImGui.SetNextItemWidth(MathF.Min(260f, ImGui.GetContentRegionAvail().X - WarCardPad - 30f));
+            if (ImGui.Combo("##warFallen", ref rule, WarFallenRuleNames, WarFallenRuleNames.Length))
+            {
+                config.WarFallenRule = rule;
+                config.Save();
+            }
+            HelpMarker("Stay down: the fallen of your side stay down.\n\n" +
+                       "Spring and Autumn: an ally runs to a fallen or captive friend (you first) and kneels there " +
+                       $"for {CombatCompanionManager.RaiseSeconds:0} seconds to raise or free them; while at it, that ally takes " +
+                       $"{CombatCompanionManager.RaiserDamageScale:0} times the damage. Killing it first stops the raise.\n\n" +
+                       "Warring States: you are the lord, and nobody is raised, you included. When you fall, your allies are taken captive " +
+                       "to be executed; or, with Retreat, one prays over your body while the others guard it.");
+
+            // The rule in one line, so the choice reads without opening the help.
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - WarCardPad);
+            ImGui.TextDisabled(rule switch
+            {
+                (int)WarFallenRule.SpringAndAutumn => "Allies raise the fallen and free captives.",
+                (int)WarFallenRule.WarringStates => "You are the lord: nobody is raised.",
+                _ => "The fallen stay down.",
+            });
+            ImGui.PopTextWrapPos();
+
+            if (rule == (int)WarFallenRule.WarringStates)
+            {
+                var retreat = config.WarRetreat;
+                if (ImGui.Checkbox("Retreat##warRetreat", ref retreat))
+                {
+                    config.WarRetreat = retreat;
+                    config.Save();
+                }
+                HelpMarker("When you fall, one ally goes to stand before your body and prays: it cannot raise you or fight, " +
+                           "and takes 4 times the damage. If it falls, the next ally takes its place. The others guard it.\n" +
+                           "Drive the enemy off to the last and the body is recovered. If an enemy reaches the body, " +
+                           "it carries it off (Enemy Control's grab, with its current settings) and the battle is lost.");
+            }
+        });
     }
 
     private void DrawWarCaptiveEmotePicker()
@@ -1744,7 +1955,7 @@ public partial class MainWindow : IDisposable
         var idx = Array.IndexOf(ids, config.WarCaptiveEmoteId);
         var preview = idx > 0 ? names[idx] : "Kneel";
 
-        ImGui.SetNextItemWidth(200);
+        ImGui.SetNextItemWidth(MathF.Min(260f, ImGui.GetContentRegionAvail().X - WarCardPad));
         if (ImGui.BeginCombo("##warCaptiveEmote", preview))
         {
             ImGui.SetNextItemWidth(-1);
@@ -1770,50 +1981,10 @@ public partial class MainWindow : IDisposable
     private static readonly string[] WarMapCreatureNames = { "Stay out", "Join the opponents" };
     private static readonly string[] WarMapPlayerNames = { "Stay out", "Join my side", "Join the opponents", "Split between sides" };
 
-    /// <summary>The allies on the field, with HP bars and a way to send each away.</summary>
-    private void DrawWarAllies()
-    {
-        var allies = companionManager.Companions;
-        if (allies.Count == 0)
-            return;
-
-        ImGui.Separator();
-        ImGui.TextDisabled("Allies:");
-        CombatCompanion? dismissed = null;
-        for (int i = allies.Count - 1; i >= 0; i--)
-        {
-            var ally = allies[i];
-            ImGui.PushID($"ally_{i}");
-            if (ally.State.MaxHp > 0)
-            {
-                float hp = (float)ally.State.CurrentHp / ally.State.MaxHp;
-                var hpColor = !ally.IsAlive ? new Vector4(0.4f, 0.4f, 0.4f, 1) : new Vector4(0.25f, 0.55f, 0.95f, 1);
-                ImGui.PushStyleColor(ImGuiCol.PlotHistogram, hpColor);
-                float hpBarWidth = (ImGui.GetContentRegionAvail().X - 120) * 0.75f;
-                ImGui.ProgressBar(hp, new Vector2(hpBarWidth, 0), $"{ally.State.CurrentHp:N0}/{ally.State.MaxHp:N0}");
-                ImGui.PopStyleColor();
-                ImGui.SameLine();
-            }
-
-            ImGui.Text(ally.Name);
-            ImGui.SameLine(ImGui.GetContentRegionAvail().X - 55);
-            if (ImGui.SmallButton("Despawn"))
-                dismissed = ally;
-            ImGui.PopID();
-        }
-
-        if (dismissed != null)
-            companionManager.DespawnCompanion(dismissed);
-
-        if (allies.Count > 1 && ImGui.SmallButton("Despawn All##warAllies"))
-            companionManager.DespawnAll();
-    }
-
     private static readonly string[] VirtualEnemyLookAtBones = { "j_kao", "j_kubi", "j_sebo_c" };
 
     private void DrawVirtualEnemyLookAtSection()
     {
-        ImGui.Separator();
         var lookAt = config.VirtualEnemyLookAtTarget;
         if (ImGui.Checkbox("Look at target##veLookAt", ref lookAt))
         {
