@@ -16,6 +16,13 @@ public sealed partial class CombatSimulatorPlugin
     private int frameCostGameFrames;
     private float frameCostSlowestFrame;
 
+    private void OnFrameworkUpdateTimed(Dalamud.Plugin.Services.IFramework fw)
+    {
+        var start = System.Diagnostics.Stopwatch.GetTimestamp();
+        OnFrameworkUpdate(fw);
+        Core.FrameCostMeter.Add("Plugin.FrameworkUpdate", System.Diagnostics.Stopwatch.GetTimestamp() - start);
+    }
+
     private void NoteFrameCost(float frameSeconds)
     {
         frameCostWindow += frameSeconds;
@@ -37,8 +44,11 @@ public sealed partial class CombatSimulatorPlugin
                 $"ragdolls {ragdoll.TotalMs / frames:F2} ms (tracking characters {ragdoll.CollidersMs / frames:F2}, " +
                 $"physics {ragdoll.PhysicsMs / frames:F2}), feet on corpses {feetMs / frames:F2} ms, " +
                 $"{(double)ragdoll.SteppedFrames / frames:F1} ragdolls stepping, " +
-                $"{(double)ragdoll.TrackedColliders / frames:F0} character collision sets tracked");
+                $"{(double)ragdoll.TrackedColliders / frames:F0} character collision sets tracked | costliest per frame (ms): " +
+                Core.FrameCostMeter.TakeTop(8, frames));
         }
+        else
+            Core.FrameCostMeter.TakeTop(0, frames);
 
         frameCostWindow = 0f;
         frameCostGameFrames = 0;

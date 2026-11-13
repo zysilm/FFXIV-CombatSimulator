@@ -626,7 +626,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         pluginInterface.UiBuilder.Draw += OnDraw;
         pluginInterface.UiBuilder.OpenMainUi += OnOpenMainUi;
         pluginInterface.UiBuilder.OpenConfigUi += OnOpenConfig;
-        framework.Update += OnFrameworkUpdate;
+        framework.Update += OnFrameworkUpdateTimed;
         clientState.TerritoryChanged += OnTerritoryChanged;
 
         log.Info("Combat Simulator loaded. [virtual-enemies: humanoid clone-from-player bootstrap]");
@@ -636,7 +636,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     {
         DisposePrivateDirectors();
         Animation.BodyTypeAnimationFallback.Shutdown();
-        framework.Update -= OnFrameworkUpdate;
+        framework.Update -= OnFrameworkUpdateTimed;
         clientState.TerritoryChanged -= OnTerritoryChanged;
         pluginInterface.UiBuilder.Draw -= OnDraw;
         pluginInterface.UiBuilder.OpenMainUi -= OnOpenMainUi;

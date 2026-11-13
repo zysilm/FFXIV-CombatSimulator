@@ -55,7 +55,7 @@ public unsafe class BoneTransformService : IDisposable
     {
         try
         {
-            OnRenderFrame?.Invoke();
+            Core.FrameCostMeter.InvokeTimed(OnRenderFrame);
         }
         catch (Exception ex)
         {
@@ -64,7 +64,7 @@ public unsafe class BoneTransformService : IDisposable
 
         try
         {
-            OnFinalPoseModifiers?.Invoke();
+            Core.FrameCostMeter.InvokeTimed(OnFinalPoseModifiers);
         }
         catch (Exception ex)
         {
@@ -73,7 +73,7 @@ public unsafe class BoneTransformService : IDisposable
 
         try
         {
-            OnPosePrepared?.Invoke();
+            Core.FrameCostMeter.InvokeTimed(OnPosePrepared);
         }
         catch (Exception ex)
         {
