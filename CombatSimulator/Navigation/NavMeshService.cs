@@ -63,6 +63,8 @@ public sealed class NavMeshService : IDisposable
     public Vector3 Center { get; private set; }
     public bool IsBuilding => building != null;
     public string Status { get; private set; } = "no navigation mesh";
+    /// <summary>Where the input of each build is written for offline study; null: not written.</summary>
+    public string? DumpPath { get; set; }
     public bool ShowDebug { get; set; }
 
     // Rebuilt around the player once they are this far from where it was built; a failed build is not
@@ -115,7 +117,15 @@ public sealed class NavMeshService : IDisposable
         var token = cancel.Token;
         var threads = Math.Max(1, Environment.ProcessorCount / 2);
         buildClock = Stopwatch.StartNew();
-        building = Task.Run(() => NavMeshBuild.Build(triangles, new NavMeshBuild.Settings(), token, threads), token);
+        var dumpPath = DumpPath;
+        var dumpCenter = center;
+        building = Task.Run(() =>
+        {
+            // The input of the last build, kept for offline study (Tests/Navigation reads it).
+            if (dumpPath != null)
+                NavMeshBuild.SaveTriangles(dumpPath, triangles, dumpCenter);
+            return NavMeshBuild.Build(triangles, new NavMeshBuild.Settings(), token, threads);
+        }, token);
         Status = $"building from {buildingTriangles:N0} collision triangles...";
         log.Info($"NavMesh: collected {buildingTriangles:N0} triangles in {collectMs} ms around {center}; building on {threads} threads.");
     }
@@ -152,7 +162,9 @@ public sealed class NavMeshService : IDisposable
                 Center = buildingCenter;
                 var tiles = CountTiles(built, out var polys);
                 // Only what can be walked to from where the player stood when it was built.
-                var cut = TryFloor(buildingCenter, 2.5f, out _, out var seed) ? NavMeshBuild.MarkUnreachable(built, seed) : 0;
+                var seeded = TryFloor(buildingCenter, 2.5f, out var seedPos, out var seed);
+                log.Info($"NavMesh: links {NavMeshBuild.DescribeLinks(built)}; seed {(seeded ? $"poly {seed} at {seedPos}" : "none under the player")}");
+                var cut = seeded ? NavMeshBuild.MarkUnreachable(built, seed) : 0;
                 Status = $"ready: {tiles} tiles, {polys:N0} polygons ({cut:N0} out of reach), built in {buildClock.ElapsedMilliseconds / 1000.0:F1} s";
                 log.Info($"NavMesh: {Status} from {buildingTriangles:N0} triangles.");
                 debugTimer = 0f;

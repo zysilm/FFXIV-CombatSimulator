@@ -188,6 +188,60 @@ public static class NavMeshBuild
         return DtNavMeshBuilder.CreateNavMeshData(option);
     }
 
+    /// <summary>How the mesh is linked: within tiles, across tile borders, and polygons with no link at all.</summary>
+    public static string DescribeLinks(DtNavMesh nav)
+    {
+        int inner = 0, across = 0, polys = 0, lonely = 0;
+        for (var i = 0; i < nav.GetMaxTiles(); i++)
+        {
+            var tile = nav.GetTile(i);
+            if (tile?.data?.header == null)
+                continue;
+            var baseRef = nav.GetPolyRefBase(tile);
+            for (var p = 0; p < tile.data.header.polyCount; p++)
+            {
+                polys++;
+                var poly = tile.data.polys[p];
+                var any = false;
+                for (var link = poly.firstLink; link != DtDetour.DT_NULL_LINK; link = tile.links[link].next)
+                {
+                    any = true;
+                    var other = tile.links[link].refs;
+                    nav.GetTileAndPolyByRefUnsafe(other, out var otherTile, out _);
+                    if (ReferenceEquals(otherTile, tile)) inner++; else across++;
+                }
+                if (!any) lonely++;
+            }
+        }
+        return $"{polys} polygons, {inner} links within tiles, {across} across tile borders, {lonely} polygons with no link";
+    }
+
+    /// <summary>Write triangles (three world positions each) and the build centre to a binary file.</summary>
+    public static void SaveTriangles(string path, IReadOnlyList<Vector3> vertices, Vector3 center)
+    {
+        try
+        {
+            using var writer = new System.IO.BinaryWriter(System.IO.File.Create(path));
+            writer.Write(center.X); writer.Write(center.Y); writer.Write(center.Z);
+            writer.Write(vertices.Count);
+            foreach (var v in vertices) { writer.Write(v.X); writer.Write(v.Y); writer.Write(v.Z); }
+        }
+        catch
+        {
+            // Study material only.
+        }
+    }
+
+    public static List<Vector3> LoadTriangles(string path, out Vector3 center)
+    {
+        using var reader = new System.IO.BinaryReader(System.IO.File.OpenRead(path));
+        center = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+        var count = reader.ReadInt32();
+        var list = new List<Vector3>(count);
+        for (var i = 0; i < count; i++) list.Add(new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()));
+        return list;
+    }
+
     public static RcVec3f ToRc(Vector3 v) => new(v.X, v.Y, v.Z);
     public static Vector3 ToVector(RcVec3f v) => new(v.X, v.Y, v.Z);
 }

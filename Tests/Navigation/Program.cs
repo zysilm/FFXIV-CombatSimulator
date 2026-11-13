@@ -11,6 +11,24 @@ using DotRecast.Detour.Crowd;
 
 static void Check(bool condition, string reason) { if (!condition) throw new Exception(reason); }
 
+// Study mode: rebuild the mesh from an input saved in game (navmesh-last-input.bin in the plugin's
+// configuration folder) and report how it is connected.
+if (args.Length > 0 && args[0].EndsWith(".bin", StringComparison.OrdinalIgnoreCase))
+{
+    var input = NavMeshBuild.LoadTriangles(args[0], out var center);
+    var studyClock = Stopwatch.StartNew();
+    var studied = NavMeshBuild.Build(input, new NavMeshBuild.Settings(), threads: Environment.ProcessorCount);
+    Console.WriteLine($"{input.Count / 3:N0} triangles around {center}; built in {studyClock.ElapsedMilliseconds} ms");
+    if (studied == null) { Console.WriteLine("nothing walkable"); return 1; }
+    Console.WriteLine("links: " + NavMeshBuild.DescribeLinks(studied));
+    var studyQuery = new DtNavMeshQuery(studied);
+    studyQuery.FindNearestPoly(NavMeshBuild.ToRc(center), new RcVec3f(1.5f, 2.5f, 1.5f), new DtQueryDefaultFilter(), out var seedRef, out var seedPt, out _);
+    Console.WriteLine($"seed under the build centre: {seedRef} at {NavMeshBuild.ToVector(seedPt)}");
+    var cutOff = NavMeshBuild.MarkUnreachable(studied, seedRef);
+    Console.WriteLine($"cut off from the seed: {cutOff}");
+    return 0;
+}
+
 var tris = new List<Vector3>();
 void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d) { tris.AddRange(new[] { a, b, c, a, c, d }); }
 void Box(Vector3 min, Vector3 max)
