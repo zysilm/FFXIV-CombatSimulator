@@ -1303,6 +1303,9 @@ public unsafe partial class EnemyControlController : IDisposable
         prevAttackKeyDown = down;
     }
 
+    /// <summary>Whether the controlled enemy's grab holds the body now.</summary>
+    public bool IsHoldingGrab => grabAttackActive;
+
     /// <summary>Attack input starts/releases the configured grab pairs.</summary>
     public void OnAttackInput()
     {

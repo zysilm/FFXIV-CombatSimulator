@@ -208,7 +208,12 @@ public unsafe partial class CombatCompanionManager
     /// <paramref name=radius/> of the lord's body: while one does, nobody can carry it off.
     /// </summary>
     public bool LordBodyContested(Vector3 body, float radius, out string? nearestGuard, out float nearestDistance)
+        => RetainersAtBody(body, radius, out nearestGuard, out nearestDistance) > 0;
+
+    /// <summary>How many retainers who can still fight for it stand within <paramref name="radius"/> of the lord's body.</summary>
+    public int RetainersAtBody(Vector3 body, float radius, out string? nearestGuard, out float nearestDistance)
     {
+        var count = 0;
         nearestGuard = null;
         nearestDistance = float.MaxValue;
         foreach (var companion in companions)
@@ -221,8 +226,10 @@ public unsafe partial class CombatCompanionManager
                 nearestDistance = d;
                 nearestGuard = companion.Name;
             }
+            if (d <= radius)
+                count++;
         }
-        return nearestDistance <= radius;
+        return count;
     }
 
     /// <summary>

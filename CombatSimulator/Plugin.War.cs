@@ -35,6 +35,12 @@ public sealed unsafe partial class CombatSimulatorPlugin
     private const float SeizerKeepDistance = 10f;
     private const float SeizerWakeRange = 40f;
     private float seizerReviewTimer;
+    // The grab on the seized body is tried again until it holds (it cannot while the lord's ragdoll is
+    // still waiting to start, or a hand finds no bone yet).
+    private const float GrabRetryInterval = 0.4f;
+    private const float GrabRetrySeconds = 8f;
+    private float grabRetryTimer;
+    private float grabRetryLeft;
 
     private readonly WarBanner warBanner = new();
     private float seizeProgress;
@@ -74,6 +80,7 @@ public sealed unsafe partial class CombatSimulatorPlugin
     private void ResetWar()
     {
         seizeProgress = 0f;
+        grabRetryLeft = 0f;
         ReleaseSeizers();
         bodySeized = false;
         outcomeShown = false;
@@ -97,6 +104,7 @@ public sealed unsafe partial class CombatSimulatorPlugin
 
     private void TickWar(float deltaTime)
     {
+        TickGrabRetry(deltaTime);
         if (!LordBodyAtStake || outcomeShown)
         {
             if (bodySeizers.Count > 0)
@@ -173,9 +181,18 @@ public sealed unsafe partial class CombatSimulatorPlugin
             companionManager.LordSeizers.Add(npc.SimulatedEntityId);
         }
 
-        // While a retainer stands over the body, nobody can carry it off.
-        var contested = companionManager.LordBodyContested(body, Companions.CombatCompanionManager.LordContestRadius,
-            out var guardName, out var guardDistance);
+        // The body is held while the retainers standing over it are at least as many as the seizers
+        // there: outnumber them and it can be taken, without first cutting down every last guard.
+        var radius = Companions.CombatCompanionManager.LordContestRadius;
+        var guardsAtBody = companionManager.RetainersAtBody(body, radius, out var guardName, out var guardDistance);
+        var seizersAtBody = 0;
+        foreach (var npc in bodySeizers)
+        {
+            var at = (Vector3)((GameObject*)npc.BattleChara)->Position;
+            if (new Vector2(at.X - body.X, at.Z - body.Z).Length() - npc.HitboxRadius <= radius)
+                seizersAtBody++;
+        }
+        var contested = guardsAtBody > 0 && guardsAtBody >= seizersAtBody;
         foreach (var npc in bodySeizers)
             npc.SeizeHeld = contested;
         if (contested != bodyContested)
@@ -202,13 +219,19 @@ public sealed unsafe partial class CombatSimulatorPlugin
         seizeProgress = atBody && !contested
             ? seizeProgress + deltaTime
             : MathF.Max(0f, seizeProgress - deltaTime * SeizeDrainRate);
+        // The body is taken in hand: not before the lord's ragdoll is there to be held.
+        var bodyReady = !config.EnableRagdoll || ragdollController.IsActive;
+        if (!bodyReady)
+            seizeProgress = MathF.Min(seizeProgress, SeizeSeconds * 0.95f);
 
         seizeReportTimer -= deltaTime;
         if (seizeReportTimer <= 0f)
         {
             seizeReportTimer = SeizeReportSeconds;
             log.Info($"War: lord's body at {body:F1}; {bodySeizers.Count} going for it, the closest {(closest == null ? "none" : $"{closest.Name} {closestGap:F1} m from it")}; " +
-                     (contested ? $"held off by {guardName} {guardDistance:F1} m from it" : guardName == null ? "no retainer left" : $"nearest retainer {guardName} {guardDistance:F1} m away") +
+                     $"{seizersAtBody} seizers and {guardsAtBody} retainers within {radius:0.#} m; " +
+                     (contested ? $"held off, nearest retainer {guardName} {guardDistance:F1} m from it" : guardName == null ? "no retainer left" : $"not held, nearest retainer {guardName} {guardDistance:F1} m away") +
+                     (bodyReady ? "" : "; body not yet fallen (ragdoll waiting)") +
                      $"; seized {seizeProgress / SeizeSeconds:P0}.");
         }
 
@@ -243,8 +266,37 @@ public sealed unsafe partial class CombatSimulatorPlugin
         {
             enemyControlController.ControlKiller(npc);
             if (enemyControlController.IsActive)
+            {
                 enemyControlController.OnAttackInput();
+                if (!enemyControlController.IsHoldingGrab)
+                {
+                    grabRetryLeft = GrabRetrySeconds;
+                    grabRetryTimer = GrabRetryInterval;
+                }
+            }
         }
+    }
+
+    /// <summary>A grab on the seized body that did not take is tried again for a few seconds.</summary>
+    private void TickGrabRetry(float deltaTime)
+    {
+        if (grabRetryLeft <= 0f)
+            return;
+        if (!enemyControlController.IsActive || enemyControlController.IsHoldingGrab)
+        {
+            if (enemyControlController.IsHoldingGrab)
+                log.Info("War: the seizer has the lord's body in hand.");
+            grabRetryLeft = 0f;
+            return;
+        }
+        grabRetryLeft -= deltaTime;
+        grabRetryTimer -= deltaTime;
+        if (grabRetryTimer > 0f)
+            return;
+        grabRetryTimer = GrabRetryInterval;
+        enemyControlController.OnAttackInput();
+        if (grabRetryLeft <= 0f && !enemyControlController.IsHoldingGrab)
+            log.Warning("War: the seizer could not take hold of the lord's body.");
     }
 
     private void DrawWar() => warBanner.Draw();
