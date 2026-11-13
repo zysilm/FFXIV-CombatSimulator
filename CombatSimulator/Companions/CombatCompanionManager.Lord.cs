@@ -4,6 +4,7 @@
 
 using System;
 using System.Numerics;
+using CombatSimulator.Animation;
 using CombatSimulator.Simulation;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
@@ -24,6 +25,7 @@ public unsafe partial class CombatCompanionManager
 
     private uint prayerId;
     private bool prayerAtPost;
+    private ushort prayerLoop;
     private bool lordFallHandled;
 
     private bool WarringStates => config.WarFallenRule == (int)WarFallenRule.WarringStates;
@@ -138,8 +140,11 @@ public unsafe partial class CombatCompanionManager
         if (!prayerAtPost)
         {
             prayerAtPost = true;
-            animationController.PlayEmoteOn((Character*)companion.BattleChara, PrayEmoteId);
+            prayerLoop = animationController.PlayEmoteOn((Character*)companion.BattleChara, PrayEmoteId)
+                ? animationController.EmoteLoopTimeline(PrayEmoteId)
+                : (ushort)0;
         }
+        AnimationController.HoldEmoteLoop((Character*)companion.BattleChara, prayerLoop);
         return true;
     }
 

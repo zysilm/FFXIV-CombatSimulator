@@ -5,6 +5,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using CombatSimulator.Animation;
 using CombatSimulator.Simulation;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
@@ -30,6 +31,8 @@ public unsafe partial class CombatCompanionManager
     private const float FreedHpShare = 0.25f;
     // The kneel the one raising holds while at it.
     private const uint RaiseEmoteId = 19;
+    // Raise: the game's own resurrection spell, for its effect when a raise lands.
+    private const uint RaiseActionId = 125;
 
     private sealed class Rescue
     {
@@ -37,6 +40,7 @@ public unsafe partial class CombatCompanionManager
         public uint RescuerId;
         public float Progress;
         public bool Channelling;
+        public ushort Loop;
     }
 
     // Patient id -> the companion raising or freeing them.
@@ -171,16 +175,22 @@ public unsafe partial class CombatCompanionManager
         {
             rescue.Channelling = true;
             companion.State.IncomingDamageScale = RaiserDamageScale;
-            animationController.PlayEmoteOn((Character*)companion.BattleChara, RaiseEmoteId);
+            rescue.Loop = animationController.PlayEmoteOn((Character*)companion.BattleChara, RaiseEmoteId)
+                ? animationController.EmoteLoopTimeline(RaiseEmoteId)
+                : (ushort)0;
             combatEngine.AddLogEntry(patient.IsCaptive
                     ? $"{companion.Name} is freeing {patient.Name}..."
                     : $"{companion.Name} is raising {patient.Name}...",
                 CombatLogType.Info);
         }
 
+        AnimationController.HoldEmoteLoop((Character*)companion.BattleChara, rescue.Loop);
         rescue.Progress += deltaTime;
         if (rescue.Progress < RaiseSeconds)
             return true;
+
+        // The raise lands: the spell's own effect, from the one kneeling onto the one raised.
+        combatEngine.PlaySupportVfx(companion.State, patient, RaiseActionId);
 
         if (patient.IsCaptive && patient.IsAlive)
             FreeFriend(patient, companion);
@@ -293,9 +303,13 @@ public unsafe partial class CombatCompanionManager
         companion.AiState = CompanionAiState.Captive;
         if (!companion.CaptiveEmotePlayed && companion.BattleChara != null)
         {
-            animationController.PlayEmoteOn((Character*)companion.BattleChara, config.WarCaptiveEmoteId);
+            companion.CaptiveLoop = animationController.PlayEmoteOn((Character*)companion.BattleChara, config.WarCaptiveEmoteId)
+                ? animationController.EmoteLoopTimeline(config.WarCaptiveEmoteId)
+                : (ushort)0;
             companion.CaptiveEmotePlayed = true;
         }
+        if (companion.BattleChara != null)
+            AnimationController.HoldEmoteLoop((Character*)companion.BattleChara, companion.CaptiveLoop);
         return true;
     }
 

@@ -353,6 +353,28 @@ public partial class CombatEngine : IDisposable
         return State.SimulationTime - since >= ExecutionWindupSeconds;
     }
 
+    /// <summary>
+    /// The visual effect of a support spell (a raise) from one actor onto another: no animation, no
+    /// damage, only the spell's own cast and landing effects.
+    /// </summary>
+    public void PlaySupportVfx(SimulatedEntityState source, SimulatedEntityState target, uint actionId)
+    {
+        try
+        {
+            var data = actionDataProvider.GetActionData(actionId);
+            if (data == null)
+                return;
+            var hits = new List<AppliedActionDamage> { new(target, new DamageResult()) };
+            animationController.PlayActionVfx(BuildActionEffectRequest(source, CloneActionData(data), hits));
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"Failed to play the effect of action {actionId}.");
+        }
+    }
+
+    private ushort playerCaptiveLoop;
+
     /// <summary>One of the player's side has been taken captive.</summary>
     public Action<SimulatedEntityState>? OnCaptured { get; set; }
 
@@ -380,7 +402,9 @@ public partial class CombatEngine : IDisposable
             {
                 var player = Core.Services.ObjectTable.LocalPlayer;
                 if (player != null && player.Address != nint.Zero)
-                    animationController.PlayEmoteOn((Character*)player.Address, config.WarCaptiveEmoteId);
+                    playerCaptiveLoop = animationController.PlayEmoteOn((Character*)player.Address, config.WarCaptiveEmoteId)
+                        ? animationController.EmoteLoopTimeline(config.WarCaptiveEmoteId)
+                        : (ushort)0;
             }
         }
 
@@ -451,6 +475,17 @@ public partial class CombatEngine : IDisposable
 
     public void Tick(float deltaTime)
     {
+        // A captive player keeps kneeling: the loop is reasserted every frame (see HoldEmoteLoop).
+        if (State.PlayerState.IsCaptive && State.PlayerState.IsAlive && playerCaptiveLoop != 0)
+        {
+            unsafe
+            {
+                var captivePlayer = Core.Services.ObjectTable.LocalPlayer;
+                if (captivePlayer != null && captivePlayer.Address != nint.Zero)
+                    AnimationController.HoldEmoteLoop((Character*)captivePlayer.Address, playerCaptiveLoop);
+            }
+        }
+
         if (!State.IsActive)
             return;
 

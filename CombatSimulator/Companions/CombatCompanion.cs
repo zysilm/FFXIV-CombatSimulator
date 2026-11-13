@@ -41,6 +41,8 @@ public unsafe class CombatCompanion
     public ActorVisualState VisualState { get; set; } = new();
     public bool DeathAnimationPlayed { get; set; }
     public bool CaptiveEmotePlayed { get; set; }
+    /// <summary>The loop the companion holds while captive (0: none to hold).</summary>
+    public ushort CaptiveLoop { get; set; }
     public ulong[]? OriginalEquipment { get; set; }
     public bool EquipmentVariantApplied { get; set; }
     public bool IsAlive => State.IsAlive;

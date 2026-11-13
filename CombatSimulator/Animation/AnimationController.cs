@@ -1996,6 +1996,28 @@ public unsafe class AnimationController : IDisposable
     /// Hold an emote (by its Emote sheet id) on any character, the player included: its intro, then
     /// its loop. False when the emote has no animation.
     /// </summary>
+    /// <summary>
+    /// Keep an emote's loop playing (its loop timeline, from <see cref="PlayEmoteOn"/>). The game and
+    /// the movement code reset the base timeline, so a held emote has to be reasserted every frame,
+    /// as the victory celebration and Enemy Control's grab do.
+    /// </summary>
+    public static void HoldEmoteLoop(Character* character, ushort loopTimeline)
+    {
+        if (character == null || loopTimeline == 0)
+            return;
+        if (character->Timeline.BaseOverride != loopTimeline)
+            character->Timeline.BaseOverride = loopTimeline;
+    }
+
+    /// <summary>The loop timeline of an emote (Emote sheet id), or 0 when it has none.</summary>
+    public ushort EmoteLoopTimeline(uint emoteId)
+    {
+        if (emoteId == 0)
+            return 0;
+        var row = dataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>().GetRowOrDefault(emoteId);
+        return row is { } emote ? (ushort)emote.ActionTimeline[0].RowId : (ushort)0;
+    }
+
     public bool PlayEmoteOn(Character* character, uint emoteId)
     {
         if (character == null || emoteId == 0)
