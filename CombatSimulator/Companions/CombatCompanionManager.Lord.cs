@@ -28,8 +28,6 @@ public unsafe partial class CombatCompanionManager
     private const float LordGuardRange = 10f;
     private const float GuardRingRadius = 3f;
     public const float LordContestRadius = 3.5f;
-    private const float SeizerTargetBonus = 400f;
-    private const float NearBodyTargetBonus = 200f;
     private const float NearBodyTargetReach = 12f;
 
     /// <summary>Where the lord's body actually lies (the ragdoll, once it falls); null: where the lord died.</summary>
@@ -225,20 +223,6 @@ public unsafe partial class CombatCompanionManager
             }
         }
         return nearestDistance <= radius;
-    }
-
-    /// <summary>Guarding the body: the enemies going for it first, then those nearest it.</summary>
-    private float LordGuardScore(Npcs.SimulatedNpc enemy)
-    {
-        if (!GuardingLord || enemy.BattleChara == null || !TryGetLordBody(out var body, out _))
-            return 0f;
-        var distanceToBody = FlatDistance((Vector3)((GameObject*)enemy.BattleChara)->Position, body);
-        var score = 0f;
-        if (LordSeizers.Contains(enemy.SimulatedEntityId))
-            score += SeizerTargetBonus;
-        if (float.IsFinite(distanceToBody))
-            score += NearBodyTargetBonus * Math.Clamp(1f - distanceToBody / NearBodyTargetReach, 0f, 1f);
-        return score;
     }
 
     /// <summary>

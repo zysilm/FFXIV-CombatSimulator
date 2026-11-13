@@ -1030,6 +1030,7 @@ public partial class CombatEngine : IDisposable
         }
 
         LandDamage(target, damage);
+        OnHit?.Invoke(npc.State, target, damage.Damage);
         if (target.IsPlayer)
         {
             State.TotalDamageTaken += damage.Damage;
@@ -1205,6 +1206,9 @@ public partial class CombatEngine : IDisposable
         return result;
     }
 
+    /// <summary>A hit by someone on someone: (source, target, damage). Who fights whom is drawn from these.</summary>
+    public Action<SimulatedEntityState, SimulatedEntityState, int>? OnHit { get; set; }
+
     /// <summary>A hit has landed and taken HP: (target, the hit). Damage numbers are drawn from it.</summary>
     public Action<SimulatedEntityState, DamageResult>? OnDamageLanded { get; set; }
 
@@ -1235,6 +1239,7 @@ public partial class CombatEngine : IDisposable
 
             var damage = calculateDamage(target);
             LandDamage(target, damage);
+            OnHit?.Invoke(source, target, damage.Damage);
             hits.Add(new AppliedActionDamage(target, damage));
         }
 

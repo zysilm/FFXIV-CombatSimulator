@@ -342,6 +342,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.OnPlayerDamageDealt = companionManager.RegisterPlayerDamage;
         combatEngine.OnPlayerDamageDealtToTarget = companionManager.RegisterPlayerDamage;
         combatEngine.ForceNpcTarget = companionManager.ForceEnemyTarget;
+        combatEngine.OnHit = companionManager.RegisterHit;
         WireVictoryCelebration();
         spectatorController = new SpectatorController(
             npcSelector, movementBlockHook, animationController.EmotePlayer,

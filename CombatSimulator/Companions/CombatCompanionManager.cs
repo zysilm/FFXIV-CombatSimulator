@@ -39,12 +39,9 @@ public unsafe partial class CombatCompanionManager : IDisposable
     private readonly ConcurrentQueue<CompanionSpawnSource> spawnQueue = new();
     private readonly HashSet<int> allocatedIndices = new();
     private readonly Dictionary<uint, uint> enemyTargetByEnemyId = new();
-    // Enhanced tactics threat table: enemy id -> (attacker id -> decaying threat).
+    // Threat table of every fighter, both sides: victim id -> (attacker id -> decaying threat). Who
+    // fights whom is drawn from it (CombatCompanionManager.Aggro.cs).
     private readonly Dictionary<uint, Dictionary<uint, float>> threatByEnemy = new();
-    private const float ThreatScoreWeight = 150f;
-    // Wider than EnemyTargetSwitchThreshold so threat ties do not ping-pong an enemy between two
-    // attackers; together with EnemyTargetCurrentBonus this is the aggro hysteresis.
-    private const float ThreatSwitchThreshold = 60f;
     private uint nextEntityId = 0xF1000001;
 
 
@@ -69,41 +66,12 @@ public unsafe partial class CombatCompanionManager : IDisposable
     public const int MaxCompanionCap = 50;
 
     private const int MaxPendingFrames = 120;
-    private const float TargetRange = 3.0f;
     private const float RecentDpsWindowSeconds = 8.0f;
-    private const float RetargetDpsLead = 1.20f;
     private const float FollowDistance = 3.0f;
     private const float FollowStopDistance = 0.6f;
     private const float CombatAnchorRelocateDistance = 10.0f;
     private const float SenseInterval = 1.0f;
     private const float TargetSelectInterval = 0.25f;
-    private const float SelectedTargetBonus = 130f;
-    private const float LastPlayerTargetBonus = 95f;
-    private const float AttackingPlayerBonus = 120f;
-    private const float PreviousTargetBonus = 35f;
-    private const float LowHpFinishBonus = 35f;
-    private const float AssignmentPenalty = 95f;
-    private const float PlayerFocusOvercapPenalty = 160f;
-    private const float DistancePenaltyPerYalm = 1.0f;
-    private const float TargetSwitchThreshold = 20f;
-    private const int MaxPlayerFocusAssistants = 2;
-    private const float EnemyTargetAssignmentPenalty = 80f;
-    private const float EnemyTargetCurrentBonus = 50f;
-    private const float EnemyTargetDpsWeight = 0.25f;
-    private const float EnemyTargetSwitchThreshold = 25f;
-    private const int CompanionMeleePressureCap = 2;
-    private const int CompanionRangedPressureCap = 3;
-    private const int CompanionFocusPressureBonus = 1;
-    private const int EnemyMeleePressureCap = 3;
-    private const int EnemyRangedPressureCap = 2;
-    private const float TargetPressureOverCapPenalty = 260f;
-    private const int TargetGraphMaxPreferredDepth = 2;
-    private const float TargetGraphChainDepthPenalty = 75f;
-    private const float TargetGraphMutualPairBonus = 45f;
-    private const float TargetGraphPeelForPlayerBonus = 55f;
-    private const float TargetGraphBreakLongChainBonus = 30f;
-    private const float ReachabilitySoftPenaltyWeight = 55f;
-    private const float ReachabilityHardPenalty = 220f;
     private const float ReachabilityRecoveryDistance = 0.75f;
     private static readonly DrawDataContainer.EquipmentSlot[] AppearanceEquipmentSlots =
     {
@@ -332,8 +300,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         TickSensing(deltaTime);
         DecayThreat(deltaTime);
 
-        var assignedTargets = new Dictionary<uint, int>();
-        var companionPressure = new Dictionary<PressureKey, int>();
+        aggroEnemies = enemies;
         TickCombatAnchor(enemies);
         UpdateFocusTarget(enemies);
 
@@ -353,21 +320,12 @@ public unsafe partial class CombatCompanionManager : IDisposable
                 HasLiveEnemy(enemies, companion.CurrentTargetId);
             if (!hasLiveTarget || now >= companion.NextTargetSelectAt)
             {
-                AssignCompanionTarget(companion, enemies, assignedTargets, companionPressure);
-                // Stagger by entity id so companions don't all reselect on the same frame.
+                AssignCompanionTarget(companion, enemies);
+                // Stagger by entity id so companions don't all look on the same frame.
                 companion.NextTargetSelectAt = now + TargetSelectInterval + (companion.SimulatedEntityId % 8) * 0.02f;
-            }
-            else
-            {
-                // Still register the held target into the spread accumulators so the
-                // companions that DO reselect this frame see accurate crowding/pressure.
-                assignedTargets[companion.CurrentTargetId] = assignedTargets.GetValueOrDefault(companion.CurrentTargetId) + 1;
-                AddPressure(companionPressure, companion.CurrentTargetId, IsRangedStyle(companion.Behavior.AutoAttackStyle));
             }
         }
 
-        var enemyTargets = new Dictionary<uint, uint>();
-        var enemyPressure = new Dictionary<PressureKey, int>();
         foreach (var enemy in enemies)
         {
             if (!enemy.IsSpawned || !enemy.State.IsAlive)
@@ -375,13 +333,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
             // A sentry that has not noticed the party presses on nobody.
             if (enemy.IsSentry && enemy.AiState == Ai.NpcAiState.Idle)
                 continue;
-
-            var target = SelectEnemyTargetInternal(enemy, enemyPressure);
-            if (target != null)
-            {
-                enemyTargets[enemy.SimulatedEntityId] = target.EntityId;
-                AddPressure(enemyPressure, target.EntityId, IsRangedStyle(enemy.Behavior.AutoAttackStyle));
-            }
+            SelectEnemyTargetInternal(enemy);
         }
 
         TickRescues(deltaTime, enemies);
@@ -417,8 +369,9 @@ public unsafe partial class CombatCompanionManager : IDisposable
 
     private void AddThreat(uint enemyId, uint sourceId, int damage, bool isTank)
     {
-        if (!config.EnhancedEnemyTactics || enemyId == 0 || sourceId == 0 || damage <= 0)
+        if (enemyId == 0 || sourceId == 0 || damage <= 0)
             return;
+        NoteHit(enemyId, sourceId);
 
         if (!threatByEnemy.TryGetValue(enemyId, out var table))
             threatByEnemy[enemyId] = table = new Dictionary<uint, float>();
@@ -437,18 +390,6 @@ public unsafe partial class CombatCompanionManager : IDisposable
         }
     }
 
-    // Threat term for the enemy target score: the candidate's share of the top threat on this enemy.
-    private float ThreatScore(uint enemyId, uint candidateId)
-    {
-        if (!threatByEnemy.TryGetValue(enemyId, out var table) || table.Count == 0)
-            return 0f;
-
-        var max = 0f;
-        foreach (var value in table.Values)
-            max = MathF.Max(max, value);
-        return EnemyMovementMath.ThreatShare(table.GetValueOrDefault(candidateId), max) * ThreatScoreWeight;
-    }
-
     /// <summary>
     /// The enemy's current target as decided by <see cref="Tick"/>, which scores with the shared
     /// pressure map. Callers outside that pass (AI, look-at, engine) only read the decision: rescoring
@@ -462,7 +403,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
             ResolveTargetState(currentId) is { IsAlive: true } current)
             return current;
 
-        return SelectEnemyTargetInternal(enemy, null);
+        return SelectEnemyTargetInternal(enemy);
     }
 
     private SimulatedEntityState? ResolveTargetState(uint entityId)
@@ -480,9 +421,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         return null;
     }
 
-    private SimulatedEntityState? SelectEnemyTargetInternal(
-        SimulatedNpc enemy,
-        Dictionary<PressureKey, int>? pressureMap = null)
+    private SimulatedEntityState? SelectEnemyTargetInternal(SimulatedNpc enemy)
     {
         if (!config.EnableCombatCompanions)
             return combatEngine.State.PlayerState.IsAlive ? combatEngine.State.PlayerState : null;
@@ -508,182 +447,17 @@ public unsafe partial class CombatCompanionManager : IDisposable
         if (candidates.Exists(c => !c.State.IsCaptive))
             candidates.RemoveAll(c => c.State.IsCaptive);
 
-        // Going for the lord's body: whoever stands over it, not whoever the spreading would pick.
-        if (LordSeizerTarget(enemy) is { } holder)
-        {
-            enemyTargetByEnemyId[enemy.SimulatedEntityId] = holder.SimulatedEntityId;
-            return holder.State;
-        }
-
-        var validTargetIds = candidates.Select(c => c.EntityId).ToHashSet();
-        foreach (var kv in enemyTargetByEnemyId.ToList())
-        {
-            if (!validTargetIds.Contains(kv.Value))
-                enemyTargetByEnemyId.Remove(kv.Key);
-        }
-
-        if (!enemyTargetByEnemyId.TryGetValue(enemy.SimulatedEntityId, out var currentId))
-        {
-            var best = SelectBalancedEnemyTarget(enemy.SimulatedEntityId, 0, candidates, pressureMap, enemy.Behavior.AutoAttackStyle);
-            enemyTargetByEnemyId[enemy.SimulatedEntityId] = best.EntityId;
-            return best.State;
-        }
-
-        var current = candidates.FirstOrDefault(c => c.EntityId == currentId);
-        if (current.State == null)
-        {
-            var best = SelectBalancedEnemyTarget(enemy.SimulatedEntityId, 0, candidates, pressureMap, enemy.Behavior.AutoAttackStyle);
-            enemyTargetByEnemyId[enemy.SimulatedEntityId] = best.EntityId;
-            return best.State;
-        }
-
-        var balancedBest = SelectBalancedEnemyTarget(enemy.SimulatedEntityId, current.EntityId, candidates, pressureMap, enemy.Behavior.AutoAttackStyle);
-        var currentScore = ScoreEnemyTargetCandidate(enemy.SimulatedEntityId, current.EntityId, current, pressureMap, enemy.Behavior.AutoAttackStyle);
-        var bestScore = ScoreEnemyTargetCandidate(enemy.SimulatedEntityId, current.EntityId, balancedBest, pressureMap, enemy.Behavior.AutoAttackStyle);
-        var switchThreshold = config.EnhancedEnemyTactics ? ThreatSwitchThreshold : EnemyTargetSwitchThreshold;
-        if (balancedBest.EntityId != current.EntityId && bestScore > currentScore + switchThreshold)
-        {
-            enemyTargetByEnemyId[enemy.SimulatedEntityId] = balancedBest.EntityId;
-            return balancedBest.State;
-        }
-
-        return current.State;
+        return DrawEnemyTarget(enemy, candidates);
     }
-
-    private (uint EntityId, SimulatedEntityState State, float Dps) SelectBalancedEnemyTarget(
-        uint enemyId,
-        uint currentId,
-        IReadOnlyList<(uint EntityId, SimulatedEntityState State, float Dps)> candidates,
-        IReadOnlyDictionary<PressureKey, int>? pressureMap,
-        NpcAttackStyle attackStyle)
-        => candidates
-            .OrderByDescending(c => ScoreEnemyTargetCandidate(enemyId, currentId, c, pressureMap, attackStyle))
-            .ThenBy(c => StableTargetTieBreak(enemyId, c.EntityId))
-            .First();
-
-    private float ScoreEnemyTargetCandidate(
-        uint enemyId,
-        uint currentId,
-        (uint EntityId, SimulatedEntityState State, float Dps) candidate,
-        IReadOnlyDictionary<PressureKey, int>? pressureMap,
-        NpcAttackStyle attackStyle)
-    {
-        var assignedCount = enemyTargetByEnemyId
-            .Where(kv => kv.Key != enemyId)
-            .Count(kv => kv.Value == candidate.EntityId);
-
-        // Enhanced tactics: aggro follows threat (damage, tanks weighted up) instead of raw DPS.
-        var score = config.EnhancedEnemyTactics
-            ? ThreatScore(enemyId, candidate.EntityId)
-            : candidate.Dps * EnemyTargetDpsWeight;
-        score -= assignedCount * EnemyTargetAssignmentPenalty;
-        if (candidate.EntityId == currentId)
-            score += EnemyTargetCurrentBonus;
-        if (pressureMap != null)
-            score -= TargetPressurePenalty(
-                pressureMap,
-                candidate.EntityId,
-                IsRangedStyle(attackStyle),
-                EnemyMeleePressureCap,
-                EnemyRangedPressureCap);
-        score += TargetGraphScore(enemyId, candidate.EntityId);
-        return score;
-    }
-
-    private static uint StableTargetTieBreak(uint enemyId, uint targetId)
-        => (enemyId * 1103515245u + targetId * 2654435761u) & 0xFFFFu;
 
     private static bool IsRangedStyle(NpcAttackStyle style)
         => style is NpcAttackStyle.Ranged or NpcAttackStyle.Magic;
-
-    private static int PressureCount(IReadOnlyDictionary<PressureKey, int> map, uint targetId, bool ranged)
-        => map.GetValueOrDefault(new PressureKey(targetId, ranged));
-
-    private static void AddPressure(Dictionary<PressureKey, int> map, uint targetId, bool ranged)
-    {
-        var key = new PressureKey(targetId, ranged);
-        map[key] = map.GetValueOrDefault(key) + 1;
-    }
-
-    private static float TargetPressurePenalty(
-        IReadOnlyDictionary<PressureKey, int> map,
-        uint targetId,
-        bool ranged,
-        int meleeCap,
-        int rangedCap,
-        int extraCap = 0)
-    {
-        var cap = (ranged ? rangedCap : meleeCap) + extraCap;
-        var count = PressureCount(map, targetId, ranged);
-        return count >= cap ? (count - cap + 1) * TargetPressureOverCapPenalty : 0f;
-    }
-
-    private uint GraphTargetId(uint actorId, uint overrideActorId = 0, uint overrideTargetId = 0)
-    {
-        if (actorId == overrideActorId)
-            return overrideTargetId;
-
-        var companion = companions.FirstOrDefault(c => c.SimulatedEntityId == actorId);
-        if (companion is { IsSpawned: true } && companion.State.IsAlive)
-            return companion.CurrentTargetId;
-
-        return enemyTargetByEnemyId.GetValueOrDefault(actorId);
-    }
-
-    private int TargetChainDepth(uint fromId, uint toId)
-    {
-        var playerId = combatEngine.State.PlayerState.EntityId;
-        var depth = 1;
-        var seen = new HashSet<uint> { fromId };
-        var current = toId;
-
-        while (current != 0 && !seen.Contains(current))
-        {
-            seen.Add(current);
-            var next = GraphTargetId(current, fromId, toId);
-            if (next == 0 || next == playerId)
-                break;
-
-            depth++;
-            current = next;
-        }
-
-        return depth;
-    }
-
-    private float TargetGraphScore(uint actorId, uint candidateId)
-    {
-        var score = 0f;
-        var depth = TargetChainDepth(actorId, candidateId);
-        if (depth > TargetGraphMaxPreferredDepth)
-            score -= (depth - TargetGraphMaxPreferredDepth) * TargetGraphChainDepthPenalty;
-
-        if (GraphTargetId(candidateId) == actorId)
-            score += TargetGraphMutualPairBonus;
-
-        if (enemyTargetByEnemyId.ContainsKey(candidateId) &&
-            GraphTargetId(candidateId) == combatEngine.State.PlayerState.EntityId)
-            score += TargetGraphPeelForPlayerBonus;
-
-        var current = GraphTargetId(actorId);
-        if (current != 0)
-        {
-            var currentDepth = TargetChainDepth(actorId, current);
-            if (currentDepth > depth)
-                score += Math.Min(2, currentDepth - depth) * TargetGraphBreakLongChainBonus;
-        }
-
-        return score;
-    }
 
     public CombatCompanion? GetCompanion(uint entityId)
         => companions.FirstOrDefault(c => c.SimulatedEntityId == entityId);
 
     public nint? ResolveAddress(uint entityId)
         => GetCompanion(entityId)?.Address;
-
-    public uint GetEnemyTargetId(uint enemyId)
-        => enemyTargetByEnemyId.GetValueOrDefault(enemyId);
 
     public void ForceEnemyTarget(uint enemyId, uint targetId)
     {
@@ -701,6 +475,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
     {
         enemyTargetByEnemyId.Clear();
         threatByEnemy.Clear();
+        ClearAggro();
         playerRecentDamage = 0;
         playerRecentDps = 0;
         selectedFocusTargetId = 0;
@@ -764,6 +539,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         lordFallHandled = false;
         enemyTargetByEnemyId.Clear();
         threatByEnemy.Clear();
+        ClearAggro();
         playerRecentDamage = 0;
         playerRecentDps = 0;
         selectedFocusTargetId = 0;
@@ -1246,11 +1022,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         companion.CurrentTargetId = 0;
     }
 
-    private void AssignCompanionTarget(
-        CombatCompanion companion,
-        IReadOnlyList<SimulatedNpc> enemies,
-        Dictionary<uint, int> assignedTargets,
-        Dictionary<PressureKey, int> pressureMap)
+    private void AssignCompanionTarget(CombatCompanion companion, IReadOnlyList<SimulatedNpc> enemies)
     {
         if (!companion.IsSpawned || !companion.State.IsAlive || companion.BattleChara == null)
             return;
@@ -1261,19 +1033,13 @@ public unsafe partial class CombatCompanionManager : IDisposable
             return;
         }
 
-        var target = SelectCompanionTarget(companion, enemies, assignedTargets, pressureMap);
+        var target = SelectCompanionTarget(companion, enemies);
         if (target == null)
         {
             ClearCompanionTargetState(companion);
             return;
         }
-
-        companion.CurrentTargetId = target?.SimulatedEntityId ?? 0;
-        if (target != null)
-        {
-            assignedTargets[target.SimulatedEntityId] = assignedTargets.GetValueOrDefault(target.SimulatedEntityId) + 1;
-            AddPressure(pressureMap, target.SimulatedEntityId, IsRangedStyle(companion.Behavior.AutoAttackStyle));
-        }
+        companion.CurrentTargetId = target.SimulatedEntityId;
     }
 
     private SimulatedNpc? GetCurrentCompanionTarget(CombatCompanion companion, IReadOnlyList<SimulatedNpc> enemies)
@@ -1367,11 +1133,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         return delta.Length();
     }
 
-    private SimulatedNpc? SelectCompanionTarget(
-        CombatCompanion companion,
-        IReadOnlyList<SimulatedNpc> enemies,
-        Dictionary<uint, int> assignedTargets,
-        IReadOnlyDictionary<PressureKey, int> pressureMap)
+    private SimulatedNpc? SelectCompanionTarget(CombatCompanion companion, IReadOnlyList<SimulatedNpc> enemies)
     {
         // (A sentry that has not noticed the party is left alone: it may be far off on the map.)
         var aliveEnemies = enemies
@@ -1381,105 +1143,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         if (aliveEnemies.Count == 0)
             return null;
 
-        var playerId = combatEngine.State.PlayerState.EntityId;
-        var current = companion.CurrentTargetId == 0
-            ? null
-            : aliveEnemies.FirstOrDefault(e => e.SimulatedEntityId == companion.CurrentTargetId);
-
-        var scoredTargets = aliveEnemies
-            .Select(enemy => (Enemy: enemy, Score: ScoreCompanionTarget(
-                companion, enemy, aliveEnemies, assignedTargets, playerId, pressureMap)))
-            .OrderByDescending(t => t.Score)
-            .ToList();
-
-        var best = scoredTargets[0];
-        if (current != null)
-        {
-            var currentScore = scoredTargets.First(t => t.Enemy.SimulatedEntityId == current.SimulatedEntityId).Score;
-            if (best.Enemy.SimulatedEntityId != current.SimulatedEntityId &&
-                best.Score < currentScore + TargetSwitchThreshold)
-            {
-                best = (current, currentScore);
-            }
-        }
-
-        assignedTargets[best.Enemy.SimulatedEntityId] =
-            assignedTargets.GetValueOrDefault(best.Enemy.SimulatedEntityId) + 1;
-        return best.Enemy;
-    }
-
-    private float ScoreCompanionTarget(
-        CombatCompanion companion,
-        SimulatedNpc enemy,
-        IReadOnlyList<SimulatedNpc> enemies,
-        IReadOnlyDictionary<uint, int> assignedTargets,
-        uint playerId,
-        IReadOnlyDictionary<PressureKey, int> pressureMap)
-    {
-        var score = 0f;
-        var enemyId = enemy.SimulatedEntityId;
-        var assignedCount = assignedTargets.GetValueOrDefault(enemyId);
-        var isSelectedTarget = selectedFocusTargetId != 0 && enemyId == selectedFocusTargetId;
-        var isLastFocusTarget = lastFocusTargetId != 0 && enemyId == lastFocusTargetId;
-        var isPlayerFocusTarget = isSelectedTarget || isLastFocusTarget;
-
-        if (isSelectedTarget)
-            score += SelectedTargetBonus;
-        if (isLastFocusTarget && !isSelectedTarget)
-            score += LastPlayerTargetBonus;
-        if (GetEnemyTargetId(enemyId) == playerId)
-            score += AttackingPlayerBonus;
-        if (companion.CurrentTargetId == enemyId)
-        {
-            score += PreviousTargetBonus;
-        }
-
-        var hpPercent = enemy.State.MaxHp > 0
-            ? (float)enemy.State.CurrentHp / enemy.State.MaxHp
-            : 1f;
-        score += (1f - Math.Clamp(hpPercent, 0f, 1f)) * LowHpFinishBonus;
-
-        var focusFreeAssignments = isPlayerFocusTarget ? MaxPlayerFocusAssistants : 0;
-        var penalizedAssignments = Math.Max(0, assignedCount - focusFreeAssignments);
-        score -= penalizedAssignments * AssignmentPenalty;
-        if (isPlayerFocusTarget && assignedCount >= MaxPlayerFocusAssistants)
-            score -= (assignedCount - MaxPlayerFocusAssistants + 1) * PlayerFocusOvercapPenalty;
-
-        score -= TargetPressurePenalty(
-            pressureMap,
-            enemyId,
-            IsRangedStyle(companion.Behavior.AutoAttackStyle),
-            CompanionMeleePressureCap,
-            CompanionRangedPressureCap,
-            isPlayerFocusTarget ? CompanionFocusPressureBonus : 0);
-        score += TargetGraphScore(companion.SimulatedEntityId, enemyId);
-        score += ReachabilityScore(companion, enemy, enemies);
-
-        var distance = DistanceToPlayer(enemy);
-        if (!float.IsInfinity(distance) && !float.IsNaN(distance))
-            score -= distance * DistancePenaltyPerYalm;
-        score += LordGuardScore(enemy);
-
-        return score;
-    }
-
-    private float DistanceToPlayer(SimulatedNpc enemy)
-    {
-        var player = objectTable.LocalPlayer;
-        if (player == null || enemy.BattleChara == null)
-            return float.MaxValue;
-
-        var enemyPos = (Vector3)((GameObject*)enemy.BattleChara)->Position;
-        return Vector3.Distance(player.Position, enemyPos);
-    }
-
-    private float ReachabilityScore(CombatCompanion companion, SimulatedNpc enemy, IReadOnlyList<SimulatedNpc> enemies)
-    {
-        var reachability = ComputeCompanionReachability(companion, enemy);
-        if (reachability.Reachable)
-            return 0f;
-
-        return -ReachabilityHardPenalty - reachability.Overflow * ReachabilitySoftPenaltyWeight;
+        return DrawCompanionTarget(companion, aliveEnemies);
     }
 
     private static bool HasLiveEnemy(IReadOnlyList<SimulatedNpc> enemies, uint entityId)
@@ -1861,5 +1525,4 @@ public unsafe partial class CombatCompanionManager : IDisposable
         }
     }
 
-    private readonly record struct PressureKey(uint TargetId, bool Ranged);
 }
