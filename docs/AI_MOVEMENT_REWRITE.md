@@ -1,8 +1,10 @@
 # 敌我 AI 移动 / 寻路重写方案
 
-状态：用户选了方案 1（DotRecast 全面重写，2026-11-13）。**阶段 A 已实现，待游戏内验证**；B–D 未开始。用户要求：不要自己手写，先找开源库，再定怎么重写。
+状态：用户选了方案 1（DotRecast 全面重写，2026-11-13）。**阶段 A 已实现并经用户游戏内确认（网格贴合；桥外不可达部分经灌水后显示暗红）；阶段 B 已实现，待游戏内验证**；C、D 未开始。用户要求：不要自己手写，先找开源库，再定怎么重写。
 
 阶段 A 实现：`Navigation/NavMeshBuild.cs`（纯 DotRecast 建网格，离线测试 `Tests/Navigation`），`Navigation/NavMeshService.cs`（主线程在游戏锁内读碰撞 `WorldCollisionMesh.TryCollectSolid`——全部实体碰撞，排除水和 vnavmesh 规则下的未激活碰撞——后台线程建网格，玩家周围水平 ±96 m、下 60 m 上 80 m），调试命令 `/combatsim navmesh build|show|hide|floor|clear`（只是命令，不进设置界面）。
+
+阶段 B 实现（敌人）：`Navigation/CrowdMover.cs`（DtCrowd，网格换了就换新人群；新网格建好后在后台空跑一遍热身）。战斗中自动在玩家周围建网格，走出 48 m 重建（`NavMeshService.EnsureAround`）。`NpcAiController.TryCrowdApproach`：交战中的敌人改由人群移动；距离统一用水平的身体间隙（中心距减两边碰撞半径，和游戏里技能射程的量法一致）；射程统一用 `ReachNow`（普攻射程——法师普攻是近战——或此刻可用技能的最远射程）；近战走到 1 m 间隙、远程走到射程内 1 m，目标走出射程才重新跟上；读条时原地不动。`TickCombat` 对这些敌人用同一个间隙和射程判定出手。位置写回取网格高度（加 DefaultNpcHeightOffset）；移动时朝移动方向，停下时朝目标。不在网格上的敌人（网格还没建好、远处的哨兵、巡逻、抢尸）照旧走老逻辑。队友仍是老逻辑（阶段 C）。
 
 ## 1. 用户报告的现象
 

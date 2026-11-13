@@ -65,6 +65,32 @@ public sealed class NavMeshService : IDisposable
     public string Status { get; private set; } = "no navigation mesh";
     public bool ShowDebug { get; set; }
 
+    // Rebuilt around the player once they are this far from where it was built; a failed build is not
+    // retried for a while.
+    private const float RebuildDistance = 48f;
+    private const float RetrySeconds = 5f;
+    private readonly Stopwatch sinceAttempt = Stopwatch.StartNew();
+    private bool attempted;
+
+    /// <summary>
+    /// Keep a mesh around the player while it is needed (a battle): build one when there is none for
+    /// this zone, or the player has gone far from where it was built.
+    /// </summary>
+    public void EnsureAround(Vector3 player, uint territory)
+    {
+        if (building != null)
+            return;
+        var current = mesh != null && Territory == territory &&
+                      Vector2.Distance(new Vector2(player.X, player.Z), new Vector2(Center.X, Center.Z)) < RebuildDistance;
+        if (current)
+            return;
+        if (attempted && sinceAttempt.Elapsed.TotalSeconds < RetrySeconds)
+            return;
+        attempted = true;
+        sinceAttempt.Restart();
+        Build(player, territory);
+    }
+
     /// <summary>Start building the mesh around a point (the player). A build already running is cancelled.</summary>
     public void Build(Vector3 center, uint territory)
     {
@@ -100,6 +126,7 @@ public sealed class NavMeshService : IDisposable
         mesh = null;
         query = null;
         Territory = 0;
+        attempted = false;
         Status = "no navigation mesh";
         debugLayer.Clear();
     }

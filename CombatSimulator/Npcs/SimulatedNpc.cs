@@ -64,6 +64,13 @@ public unsafe class SimulatedNpc
     /// the party comes within its sight, when a neighbour does, or when it is hit.
     /// </summary>
     public bool IsSentry { get; set; }
+    /// <summary>
+    /// Moved this frame by the crowd on the plugin's navigation mesh (docs/AI_MOVEMENT_REWRITE.md):
+    /// its range tests then use the same reach and the same gap as its movement.
+    /// </summary>
+    public bool CrowdDriven { get; set; }
+    /// <summary>Close enough to stand and fight (with hysteresis: see NpcAiController.TryCrowdApproach).</summary>
+    public bool InReach { get; set; }
     /// <summary>Where this enemy is going to carry off the fallen lord's body (Warring States), or null.</summary>
     public Vector3? SeizeGoal { get; set; }
     /// <summary>A sentry that walks about its post while idle.</summary>

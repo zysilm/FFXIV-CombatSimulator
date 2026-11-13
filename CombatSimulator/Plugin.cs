@@ -103,6 +103,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     private readonly Effects.ArrowImpactController arrowImpactController;
     private readonly Rendering.WorldGeometry.WorldGeometryPreview worldGeometryPreview;
     private readonly Navigation.NavMeshService navMesh;
+    private readonly Navigation.CrowdMover crowdMover;
     public Rendering.WorldGeometry.WorldGeometryRenderer WorldGeometry => worldGeometryRenderer;
     private readonly EnemyControlController enemyControlController;
     private readonly HookSafetyChecker hookSafetyChecker;
@@ -235,6 +236,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         InitPrivateEffects();
         worldGeometryPreview = new Rendering.WorldGeometry.WorldGeometryPreview(worldGeometryRenderer);
         navMesh = new Navigation.NavMeshService(worldGeometryRenderer, log);
+        crowdMover = new Navigation.CrowdMover(navMesh, log);
         dismembermentController = new DismembermentController(boneTransformService, glamourerIpc, animationController, objectTable, config, log);
         dismembermentController.PlayerRagdollController = ragdollController;
         // Clothes still on the corpse ride along when it is picked up; the dismemberment side owns the
@@ -362,6 +364,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             // double-swing where the old 0.6s animation lock expired mid-animation).
             telegraphSystem.IsBusy);
         npcAiController.AreaMarkers = enemyAreaMarkers;
+        npcAiController.Crowd = crowdMover;
         npcAiController.CollectPartyPositions = companionManager.CollectPartyPositions;
         npcSpawner.Navmesh = vnavmeshIpc;
         npcSpawner.OnAllySpawnComplete = (npc, request) =>
@@ -1009,6 +1012,9 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             devExperimental.TickWorld(deltaTime);
             npcScaleController.Tick();
             arrowImpactController.Tick();
+            // A battle moves its actors on the plugin's own navigation mesh, kept around the player.
+            if (combatEngine.IsActive && Services.ObjectTable.LocalPlayer is { } meshPlayer)
+                navMesh.EnsureAround(meshPlayer.Position, clientState.TerritoryType);
             navMesh.Tick(deltaTime, Services.ObjectTable.LocalPlayer?.Position);
             worldGeometryRenderer.Tick();
             worldGeometryPreview.Tick(deltaTime);

@@ -150,6 +150,10 @@ public unsafe partial class NpcAiController : IDisposable
         combatEngine.OnSimulationReset += OnSimulationResetOrStop;
     }
 
+    /// <summary>The crowd on the plugin's navigation mesh; null or not ready: enemies move the old way.</summary>
+    public CombatSimulator.Navigation.CrowdMover? Crowd { private get; set; }
+    private readonly List<SimulatedNpc> crowdDriven = new();
+
     /// <summary>Fills a list with where the living party stands (player and companions); sentries watch for them.</summary>
     public Action<List<Vector3>>? CollectPartyPositions { private get; set; }
 
@@ -353,6 +357,9 @@ public unsafe partial class NpcAiController : IDisposable
             if (partyMode)
                 UpdateMeleeAdmission(approachNpcs, targetByNpcId);
 
+            crowdDriven.Clear();
+            foreach (var npc in approachNpcs)
+                npc.CrowdDriven = false;
             for (int i = 0; i < approachNpcs.Count; i++)
             {
                 var npc = approachNpcs[i];
@@ -377,6 +384,12 @@ public unsafe partial class NpcAiController : IDisposable
                         TickPatrol(npc, deltaTime);
                     else
                         StopApproachMoveAnim(npc);
+                    continue;
+                }
+
+                if (TryCrowdApproach(npc))
+                {
+                    crowdDriven.Add(npc);
                     continue;
                 }
 
@@ -412,6 +425,8 @@ public unsafe partial class NpcAiController : IDisposable
                 LogApproachRouteDebug(npc, "party", partyMode, hasLivingCompanions);
                 TickPartyApproach(npc, deltaTime, playerPos, target.State, target.Position, terrainCache);
             }
+
+            ApplyCrowdMotion(deltaTime);
         }
         else
         {
@@ -648,6 +663,129 @@ public unsafe partial class NpcAiController : IDisposable
         ForceRotateToward(npc, moveTarget, deltaTime);
     }
 
+    // --- Movement on the navigation mesh (phase B of docs/AI_MOVEMENT_REWRITE.md) --------------------
+
+    // Close in to a comfortable gap for melee; ranged stops just inside its reach. Moving resumes only
+    // once the target is out of reach, so a small step back does not set it walking.
+    private const float MeleeStandGap = 1.0f;
+    private const float RangedStandMargin = 1.0f;
+    private const float StopTolerance = 0.25f;
+    private const float MeleeReachLimit = 5f;
+
+    /// <summary>
+    /// The space between the two bodies, horizontally: centre distance less both hitbox radii. Ranges
+    /// in the game are measured this way, so a skill's authored range is used as it is.
+    /// </summary>
+    private float CrowdGap(SimulatedNpc npc, SimulatedEntityState target, Vector3 npcPos, Vector3 targetPos)
+        => MathF.Max(0f, FlatDistance(npcPos, targetPos) - npc.HitboxRadius - EntityHitboxRadius(target));
+
+    /// <summary>
+    /// How far this enemy can attack from right now: its auto-attack (a caster's is a melee swing), or
+    /// the longest skill it could use this moment (off cooldown, unlocked by HP, affordable).
+    /// </summary>
+    private float ReachNow(SimulatedNpc npc)
+    {
+        var reach = npc.Behavior.AutoAttackStyle switch
+        {
+            NpcAttackStyle.Ranged => ScaleNpcNonMeleeRange(npc.Behavior.AutoAttackRange),
+            NpcAttackStyle.Magic => ScaleNpcMeleeRange(MagicAutoAttackMeleeRange),
+            _ => ScaleNpcMeleeRange(npc.Behavior.AutoAttackRange),
+        };
+        var hpShare = npc.State.MaxHp > 0 ? (float)npc.State.CurrentHp / npc.State.MaxHp : 1f;
+        foreach (var skill in npc.Behavior.Skills)
+        {
+            if (skill.CooldownRemaining > 0 || hpShare > skill.HpThreshold)
+                continue;
+            if (npc.State.CurrentMp < SkillMpCost(npc, skill.ActionId))
+                continue;
+            var style = skill.AttackStyle == NpcAttackStyle.Auto ? npc.Behavior.AutoAttackStyle : skill.AttackStyle;
+            var range = style == NpcAttackStyle.Melee ? ScaleNpcMeleeRange(skill.Range) : ScaleNpcNonMeleeRange(skill.Range);
+            reach = MathF.Max(reach, range);
+        }
+        return reach;
+    }
+
+    /// <summary>
+    /// Hand this enemy to the crowd: stand and fight when the target is within reach, otherwise walk to
+    /// the nearest point at its standing gap. False when there is no mesh here, or the enemy is not on
+    /// it: it then moves the old way.
+    /// </summary>
+    private bool TryCrowdApproach(SimulatedNpc npc)
+    {
+        var crowd = Crowd;
+        if (crowd == null || !crowd.Ready || npc.BattleChara == null)
+            return false;
+
+        var npcPos = GetNpcPosition(npc);
+        var speed = npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f;
+        Vector3? goal = null;
+
+        var target = combatEngine.GetNpcTarget(npc);
+        var fighting = npc.AiState is NpcAiState.Engaging or NpcAiState.Combat or NpcAiState.Chasing;
+        // (A caster channelling stands: its area was fixed when the cast began.)
+        if (fighting && target is { IsAlive: true } && !npc.State.IsCasting)
+        {
+            var targetPos = combatEngine.GetSimulatedEntityPosition(target);
+            var reach = ReachNow(npc);
+            var gap = CrowdGap(npc, target, npcPos, targetPos);
+            var stand = reach <= MeleeReachLimit
+                ? MathF.Min(MeleeStandGap, reach * 0.5f)
+                : MathF.Max(MeleeStandGap, reach - RangedStandMargin);
+
+            if (npc.InReach && gap > reach)
+                npc.InReach = false;
+            else if (!npc.InReach && gap <= stand + StopTolerance)
+                npc.InReach = true;
+
+            if (!npc.InReach)
+            {
+                var away = new Vector3(npcPos.X - targetPos.X, 0f, npcPos.Z - targetPos.Z);
+                away = away.LengthSquared() > 1e-6f ? Vector3.Normalize(away) : Vector3.UnitZ;
+                var centres = stand + npc.HitboxRadius + EntityHitboxRadius(target);
+                goal = targetPos + away * centres;
+            }
+        }
+        else
+            npc.InReach = false;
+
+        if (!crowd.Drive(npc.Address, npcPos, npc.HitboxRadius, speed, goal))
+            return false;
+        npc.CrowdDriven = true;
+        return true;
+    }
+
+    /// <summary>Step the crowd, then put every enemy it moves where it is, facing where it goes or its target.</summary>
+    private void ApplyCrowdMotion(float deltaTime)
+    {
+        var crowd = Crowd;
+        if (crowd == null)
+            return;
+        crowd.Update(deltaTime);
+
+        foreach (var npc in crowdDriven)
+        {
+            if (npc.BattleChara == null || !crowd.TryGetMotion(npc.Address, out var position, out var velocity))
+                continue;
+
+            var gameObj = (GameObject*)npc.BattleChara;
+            position.Y += config.DefaultNpcHeightOffset;
+            movementBlockHook.SetApproachPosition(gameObj, position.X, position.Y, position.Z);
+
+            var flat = new Vector3(velocity.X, 0f, velocity.Z);
+            if (flat.LengthSquared() > 0.3f * 0.3f)
+            {
+                StartApproachMoveAnim(npc, deltaTime);
+                ForceRotateToward(npc, position + flat, deltaTime);
+            }
+            else
+            {
+                StopApproachMoveAnim(npc);
+                if (combatEngine.GetNpcTarget(npc) is { IsAlive: true } target)
+                    ForceRotateToward(npc, combatEngine.GetSimulatedEntityPosition(target), deltaTime);
+            }
+        }
+    }
+
     private void ClearPartyApproachState(SimulatedNpc npc)
     {
         StopApproachMoveAnim(npc);
@@ -792,9 +930,11 @@ public unsafe partial class NpcAiController : IDisposable
             return;
 
         var targetPos = combatEngine.GetSimulatedEntityPosition(simulatedTarget);
-        var distToTarget = (UsesPartyConfiguredRange(npc, simulatedTarget)
-            ? FlatDistance(npcPos, targetPos)
-            : Vector3.Distance(npcPos, targetPos)) - HitboxSpacingExtra(npc, simulatedTarget);
+        var distToTarget = npc.CrowdDriven
+            ? CrowdGap(npc, simulatedTarget, npcPos, targetPos)
+            : (UsesPartyConfiguredRange(npc, simulatedTarget)
+                ? FlatDistance(npcPos, targetPos)
+                : Vector3.Distance(npcPos, targetPos)) - HitboxSpacingExtra(npc, simulatedTarget);
         var targetEntityId = simulatedTarget.EntityId;
 
         if (npc.State.IsCasting && npc.State.CastTargetId != targetEntityId)
@@ -826,7 +966,7 @@ public unsafe partial class NpcAiController : IDisposable
         if (npc.CastArea != null && TickSnapshotCast(npc, deltaTime))
             return;
 
-        float effectiveRange = GetEffectiveNpcAttackRange(npc, simulatedTarget);
+        float effectiveRange = npc.CrowdDriven ? ReachNow(npc) : GetEffectiveNpcAttackRange(npc, simulatedTarget);
 
         if (distToTarget > effectiveRange)
         {
@@ -1914,6 +2054,8 @@ public unsafe partial class NpcAiController : IDisposable
         var authoredRange = style == NpcAttackStyle.Melee
             ? ScaleNpcMeleeRange(skill.Range)
             : ScaleNpcNonMeleeRange(skill.Range);
+        if (npc.CrowdDriven)
+            return authoredRange;
 
         if (UsesPartyConfiguredRange(npc, target))
         {
