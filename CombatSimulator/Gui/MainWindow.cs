@@ -1882,29 +1882,9 @@ public partial class MainWindow : IDisposable
     private static readonly string[] WarFallenRuleNames = { "Stay down", "Spring and Autumn", "Warring States" };
     private string warCaptiveEmoteFilter = string.Empty;
 
-    /// <summary>What becomes of your side's fallen: hostages, and who may be raised.</summary>
+    /// <summary>What becomes of your side's fallen: who may be raised, and under Warring States, hostages.</summary>
     private void DrawWarRules()
     {
-        WarCard("Hostages", () =>
-        {
-            var captives = config.WarCaptives;
-            if (ImGui.Checkbox("Take the fallen hostage##warCaptives", ref captives))
-            {
-                config.WarCaptives = captives;
-                config.Save();
-            }
-            HelpMarker("Your side only. A blow that would fell you or an ally leaves them at 1 HP instead, taken captive: " +
-                       "they hold the emote chosen here and cannot move or act.\n" +
-                       "An enemy with nobody else left to fight walks over, stands over the captive a moment and executes them: " +
-                       "the body drops at once.\nWinning the battle frees every captive.");
-
-            using (ImRaii.Disabled(!captives))
-            {
-                WarLabel("Captive emote");
-                DrawWarCaptiveEmotePicker();
-            }
-        });
-
         WarCard("The fallen", () =>
         {
             var rule = Math.Clamp(config.WarFallenRule, 0, WarFallenRuleNames.Length - 1);
@@ -1915,8 +1895,8 @@ public partial class MainWindow : IDisposable
                 config.Save();
             }
             HelpMarker("Stay down: the fallen of your side stay down.\n\n" +
-                       "Spring and Autumn: an ally runs to a fallen or captive friend (you first) and kneels there " +
-                       $"for {CombatCompanionManager.RaiseSeconds:0} seconds to raise or free them; while at it, that ally takes " +
+                       "Spring and Autumn: an ally runs to a fallen friend (you first) and kneels there " +
+                       $"for {CombatCompanionManager.RaiseSeconds:0} seconds to raise them; while at it, that ally takes " +
                        $"{CombatCompanionManager.RaiserDamageScale:0} times the damage. Killing it first stops the raise.\n\n" +
                        "Warring States: you are the lord, and nobody is raised, you included. When you fall, your allies are taken captive " +
                        "to be executed; or, with Retreat, one prays over your body while the others guard it.");
@@ -1925,7 +1905,7 @@ public partial class MainWindow : IDisposable
             ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - WarCardPad);
             ImGui.TextDisabled(rule switch
             {
-                (int)WarFallenRule.SpringAndAutumn => "Allies raise the fallen and free captives.",
+                (int)WarFallenRule.SpringAndAutumn => "Allies raise the fallen.",
                 (int)WarFallenRule.WarringStates => "You are the lord: nobody is raised.",
                 _ => "The fallen stay down.",
             });
@@ -1933,6 +1913,21 @@ public partial class MainWindow : IDisposable
 
             if (rule == (int)WarFallenRule.WarringStates)
             {
+                var captives = config.WarCaptives;
+                if (ImGui.Checkbox("Hostages##warCaptives", ref captives))
+                {
+                    config.WarCaptives = captives;
+                    config.Save();
+                }
+                HelpMarker("While you stand, a blow that would fell you or an ally leaves them at 1 HP instead, taken captive: " +
+                           "they hold the emote below and cannot move or act. An enemy with nobody else left to fight walks over, " +
+                           "stands over the captive a moment and executes them: the body drops at once. Winning the battle frees every captive.\n" +
+                           "Off: they fall at once.\n" +
+                           "Either way, once you fall your allies are taken captive (without Retreat, or when your body is carried off).");
+
+                WarLabel("Captive emote");
+                DrawWarCaptiveEmotePicker();
+
                 var retreat = config.WarRetreat;
                 if (ImGui.Checkbox("Retreat##warRetreat", ref retreat))
                 {

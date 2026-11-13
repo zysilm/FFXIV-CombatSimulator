@@ -980,7 +980,9 @@ public partial class CombatEngine : IDisposable
             AddLogEntry($"{npc.Name} executes {target.Name}!", CombatLogType.Death);
             return;
         }
-        if (friend && config.WarCaptives && target.IsAlive && damage.Damage >= target.CurrentHp)
+        // Hostages are a Warring States rule.
+        if (friend && config.WarCaptives && config.WarFallenRule == (int)WarFallenRule.WarringStates &&
+            target.IsAlive && damage.Damage >= target.CurrentHp)
         {
             if (target.IsPlayer)
                 State.TotalDamageTaken += Math.Max(0, target.CurrentHp - 1);
