@@ -249,6 +249,8 @@
 - “行为完全一致”定义为：同一份录制输入下，重构前后输出逐位相同；方案 [REFACTOR_PLAN.md](REFACTOR_PLAN.md) 获准，第一批开工。
 - 库先只面向 .NET；虚幻引擎等非 .NET 环境怎么用，以后再定。
 - 库公开。
+- 库名 **AdvancedRagdoll**（NuGet 包名、程序集名、命名空间根；2026-11-14 查过 NuGet 与 GitHub 均未被占用）。现在的工作名 `RagdollLib` / `CombatSimulator.RagdollLib` 在开工后改过来。
+- 两份架构设计稿（[RAGDOLL_LIBRARY_ARCHITECTURE.md](RAGDOLL_LIBRARY_ARCHITECTURE.md)、[PLUGIN_ARCHITECTURE.md](PLUGIN_ARCHITECTURE.md)）用户已审阅，“没有问题”（2026-11-14）。
 
 ### 发出的简报
 
@@ -289,6 +291,7 @@
 
 ### 日志（新的在上）
 
+- 2026-11-14 · 协调者建议的仓库时机：用户现在建空的公开仓库占名（如 `zysilm/AdvancedRagdoll`）；A2–A4 期间代码留在本仓库 `RagdollLib/`（库和插件同提交改动、按标准答案逐位比对）；A4 完成后用 git 拆分连同历史搬到新仓库并发布 NuGet，插件改为引用包，开发时保留引用本地源码的开关。
 - 2026-11-14 · 用户用公开版（`PUBLIC_BUILD`，`DEV_EXPERIMENTAL=false`）录了金标准：两个会话 `20261114-124754`（45 个文件）和 `20261114-125323`（10 个文件），共 55 个文件、3.9 GB，在 `%APPDATA%/XIVLauncher/pluginConfigs/CombatSimulator/ragdoll-rec/`，**不进仓库，要保留到 A4 完成**。其中玩家 7 份、NPC 48 份；第二份起含水中死亡。55 份全部能读、格式版本 2、没有录制器故障；45 份正常停用收尾，第二会话 10 份由“停止录制”收尾。两份 NPC 文件（`124754-013`、`-014`）在物理开始前就被停用，0 步。单文件 0–138 MB，一个 NPC 尸体约 2–5 MB/秒。录制期间帧数 33–62，个别 5 秒窗口掉到 14。
 - 2026-11-14 · 同场录了战斗基线日志：春秋 `dddd` 三场、战国 `ddddWS` 两场、Imperial Decisive Battle、Defense of the Imperial Palace；日志里有 `Enemies (…)` 98 行、`Allies (…)` 77 行、`Targets:` 59 行、`War:` 7 行、`Rescue:` 11 行。之后插件已换回完整版。
 - 2026-11-14 · A1 与 B0 合入 `refactor/architecture`，含子模块的构建编译通过。下一步：A0（布娃娃录制）；之后请用户开游戏录战斗基线日志和布娃娃录制，录完才开始 A2 / B1。
