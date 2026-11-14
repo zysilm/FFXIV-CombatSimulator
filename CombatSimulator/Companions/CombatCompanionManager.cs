@@ -39,10 +39,8 @@ public unsafe partial class CombatCompanionManager : IDisposable
     private readonly List<PendingSpawn> pendingSpawns = new();
     private readonly ConcurrentQueue<CompanionSpawnSource> spawnQueue = new();
     private readonly HashSet<int> allocatedIndices = new();
-    private readonly Dictionary<uint, uint> enemyTargetByEnemyId = new();
-    // Threat table of every fighter, both sides: victim id -> (attacker id -> decaying threat). Who
-    // fights whom is drawn from it (CombatCompanionManager.Aggro.cs).
-    private readonly Dictionary<uint, Dictionary<uint, float>> threatByEnemy = new();
+    // Who fights whom: threat tables, draw states and the enemies' current targets (both sides).
+    private readonly TargetingService targeting;
     private uint nextEntityId = 0xF1000001;
 
 
@@ -134,6 +132,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         this.clientState = clientState;
         this.config = config;
         this.combatEngine = combatEngine;
+        targeting = new TargetingService(() => this.combatEngine.State.SimulationTime);
         this.animationController = animationController;
         this.movementBlockHook = movementBlockHook;
         this.targetManager = targetManager;
@@ -305,9 +304,9 @@ public unsafe partial class CombatCompanionManager : IDisposable
             return;
 
         TickSensing(deltaTime);
-        DecayThreat(deltaTime);
+        targeting.DecayThreat(deltaTime);
 
-        aggroEnemies = enemies;
+        targeting.TrackEnemies(enemies);
         TickCombatAnchor(enemies);
         UpdateFocusTarget(enemies);
 
@@ -372,30 +371,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
     public void RegisterPlayerDamage(uint targetId, int damage)
     {
         RegisterPlayerDamage(damage);
-        AddThreat(targetId, combatEngine.State.PlayerState.EntityId, damage, combatEngine.State.PlayerState.IsTank);
-    }
-
-    private void AddThreat(uint enemyId, uint sourceId, int damage, bool isTank)
-    {
-        if (enemyId == 0 || sourceId == 0 || damage <= 0)
-            return;
-        NoteHit(enemyId, sourceId);
-
-        if (!threatByEnemy.TryGetValue(enemyId, out var table))
-            threatByEnemy[enemyId] = table = new Dictionary<uint, float>();
-        table[sourceId] = table.GetValueOrDefault(sourceId) + EnemyMovementMath.HitThreat(damage, isTank);
-    }
-
-    private void DecayThreat(float deltaTime)
-    {
-        if (threatByEnemy.Count == 0)
-            return;
-
-        foreach (var table in threatByEnemy.Values)
-        {
-            foreach (var key in table.Keys.ToList())
-                table[key] = EnemyMovementMath.DecayThreat(table[key], deltaTime);
-        }
+        targeting.AddThreat(targetId, combatEngine.State.PlayerState.EntityId, damage, combatEngine.State.PlayerState.IsTank);
     }
 
     /// <summary>
@@ -407,7 +383,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
     public SimulatedEntityState? SelectEnemyTarget(SimulatedNpc enemy)
     {
         if (config.EnableCombatCompanions &&
-            enemyTargetByEnemyId.TryGetValue(enemy.SimulatedEntityId, out var currentId) &&
+            targeting.TryGetEnemyTarget(enemy.SimulatedEntityId, out var currentId) &&
             ResolveTargetState(currentId) is { IsAlive: true } current)
             return current;
 
@@ -467,12 +443,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         => GetCompanion(entityId)?.Address;
 
     public void ForceEnemyTarget(uint enemyId, uint targetId)
-    {
-        if (targetId == 0)
-            enemyTargetByEnemyId.Remove(enemyId);
-        else
-            enemyTargetByEnemyId[enemyId] = targetId;
-    }
+        => targeting.ForceEnemyTarget(enemyId, targetId);
 
     /// <summary>
     /// Combat reset while keeping companions: revive + heal each one and clear its
@@ -480,9 +451,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
     /// </summary>
     public void ResetForCombatReset()
     {
-        enemyTargetByEnemyId.Clear();
-        threatByEnemy.Clear();
-        ClearAggro();
+        targeting.Reset();
         playerRecentDamage = 0;
         playerRecentDps = 0;
         selectedFocusTargetId = 0;
@@ -544,9 +513,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         prayerId = 0;
         prayerAtPost = false;
         lordFallHandled = false;
-        enemyTargetByEnemyId.Clear();
-        threatByEnemy.Clear();
-        ClearAggro();
+        targeting.Reset();
         playerRecentDamage = 0;
         playerRecentDps = 0;
         selectedFocusTargetId = 0;
@@ -974,7 +941,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
             {
                 companion.State.CurrentMp = Math.Max(0, companion.State.CurrentMp - mpCost);
                 RegisterDamage(companion.SimulatedEntityId, result.Damage);
-                AddThreat(target.SimulatedEntityId, companion.SimulatedEntityId, result.Damage, companion.State.IsTank);
+                targeting.AddThreat(target.SimulatedEntityId, companion.SimulatedEntityId, result.Damage, companion.State.IsTank);
                 skill.CooldownRemaining = skill.Cooldown / ActionPace();
                 companion.State.AnimationLock = 0.6f;
             }
@@ -998,7 +965,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
                 companion.State.CurrentMp = Math.Min(companion.State.MaxMp,
                     companion.State.CurrentMp + CombatBudgetModel.EnemyAutoAttackMpRestore);
                 RegisterDamage(companion.SimulatedEntityId, result.Damage);
-                AddThreat(target.SimulatedEntityId, companion.SimulatedEntityId, result.Damage, companion.State.IsTank);
+                targeting.AddThreat(target.SimulatedEntityId, companion.SimulatedEntityId, result.Damage, companion.State.IsTank);
                 companion.State.AnimationLock = 0.6f;
             }
         }

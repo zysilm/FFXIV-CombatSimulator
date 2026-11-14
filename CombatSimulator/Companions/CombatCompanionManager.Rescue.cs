@@ -181,14 +181,7 @@ public unsafe partial class CombatCompanionManager
     }
 
     /// <summary>How many enemies have this one as their target.</summary>
-    private int AttackersOn(uint entityId)
-    {
-        var n = 0;
-        foreach (var target in enemyTargetByEnemyId.Values)
-            if (target == entityId)
-                n++;
-        return n;
-    }
+    private int AttackersOn(uint entityId) => targeting.AttackersOn(entityId);
 
     private static bool NeedsRescue(SimulatedEntityState friend)
         => !friend.IsAlive || friend.IsCaptive;

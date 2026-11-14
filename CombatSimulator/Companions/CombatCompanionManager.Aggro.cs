@@ -34,100 +34,35 @@ public unsafe partial class CombatCompanionManager
     private const float ExposedGain = AggroModel.ExposedGain;
     private const float UnreachableGain = AggroModel.UnreachableGain;
 
-    private readonly Dictionary<uint, AggroState> aggro = new();
-    private readonly Dictionary<uint, (int Melee, int Ranged)> aggroCounts = new();
-    private readonly List<(uint Id, float Weight)> aggroDraw = new();
-    private IReadOnlyList<SimulatedNpc> aggroEnemies = Array.Empty<SimulatedNpc>();
-
     /// <summary>
     /// Where each fighter's own generator (the one its targets are drawn with) gets its seed, the first
     /// time that fighter is seen. Unseeded, unless a caller wants a repeatable run and gives a seeded
     /// one; fighters already seen keep the generator they have until the next reset.
     /// </summary>
-    public Random AggroSeedSource { private get; set; } = new();
-
-    // How often each side drew a target, and how often the draw took a fighter off a target it could
-    // have kept (a voluntary switch, the measure behind sw/min in Tests/TargetingSim), written to the
-    // log every few seconds in which anyone drew.
-    private int enemyDraws, enemySwitches, allyDraws, allySwitches;
-    private readonly System.Diagnostics.Stopwatch targetReportClock = System.Diagnostics.Stopwatch.StartNew();
+    public Random AggroSeedSource { set => targeting.SeedSource = value; }
 
     private void ReportTargetSwitches(IReadOnlyList<SimulatedNpc> enemies)
-    {
-        if (targetReportClock.Elapsed.TotalSeconds < 5)
-            return;
-        targetReportClock.Restart();
-        if (enemyDraws + allyDraws == 0)
-            return;
-        var fightingEnemies = 0;
-        foreach (var e in enemies)
-            if (e.IsSpawned && e.State.IsAlive && !(e.IsSentry && e.AiState == Ai.NpcAiState.Idle)) fightingEnemies++;
-        var fightingAllies = 0;
-        foreach (var c in companions)
-            if (c.IsSpawned && c.State.IsAlive) fightingAllies++;
-        log.Info($"Targets: enemies {enemySwitches} switches / {enemyDraws} draws, allies {allySwitches} / {allyDraws} over 5 s ({fightingEnemies} enemies, {fightingAllies} allies fighting).");
-        enemyDraws = enemySwitches = allyDraws = allySwitches = 0;
-    }
+        => targeting.ReportIfDue(log, enemies, companions);
 
-    private AggroState AggroOf(uint id)
-    {
-        if (!aggro.TryGetValue(id, out var state))
-            aggro[id] = state = new AggroState { Rng = new Random(AggroSeedSource.Next()) };
-        return state;
-    }
+    private AggroState AggroOf(uint id) => targeting.AggroOf(id);
 
     /// <summary>A hit from an enemy on one of the player's side: the victim's threat table and its "hit by someone new".</summary>
     public void RegisterHit(SimulatedEntityState source, SimulatedEntityState target, int damage)
-    {
-        if (source.IsPlayer || source.IsCompanion || damage <= 0)
-            return;
-        AddThreat(target.EntityId, source.EntityId, damage, source.IsTank);
-    }
-
-    private void NoteHit(uint victimId, uint sourceId)
-    {
-        var state = AggroOf(victimId);
-        var now = combatEngine.State.SimulationTime;
-        AggroModel.NoteHit(state, sourceId, now);
-    }
+        => targeting.RegisterHit(source, target, damage);
 
     /// <summary>How many fighters, melee and ranged, are on each target now (both sides).</summary>
-    private void CountAggro()
-    {
-        aggroCounts.Clear();
-        foreach (var enemy in aggroEnemies)
-        {
-            if (!enemy.IsSpawned || !enemy.State.IsAlive || !enemyTargetByEnemyId.TryGetValue(enemy.SimulatedEntityId, out var target))
-                continue;
-            Count(target, IsRangedStyle(enemy.Behavior.AutoAttackStyle));
-        }
-        foreach (var companion in companions)
-            if (companion.IsSpawned && companion.State.IsAlive && companion.CurrentTargetId != 0)
-                Count(companion.CurrentTargetId, IsRangedStyle(companion.Behavior.AutoAttackStyle));
-
-        void Count(uint target, bool ranged)
-        {
-            var (melee, rangedCount) = aggroCounts.GetValueOrDefault(target);
-            aggroCounts[target] = ranged ? (melee, rangedCount + 1) : (melee + 1, rangedCount);
-        }
-    }
+    private void CountAggro() => targeting.CountAggro(companions);
 
     /// <summary>The weight shared by both sides (AggroModel.Weight); the situation multiplier is the caller's.</summary>
     private float AggroWeight(
         uint selfId, Vector3 selfPos, float selfReach, bool selfRanged, uint currentTarget,
         uint candidateId, Vector3 candidatePos, float candidateHpShare, uint candidateTarget)
-    {
-        var share = AggroModel.ThreatShare(threatByEnemy.GetValueOrDefault(selfId), candidateId);
-        var (melee, ranged) = aggroCounts.GetValueOrDefault(candidateId);
-        return AggroModel.Weight(
-            new AggroModel.Self(selfId, selfPos, selfReach, selfRanged, currentTarget),
-            new AggroModel.Candidate(candidateId, candidatePos, candidateHpShare, candidateTarget),
-            share, melee, ranged);
-    }
+        => targeting.Weight(selfId, selfPos, selfReach, selfRanged, currentTarget,
+            candidateId, candidatePos, candidateHpShare, candidateTarget);
 
-    private uint DrawAggro(AggroState state) => AggroModel.Draw(state, aggroDraw);
+    private uint DrawAggro(AggroState state) => targeting.Draw(state);
 
-    private void HoldAggro(AggroState state, uint target) => AggroModel.Hold(state, target, combatEngine.State.SimulationTime);
+    private void HoldAggro(AggroState state, uint target) => targeting.Hold(state, target);
 
     /// <summary>Whether this friend is kneeling (raising someone, or praying over the lord): open to the enemy.</summary>
     private bool IsExposed(uint friendId)
@@ -161,7 +96,7 @@ public unsafe partial class CombatCompanionManager
     {
         var state = AggroOf(enemy.SimulatedEntityId);
         var now = combatEngine.State.SimulationTime;
-        var current = enemyTargetByEnemyId.GetValueOrDefault(enemy.SimulatedEntityId);
+        var current = targeting.EnemyTargetOf(enemy.SimulatedEntityId);
         var currentLive = candidates.Exists(c => c.EntityId == current);
         var holder = LordSeizerTarget(enemy)?.SimulatedEntityId ?? 0;
 
@@ -172,7 +107,7 @@ public unsafe partial class CombatCompanionManager
             return candidates.Find(c => c.EntityId == current).State;
 
         CountAggro();
-        aggroDraw.Clear();
+        targeting.BeginDraw();
         var selfPos = enemy.BattleChara != null ? (Vector3)((GameObject*)enemy.BattleChara)->Position : enemy.SpawnPosition;
         var selfRanged = IsRangedStyle(enemy.Behavior.AutoAttackStyle);
         var reach = EnemyReach(enemy);
@@ -184,14 +119,12 @@ public unsafe partial class CombatCompanionManager
                 w *= TaskGain;
             if (IsExposed(id))
                 w *= ExposedGain;
-            aggroDraw.Add((id, w));
+            targeting.AddCandidate(id, w);
         }
         var drawn = DrawAggro(state);
-        enemyDraws++;
-        if (currentLive && drawn != current)
-            enemySwitches++;
+        targeting.NoteEnemyDraw(currentLive && drawn != current);
         HoldAggro(state, drawn);
-        enemyTargetByEnemyId[enemy.SimulatedEntityId] = drawn;
+        targeting.SetEnemyTarget(enemy.SimulatedEntityId, drawn);
         return candidates.Find(c => c.EntityId == drawn).State;
     }
 
@@ -213,7 +146,7 @@ public unsafe partial class CombatCompanionManager
             return currentEnemy;
 
         CountAggro();
-        aggroDraw.Clear();
+        targeting.BeginDraw();
         var self = (Vector3)((GameObject*)companion.BattleChara)->Position;
         var selfRanged = IsRangedStyle(companion.Behavior.AutoAttackStyle);
         var reach = CrowdReachNow(companion);
@@ -222,7 +155,7 @@ public unsafe partial class CombatCompanionManager
         foreach (var enemy in enemies)
         {
             var enemyPos = (Vector3)((GameObject*)enemy.BattleChara)->Position;
-            var enemyTarget = enemyTargetByEnemyId.GetValueOrDefault(enemy.SimulatedEntityId);
+            var enemyTarget = targeting.EnemyTargetOf(enemy.SimulatedEntityId);
             var w = AggroWeight(companion.SimulatedEntityId, self, reach, selfRanged, currentEnemy != null ? current : 0,
                 enemy.SimulatedEntityId, enemyPos, HpShare(enemy.State), enemyTarget);
             if (selectedFocusTargetId != 0 && enemy.SimulatedEntityId == selectedFocusTargetId)
@@ -239,19 +172,11 @@ public unsafe partial class CombatCompanionManager
                 if (!ComputeCompanionReachability(companion, enemy).Reachable)
                     w *= UnreachableGain;
             }
-            aggroDraw.Add((enemy.SimulatedEntityId, w));
+            targeting.AddCandidate(enemy.SimulatedEntityId, w);
         }
         var drawn = DrawAggro(state);
-        allyDraws++;
-        if (currentEnemy != null && drawn != current)
-            allySwitches++;
+        targeting.NoteAllyDraw(currentEnemy != null && drawn != current);
         HoldAggro(state, drawn);
         return enemies.Find(e => e.SimulatedEntityId == drawn);
-    }
-
-    private void ClearAggro()
-    {
-        aggro.Clear();
-        aggroCounts.Clear();
     }
 }
