@@ -308,6 +308,7 @@
 
 ### 日志（新的在上）
 
+- 2026-11-14 · A3c 提交：主文件 12,041 → 933 行，切成 20 个 partial 文件；`Tests/PartialCut` 证明成员和 IL 不变（两种配置）；97/97。A3b 待用户裁决：私有模块的 `Ragdoll.WeaponReturn.cs` 用 partial 方法和主类私有成员，A4 后接不上——改该文件接扩展接口（推荐）还是插件留兼容外壳。
 - 2026-11-14 · A3 提交（`721a6f9`），B5 合入（`a09af5b`，独立审查可合并，跟进改为只问活部件）。合并后：完整版编译 0 错误；CombatReplay 10/10、夺尸 85、函数对照、AiMovement、CombatBalance、Navigation、BoneNameLiterals 全过；布娃娃回放 97/97 逐位相同。B 轨剩 B6/B7/B9，按计划等 A4 之后。
 - 2026-11-14 · 用户第一次在游戏里录 3 版（会话 `20261114-154951` 27 个、`-155152` 15 个，NPC 碰撞 Accurate、头发碰撞、武器 Body mesh；未录网格体积和武器落尸体）。回放修两处：角色名标签只作诊断不比对；玩家激活前已在跑的活头发由回放从录制推断并恢复。现 97/97（55 金标准 + 42 新）逐位相同，头发也一致。
 - 2026-11-14 · A2b 提交（`c8526f7`，审查可合并，低优先级意见留到 A4，见 REFACTOR_PLAN 状态行）；B4a/B4b 合入（`51acbf3`）。合并后：完整版编译 0 错误；CombatReplay 7/7、夺尸 85、函数对照、AiMovement、CombatBalance、Navigation、TargetingSim 全过；55 份布娃娃回放 55/55 逐位相同。
