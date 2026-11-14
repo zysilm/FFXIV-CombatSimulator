@@ -562,7 +562,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
 
             // Under Warring States with Retreat the lord's body is fought over: an enemy takes it with
             // Enemy Control's grab only if it reaches it (Plugin.War), not the moment the lord falls.
-            var bodyFoughtOver = config.WarFallenRule == (int)Simulation.WarFallenRule.WarringStates && config.WarRetreat;
+            var bodyFoughtOver = combatEngine.Rules.LordBodyIsFoughtOver;
             if (bodyFoughtOver)
                 log.Info("EnemyControl: the lord's body is fought over; nobody takes it yet.");
             else if (config.EnemyControlControlKiller)

@@ -80,12 +80,10 @@ public unsafe partial class CombatCompanionManager
     public float? RescueProgress(uint patientId)
         => rescues.TryGetValue(patientId, out var rescue) && rescue.Channelling ? rescue.Progress / RaiseSeconds : null;
 
-    private bool RaisingAllowed => config.WarFallenRule == (int)WarFallenRule.SpringAndAutumn;
-
     /// <summary>Who needs raising or freeing, and who goes: once per frame, before the companions act.</summary>
     private void TickRescues(float deltaTime, IReadOnlyList<Npcs.SimulatedNpc> enemies)
     {
-        if (!RaisingAllowed || !combatEngine.IsActive)
+        if (!Rules.RaisesTheFallen || !combatEngine.IsActive)
         {
             CancelAllRescues();
             return;

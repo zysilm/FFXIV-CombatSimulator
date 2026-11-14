@@ -878,7 +878,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
 
         // Only guarding the lord's body holds an ally to one place; otherwise it fights wherever the
         // fight goes.
-        if (GuardingLord && !IsWithinCommandRange(companion))
+        if (Rules.LordBodyIsGuarded && !IsWithinCommandRange(companion))
         {
             NoteActivity(ActivityReturning);
             ClearCompanionActionState(companion);
@@ -1001,7 +1001,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         if (!companion.IsSpawned || !companion.State.IsAlive || companion.BattleChara == null)
             return;
 
-        if (GuardingLord && !IsWithinCommandRange(companion))
+        if (Rules.LordBodyIsGuarded && !IsWithinCommandRange(companion))
         {
             ClearCompanionTargetState(companion);
             return;
@@ -1035,7 +1035,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         var current = (Vector3)obj->Position;
         var delta = current - CommandAnchor(player.Position);
         delta.Y = 0;
-        if (!GuardingLord)
+        if (!Rules.LordBodyIsGuarded)
         {
             companion.ReturningToLord = false;
             return delta.Length() <= CommandLimit(companion.SimulatedEntityId);
@@ -1048,7 +1048,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
     /// began (or the player).
     /// </summary>
     private Vector3 CommandAnchor(Vector3 playerPosition)
-        => GuardingLord ? LordBodyAt(playerPosition) : !combatAnchorActive ? playerPosition : combatAnchorPosition;
+        => Rules.LordBodyIsGuarded ? LordBodyAt(playerPosition) : !combatAnchorActive ? playerPosition : combatAnchorPosition;
 
     /// <summary>
     /// How far from the command anchor this ally may go: the party range (the guard range around the
@@ -1058,7 +1058,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
     {
         var jitter = StableUnit(actorId ^ 0xC001u);
         var factor = 1.0f - Math.Clamp(config.PartyCommandRangeRandomness, 0, 0.8f) * jitter;
-        return MathF.Max(1.0f, (GuardingLord ? LordGuardRange : config.PartyCommandRange) * factor);
+        return MathF.Max(1.0f, (Rules.LordBodyIsGuarded ? LordGuardRange : config.PartyCommandRange) * factor);
     }
 
     private static float StableUnit(uint x)
@@ -1086,8 +1086,8 @@ public unsafe partial class CombatCompanionManager : IDisposable
         var obj = (GameObject*)companion.BattleChara;
         var current = (Vector3)obj->Position;
         var anchor = CommandAnchor(player.Position);
-        var anchorRotation = combatAnchorActive && !GuardingLord ? combatAnchorRotation : player.Rotation;
-        var goal = GuardingLord
+        var anchorRotation = combatAnchorActive && !Rules.LordBodyIsGuarded ? combatAnchorRotation : player.Rotation;
+        var goal = Rules.LordBodyIsGuarded
             ? GuardGoal(companion, anchor, current)
             : CalculateFollowPosition(anchor, anchorRotation, companionIndex, companionCount);
         if (FlatDistance(current, goal) > FollowStopDistance)
@@ -1135,7 +1135,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         SimulatedNpc enemy)
     {
         var player = objectTable.LocalPlayer;
-        if (!GuardingLord || player == null || companion.BattleChara == null || enemy.BattleChara == null)
+        if (!Rules.LordBodyIsGuarded || player == null || companion.BattleChara == null || enemy.BattleChara == null)
             return (true, 0f);
 
         var enemyPos = (Vector3)((GameObject*)enemy.BattleChara)->Position;

@@ -140,7 +140,7 @@ public unsafe partial class CombatCompanionManager
         state.HitByNew = false;
         state.Focus = selectedFocusTargetId;
         // Guarding the lord: a target that has gone out of the guard's reach is let go at once.
-        if (!due && GuardingLord && !ComputeCompanionReachability(companion, currentEnemy!).Reachable)
+        if (!due && Rules.LordBodyIsGuarded && !ComputeCompanionReachability(companion, currentEnemy!).Reachable)
             due = true;
         if (!due)
             return currentEnemy;
@@ -151,7 +151,7 @@ public unsafe partial class CombatCompanionManager
         var selfRanged = IsRangedStyle(companion.Behavior.AutoAttackStyle);
         var reach = CrowdReachNow(companion);
         var playerId = combatEngine.State.PlayerState.EntityId;
-        var hasBody = TryGetLordBody(out var body, out _) && GuardingLord;
+        var hasBody = TryGetLordBody(out var body, out _) && Rules.LordBodyIsGuarded;
         foreach (var enemy in enemies)
         {
             var enemyPos = (Vector3)((GameObject*)enemy.BattleChara)->Position;

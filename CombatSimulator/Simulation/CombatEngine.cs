@@ -80,6 +80,8 @@ public partial class CombatEngine : IDisposable
 
     public SimulationState State { get; } = new();
     public bool IsActive => State.IsActive;
+    /// <summary>The war-rule switches as named queries, read live (docs/PLUGIN_ARCHITECTURE.md §5.3).</summary>
+    public Battle.BattleRules Rules { get; }
     public List<CombatLogEntry> CombatLog { get; } = new();
     public Action? OnSimulationStarted { get; set; }
     public Func<SimulatedNpc, SimulatedEntityState?>? ResolveNpcTarget { get; set; }
@@ -190,6 +192,7 @@ public partial class CombatEngine : IDisposable
         this.movementBlockHook = movementBlockHook;
         this.ragdollController = ragdollController;
         this.config = config;
+        Rules = new Battle.BattleRules(config, () => IsActive, () => State.PlayerState.IsAlive);
         this.npcSelector = npcSelector;
         this.clientState = clientState;
         this.log = log;
@@ -1019,7 +1022,7 @@ public partial class CombatEngine : IDisposable
             return;
         }
         // Hostages are a Warring States rule.
-        if (friend && config.WarCaptives && config.WarFallenRule == (int)WarFallenRule.WarringStates &&
+        if (friend && Rules.TakesCaptivesOnLethalBlow &&
             target.IsAlive && damage.Damage >= target.CurrentHp)
         {
             if (target.IsPlayer)
