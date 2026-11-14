@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 using System.Numerics;
+using CombatSimulator.Combat;
 using CombatSimulator.Companions;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
@@ -17,11 +18,13 @@ namespace CombatSimulator.Battle.Rules;
 /// allies' controller; a part decides when they are used.
 /// </summary>
 /// <remarks>
-/// Refactor stage B5 wires the hooks the allies' controller calls (where it called its Lord and Rescue
-/// code). The engine-side hooks (<see cref="TickAfterEngine"/>, <see cref="OnLethalBlow"/>,
-/// <see cref="SuppressesKillerPossession"/>, <see cref="DescribeOutcome"/>) are declared but not called
-/// yet: those decisions are still made where they were (<c>CombatEngine</c>, <c>Plugin.War.cs</c>,
-/// <c>Plugin.cs</c>) until stage B6.
+/// Refactor stage B5 wired the hooks the allies' controller calls (where it called its Lord and Rescue
+/// code); stage B6 the engine side: <see cref="TickAfterEngine"/> (the plugin's war tick, after the engine),
+/// <see cref="OnLethalBlow"/> (the engine's hit settlement), <see cref="SuppressesKillerPossession"/> (the
+/// player's death) and <see cref="DescribeOutcome"/> (the result banner). Those four keep the old code's
+/// reach (see <see cref="BattleRuleSet"/>): the lethal blow and the killer are asked of the composition as the
+/// old code read the switches; the tick and the banner's words go to every part, as the old code ran the
+/// seizure and worded the banner whatever the switches said by then.
 /// </remarks>
 public interface IBattleRule
 {
@@ -79,18 +82,29 @@ public interface IBattleRule
     /// <summary>The word before a name on the HP bars, or null: another part's, else "Fighting".</summary>
     string? StatusWord(BattleContext ctx, SimulatedEntityState who);
 
-    // ---- declared for stage B6 (the engine side); not called yet ----
+    // ---- the engine side (stage B6) ----
 
-    /// <summary>Once a frame, after the engine and before the enemy AI (today: <c>Plugin.TickWar</c>).</summary>
+    /// <summary>
+    /// Once a frame while a battle is under way, after the engine and before the enemy AI (the plugin's war
+    /// tick); every part, composed or not.
+    /// </summary>
     void TickAfterEngine(BattleContext ctx, float deltaTime);
 
-    /// <summary>A blow that would kill one of the player's side (today: <c>CombatEngine</c>, hostages).</summary>
-    LethalBlow OnLethalBlow(BattleContext ctx, SimulatedEntityState victim, SimulatedNpc by, bool primary);
+    /// <summary>
+    /// A blow by <paramref name="by"/> that would fell <paramref name="victim"/>, one of the player's side
+    /// (<paramref name="primary"/>: it was aimed at them, not a splash); composed parts, the first answer
+    /// other than <see cref="LethalBlow.Default"/> stands.
+    /// </summary>
+    LethalBlow OnLethalBlow(BattleContext ctx, SimulatedEntityState victim, Combatant by, bool primary);
 
-    /// <summary>When the player dies, Enemy Control does not take over the killer (today: <c>Plugin.cs</c>).</summary>
+    /// <summary>When the player dies, Enemy Control does not take over the killer (composed parts, any).</summary>
     bool SuppressesKillerPossession(BattleContext ctx);
 
-    /// <summary>The banner's title and reason, or null (today: <c>Plugin.War.cs</c>).</summary>
+    /// <summary>
+    /// The banner's title and reason, or null: the earlier parts' words stand. Every part is asked, in order,
+    /// and the last answer stands: the base part words every battle, a part that ends a battle its own way
+    /// speaks after it.
+    /// </summary>
     OutcomeText? DescribeOutcome(BattleContext ctx, bool playerWon);
 }
 
@@ -154,7 +168,7 @@ public abstract class BattleRule : IBattleRule
     public virtual IAllyLeash? LeashFor(BattleContext ctx, CombatCompanion ally) => null;
     public virtual string? StatusWord(BattleContext ctx, SimulatedEntityState who) => null;
     public virtual void TickAfterEngine(BattleContext ctx, float deltaTime) { }
-    public virtual LethalBlow OnLethalBlow(BattleContext ctx, SimulatedEntityState victim, SimulatedNpc by, bool primary) => LethalBlow.Default;
+    public virtual LethalBlow OnLethalBlow(BattleContext ctx, SimulatedEntityState victim, Combatant by, bool primary) => LethalBlow.Default;
     public virtual bool SuppressesKillerPossession(BattleContext ctx) => false;
     public virtual OutcomeText? DescribeOutcome(BattleContext ctx, bool playerWon) => null;
 }

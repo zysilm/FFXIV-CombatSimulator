@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 using System.Collections.Generic;
+using CombatSimulator.Combat;
 using CombatSimulator.Companions;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
@@ -193,5 +194,59 @@ public sealed class BattleRuleSet
             if (Live(i) && parts[i].StatusWord(Context, who) is { } word)
                 return word;
         return "Fighting";
+    }
+
+    // ---- the engine side (stage B6) ----
+
+    /// <summary>
+    /// Once a frame while a battle is under way, after the engine and before the enemy AI (the plugin's war
+    /// tick): every part, composed or not, as the corpse seizure ran every frame whatever the switches (it
+    /// lets go of its seizers and its grab on its own).
+    /// </summary>
+    public void TickAfterEngine(float deltaTime)
+    {
+        foreach (var part in parts)
+            part.TickAfterEngine(Context, deltaTime);
+    }
+
+    /// <summary>
+    /// A blow that would fell one of the player's side: the composed parts in order, the first answer other
+    /// than <see cref="LethalBlow.Default"/>. The composition, not <see cref="Live"/>: the engine read the
+    /// switches themselves at the blow.
+    /// </summary>
+    public LethalBlow OnLethalBlow(SimulatedEntityState victim, Combatant by, bool primary)
+    {
+        foreach (var part in parts)
+        {
+            if (!Composed(part))
+                continue;
+            var blow = part.OnLethalBlow(Context, victim, by, primary);
+            if (blow != LethalBlow.Default)
+                return blow;
+        }
+        return LethalBlow.Default;
+    }
+
+    /// <summary>When the player dies, whether Enemy Control leaves the killer alone: any composed part says so.</summary>
+    public bool SuppressesKillerPossession()
+    {
+        foreach (var part in parts)
+            if (Composed(part) && part.SuppressesKillerPossession(Context))
+                return true;
+        return false;
+    }
+
+    /// <summary>
+    /// The result banner's title and reason: every part is asked in order and the last answer stands (the base
+    /// part words every battle; a part that ends a battle its own way speaks after it). Every part, not only the
+    /// composition: the body carried off stays the battle's word after the switch is turned off, as it did.
+    /// </summary>
+    public OutcomeText DescribeOutcome(bool playerWon)
+    {
+        OutcomeText? text = null;
+        foreach (var part in parts)
+            if (part.DescribeOutcome(Context, playerWon) is { } said)
+                text = said;
+        return text.GetValueOrDefault();
     }
 }

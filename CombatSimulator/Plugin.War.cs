@@ -16,7 +16,9 @@ namespace CombatSimulator;
 /// The War Generator's outcome: the result banner, and under Warring States with Retreat, the lord's
 /// body: guarded until the enemy is driven off ("body recovered"), or carried off by an enemy that
 /// reaches it (Enemy Control's grab, with its current settings), which loses the battle. The fight
-/// over the body is <see cref="CorpseSeizure{TNpc}"/>; this file gives it the game.
+/// over the body is <see cref="CorpseSeizure{TNpc}"/>, run by its battle rule
+/// (<see cref="Battle.Rules.CorpseSeizureRule"/>); this file gives it the game. The banner's words are the
+/// battle rules' (<see cref="Battle.Rules.IBattleRule.DescribeOutcome"/>).
 /// </summary>
 public sealed unsafe partial class CombatSimulatorPlugin
 {
@@ -28,6 +30,7 @@ public sealed unsafe partial class CombatSimulatorPlugin
     {
         var world = new CorpseSeizureWorld(this);
         corpseSeizure = new CorpseSeizure<SimulatedNpc>(combatEngine.Rules, world, world, Companions.CombatCompanionManager.LordContestRadius);
+        companionManager.RuleParts.Get<Battle.Rules.CorpseSeizureRule>().Seizure = corpseSeizure;
         var previous = combatEngine.OnOutcomeDecided;
         combatEngine.OnOutcomeDecided = playerWon =>
         {
@@ -46,39 +49,9 @@ public sealed unsafe partial class CombatSimulatorPlugin
 
         if (!config.ShowResultBanner)
             return;
-        var (title, reason) = DescribeOutcome(playerWon);
+        // The words are the battle rules' (each part that ends a fight its own way speaks for it).
+        var (title, reason) = companionManager.RuleParts.DescribeOutcome(playerWon);
         warBanner.Show(title, reason, playerWon ? new Vector4(0.95f, 0.85f, 0.3f, 1f) : new Vector4(0.9f, 0.25f, 0.2f, 1f));
-    }
-
-    /// <summary>
-    /// The result and why, for the banner. Each battle rule that ends a fight its own way adds its case
-    /// here.
-    /// </summary>
-    private (string Title, string Reason) DescribeOutcome(bool playerWon)
-    {
-        var lordAlive = combatEngine.State.PlayerState.IsAlive;
-        var warringStates = combatEngine.Rules.PlayerIsTheLord;
-        var anyExecuted = combatEngine.State.PlayerState.Executed;
-        foreach (var companion in companionManager.Companions)
-            if (companion.State.Executed)
-                anyExecuted = true;
-
-        if (!playerWon)
-        {
-            if (corpseSeizure.BodySeized)
-                return ("DISGRACED", "Your corpse has been dragged off as a trophy. Your army is executed.");
-            if (anyExecuted)
-                return ("ROUTED", warringStates
-                    ? "You have fallen and your captured soldiers have been executed."
-                    : "Your party has been executed.");
-            return ("ANNIHILATED", "Every member of your party lies dead on the field.");
-        }
-
-        if (!lordAlive && warringStates)
-            return ("REMAINS SECURED", "You fell, but your remains are secured and will be carried back to Eorzea.");
-        if (!lordAlive)
-            return ("VICTORY", "Every enemy has been slain, though you fell in the battle.");
-        return ("VICTORY", "Every enemy has been slain. Your army is victorious.");
     }
 
     private void ResetWar()
@@ -88,7 +61,8 @@ public sealed unsafe partial class CombatSimulatorPlugin
         warBanner.Hide();
     }
 
-    private void TickWar(float deltaTime) => corpseSeizure.Tick(deltaTime);
+    /// <summary>The battle rules after the engine (the corpse seizure's tick).</summary>
+    private void TickWar(float deltaTime) => companionManager.RuleParts.TickAfterEngine(deltaTime);
 
     /// <summary>Where a fallen actor's body lies: its ragdoll's pelvis, or null without one.</summary>
     private Vector3? BodyPositionOf(nint address)

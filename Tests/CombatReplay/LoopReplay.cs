@@ -204,6 +204,9 @@ sealed unsafe class FlatWorld : ICombatWorld, ICrowdAgents, ICastAreaMarkers
 
     public FlatWorld(LoopLog log) => this.log = log;
 
+    /// <summary>Puts its observer on every fighter's draw generator before it is used (see <see cref="DrawSpy"/>).</summary>
+    public DrawSpy? Spy;
+
     public Body Add(Body body)
     {
         bodies.Add(body.Address, body);
@@ -225,7 +228,11 @@ sealed unsafe class FlatWorld : ICombatWorld, ICrowdAgents, ICastAreaMarkers
     // The player has nothing selected.
     public IGameObjectView? PlayerTarget => null;
 
-    public Vector3 PositionOf(Combatant c) => Of(c).Position;
+    public Vector3 PositionOf(Combatant c)
+    {
+        Spy?.Wrap();
+        return Of(c).Position;
+    }
     public Vector3 ReferencePositionOf(Combatant c) => throw new InvalidOperationException("no managed object references in the flat world");
     public float RotationOf(Combatant c) => Of(c).Rotation;
     // Combatant.HitboxRadius: the object's radius, 0.5 when there is none or it is not set.
@@ -392,6 +399,7 @@ sealed class FakeEngine : ICombatLoopEngine
 
     public Vector3 GetSimulatedEntityPosition(SimulatedEntityState entity)
     {
+        world.Spy?.Wrap();
         if (entity.IsPlayer)
             return world.Player.Position;
         if (entity.IsCompanion)
@@ -540,6 +548,83 @@ sealed class FakeAttacks : IAttackSink
     }
 }
 
+/// <summary>
+/// Records every target draw's weights, both sides, as <c>W</c> lines (the B5 leftover: the decisions alone do
+/// not show a weight changed by a small factor). Observes only: the production code is not changed and every
+/// number it draws is the one it would have drawn. Each fighter's draw state (<c>TargetingService.AggroOf</c>)
+/// holds its own generator, used only by <c>AggroModel.Draw</c> (one number, none when there is no candidate)
+/// and <c>AggroModel.Hold</c> (one number), in that order, each time a fighter draws. Before either can run,
+/// the drawing code reads a position through a seam (the drawer's own, <c>ICombatWorld.PositionOf</c>, or a
+/// candidate's, <c>GetSimulatedEntityPosition</c>), and there every new state's generator is wrapped in one
+/// that hands out its numbers unchanged and, on the first number of a draw, writes the weights the draw is
+/// made from (the manager's candidate list, <c>TargetingService.aggroDraw</c>, as it stands). "First of a
+/// draw": the list was changed (it is cleared at every draw's start) since the last line, by its version.
+/// </summary>
+sealed class DrawSpy
+{
+    private static readonly FieldInfo ListVersion =
+        typeof(List<(uint Id, float Weight)>).GetField("_version", BindingFlags.NonPublic | BindingFlags.Instance)
+        ?? throw new InvalidOperationException("List<T>._version not found");
+
+    private readonly Dictionary<uint, AggroState> states;
+    private readonly List<(uint Id, float Weight)> draw;
+    private readonly LoopLog log;
+    private readonly Func<uint, string> name;
+    private int wrapped = -1;
+    private int lastVersion;
+
+    public DrawSpy(TargetingService targeting, LoopLog log, Func<uint, string> name)
+    {
+        states = (Dictionary<uint, AggroState>)typeof(TargetingService)
+            .GetField("aggro", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(targeting)!;
+        draw = (List<(uint Id, float Weight)>)typeof(TargetingService)
+            .GetField("aggroDraw", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(targeting)!;
+        lastVersion = (int)ListVersion.GetValue(draw)!;
+        this.log = log;
+        this.name = name;
+    }
+
+    /// <summary>Wraps the generator of every draw state made since the last call.</summary>
+    public void Wrap()
+    {
+        if (states.Count == wrapped)
+            return;
+        wrapped = states.Count;
+        foreach (var (id, state) in states)
+            if (state.Rng is not Observed)
+                state.Rng = new Observed(state.Rng, () => Drawing(id));
+    }
+
+    private void Drawing(uint id)
+    {
+        var version = (int)ListVersion.GetValue(draw)!;
+        if (version == lastVersion)
+            return;
+        lastVersion = version;
+        var sb = new StringBuilder();
+        sb.Append("W ").Append(log.Frame).Append(' ').Append(name(id)).Append(" n ").Append(draw.Count);
+        foreach (var (candidate, weight) in draw)
+            sb.Append(' ').Append(name(candidate)).Append(':').Append(Fmt.H(weight));
+        log.Line(sb.ToString());
+    }
+
+    /// <summary>The fighter's own generator, its numbers unchanged; tells before each one.</summary>
+    private sealed class Observed(Random inner, Action before) : Random
+    {
+        public override double NextDouble() { before(); return inner.NextDouble(); }
+        public override int Next() { before(); return inner.Next(); }
+        public override int Next(int maxValue) { before(); return inner.Next(maxValue); }
+        public override int Next(int minValue, int maxValue) { before(); return inner.Next(minValue, maxValue); }
+        public override long NextInt64() { before(); return inner.NextInt64(); }
+        public override long NextInt64(long maxValue) { before(); return inner.NextInt64(maxValue); }
+        public override long NextInt64(long minValue, long maxValue) { before(); return inner.NextInt64(minValue, maxValue); }
+        public override float NextSingle() { before(); return inner.NextSingle(); }
+        public override void NextBytes(byte[] buffer) { before(); inner.NextBytes(buffer); }
+        public override void NextBytes(Span<byte> buffer) { before(); inner.NextBytes(buffer); }
+        protected override double Sample() => throw new InvalidOperationException("not used");
+    }
+}
+
 /// <summary>IPluginLog that drops everything (the loops' summary lines are wall-clock timed, not part of a run).</summary>
 public class NullLogProxy : DispatchProxy
 {
@@ -630,6 +715,7 @@ sealed unsafe class LoopReplay
         companions.AggroSeedSource = new Random(seed + 2);
         targeting = (TargetingService)typeof(CombatCompanionManager)
             .GetField("targeting", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(companions)!;
+        world.Spy = new DrawSpy(targeting, log, Name);
 
         // Enemies as the NPC spawner leaves them (client-controlled, spawned, idle), registered with the engine.
         var enemyIndex = 0;

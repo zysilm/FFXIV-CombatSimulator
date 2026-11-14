@@ -9,7 +9,9 @@ namespace CombatSimulator.Battle.Rules;
 /// <summary>
 /// Every battle: the fallen stay down. Its words on the HP bars are what the engine's mechanics left
 /// (the dead, the executed, the captive, whatever rule took them) and the player's; the other parts
-/// add theirs for the living allies, and with none "Fighting" stands.
+/// add theirs for the living allies, and with none "Fighting" stands. Its words on the result banner are
+/// every battle's (the party dead or executed, every enemy slain); a part that ends a battle its own way
+/// speaks after it.
 /// </summary>
 public sealed class BaseRule : BattleRule
 {
@@ -26,5 +28,26 @@ public sealed class BaseRule : BattleRule
         if (who.IsPlayer)
             return "Fighting";
         return null;
+    }
+
+    public override OutcomeText? DescribeOutcome(BattleContext ctx, bool playerWon)
+    {
+        if (!playerWon)
+            return AnyExecuted(ctx)
+                ? new OutcomeText("ROUTED", "Your party has been executed.")
+                : new OutcomeText("ANNIHILATED", "Every member of your party lies dead on the field.");
+        return ctx.Engine.State.PlayerState.IsAlive
+            ? new OutcomeText("VICTORY", "Every enemy has been slain. Your army is victorious.")
+            : new OutcomeText("VICTORY", "Every enemy has been slain, though you fell in the battle.");
+    }
+
+    /// <summary>The player or any ally has been executed.</summary>
+    internal static bool AnyExecuted(BattleContext ctx)
+    {
+        var anyExecuted = ctx.Engine.State.PlayerState.Executed;
+        foreach (var companion in ctx.Allies.All)
+            if (companion.State.Executed)
+                anyExecuted = true;
+        return anyExecuted;
     }
 }

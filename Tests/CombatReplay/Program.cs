@@ -39,8 +39,16 @@ foreach (var scenario in LoopScenarios.All)
     sb.Append("# loop-").Append(scenario.Name).Append(": ").Append(scenario.Description).Append('\n');
     for (var i = 0; i < 3; i++)
         sb.Append(new LoopReplay(scenario, seed: 1 + i, steps: Steps.ForSeedIndex(i)).Run());
-    outputs.Add(("loop-" + scenario.Name + ".txt", sb.ToString()));
+    // Two files from the one run: loop-<name>.weights.txt with every target draw's weights (W lines, added
+    // after stage B5), and loop-<name>.txt without them, the file as recorded before the W lines existed.
+    var full = sb.ToString();
+    outputs.Add(("loop-" + scenario.Name + ".txt", string.Concat(full.Split('\n').Where(l => !l.StartsWith("W ", StringComparison.Ordinal)).Select(l => l + "\n"))[..^1]));
+    outputs.Add(("loop-" + scenario.Name + ".weights.txt", full));
 }
+// The engine side (stage B6, SettlementReplay.cs): hits settled, the banner's words, the corpse seizure.
+outputs.Add(("settlement.txt", SettlementReplay.Run()));
+outputs.Add(("outcomes.txt", Outcomes.Table()));
+outputs.Add(("seizure.txt", SeizureReplay.Run()));
 
 var failed = false;
 foreach (var (file, text) in outputs)

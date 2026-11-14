@@ -109,9 +109,41 @@ the rules became parts:
   at each change): Spring and Autumn, at 6 s Warring States with retreat, at 13 s retreat off, at 17 s Spring and
   Autumn, at 23 s Warring States with retreat; the parts leaving and joining the composition mid-battle.
 
-The loop files record decisions (targets, states, attacks, a hash of every fighter's state), not the target weights:
-a weight changed by a small factor may not change any draw in these runs.
+The weights (added after stage B5, before B6): every loop scenario also writes `golden/loop-<name>.weights.txt`, the
+same run with a `W <frame> <who> n <count> <candidate>:<weight bits> ...` line for every target draw, both sides, the
+weights exactly as the draw is made from them (raw float bits). `loop-<name>.txt` is that run without the `W` lines,
+byte for byte the file recorded before the `W` lines existed. The weights are only observed: `DrawSpy` (LoopReplay.cs)
+wraps each fighter's own draw generator (`AggroState.Rng`, used only by `AggroModel.Draw` and `Hold`) in one that hands
+out the same numbers and, on the first number of a draw, writes the candidate list the manager drew from
+(`TargetingService.aggroDraw`, read by reflection). A small change of a weight (x30 to x30.3 on the guards' seizers)
+or a part answering for one frame more or less (`BattleRuleSet.Live`) shows in the weights files although the
+decisions in the loop files stay the same.
 
-Not reached by these scenarios: the engine cast and snapshotted-area path (Fighting Mode), sentries and patrols,
-the charge, freeing a captive (Spring and Autumn with hostages), executions, the corpse seizure's progress and capture
-(Tests/CorpseSeizure).
+## The engine side (`golden/settlement.txt`, `outcomes.txt`, `seizure.txt`, stage B6)
+
+Recorded with `--write-missing` before the engine's two settlement paths were merged and the battle rules' engine
+hooks wired (from the old paths moved unchanged into `CombatSimulator/Simulation/HitSettlement.cs`, the banner's
+words and the killer's possession as `Plugin.War.cs` and `Plugin.cs` decided them, the corpse seizure ticked as the
+plugin ticked it); since B6 the same output comes from the merged settlement and the rule parts (SettlementReplay.cs).
+
+- `settlement.txt` — seeds 1–3, 700 random events each: enemy attacks (auto-attacks and skills with and without
+  action data and potency, styles, splash, snapshotted areas with and without the guarded player, the windup's
+  VFX-only strike, arrows in flight, unknown or dead targets), ally attacks (bare potency, the full formula with
+  critical and direct hits and the damage multiplier, splash, arrows), time passing (arrows landing), the war
+  switches changed, fighters revived, enemies despawned. Captives come from hostages' lethal blows and are executed
+  after the wind-up. The engine is `RecordingHost`: every call the settlement makes is an `h` line with what it was
+  given; it changes HP and the captive state as `CombatEngine` does and finds the targets in an area as it does, but
+  runs no death queue, victory checks or effects. `e` the event, `r` the result, `s` everyone's HP, captive and
+  executed marks and the damage tallies, `O` the banner's words for a loss and a win every 50 events.
+- `outcomes.txt` — the banner's title and reason for every combination of the switches, battle under way, the lord
+  alive or dead and executed, an ally executed, the body carried off, won or lost; then whether the killer is
+  possessed, for every combination of the switches, battle under way and the lord's life.
+- `seizure.txt` — `Battle/CorpseSeizure` (production) through to its end: Warring States with Retreat, the lord dead,
+  the retainers at the body thinning out, six enemies (one a far sentry) walking at their goals, the body taken
+  (`DISGRACED`), the grab retried until it holds; a variant switching Retreat off at 2 s and on at 3 s; a variant
+  whose ragdoll is never ready (the seizing held at 95 %) and whose outcome is decided elsewhere at 6 s. `w` every
+  call into the fake world, `f` the frame's progress, `O` the banner's words.
+
+Not reached by the loop scenarios: the engine cast and snapshotted-area path (Fighting Mode), sentries and patrols,
+the charge, freeing a captive (Spring and Autumn with hostages); executions, the corpse seizure and the banner are
+reached by the engine side's files above (and Tests/CorpseSeizure).

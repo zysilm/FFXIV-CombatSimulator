@@ -17,10 +17,6 @@ using GamePlayerState = FFXIVClientStructs.FFXIV.Client.Game.UI.PlayerState;
 
 namespace CombatSimulator.Simulation;
 
-internal readonly record struct AppliedActionDamage(
-    SimulatedEntityState Target,
-    DamageResult DamageResult);
-
 public class CombatLogEntry
 {
     public float Timestamp { get; set; }
@@ -39,6 +35,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
     private readonly IClientState clientState;
     private readonly IPluginLog log;
     private readonly RagdollController ragdollController;
+    private readonly HitSettlement settlement;
     /// <summary>Optional cinematic victory sequence (dev-only); set after construction. Null = none.</summary>
     public IVictorySequence? VictorySequence { private get; set; }
     private bool playerDeathTriggered;
@@ -171,6 +168,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         this.npcSelector = npcSelector;
         this.clientState = clientState;
         this.log = log;
+        settlement = new HitSettlement(new SettlementHost(this), damageCalculator);
     }
 
     public void StartSimulation()
@@ -190,7 +188,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         playerVictoryTriggered = false;
         enemyVictoryTriggered = false;
         playerInitiatedCombat = false;
-        executionWindups.Clear();
+        settlement.ForgetExecutionWindups();
         pendingDeaths.Clear();
         ClearDeferredHits();
 
@@ -303,7 +301,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         playerVictoryTriggered = false;
         enemyVictoryTriggered = false;
         playerInitiatedCombat = false;
-        executionWindups.Clear();
+        settlement.ForgetExecutionWindups();
         pendingDeaths.Clear();
         ClearDeferredHits();
         ClearQueuedActions();
@@ -312,24 +310,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         log.Info("Combat state reset.");
 
         OnSimulationReset?.Invoke();
-    }
-
-    // An enemy's first try at a captive starts the wind-up; it strikes once the wind-up is over.
-    private const float ExecutionWindupSeconds = 1.5f;
-    private const float ExecutionWindupForgetSeconds = 4f;
-    private readonly Dictionary<(uint Npc, uint Captive), float> executionWindups = new();
-
-    private bool ExecutionReady(SimulatedNpc npc, SimulatedEntityState captive)
-    {
-        var key = (npc.SimulatedEntityId, captive.EntityId);
-        // A wind-up the enemy walked away from (it fought someone else meanwhile) starts over.
-        if (!executionWindups.TryGetValue(key, out var since) ||
-            State.SimulationTime - since > ExecutionWindupSeconds + ExecutionWindupForgetSeconds)
-        {
-            executionWindups[key] = State.SimulationTime;
-            return false;
-        }
-        return State.SimulationTime - since >= ExecutionWindupSeconds;
     }
 
     /// <summary>
@@ -344,7 +324,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
             if (data == null)
                 return;
             var hits = new List<AppliedActionDamage> { new(target, new DamageResult()) };
-            animationController.PlayActionVfx(BuildActionEffectRequest(source, CloneActionData(data), hits));
+            animationController.PlayActionVfx(BuildActionEffectRequest(source, HitSettlement.CloneActionData(data), hits));
         }
         catch (Exception ex)
         {
@@ -397,9 +377,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
             return;
         friend.IsCaptive = false;
         friend.CurrentHp = Math.Clamp((int)MathF.Ceiling(friend.MaxHp * hpShare), 1, Math.Max(1, friend.MaxHp));
-        foreach (var key in new List<(uint Npc, uint Captive)>(executionWindups.Keys))
-            if (key.Captive == friend.EntityId)
-                executionWindups.Remove(key);
+        settlement.ForgetExecutionWindupsOn(friend.EntityId);
 
         if (friend.IsPlayer && !playerDeathTriggered)
         {
@@ -788,6 +766,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
             AddLogEntry("You interrupt the cast.", CombatLogType.Info);
     }
 
+    /// <summary>An enemy's attack lands (see <see cref="HitSettlement"/>).</summary>
     public SimulatedActionResult ProcessNpcAction(
         SimulatedNpc npc,
         uint actionId,
@@ -801,257 +780,10 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         bool modelTimelineOwnsVfx = false,
         TelegraphShape? area = null,
         ulong excludeTargetId = 0)
-    {
-        var result = new SimulatedActionResult
-        {
-            ActionId = actionId,
-            SourceId = npc.SimulatedEntityId,
-            TargetId = targetId,
-        };
+        => settlement.ProcessNpcAction(npc, actionId, targetId, potency, attackStyle, radius,
+            suppressCasterActionEffect, suppressCastVfx, modelVfxActionId, modelTimelineOwnsVfx, area, excludeTargetId);
 
-        var target = State.GetEntity(targetId);
-        if (target == null || !npc.State.IsAlive || !target.IsAlive)
-        {
-            result.FailReason = "Invalid target or source dead.";
-            return result;
-        }
-
-        // An execution is not a passing blow: the enemy stands over the captive a moment first.
-        if (target.IsCaptive && !ExecutionReady(npc, target))
-        {
-            result.FailReason = "Winding up an execution.";
-            return result;
-        }
-
-        // A snapshotted telegraph area decides who is hit: everyone hostile standing in it at
-        // resolve, and only them — the primary included only if it stayed inside, the guarding
-        // player (excludeTargetId) spared without sparing the companions next to them.
-        List<SimulatedEntityState>? areaTargets = null;
-        if (area is { } areaShape)
-        {
-            areaTargets = new List<SimulatedEntityState>();
-            foreach (var candidate in GetHostileTargets(npc.State))
-            {
-                if (areaTargets.Count >= 32)
-                    break;
-                if (!candidate.IsAlive || candidate.EntityId == excludeTargetId)
-                    continue;
-                if (areaShape.Contains(GetEntityPosition(candidate)))
-                    areaTargets.Add(candidate);
-            }
-            if (areaTargets.Count == 0)
-            {
-                result.FailReason = "No targets in area.";
-                return result;
-            }
-            if (!areaTargets.Contains(target))
-            {
-                target = areaTargets[0];
-                result.TargetId = target.EntityId;
-            }
-        }
-
-        var resolvedActionData = actionDataProvider.GetActionData(actionId);
-
-        // The enemy's damage is budgeted against what its own kit sustains; measured once per kit.
-        var damageType = resolvedActionData?.DamageType ?? SimDamageType.Physical;
-        DamageResult dmgResult;
-        if (potency > 0)
-        {
-            dmgResult = damageCalculator.CalculateNpcAutoAttack(npc.State, target, potency, damageType);
-        }
-        else
-        {
-            if (resolvedActionData != null)
-            {
-                dmgResult = damageCalculator.CalculateNpcAutoAttack(npc.State, target, resolvedActionData.Potency, damageType);
-            }
-            else
-            {
-                dmgResult = damageCalculator.CalculateNpcAutoAttack(npc.State, target);
-            }
-        }
-
-        // A bow or gun auto-attack starts its shot motion now and lands when the arrow arrives; the
-        // damage, flinch and death wait for that moment. Everything else lands as it always has.
-        var contactDelay = !suppressCasterActionEffect && area == null && actionId is 7 or 8
-            ? RangedContactDelay(npc.State, target)
-            : -1f;
-        var deferred = contactDelay >= 0f;
-
-        // Apply damage to target
-        if (!deferred)
-            ApplyNpcHit(npc, target, dmgResult);
-
-        // Trigger animation (NPC -> Player). Preserve the selected action id
-        // so ranged/caster skills can use their own timelines/VFX instead of
-        // every enemy action collapsing to ActionId 7.
-        var visualAction = resolvedActionData != null ? CloneActionData(resolvedActionData) : new ActionData
-        {
-            ActionId = actionId == 0 ? 7 : actionId,
-            Name = actionId == 7 ? "Auto-attack" : $"Action #{actionId}",
-            Potency = potency > 0 ? potency : 110,
-            DamageType = SimDamageType.Physical,
-            Range = npc.Behavior.AutoAttackRange,
-            AnimationLock = 0.6f,
-        };
-        if (potency > 0)
-            visualAction.Potency = potency;
-        if (radius > 0)
-        {
-            visualAction.Radius = radius;
-            if (visualAction.Shape == AoeShape.Single)
-                visualAction.Shape = AoeShape.CircleSelf;
-        }
-
-        ApplyNpcAttackStyle(visualAction, attackStyle == NpcAttackStyle.Auto ? npc.Behavior.AutoAttackStyle : attackStyle);
-        var hits = new List<AppliedActionDamage> { new(target, dmgResult) };
-        var totalDamage = dmgResult.Damage;
-        foreach (var extraTarget in areaTargets ?? ResolveActionTargets(npc.State, target, visualAction, primaryAlreadyHit: true))
-        {
-            if (extraTarget.EntityId == target.EntityId)
-                continue;
-
-            var extraDamage = damageCalculator.CalculateNpcAutoAttack(
-                npc.State,
-                extraTarget,
-                visualAction.Potency > 0 ? visualAction.Potency : 110,
-                damageType);
-            if (!deferred)
-                ApplyNpcHit(npc, extraTarget, extraDamage, primary: false);
-            hits.Add(new AppliedActionDamage(extraTarget, extraDamage));
-            totalDamage += extraDamage.Damage;
-        }
-
-        if (suppressCasterActionEffect)
-        {
-            // The caster's swing already played as a windup pose, so skip a second animation — but a
-            // Keep a VFX-only strike even for Action 7: an action with no authored target effect
-            // uses the configured contact spark instead of resolving as an invisible hit.
-            TriggerManualNpcHitFeedback(hits);
-            var vfxAction = modelVfxActionId != 0
-                ? actionDataProvider.GetActionData(modelVfxActionId)
-                : null;
-            animationController.PlayActionVfx(BuildActionEffectRequest(
-                npc.State,
-                vfxAction != null ? CloneActionData(vfxAction) : visualAction,
-                hits,
-                suppressCastVfx,
-                modelTimelineOwnsVfx));
-        }
-        else
-            TriggerActionEffect(npc.State, visualAction, hits, suppressCastVfx, contactDelay, deferHitReaction: deferred);
-
-        result.Success = true;
-        result.Damage = totalDamage;
-        result.IsCritical = dmgResult.IsCritical;
-        result.IsDirectHit = dmgResult.IsDirectHit;
-
-        // Log
-        var actionName = actionId is 7 or 8
-            ? "auto-attacks"
-            : $"uses {(!string.IsNullOrWhiteSpace(visualAction.Name) ? visualAction.Name : "action")}";
-        // TODO: companion targets still render as "You" in this legacy log line.
-        AddLogEntry(
-            $"{npc.Name} {actionName} → You: {dmgResult.Damage:N0} damage",
-            CombatLogType.DamageTaken);
-
-        if (deferred)
-        {
-            DeferHit(contactDelay, () =>
-            {
-                if (!npc.IsSpawned)
-                    return;
-                foreach (var hit in hits)
-                {
-                    if (!hit.Target.IsAlive)
-                        continue;
-                    ApplyNpcHit(npc, hit.Target, hit.DamageResult, primary: hit.Target == target);
-                    PlayHitReactionOnTarget(hit.Target, hit.DamageResult.Damage > 0, includePlayer: true);
-                }
-                FinishNpcDeaths(npc, hits, target, null);
-            });
-            return result;
-        }
-
-        FinishNpcDeaths(npc, hits, target, result);
-        return result;
-    }
-
-    /// <summary>
-    /// Land one of an enemy's hits: HP, the damage-taken tally and the auto-counter cue. With
-    /// hostages on, a blow that would fell one of the player's side takes them captive instead, and
-    /// a captive dies only to a blow aimed at them (<paramref name="primary"/>), not to a splash.
-    /// </summary>
-    private void ApplyNpcHit(SimulatedNpc npc, SimulatedEntityState target, DamageResult damage, bool primary = true)
-    {
-        var friend = target.IsPlayer || target.IsCompanion;
-        if (friend && target.IsCaptive)
-        {
-            if (!primary)
-                return;
-            target.Executed = true;
-            target.CurrentHp = 0;
-            executionWindups.Remove((npc.SimulatedEntityId, target.EntityId));
-            AddLogEntry($"{npc.Name} executes {target.Name}!", CombatLogType.Death);
-            return;
-        }
-        // Hostages are a Warring States rule.
-        if (friend && Rules.TakesCaptivesOnLethalBlow &&
-            target.IsAlive && damage.Damage >= target.CurrentHp)
-        {
-            if (target.IsPlayer)
-                State.TotalDamageTaken += Math.Max(0, target.CurrentHp - 1);
-            target.CurrentHp = 1;
-            OnDamageLanded?.Invoke(target, damage, npc.State);
-            TakeCaptive(target);
-            return;
-        }
-
-        LandDamage(target, damage, npc.State);
-        OnHit?.Invoke(npc.State, target, damage.Damage);
-        if (target.IsPlayer)
-        {
-            State.TotalDamageTaken += damage.Damage;
-            if (damage.Damage > 0)
-                OnPlayerDamagedByNpc?.Invoke();
-            // Player was hit and survived → let auto-counter consider locking this attacker.
-            if (target.IsAlive)
-                OnPlayerHitByNpc?.Invoke(npc.SimulatedEntityId);
-        }
-    }
-
-    /// <summary>Deaths caused by an enemy's hits, the primary target first.</summary>
-    private void FinishNpcDeaths(SimulatedNpc npc, IReadOnlyList<AppliedActionDamage> hits,
-        SimulatedEntityState target, SimulatedActionResult? result)
-    {
-        if (!target.IsAlive)
-        {
-            if (target.IsPlayer)
-            {
-                LastPlayerDefeatedBy = npc.Name;
-                LastPlayerKillerAddress = npc.Address;
-                LastPlayerKillerEntityId = npc.SimulatedEntityId;
-            }
-            if (result != null)
-                result.TargetKilled = true;
-            OnEntityDeath(target);
-        }
-        foreach (var hit in hits)
-        {
-            if (hit.Target.EntityId == target.EntityId || hit.Target.IsAlive)
-                continue;
-
-            if (hit.Target.IsPlayer)
-            {
-                LastPlayerDefeatedBy = npc.Name;
-                LastPlayerKillerAddress = npc.Address;
-                LastPlayerKillerEntityId = npc.SimulatedEntityId;
-            }
-            OnEntityDeath(hit.Target);
-        }
-    }
-
+    /// <summary>An ally's attack lands (see <see cref="HitSettlement"/>).</summary>
     public SimulatedActionResult ProcessCompanionAction(
         CombatCompanion companion,
         SimulatedNpc targetNpc,
@@ -1059,131 +791,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         int potency = 0,
         NpcAttackStyle attackStyle = NpcAttackStyle.Auto,
         float radius = 0)
-    {
-        var result = new SimulatedActionResult
-        {
-            ActionId = actionId,
-            SourceId = companion.SimulatedEntityId,
-            TargetId = targetNpc.SimulatedEntityId,
-        };
-
-        if (!companion.State.IsAlive || !targetNpc.State.IsAlive)
-        {
-            result.FailReason = "Invalid target or source dead.";
-            return result;
-        }
-
-        var resolvedActionData = actionDataProvider.GetActionData(actionId);
-        DamageResult dmgResult;
-        if (potency > 0)
-            dmgResult = damageCalculator.CalculateNpcAutoAttack(companion.State, targetNpc.State, potency);
-        else if (resolvedActionData != null)
-            dmgResult = damageCalculator.Calculate(companion.State, targetNpc.State, resolvedActionData, false, EnableCriticalHits, EnableDirectHits, DamageMultiplier);
-        else
-            dmgResult = damageCalculator.CalculateNpcAutoAttack(companion.State, targetNpc.State);
-
-        // A companion's bow or gun auto-attack lands when the arrow arrives (see RangedContactDelay).
-        var contactDelay = actionId is 7 or 8 ? RangedContactDelay(companion.State, targetNpc.State) : -1f;
-        var deferred = contactDelay >= 0f;
-        if (!deferred)
-        {
-            LandDamage(targetNpc.State, dmgResult, companion.State);
-            State.TotalDamageDealt += dmgResult.Damage;
-        }
-
-        // Companion aggro normally makes the target fight back. The dev player-hit gate
-        // suppresses this path so only a confirmed local-player hit can release the pack.
-        EngageIdleTarget(targetNpc.SimulatedEntityId);
-
-        var visualAction = resolvedActionData != null ? CloneActionData(resolvedActionData) : new ActionData
-        {
-            ActionId = actionId == 0 ? 7 : actionId,
-            Name = actionId == 7 ? "Auto-attack" : $"Action #{actionId}",
-            Potency = potency > 0 ? potency : 110,
-            DamageType = SimDamageType.Physical,
-            Range = companion.Behavior.AutoAttackRange,
-            AnimationLock = 0.6f,
-        };
-        if (potency > 0)
-            visualAction.Potency = potency;
-        if (radius > 0)
-        {
-            visualAction.Radius = radius;
-            if (visualAction.Shape == AoeShape.Single)
-                visualAction.Shape = AoeShape.CircleSelf;
-        }
-
-        ApplyNpcAttackStyle(visualAction, attackStyle == NpcAttackStyle.Auto ? companion.Behavior.AutoAttackStyle : attackStyle);
-        var hits = new List<AppliedActionDamage> { new(targetNpc.State, dmgResult) };
-        var totalDamage = dmgResult.Damage;
-        foreach (var extraTarget in ResolveActionTargets(companion.State, targetNpc.State, visualAction, primaryAlreadyHit: true))
-        {
-            if (extraTarget.EntityId == targetNpc.SimulatedEntityId)
-                continue;
-
-            var extraDamage = potency > 0
-                ? damageCalculator.CalculateNpcAutoAttack(companion.State, extraTarget, visualAction.Potency)
-                : resolvedActionData != null
-                    ? damageCalculator.Calculate(companion.State, extraTarget, visualAction, false, EnableCriticalHits, EnableDirectHits, DamageMultiplier)
-                    : damageCalculator.CalculateNpcAutoAttack(companion.State, extraTarget);
-            if (!deferred)
-            {
-                LandDamage(extraTarget, extraDamage, companion.State);
-                State.TotalDamageDealt += extraDamage.Damage;
-            }
-            hits.Add(new AppliedActionDamage(extraTarget, extraDamage));
-            totalDamage += extraDamage.Damage;
-
-            EngageIdleTarget(extraTarget.EntityId);
-        }
-
-        TriggerActionEffect(companion.State, visualAction, hits, contactDelay: contactDelay, deferHitReaction: deferred);
-
-        result.Success = true;
-        result.Damage = totalDamage;
-        result.IsCritical = dmgResult.IsCritical;
-        result.IsDirectHit = dmgResult.IsDirectHit;
-
-        var actionName = actionId is 7 or 8
-            ? "auto-attacks"
-            : $"uses {(!string.IsNullOrWhiteSpace(visualAction.Name) ? visualAction.Name : "action")}";
-        AddLogEntry(
-            $"{companion.Name} {actionName} -> {targetNpc.Name}: {dmgResult.Damage:N0} damage",
-            CombatLogType.DamageDealt);
-
-        if (deferred)
-        {
-            DeferHit(contactDelay, () =>
-            {
-                foreach (var hit in hits)
-                {
-                    if (!hit.Target.IsAlive)
-                        continue;
-                    LandDamage(hit.Target, hit.DamageResult, companion.State);
-                    State.TotalDamageDealt += hit.DamageResult.Damage;
-                    PlayHitReactionOnTarget(hit.Target, hit.DamageResult.Damage > 0);
-                    if (!hit.Target.IsAlive)
-                        OnEntityDeath(hit.Target);
-                }
-            });
-            return result;
-        }
-
-        if (!targetNpc.State.IsAlive)
-        {
-            result.TargetKilled = true;
-            OnEntityDeath(targetNpc.State);
-        }
-        foreach (var hit in hits)
-        {
-            if (hit.Target.EntityId == targetNpc.SimulatedEntityId || hit.Target.IsAlive)
-                continue;
-
-            OnEntityDeath(hit.Target);
-        }
-
-        return result;
-    }
+        => settlement.ProcessCompanionAction(companion, targetNpc, actionId, potency, attackStyle, radius);
 
     /// <summary>A hit by someone on someone: (source, target, damage). Who fights whom is drawn from these.</summary>
     public Action<SimulatedEntityState, SimulatedEntityState, int>? OnHit { get; set; }
@@ -1313,61 +921,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
 
     // 2D hit-shape tests moved to CombatGeometry so the Action-Mode telegraph +
     // player hitbox share the exact same geometry as AoE resolution.
-
-    private static void ApplyNpcAttackStyle(ActionData actionData, NpcAttackStyle attackStyle)
-    {
-        switch (attackStyle)
-        {
-            case NpcAttackStyle.Ranged:
-                actionData.Range = Math.Max(actionData.Range, 20f);
-                break;
-            case NpcAttackStyle.Magic:
-                actionData.Range = Math.Max(actionData.Range, 20f);
-                actionData.DamageType = SimDamageType.Magical;
-                break;
-            case NpcAttackStyle.Melee:
-                if (actionData.Range <= 0 || actionData.Range > 5f)
-                    actionData.Range = 3f;
-                break;
-        }
-    }
-
-    private static ActionData CloneActionData(ActionData source)
-    {
-        return new ActionData
-        {
-            ActionId = source.ActionId,
-            Name = source.Name,
-            Potency = source.Potency,
-            CastTime = source.CastTime,
-            RecastTime = source.RecastTime,
-            RecastGroup = source.RecastGroup,
-            Range = source.Range,
-            Radius = source.Radius,
-            Shape = source.Shape,
-            Width = source.Width,
-            CastType = source.CastType,
-            ConeAngleDeg = source.ConeAngleDeg,
-            InnerRadius = source.InnerRadius,
-            OmenVfxPath = source.OmenVfxPath,
-            CanTargetHostile = source.CanTargetHostile,
-            DamageType = source.DamageType,
-            NativeMpCost = source.NativeMpCost,
-            MpCost = source.MpCost,
-            IsComboAction = source.IsComboAction,
-            ComboFrom = source.ComboFrom,
-            ComboPotency = source.ComboPotency,
-            AnimationLock = source.AnimationLock,
-            AnimationDuration = source.AnimationDuration,
-            IsPlayerAction = source.IsPlayerAction,
-            AnimationStartTimelineId = source.AnimationStartTimelineId,
-            AnimationEndTimelineId = source.AnimationEndTimelineId,
-            CastVfxPath = source.CastVfxPath,
-            StartVfxPath = source.StartVfxPath,
-            CasterVfxPaths = new List<string>(source.CasterVfxPaths),
-            TargetVfxPaths = new List<string>(source.TargetVfxPaths),
-        };
-    }
 
     private void TriggerActionEffect(
         SimulatedEntityState source,
@@ -2066,7 +1619,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         var source = actionDataProvider.GetActionData(actionId);
         if (source != null)
         {
-            var data = CloneActionData(source);
+            var data = HitSettlement.CloneActionData(source);
             ApplyActionModeAnimationDuration(data, animationDuration);
             return data;
         }
@@ -2207,7 +1760,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         if (Math.Abs(falloff - 1f) < 0.001f)
             return actionData;
 
-        var scaled = CloneActionData(actionData);
+        var scaled = HitSettlement.CloneActionData(actionData);
         scaled.Potency = Math.Max(1, (int)MathF.Round(scaled.Potency * falloff));
         if (scaled.ComboPotency > 0)
             scaled.ComboPotency = Math.Max(1, (int)MathF.Round(scaled.ComboPotency * falloff));

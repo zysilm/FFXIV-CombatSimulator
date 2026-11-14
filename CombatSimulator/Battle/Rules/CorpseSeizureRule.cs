@@ -10,11 +10,15 @@ namespace CombatSimulator.Battle.Rules;
 
 /// <summary>
 /// Warring States with Retreat: the enemy goes for the lord's body. The seizure itself (who goes, the
-/// count at the body, carrying it off) is <see cref="CorpseSeizure{TNpc}"/>, still run by the plugin
-/// after the engine (<c>Plugin.TickWar</c>; the <see cref="IBattleRule.TickAfterEngine"/> hook is stage
-/// B6). This part is the seizers' target choice: the one standing in their way is drawn at x100, and a
-/// new one makes them draw again. Moved from <c>CombatCompanionManager.Lord.cs</c> and <c>.Aggro.cs</c>
-/// (refactor stage B5).
+/// count at the body, carrying it off) is <see cref="CorpseSeizure{TNpc}"/>, built by the plugin over the
+/// game and handed to this part (<see cref="Seizure"/>), which ticks it after the engine
+/// (<see cref="IBattleRule.TickAfterEngine"/>, every frame whatever the switches, as the plugin's war tick
+/// did). The body carried off is the battle lost in disgrace (<see cref="IBattleRule.DescribeOutcome"/>), and
+/// while the body is fought over the killer is not possessed when the lord falls
+/// (<see cref="IBattleRule.SuppressesKillerPossession"/>). The seizers' target choice: the one standing in
+/// their way is drawn at x100, and a new one makes them draw again. Moved from
+/// <c>CombatCompanionManager.Lord.cs</c> and <c>.Aggro.cs</c> (refactor stage B5) and <c>Plugin.War.cs</c>,
+/// <c>Plugin.cs</c> (B6).
 /// </summary>
 public sealed class CorpseSeizureRule : BattleRule
 {
@@ -27,6 +31,20 @@ public sealed class CorpseSeizureRule : BattleRule
     public CorpseSeizureRule(LordGuardRule guard) => this.guard = guard;
 
     public override string Id => BattleRuleFactory.Seizure;
+
+    /// <summary>The fight over the lord's body (the plugin's, over the game); null until the war is wired.</summary>
+    public CorpseSeizure<SimulatedNpc>? Seizure { get; set; }
+
+    public override void TickAfterEngine(BattleContext ctx, float deltaTime) => Seizure?.Tick(deltaTime);
+
+    /// <summary>The lord's body is fought over: nobody takes it the moment the lord falls.</summary>
+    public override bool SuppressesKillerPossession(BattleContext ctx) => true;
+
+    /// <summary>The body carried off: the battle is lost in disgrace (whatever the switches say by then).</summary>
+    public override OutcomeText? DescribeOutcome(BattleContext ctx, bool playerWon)
+        => !playerWon && Seizure?.BodySeized == true
+            ? new OutcomeText("DISGRACED", "Your corpse has been dragged off as a trophy. Your army is executed.")
+            : null;
 
     /// <summary>
     /// The one an enemy going for the lord's body must cut down: the one praying over it (it cannot
