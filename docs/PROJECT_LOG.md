@@ -96,7 +96,8 @@
 - 尸体跟随（防剔除）只写本地玩家的 `DrawObject.Position`，从不写 `GameObject.Position`；写入放在 framework tick，不在渲染钩子里（2026-07-14）。
 - 登出清理：`ObjectTable.LocalPlayer == null` 时不碰任何游戏内存（2026-07-14，`e9dbeaf`）。
 - 头发物理（尤其开碰撞时会抖）不要求重构前后 1:1：55 份金标准录制时没开头发碰撞，无从对照；重构阶段不改头发的游戏行为，回放工具里头发输出可排除在逐位要求之外；头发以后可按协调者的理解重做（2026-11-14，用户裁决）。
-- AdvancedRagdoll 库用 MPL-2.0，与插件相同（2026-11-14，用户裁决；先定 GPL v3，得知动态链接也受约束后改回）；闭源项目可以引用，改了库文件须公开该文件；Bepu 为 Apache-2.0，兼容。发布 NuGet 需用户的 nuget.org 账户和 API 密钥，推送时一次性使用、不保存。
+- NuGet 发布用 Trusted Publishing（GitHub Actions OIDC，`NuGet/login@v1` 换 1 小时临时密钥），不用长期 API 密钥：nuget.org 策略 owner `zysilm`、repo `AdvancedRagdoll`、workflow `publish.yml`、environment `release`、glob `AdvancedRagdoll`；GitHub secret `NUGET_USER` = nuget.org 用户名（2026-11-14，用户指出 API 密钥已不推荐）。
+- AdvancedRagdoll 库用 MPL-2.0，与插件相同（2026-11-14，用户裁决；先定 GPL v3，得知动态链接也受约束后改回）；闭源项目可以引用，改了库文件须公开该文件；Bepu 为 Apache-2.0，兼容。
 - 私有模块：A3b/A4 需要时由协调者改接法，代码不进公开库（2026-11-14，用户授权协调者自行决定）。
 - 网格体积（两条工作线程）不开 BEPU 确定性模式：游戏行为不变，这条路径的录制只核对产物被正确回答，不要求逐位相同（2026-11-14，用户按协调者建议裁决）。
 
