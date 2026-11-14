@@ -30,6 +30,9 @@ public sealed class BattleRules
         this.lordAlive = lordAlive;
     }
 
+    /// <summary>The switches themselves (the rule parts' composition, <c>Rules/BattleRuleFactory.PartsFor</c>).</summary>
+    public IBattleRuleSettings Settings => settings;
+
     /// <summary>Warring States: the player is the lord (the banner's wording, the lord's fall).</summary>
     public bool PlayerIsTheLord => settings.FallenRule == WarFallenRule.WarringStates;
 

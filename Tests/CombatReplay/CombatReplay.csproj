@@ -41,6 +41,8 @@
     <Compile Include="../../CombatSimulator/Simulation/WarFallenRule.cs" Link="Production/Loop/WarFallenRule.cs" />
     <Compile Include="../../CombatSimulator/Battle/BattleRules.cs" Link="Production/Loop/BattleRules.cs" />
     <Compile Include="../../CombatSimulator/Battle/IBattleRuleSettings.cs" Link="Production/Loop/IBattleRuleSettings.cs" />
+    <Compile Include="../../CombatSimulator/Battle/Rules/*.cs" LinkBase="Production/Loop/Rules" />
+    <Compile Include="../../CombatSimulator/Companions/CombatCompanionManager.Rules.cs" Link="Production/Loop/CombatCompanionManager.Rules.cs" />
     <Compile Include="../../CombatSimulator/Action/IAttackExecutor.cs" Link="Production/Loop/IAttackExecutor.cs" />
     <Compile Include="../../CombatSimulator/Animation/ActorVisualStateController.cs" Link="Production/Loop/ActorVisualStateController.cs" />
     <Compile Include="../../CombatSimulator/Core/Services.cs" Link="Production/Loop/Services.cs" />

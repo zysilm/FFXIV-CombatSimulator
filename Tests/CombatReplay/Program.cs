@@ -10,6 +10,7 @@ using CombatSimulator.Simulation;
 //
 //   dotnet run -c Release             compare with the golden files, exit 1 on the first difference
 //   dotnet run -c Release -- --write  (re)write the golden files
+//   dotnet run -c Release -- --write-missing  write only the golden files that do not exist yet (a new scenario)
 //
 // golden/functions.txt: every CombatantMath / AggroModel function on a fixed input table (the function level
 // of §8.1). golden/<scenario>.txt: a flat fake world stepped frame by frame in which every decision the pure
@@ -18,6 +19,7 @@ using CombatSimulator.Simulation;
 // harness's, not the plugin's: the two controllers cannot run offline before stage B4a.
 
 var write = args.Contains("--write");
+var writeMissing = args.Contains("--write-missing");
 var dir = Path.Combine(Here(), "golden");
 Directory.CreateDirectory(dir);
 
@@ -49,6 +51,12 @@ foreach (var (file, text) in outputs)
     {
         File.WriteAllBytes(path, bytes);
         Console.WriteLine($"wrote {file}: {bytes.Length} bytes, {text.Count(c => c == '\n')} lines");
+        continue;
+    }
+    if (!File.Exists(path) && writeMissing)
+    {
+        File.WriteAllBytes(path, bytes);
+        Console.WriteLine($"wrote new {file}: {bytes.Length} bytes, {text.Count(c => c == '\n')} lines");
         continue;
     }
     if (!File.Exists(path))
