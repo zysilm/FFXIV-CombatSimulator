@@ -2,6 +2,15 @@
   "version": 1,
   "dependencies": {
     "net10.0-windows7.0": {
+      "AdvancedRagdoll": {
+        "type": "Direct",
+        "requested": "[0.1.0-beta.2, )",
+        "resolved": "0.1.0-beta.2",
+        "contentHash": "0p1aT0NwNLWzW1+8lhFM8rka37dHBjAFVUzHBMto4dvc3Q9nSQ8hHMyS2sTsDMs8IXlPjHibR0KQnBnowSH8QQ==",
+        "dependencies": {
+          "BepuPhysics": "[2.5.0-beta.22]"
+        }
+      },
       "BepuPhysics": {
         "type": "Direct",
         "requested": "[2.5.0-beta.22, )",
@@ -103,12 +112,6 @@
         "type": "Transitive",
         "resolved": "2.21.0",
         "contentHash": "1Hv05KJmKXzzlp3+nFHl2A8yaugGkAj0gCSOaSsLFNFnwuLUIKLBGaC6y23JgGYnK+1t1DS40oPOquHQPI06rg=="
-      },
-      "advancedragdoll": {
-        "type": "Project",
-        "dependencies": {
-          "BepuPhysics": "[2.5.0-beta.22, 2.5.0-beta.22]"
-        }
       }
     }
   }
