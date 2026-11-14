@@ -344,6 +344,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         combatEngine.OnPlayerDamageDealtToTarget = companionManager.RegisterPlayerDamage;
         combatEngine.ForceNpcTarget = companionManager.ForceEnemyTarget;
         combatEngine.OnHit = companionManager.RegisterHit;
+        combatEngine.RuleParts = companionManager.RuleParts;
         WireVictoryCelebration();
         spectatorController = new SpectatorController(
             npcSelector, movementBlockHook, animationController.EmotePlayer,
@@ -561,8 +562,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             devExperimental.OnPlayerDeath(addr);
 
             // Under Warring States with Retreat the lord's body is fought over: an enemy takes it with
-            // Enemy Control's grab only if it reaches it (Plugin.War), not the moment the lord falls.
-            var bodyFoughtOver = combatEngine.Rules.LordBodyIsFoughtOver;
+            // Enemy Control's grab only if it reaches it (the corpse seizure rule), not the moment the lord falls.
+            var bodyFoughtOver = companionManager.RuleParts.SuppressesKillerPossession();
             if (bodyFoughtOver)
                 log.Info("EnemyControl: the lord's body is fought over; nobody takes it yet.");
             else if (config.EnemyControlControlKiller)

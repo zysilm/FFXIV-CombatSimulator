@@ -1,0 +1,5318 @@
+# seizure: the lord's body under Warring States with Retreat, carried through by Battle/CorpseSeizure
+## taken
+w engage E3
+w engage E5
+w engage E4
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+w info War: lord's body at <1.0, 0.0, 2.0>; 3 going for it, the closest E3 6.8 m from it; 0 seizers and 2 retainers within 3.5 m; held off, nearest retainer A1 1.2 m from it; body not yet fallen (ragdoll waiting); seized 0%.
+f 0 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 1 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 2 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 3 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 4 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 5 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 6 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 7 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 8 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 9 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 10 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 11 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 12 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 13 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 14 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 15 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 16 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 17 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 18 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 19 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 20 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 21 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 22 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 23 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 24 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 25 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 26 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 27 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 28 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 29 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 30 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 31 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 32 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 33 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 34 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 35 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 36 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 37 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 38 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 39 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 40 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 41 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 42 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 43 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 44 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 45 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 46 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 47 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 48 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 49 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 50 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 51 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 52 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 53 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+w log Nobody stands over the lord's body!
+f 54 progress 3D088889 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 55 progress 3D888889 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 56 progress 3DCCCCCE seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 57 progress 3E088889 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 58 progress 3E2AAAAB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 59 progress 3E4CCCCD seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 60 progress 3E6EEEEF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+w info War: lord's body at <1.0, 0.0, 2.0>; 3 going for it, the closest E3 0.3 m from it; 3 seizers and 2 retainers within 3.5 m; not held, nearest retainer A1 1.2 m away; seized 13%.
+f 61 progress 3E888889 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 62 progress 3E99999A seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 63 progress 3EAAAAAB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 64 progress 3EBBBBBC seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 65 progress 3ECCCCCD seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 66 progress 3EDDDDDE seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 67 progress 3EEEEEEF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 68 progress 3F000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 69 progress 3F088889 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 70 progress 3F111112 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 71 progress 3F19999B seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 72 progress 3F222224 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 73 progress 3F2AAAAD seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 74 progress 3F333336 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 75 progress 3F3BBBBF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 76 progress 3F444448 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 77 progress 3F4CCCD1 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 78 progress 3F55555A seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 79 progress 3F5DDDE3 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 80 progress 3F66666C seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 81 progress 3F6EEEF5 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 82 progress 3F77777E seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 83 progress 3F800003 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 84 progress 3F844447 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 85 progress 3F88888B seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 86 progress 3F8CCCCF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 87 progress 3F911113 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 88 progress 3F955557 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 89 progress 3F99999B seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 90 progress 3F9DDDDF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 91 progress 3FA22223 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 92 progress 3FA66667 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 93 progress 3FAAAAAB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 94 progress 3FAEEEEF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 95 progress 3FB33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 96 progress 3FB77777 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 97 progress 3FBBBBBB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 98 progress 3FBFFFFF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 99 progress 3FC44443 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 100 progress 3FC88887 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 101 progress 3FCCCCCB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 102 progress 3FD1110F seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 103 progress 3FD55553 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 104 progress 3FD99997 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 105 progress 3FDDDDDB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 106 progress 3FE2221F seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 107 progress 3FE66663 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 108 progress 3FEAAAA7 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 109 progress 3FEEEEEB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 110 progress 3FF3332F seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 111 progress 3FF77773 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 112 progress 3FFBBBB7 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 113 progress 3FFFFFFB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+w corpse captured True
+w goal E3 -
+w held E3 False
+w goal E5 -
+w held E5 False
+w goal E4 -
+w held E4 False
+w seizers cleared
+w log E4 carries off the lord's body!
+w surrender
+w enemy victory
+w control E4
+w grab 1 holding False
+f 114 progress 40022220 seized True
+f 115 progress 00000000 seized True
+f 116 progress 00000000 seized True
+f 117 progress 00000000 seized True
+f 118 progress 00000000 seized True
+f 119 progress 00000000 seized True
+f 120 progress 00000000 seized True
+f 121 progress 00000000 seized True
+f 122 progress 00000000 seized True
+f 123 progress 00000000 seized True
+f 124 progress 00000000 seized True
+f 125 progress 00000000 seized True
+f 126 progress 00000000 seized True
+w grab 2 holding False
+f 127 progress 00000000 seized True
+f 128 progress 00000000 seized True
+f 129 progress 00000000 seized True
+f 130 progress 00000000 seized True
+f 131 progress 00000000 seized True
+f 132 progress 00000000 seized True
+f 133 progress 00000000 seized True
+f 134 progress 00000000 seized True
+f 135 progress 00000000 seized True
+f 136 progress 00000000 seized True
+f 137 progress 00000000 seized True
+f 138 progress 00000000 seized True
+f 139 progress 00000000 seized True
+w grab 3 holding True
+f 140 progress 00000000 seized True
+w info War: the seizer has the lord's body in hand.
+f 141 progress 00000000 seized True
+f 142 progress 00000000 seized True
+f 143 progress 00000000 seized True
+f 144 progress 00000000 seized True
+f 145 progress 00000000 seized True
+f 146 progress 00000000 seized True
+f 147 progress 00000000 seized True
+f 148 progress 00000000 seized True
+f 149 progress 00000000 seized True
+f 150 progress 00000000 seized True
+f 151 progress 00000000 seized True
+f 152 progress 00000000 seized True
+f 153 progress 00000000 seized True
+f 154 progress 00000000 seized True
+f 155 progress 00000000 seized True
+f 156 progress 00000000 seized True
+f 157 progress 00000000 seized True
+f 158 progress 00000000 seized True
+f 159 progress 00000000 seized True
+f 160 progress 00000000 seized True
+f 161 progress 00000000 seized True
+f 162 progress 00000000 seized True
+f 163 progress 00000000 seized True
+f 164 progress 00000000 seized True
+f 165 progress 00000000 seized True
+f 166 progress 00000000 seized True
+f 167 progress 00000000 seized True
+f 168 progress 00000000 seized True
+f 169 progress 00000000 seized True
+f 170 progress 00000000 seized True
+f 171 progress 00000000 seized True
+f 172 progress 00000000 seized True
+f 173 progress 00000000 seized True
+f 174 progress 00000000 seized True
+f 175 progress 00000000 seized True
+f 176 progress 00000000 seized True
+f 177 progress 00000000 seized True
+f 178 progress 00000000 seized True
+f 179 progress 00000000 seized True
+f 180 progress 00000000 seized True
+f 181 progress 00000000 seized True
+f 182 progress 00000000 seized True
+f 183 progress 00000000 seized True
+f 184 progress 00000000 seized True
+f 185 progress 00000000 seized True
+f 186 progress 00000000 seized True
+f 187 progress 00000000 seized True
+f 188 progress 00000000 seized True
+f 189 progress 00000000 seized True
+f 190 progress 00000000 seized True
+f 191 progress 00000000 seized True
+f 192 progress 00000000 seized True
+f 193 progress 00000000 seized True
+f 194 progress 00000000 seized True
+f 195 progress 00000000 seized True
+f 196 progress 00000000 seized True
+f 197 progress 00000000 seized True
+f 198 progress 00000000 seized True
+f 199 progress 00000000 seized True
+f 200 progress 00000000 seized True
+f 201 progress 00000000 seized True
+f 202 progress 00000000 seized True
+f 203 progress 00000000 seized True
+f 204 progress 00000000 seized True
+f 205 progress 00000000 seized True
+f 206 progress 00000000 seized True
+f 207 progress 00000000 seized True
+f 208 progress 00000000 seized True
+f 209 progress 00000000 seized True
+f 210 progress 00000000 seized True
+f 211 progress 00000000 seized True
+f 212 progress 00000000 seized True
+f 213 progress 00000000 seized True
+f 214 progress 00000000 seized True
+f 215 progress 00000000 seized True
+f 216 progress 00000000 seized True
+f 217 progress 00000000 seized True
+f 218 progress 00000000 seized True
+f 219 progress 00000000 seized True
+f 220 progress 00000000 seized True
+f 221 progress 00000000 seized True
+f 222 progress 00000000 seized True
+f 223 progress 00000000 seized True
+f 224 progress 00000000 seized True
+f 225 progress 00000000 seized True
+f 226 progress 00000000 seized True
+f 227 progress 00000000 seized True
+f 228 progress 00000000 seized True
+f 229 progress 00000000 seized True
+f 230 progress 00000000 seized True
+f 231 progress 00000000 seized True
+f 232 progress 00000000 seized True
+f 233 progress 00000000 seized True
+f 234 progress 00000000 seized True
+f 235 progress 00000000 seized True
+f 236 progress 00000000 seized True
+f 237 progress 00000000 seized True
+f 238 progress 00000000 seized True
+f 239 progress 00000000 seized True
+f 240 progress 00000000 seized True
+f 241 progress 00000000 seized True
+f 242 progress 00000000 seized True
+f 243 progress 00000000 seized True
+f 244 progress 00000000 seized True
+f 245 progress 00000000 seized True
+f 246 progress 00000000 seized True
+f 247 progress 00000000 seized True
+f 248 progress 00000000 seized True
+f 249 progress 00000000 seized True
+f 250 progress 00000000 seized True
+f 251 progress 00000000 seized True
+f 252 progress 00000000 seized True
+f 253 progress 00000000 seized True
+f 254 progress 00000000 seized True
+f 255 progress 00000000 seized True
+f 256 progress 00000000 seized True
+f 257 progress 00000000 seized True
+f 258 progress 00000000 seized True
+f 259 progress 00000000 seized True
+f 260 progress 00000000 seized True
+f 261 progress 00000000 seized True
+f 262 progress 00000000 seized True
+f 263 progress 00000000 seized True
+f 264 progress 00000000 seized True
+f 265 progress 00000000 seized True
+f 266 progress 00000000 seized True
+f 267 progress 00000000 seized True
+f 268 progress 00000000 seized True
+f 269 progress 00000000 seized True
+f 270 progress 00000000 seized True
+f 271 progress 00000000 seized True
+f 272 progress 00000000 seized True
+f 273 progress 00000000 seized True
+f 274 progress 00000000 seized True
+f 275 progress 00000000 seized True
+f 276 progress 00000000 seized True
+f 277 progress 00000000 seized True
+f 278 progress 00000000 seized True
+f 279 progress 00000000 seized True
+f 280 progress 00000000 seized True
+f 281 progress 00000000 seized True
+f 282 progress 00000000 seized True
+f 283 progress 00000000 seized True
+f 284 progress 00000000 seized True
+f 285 progress 00000000 seized True
+f 286 progress 00000000 seized True
+f 287 progress 00000000 seized True
+f 288 progress 00000000 seized True
+f 289 progress 00000000 seized True
+f 290 progress 00000000 seized True
+f 291 progress 00000000 seized True
+f 292 progress 00000000 seized True
+f 293 progress 00000000 seized True
+f 294 progress 00000000 seized True
+f 295 progress 00000000 seized True
+f 296 progress 00000000 seized True
+f 297 progress 00000000 seized True
+f 298 progress 00000000 seized True
+f 299 progress 00000000 seized True
+f 300 progress 00000000 seized True
+f 301 progress 00000000 seized True
+f 302 progress 00000000 seized True
+f 303 progress 00000000 seized True
+f 304 progress 00000000 seized True
+f 305 progress 00000000 seized True
+f 306 progress 00000000 seized True
+f 307 progress 00000000 seized True
+f 308 progress 00000000 seized True
+f 309 progress 00000000 seized True
+f 310 progress 00000000 seized True
+f 311 progress 00000000 seized True
+f 312 progress 00000000 seized True
+f 313 progress 00000000 seized True
+f 314 progress 00000000 seized True
+f 315 progress 00000000 seized True
+f 316 progress 00000000 seized True
+f 317 progress 00000000 seized True
+f 318 progress 00000000 seized True
+f 319 progress 00000000 seized True
+f 320 progress 00000000 seized True
+f 321 progress 00000000 seized True
+f 322 progress 00000000 seized True
+f 323 progress 00000000 seized True
+f 324 progress 00000000 seized True
+f 325 progress 00000000 seized True
+f 326 progress 00000000 seized True
+f 327 progress 00000000 seized True
+f 328 progress 00000000 seized True
+f 329 progress 00000000 seized True
+f 330 progress 00000000 seized True
+f 331 progress 00000000 seized True
+f 332 progress 00000000 seized True
+f 333 progress 00000000 seized True
+f 334 progress 00000000 seized True
+f 335 progress 00000000 seized True
+f 336 progress 00000000 seized True
+f 337 progress 00000000 seized True
+f 338 progress 00000000 seized True
+f 339 progress 00000000 seized True
+f 340 progress 00000000 seized True
+f 341 progress 00000000 seized True
+f 342 progress 00000000 seized True
+f 343 progress 00000000 seized True
+f 344 progress 00000000 seized True
+f 345 progress 00000000 seized True
+f 346 progress 00000000 seized True
+f 347 progress 00000000 seized True
+f 348 progress 00000000 seized True
+f 349 progress 00000000 seized True
+f 350 progress 00000000 seized True
+f 351 progress 00000000 seized True
+f 352 progress 00000000 seized True
+f 353 progress 00000000 seized True
+f 354 progress 00000000 seized True
+f 355 progress 00000000 seized True
+f 356 progress 00000000 seized True
+f 357 progress 00000000 seized True
+f 358 progress 00000000 seized True
+f 359 progress 00000000 seized True
+O DISGRACED | Your corpse has been dragged off as a trophy. Your army is executed.
+## retreat off at 2 s, on at 3 s
+w engage E3
+w engage E5
+w engage E4
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+w info War: lord's body at <1.0, 0.0, 2.0>; 3 going for it, the closest E3 6.8 m from it; 0 seizers and 2 retainers within 3.5 m; held off, nearest retainer A1 1.2 m from it; body not yet fallen (ragdoll waiting); seized 0%.
+f 0 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 1 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 2 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 3 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 4 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 5 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 6 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 7 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 8 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 9 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 10 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 11 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 12 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 13 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 14 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 15 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 16 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 17 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 18 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 19 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 20 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 21 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 22 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 23 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 24 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 25 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 26 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 27 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 28 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 29 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 30 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 31 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 32 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 33 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 34 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 35 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 36 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 37 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 38 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 39 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 40 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 41 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 42 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 43 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 44 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 45 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 46 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 47 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 48 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 49 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 50 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 51 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 52 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 53 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+w log Nobody stands over the lord's body!
+f 54 progress 3D088889 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 55 progress 3D888889 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 56 progress 3DCCCCCE seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 57 progress 3E088889 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 58 progress 3E2AAAAB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 59 progress 3E4CCCCD seized False
+f 60 rules WarringStates hostages False retreat False
+w goal E3 -
+w held E3 False
+w goal E5 -
+w held E5 False
+w goal E4 -
+w held E4 False
+w seizers cleared
+f 60 progress 00000000 seized False
+f 61 progress 00000000 seized False
+f 62 progress 00000000 seized False
+f 63 progress 00000000 seized False
+f 64 progress 00000000 seized False
+f 65 progress 00000000 seized False
+f 66 progress 00000000 seized False
+f 67 progress 00000000 seized False
+f 68 progress 00000000 seized False
+f 69 progress 00000000 seized False
+f 70 progress 00000000 seized False
+f 71 progress 00000000 seized False
+f 72 progress 00000000 seized False
+f 73 progress 00000000 seized False
+f 74 progress 00000000 seized False
+f 75 progress 00000000 seized False
+f 76 progress 00000000 seized False
+f 77 progress 00000000 seized False
+f 78 progress 00000000 seized False
+f 79 progress 00000000 seized False
+f 80 progress 00000000 seized False
+f 81 progress 00000000 seized False
+f 82 progress 00000000 seized False
+f 83 progress 00000000 seized False
+f 84 progress 00000000 seized False
+f 85 progress 00000000 seized False
+f 86 progress 00000000 seized False
+f 87 progress 00000000 seized False
+f 88 progress 00000000 seized False
+f 89 progress 00000000 seized False
+f 90 rules WarringStates hostages False retreat True
+w engage E3
+w engage E5
+w engage E4
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 90 progress 3D088889 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+w info War: lord's body at <1.0, 0.0, 2.0>; 3 going for it, the closest E3 0.3 m from it; 3 seizers and 1 retainers within 3.5 m; not held, nearest retainer A1 1.2 m away; seized 3%.
+f 91 progress 3D888889 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 92 progress 3DCCCCCE seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 93 progress 3E088889 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 94 progress 3E2AAAAB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 95 progress 3E4CCCCD seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 96 progress 3E6EEEEF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 97 progress 3E888889 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 98 progress 3E99999A seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 99 progress 3EAAAAAB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 100 progress 3EBBBBBC seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 101 progress 3ECCCCCD seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 102 progress 3EDDDDDE seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 103 progress 3EEEEEEF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 104 progress 3F000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 105 progress 3F088889 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 106 progress 3F111112 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 107 progress 3F19999B seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 108 progress 3F222224 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 109 progress 3F2AAAAD seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 110 progress 3F333336 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 111 progress 3F3BBBBF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 112 progress 3F444448 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 113 progress 3F4CCCD1 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 114 progress 3F55555A seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 115 progress 3F5DDDE3 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 116 progress 3F66666C seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 117 progress 3F6EEEF5 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 118 progress 3F77777E seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 119 progress 3F800003 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 120 progress 3F844447 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 121 progress 3F88888B seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 122 progress 3F8CCCCF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 123 progress 3F911113 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 124 progress 3F955557 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 125 progress 3F99999B seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 126 progress 3F9DDDDF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 127 progress 3FA22223 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 128 progress 3FA66667 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 129 progress 3FAAAAAB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 130 progress 3FAEEEEF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 131 progress 3FB33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 132 progress 3FB77777 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 133 progress 3FBBBBBB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 134 progress 3FBFFFFF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 135 progress 3FC44443 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 136 progress 3FC88887 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 137 progress 3FCCCCCB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 138 progress 3FD1110F seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 139 progress 3FD55553 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 140 progress 3FD99997 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 141 progress 3FDDDDDB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 142 progress 3FE2221F seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 143 progress 3FE66663 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 144 progress 3FEAAAA7 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 145 progress 3FEEEEEB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 146 progress 3FF3332F seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 147 progress 3FF77773 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 148 progress 3FFBBBB7 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 149 progress 3FFFFFFB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+w corpse captured True
+w goal E3 -
+w held E3 False
+w goal E5 -
+w held E5 False
+w goal E4 -
+w held E4 False
+w seizers cleared
+w log E4 carries off the lord's body!
+w surrender
+w enemy victory
+w control E4
+w grab 1 holding False
+f 150 progress 40022220 seized True
+f 151 progress 00000000 seized True
+f 152 progress 00000000 seized True
+f 153 progress 00000000 seized True
+f 154 progress 00000000 seized True
+f 155 progress 00000000 seized True
+f 156 progress 00000000 seized True
+f 157 progress 00000000 seized True
+f 158 progress 00000000 seized True
+f 159 progress 00000000 seized True
+f 160 progress 00000000 seized True
+f 161 progress 00000000 seized True
+f 162 progress 00000000 seized True
+w grab 2 holding False
+f 163 progress 00000000 seized True
+f 164 progress 00000000 seized True
+f 165 progress 00000000 seized True
+f 166 progress 00000000 seized True
+f 167 progress 00000000 seized True
+f 168 progress 00000000 seized True
+f 169 progress 00000000 seized True
+f 170 progress 00000000 seized True
+f 171 progress 00000000 seized True
+f 172 progress 00000000 seized True
+f 173 progress 00000000 seized True
+f 174 progress 00000000 seized True
+f 175 progress 00000000 seized True
+w grab 3 holding True
+f 176 progress 00000000 seized True
+w info War: the seizer has the lord's body in hand.
+f 177 progress 00000000 seized True
+f 178 progress 00000000 seized True
+f 179 progress 00000000 seized True
+f 180 progress 00000000 seized True
+f 181 progress 00000000 seized True
+f 182 progress 00000000 seized True
+f 183 progress 00000000 seized True
+f 184 progress 00000000 seized True
+f 185 progress 00000000 seized True
+f 186 progress 00000000 seized True
+f 187 progress 00000000 seized True
+f 188 progress 00000000 seized True
+f 189 progress 00000000 seized True
+f 190 progress 00000000 seized True
+f 191 progress 00000000 seized True
+f 192 progress 00000000 seized True
+f 193 progress 00000000 seized True
+f 194 progress 00000000 seized True
+f 195 progress 00000000 seized True
+f 196 progress 00000000 seized True
+f 197 progress 00000000 seized True
+f 198 progress 00000000 seized True
+f 199 progress 00000000 seized True
+f 200 progress 00000000 seized True
+f 201 progress 00000000 seized True
+f 202 progress 00000000 seized True
+f 203 progress 00000000 seized True
+f 204 progress 00000000 seized True
+f 205 progress 00000000 seized True
+f 206 progress 00000000 seized True
+f 207 progress 00000000 seized True
+f 208 progress 00000000 seized True
+f 209 progress 00000000 seized True
+f 210 progress 00000000 seized True
+f 211 progress 00000000 seized True
+f 212 progress 00000000 seized True
+f 213 progress 00000000 seized True
+f 214 progress 00000000 seized True
+f 215 progress 00000000 seized True
+f 216 progress 00000000 seized True
+f 217 progress 00000000 seized True
+f 218 progress 00000000 seized True
+f 219 progress 00000000 seized True
+f 220 progress 00000000 seized True
+f 221 progress 00000000 seized True
+f 222 progress 00000000 seized True
+f 223 progress 00000000 seized True
+f 224 progress 00000000 seized True
+f 225 progress 00000000 seized True
+f 226 progress 00000000 seized True
+f 227 progress 00000000 seized True
+f 228 progress 00000000 seized True
+f 229 progress 00000000 seized True
+f 230 progress 00000000 seized True
+f 231 progress 00000000 seized True
+f 232 progress 00000000 seized True
+f 233 progress 00000000 seized True
+f 234 progress 00000000 seized True
+f 235 progress 00000000 seized True
+f 236 progress 00000000 seized True
+f 237 progress 00000000 seized True
+f 238 progress 00000000 seized True
+f 239 progress 00000000 seized True
+f 240 progress 00000000 seized True
+f 241 progress 00000000 seized True
+f 242 progress 00000000 seized True
+f 243 progress 00000000 seized True
+f 244 progress 00000000 seized True
+f 245 progress 00000000 seized True
+f 246 progress 00000000 seized True
+f 247 progress 00000000 seized True
+f 248 progress 00000000 seized True
+f 249 progress 00000000 seized True
+f 250 progress 00000000 seized True
+f 251 progress 00000000 seized True
+f 252 progress 00000000 seized True
+f 253 progress 00000000 seized True
+f 254 progress 00000000 seized True
+f 255 progress 00000000 seized True
+f 256 progress 00000000 seized True
+f 257 progress 00000000 seized True
+f 258 progress 00000000 seized True
+f 259 progress 00000000 seized True
+f 260 progress 00000000 seized True
+f 261 progress 00000000 seized True
+f 262 progress 00000000 seized True
+f 263 progress 00000000 seized True
+f 264 progress 00000000 seized True
+f 265 progress 00000000 seized True
+f 266 progress 00000000 seized True
+f 267 progress 00000000 seized True
+f 268 progress 00000000 seized True
+f 269 progress 00000000 seized True
+f 270 progress 00000000 seized True
+f 271 progress 00000000 seized True
+f 272 progress 00000000 seized True
+f 273 progress 00000000 seized True
+f 274 progress 00000000 seized True
+f 275 progress 00000000 seized True
+f 276 progress 00000000 seized True
+f 277 progress 00000000 seized True
+f 278 progress 00000000 seized True
+f 279 progress 00000000 seized True
+f 280 progress 00000000 seized True
+f 281 progress 00000000 seized True
+f 282 progress 00000000 seized True
+f 283 progress 00000000 seized True
+f 284 progress 00000000 seized True
+f 285 progress 00000000 seized True
+f 286 progress 00000000 seized True
+f 287 progress 00000000 seized True
+f 288 progress 00000000 seized True
+f 289 progress 00000000 seized True
+f 290 progress 00000000 seized True
+f 291 progress 00000000 seized True
+f 292 progress 00000000 seized True
+f 293 progress 00000000 seized True
+f 294 progress 00000000 seized True
+f 295 progress 00000000 seized True
+f 296 progress 00000000 seized True
+f 297 progress 00000000 seized True
+f 298 progress 00000000 seized True
+f 299 progress 00000000 seized True
+f 300 progress 00000000 seized True
+f 301 progress 00000000 seized True
+f 302 progress 00000000 seized True
+f 303 progress 00000000 seized True
+f 304 progress 00000000 seized True
+f 305 progress 00000000 seized True
+f 306 progress 00000000 seized True
+f 307 progress 00000000 seized True
+f 308 progress 00000000 seized True
+f 309 progress 00000000 seized True
+f 310 progress 00000000 seized True
+f 311 progress 00000000 seized True
+f 312 progress 00000000 seized True
+f 313 progress 00000000 seized True
+f 314 progress 00000000 seized True
+f 315 progress 00000000 seized True
+f 316 progress 00000000 seized True
+f 317 progress 00000000 seized True
+f 318 progress 00000000 seized True
+f 319 progress 00000000 seized True
+f 320 progress 00000000 seized True
+f 321 progress 00000000 seized True
+f 322 progress 00000000 seized True
+f 323 progress 00000000 seized True
+f 324 progress 00000000 seized True
+f 325 progress 00000000 seized True
+f 326 progress 00000000 seized True
+f 327 progress 00000000 seized True
+f 328 progress 00000000 seized True
+f 329 progress 00000000 seized True
+f 330 progress 00000000 seized True
+f 331 progress 00000000 seized True
+f 332 progress 00000000 seized True
+f 333 progress 00000000 seized True
+f 334 progress 00000000 seized True
+f 335 progress 00000000 seized True
+f 336 progress 00000000 seized True
+f 337 progress 00000000 seized True
+f 338 progress 00000000 seized True
+f 339 progress 00000000 seized True
+f 340 progress 00000000 seized True
+f 341 progress 00000000 seized True
+f 342 progress 00000000 seized True
+f 343 progress 00000000 seized True
+f 344 progress 00000000 seized True
+f 345 progress 00000000 seized True
+f 346 progress 00000000 seized True
+f 347 progress 00000000 seized True
+f 348 progress 00000000 seized True
+f 349 progress 00000000 seized True
+f 350 progress 00000000 seized True
+f 351 progress 00000000 seized True
+f 352 progress 00000000 seized True
+f 353 progress 00000000 seized True
+f 354 progress 00000000 seized True
+f 355 progress 00000000 seized True
+f 356 progress 00000000 seized True
+f 357 progress 00000000 seized True
+f 358 progress 00000000 seized True
+f 359 progress 00000000 seized True
+O DISGRACED | Your corpse has been dragged off as a trophy. Your army is executed.
+## ragdoll never ready, decided at 6 s
+w engage E3
+w engage E5
+w engage E4
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+w info War: lord's body at <1.0, 0.0, 2.0>; 3 going for it, the closest E3 6.8 m from it; 0 seizers and 2 retainers within 3.5 m; held off, nearest retainer A1 1.2 m from it; body not yet fallen (ragdoll waiting); seized 0%.
+f 0 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 1 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 2 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 3 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 4 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 5 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 6 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 7 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 8 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 9 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 10 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 11 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 12 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 13 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 14 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 15 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 16 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 17 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 18 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 19 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 20 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 21 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 22 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 23 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 24 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 25 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 26 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 27 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 28 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 29 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 30 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 31 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 32 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 33 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 34 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 35 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 36 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 37 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 38 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 39 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 40 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 41 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 42 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 43 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 44 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 45 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 46 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 47 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 48 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 49 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 50 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 51 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 52 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 True
+w held E5 True
+w held E4 True
+f 53 progress 00000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+w log Nobody stands over the lord's body!
+f 54 progress 3D088889 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 55 progress 3D888889 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 56 progress 3DCCCCCE seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 57 progress 3E088889 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 58 progress 3E2AAAAB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 59 progress 3E4CCCCD seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 60 progress 3E6EEEEF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+w info War: lord's body at <1.0, 0.0, 2.0>; 3 going for it, the closest E3 0.3 m from it; 3 seizers and 2 retainers within 3.5 m; not held, nearest retainer A1 1.2 m away; body not yet fallen (ragdoll waiting); seized 13%.
+f 61 progress 3E888889 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 62 progress 3E99999A seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 63 progress 3EAAAAAB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 64 progress 3EBBBBBC seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 65 progress 3ECCCCCD seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 66 progress 3EDDDDDE seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 67 progress 3EEEEEEF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 68 progress 3F000000 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 69 progress 3F088889 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 70 progress 3F111112 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 71 progress 3F19999B seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 72 progress 3F222224 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 73 progress 3F2AAAAD seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 74 progress 3F333336 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 75 progress 3F3BBBBF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 76 progress 3F444448 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 77 progress 3F4CCCD1 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 78 progress 3F55555A seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 79 progress 3F5DDDE3 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 80 progress 3F66666C seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 81 progress 3F6EEEF5 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 82 progress 3F77777E seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 83 progress 3F800003 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 84 progress 3F844447 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 85 progress 3F88888B seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 86 progress 3F8CCCCF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 87 progress 3F911113 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 88 progress 3F955557 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 89 progress 3F99999B seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 90 progress 3F9DDDDF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 91 progress 3FA22223 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 92 progress 3FA66667 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 93 progress 3FAAAAAB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 94 progress 3FAEEEEF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 95 progress 3FB33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 96 progress 3FB77777 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 97 progress 3FBBBBBB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 98 progress 3FBFFFFF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 99 progress 3FC44443 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 100 progress 3FC88887 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 101 progress 3FCCCCCB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 102 progress 3FD1110F seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 103 progress 3FD55553 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 104 progress 3FD99997 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 105 progress 3FDDDDDB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 106 progress 3FE2221F seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 107 progress 3FE66663 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 108 progress 3FEAAAA7 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 109 progress 3FEEEEEB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 110 progress 3FF3332F seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 111 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 112 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 113 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 114 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 115 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 116 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 117 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 118 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 119 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 120 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 121 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+w info War: lord's body at <1.0, 0.0, 2.0>; 3 going for it, the closest E4 0.3 m from it; 3 seizers and 1 retainers within 3.5 m; not held, nearest retainer A1 1.2 m away; body not yet fallen (ragdoll waiting); seized 95%.
+f 122 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 123 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 124 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 125 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 126 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 127 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 128 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 129 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 130 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 131 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 132 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 133 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 134 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 135 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 136 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 137 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 138 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 139 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 140 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 141 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 142 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 143 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 144 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 145 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 146 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 147 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 148 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 149 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 150 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 151 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 152 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 153 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 154 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 155 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 156 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 157 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 158 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 159 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 160 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 161 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 162 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 163 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 164 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 165 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 166 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 167 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 168 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 169 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 170 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 171 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 172 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 173 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 174 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 175 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 176 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 177 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 178 progress 3FF33333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 179 progress 3FF33333 seized False
+f 180 decided elsewhere
+w goal E3 -
+w held E3 False
+w goal E5 -
+w held E5 False
+w goal E4 -
+w held E4 False
+w seizers cleared
+f 180 progress 00000000 seized False
+f 181 progress 00000000 seized False
+f 182 progress 00000000 seized False
+f 183 progress 00000000 seized False
+f 184 progress 00000000 seized False
+f 185 progress 00000000 seized False
+f 186 progress 00000000 seized False
+f 187 progress 00000000 seized False
+f 188 progress 00000000 seized False
+f 189 progress 00000000 seized False
+f 190 progress 00000000 seized False
+f 191 progress 00000000 seized False
+f 192 progress 00000000 seized False
+f 193 progress 00000000 seized False
+f 194 progress 00000000 seized False
+f 195 progress 00000000 seized False
+f 196 progress 00000000 seized False
+f 197 progress 00000000 seized False
+f 198 progress 00000000 seized False
+f 199 progress 00000000 seized False
+f 200 progress 00000000 seized False
+f 201 progress 00000000 seized False
+f 202 progress 00000000 seized False
+f 203 progress 00000000 seized False
+f 204 progress 00000000 seized False
+f 205 progress 00000000 seized False
+f 206 progress 00000000 seized False
+f 207 progress 00000000 seized False
+f 208 progress 00000000 seized False
+f 209 progress 00000000 seized False
+f 210 progress 00000000 seized False
+f 211 progress 00000000 seized False
+f 212 progress 00000000 seized False
+f 213 progress 00000000 seized False
+f 214 progress 00000000 seized False
+f 215 progress 00000000 seized False
+f 216 progress 00000000 seized False
+f 217 progress 00000000 seized False
+f 218 progress 00000000 seized False
+f 219 progress 00000000 seized False
+f 220 progress 00000000 seized False
+f 221 progress 00000000 seized False
+f 222 progress 00000000 seized False
+f 223 progress 00000000 seized False
+f 224 progress 00000000 seized False
+f 225 progress 00000000 seized False
+f 226 progress 00000000 seized False
+f 227 progress 00000000 seized False
+f 228 progress 00000000 seized False
+f 229 progress 00000000 seized False
+f 230 progress 00000000 seized False
+f 231 progress 00000000 seized False
+f 232 progress 00000000 seized False
+f 233 progress 00000000 seized False
+f 234 progress 00000000 seized False
+f 235 progress 00000000 seized False
+f 236 progress 00000000 seized False
+f 237 progress 00000000 seized False
+f 238 progress 00000000 seized False
+f 239 progress 00000000 seized False
+f 240 progress 00000000 seized False
+f 241 progress 00000000 seized False
+f 242 progress 00000000 seized False
+f 243 progress 00000000 seized False
+f 244 progress 00000000 seized False
+f 245 progress 00000000 seized False
+f 246 progress 00000000 seized False
+f 247 progress 00000000 seized False
+f 248 progress 00000000 seized False
+f 249 progress 00000000 seized False
+f 250 progress 00000000 seized False
+f 251 progress 00000000 seized False
+f 252 progress 00000000 seized False
+f 253 progress 00000000 seized False
+f 254 progress 00000000 seized False
+f 255 progress 00000000 seized False
+f 256 progress 00000000 seized False
+f 257 progress 00000000 seized False
+f 258 progress 00000000 seized False
+f 259 progress 00000000 seized False
+f 260 progress 00000000 seized False
+f 261 progress 00000000 seized False
+f 262 progress 00000000 seized False
+f 263 progress 00000000 seized False
+f 264 progress 00000000 seized False
+f 265 progress 00000000 seized False
+f 266 progress 00000000 seized False
+f 267 progress 00000000 seized False
+f 268 progress 00000000 seized False
+f 269 progress 00000000 seized False
+f 270 progress 00000000 seized False
+f 271 progress 00000000 seized False
+f 272 progress 00000000 seized False
+f 273 progress 00000000 seized False
+f 274 progress 00000000 seized False
+f 275 progress 00000000 seized False
+f 276 progress 00000000 seized False
+f 277 progress 00000000 seized False
+f 278 progress 00000000 seized False
+f 279 progress 00000000 seized False
+f 280 progress 00000000 seized False
+f 281 progress 00000000 seized False
+f 282 progress 00000000 seized False
+f 283 progress 00000000 seized False
+f 284 progress 00000000 seized False
+f 285 progress 00000000 seized False
+f 286 progress 00000000 seized False
+f 287 progress 00000000 seized False
+f 288 progress 00000000 seized False
+f 289 progress 00000000 seized False
+f 290 progress 00000000 seized False
+f 291 progress 00000000 seized False
+f 292 progress 00000000 seized False
+f 293 progress 00000000 seized False
+f 294 progress 00000000 seized False
+f 295 progress 00000000 seized False
+f 296 progress 00000000 seized False
+f 297 progress 00000000 seized False
+f 298 progress 00000000 seized False
+f 299 progress 00000000 seized False
+f 300 progress 00000000 seized False
+f 301 progress 00000000 seized False
+f 302 progress 00000000 seized False
+f 303 progress 00000000 seized False
+f 304 progress 00000000 seized False
+f 305 progress 00000000 seized False
+f 306 progress 00000000 seized False
+f 307 progress 00000000 seized False
+f 308 progress 00000000 seized False
+f 309 progress 00000000 seized False
+f 310 progress 00000000 seized False
+f 311 progress 00000000 seized False
+f 312 progress 00000000 seized False
+f 313 progress 00000000 seized False
+f 314 progress 00000000 seized False
+f 315 progress 00000000 seized False
+f 316 progress 00000000 seized False
+f 317 progress 00000000 seized False
+f 318 progress 00000000 seized False
+f 319 progress 00000000 seized False
+f 320 progress 00000000 seized False
+f 321 progress 00000000 seized False
+f 322 progress 00000000 seized False
+f 323 progress 00000000 seized False
+f 324 progress 00000000 seized False
+f 325 progress 00000000 seized False
+f 326 progress 00000000 seized False
+f 327 progress 00000000 seized False
+f 328 progress 00000000 seized False
+f 329 progress 00000000 seized False
+f 330 progress 00000000 seized False
+f 331 progress 00000000 seized False
+f 332 progress 00000000 seized False
+f 333 progress 00000000 seized False
+f 334 progress 00000000 seized False
+f 335 progress 00000000 seized False
+f 336 progress 00000000 seized False
+f 337 progress 00000000 seized False
+f 338 progress 00000000 seized False
+f 339 progress 00000000 seized False
+f 340 progress 00000000 seized False
+f 341 progress 00000000 seized False
+f 342 progress 00000000 seized False
+f 343 progress 00000000 seized False
+f 344 progress 00000000 seized False
+f 345 progress 00000000 seized False
+f 346 progress 00000000 seized False
+f 347 progress 00000000 seized False
+f 348 progress 00000000 seized False
+f 349 progress 00000000 seized False
+f 350 progress 00000000 seized False
+f 351 progress 00000000 seized False
+f 352 progress 00000000 seized False
+f 353 progress 00000000 seized False
+f 354 progress 00000000 seized False
+f 355 progress 00000000 seized False
+f 356 progress 00000000 seized False
+f 357 progress 00000000 seized False
+f 358 progress 00000000 seized False
+f 359 progress 00000000 seized False
+O ANNIHILATED | Every member of your party lies dead on the field.

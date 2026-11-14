@@ -39,15 +39,6 @@ public sealed class BattleRules
     /// <summary>Spring and Autumn: allies raise or free the fallen.</summary>
     public bool RaisesTheFallen => settings.FallenRule == WarFallenRule.SpringAndAutumn;
 
-    /// <summary>Hostages (Warring States only): a lethal blow on the player's side takes a captive instead.</summary>
-    public bool TakesCaptivesOnLethalBlow => settings.Hostages && PlayerIsTheLord;
-
-    /// <summary>
-    /// Warring States with Retreat: the lord's body is fought over, so nobody takes it the moment the
-    /// lord falls (the killer is not possessed).
-    /// </summary>
-    public bool LordBodyIsFoughtOver => PlayerIsTheLord && settings.Retreat;
-
     /// <summary>Retreat: when the lord falls, the retainers fall back to the body (else they are all taken).</summary>
     public bool RetainersRetreatWithTheBody => settings.Retreat;
 

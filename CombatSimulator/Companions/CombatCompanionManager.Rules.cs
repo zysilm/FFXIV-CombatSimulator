@@ -19,6 +19,9 @@ public unsafe partial class CombatCompanionManager
 {
     private readonly BattleRuleSet ruleParts;
 
+    /// <summary>The battle's rule parts, for the engine side's hooks (the lethal blow, the war tick, the banner, the killer).</summary>
+    public BattleRuleSet RuleParts => ruleParts;
+
     /// <summary>The allies as the rule parts drive them.</summary>
     private sealed class RuleAllies(CombatCompanionManager owner) : IRuleAllies
     {

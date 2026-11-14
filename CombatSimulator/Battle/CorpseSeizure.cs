@@ -83,8 +83,8 @@ public interface ICorpseGrab<TNpc> where TNpc : class
 /// <summary>
 /// The Warring States corpse seizure (with Retreat): once the lord falls, half the living enemies go
 /// for the body and carry it off unless the retainers standing over it are at least as many. Moved
-/// verbatim from <c>Plugin.War.cs</c> (refactor stage B3); the plugin calls <see cref="Tick"/> where it
-/// called <c>TickWar</c> and <see cref="Reset"/> where <c>ResetWar</c> reset it.
+/// verbatim from <c>Plugin.War.cs</c> (refactor stage B3); its battle rule (<c>Rules.CorpseSeizureRule</c>) calls
+/// <see cref="Tick"/> in the plugin's war tick (stage B6), and the plugin calls <see cref="Reset"/> where <c>ResetWar</c> reset it.
 /// </summary>
 public sealed class CorpseSeizure<TNpc> where TNpc : class
 {
