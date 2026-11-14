@@ -16,7 +16,7 @@
 ### 工作方式 / git
 
 - 协调者 + 子代理工作流，实现交给后台子代理，主线留给讨论（2026-11-14，用户裁决）→ [AGENT_WORKFLOW.md](AGENT_WORKFLOW.md)。
-- 只有协调者提交推送；不用 `git stash`、不强推、不改历史；提交只 `git add -A CombatSimulator RagdollLib Tests docs CombatSimulator.sln CLAUDE.md ':!CombatSimulator/Dev/Experimental'`。
+- 只有协调者提交推送；不用 `git stash`、不强推、不改历史；提交只 `git add -A CombatSimulator AdvancedRagdoll Tests docs CombatSimulator.sln CLAUDE.md ':!CombatSimulator/Dev/Experimental'`。
 - 对用户一律中文；界面指引写确切页签名和折叠栏标题，先在 `Gui/MainWindow.cs` 核对（2026-10-24，用户裁决）。
 - 简短反馈既像报 bug 又像提需求时，先一句话复述确认再动手；修 bug 只改根因（2026-10-25）。
 - 重写就删干净，旧路径不留作退路（2026-11-13，用户裁决）。

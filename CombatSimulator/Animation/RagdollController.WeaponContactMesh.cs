@@ -35,7 +35,7 @@ public unsafe partial class RagdollController
     /// <summary>Weapon body contacts use the cached body surface instead of the ragdoll volumes.</summary>
     private void AttachWeaponContactBodyCore(BodyHandle weapon)
     {
-        if (simulation == null || !config.WeaponBodyMeshContacts || activeRagdollIsGeneric) return;
+        if (simulation == null || !settings.WeaponBodyMeshContacts || activeRagdollIsGeneric) return;
         if (weaponContactProxies.Count == 0) CreateWeaponContactProxies();
         if (weaponContactProxies.Count > 0) weaponContactBodyHandles.Add(weapon.Value);
     }

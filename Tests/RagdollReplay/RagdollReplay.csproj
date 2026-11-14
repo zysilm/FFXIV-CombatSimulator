@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Offline replay of ragdoll recordings (docs/REFACTOR_PLAN.md stage A2a; see README.md). It drives the real
+       RagdollController of a PUBLIC_BUILD of the plugin (the gold recordings were made with one) through the host
+       interfaces, feeding back what the recording says the game answered, and compares the outputs bit for bit.
+
+       The plugin is referenced as a built DLL, not as a project: building it here would write into its own
+       bin/Release, which the game loads. Build it first, outside the repository:
+         dotnet build ../../CombatSimulator -c Release -p:DefineConstants=PUBLIC_BUILD -o <PluginDir>
+       PluginDir defaults to %TEMP%\AdvancedRagdollReplay\plugin. The Dalamud assemblies are only needed so the
+       plugin's types load; nothing from the game runs. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PluginDir Condition="'$(PluginDir)' == ''">$(TEMP)\AdvancedRagdollReplay\plugin</PluginDir>
+    <DalamudDir Condition="'$(DalamudDir)' == ''">$(APPDATA)\XIVLauncher\addon\Hooks\dev</DalamudDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The plugin's exact BepuPhysics package. -->
+    <PackageReference Include="BepuPhysics" Version="2.5.0-beta.22" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="CombatSimulator" HintPath="$(PluginDir)\CombatSimulator.dll" />
+    <Reference Include="AdvancedRagdoll" HintPath="$(PluginDir)\AdvancedRagdoll.dll" />
+    <Reference Include="Dalamud" HintPath="$(DalamudDir)\Dalamud.dll" />
+    <Reference Include="FFXIVClientStructs" HintPath="$(DalamudDir)\FFXIVClientStructs.dll" />
+    <Reference Include="InteropGenerator.Runtime" HintPath="$(DalamudDir)\InteropGenerator.Runtime.dll" />
+    <Reference Include="Lumina" HintPath="$(DalamudDir)\Lumina.dll" />
+    <Reference Include="Lumina.Excel" HintPath="$(DalamudDir)\Lumina.Excel.dll" />
+    <Reference Include="Dalamud.Bindings.ImGui" HintPath="$(DalamudDir)\Dalamud.Bindings.ImGui.dll" />
+    <Reference Include="Serilog" HintPath="$(DalamudDir)\Serilog.dll" />
+    <Reference Include="Newtonsoft.Json" HintPath="$(DalamudDir)\Newtonsoft.Json.dll" />
+  </ItemGroup>
+</Project>

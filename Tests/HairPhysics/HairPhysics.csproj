@@ -7,13 +7,13 @@
     <!-- Keep warmed allocation/timing fixtures independent of tiered-JIT
          transitions. This affects this offline executable only. -->
     <RuntimeHostConfigurationOption Include="System.Runtime.TieredCompilation" Value="false" />
-    <Compile Include="../../RagdollLib/Hair/FlexibleHairSolver.cs" Link="Production/FlexibleHairSolver.cs" />
-    <Compile Include="../../RagdollLib/Hair/HairMeshEnvelope.cs" Link="Production/HairMeshEnvelope.cs" />
-    <Compile Include="../../RagdollLib/Hair/HairMeshSample.cs" Link="Production/HairMeshSample.cs" />
-    <Compile Include="../../RagdollLib/Hair/HairInputTiming.cs" Link="Production/HairInputTiming.cs" />
-    <Compile Include="../../RagdollLib/MeshVolume/PosedSurfaceRegion.cs" Link="Production/PosedSurfaceRegion.cs" />
-    <Compile Include="../../RagdollLib/MeshVolume/SurfaceSmoothing.cs" Link="Production/SurfaceSmoothing.cs" />
-    <Compile Include="../../RagdollLib/MeshVolume/BodyMeshGeometry.cs" Link="Production/BodyMeshGeometry.cs" />
-    <Compile Include="../../RagdollLib/MeshVolume/SurfaceMeshBvh.cs" Link="Production/SurfaceMeshBvh.cs" />
+    <Compile Include="../../AdvancedRagdoll/Hair/FlexibleHairSolver.cs" Link="Production/FlexibleHairSolver.cs" />
+    <Compile Include="../../AdvancedRagdoll/Hair/HairMeshEnvelope.cs" Link="Production/HairMeshEnvelope.cs" />
+    <Compile Include="../../AdvancedRagdoll/Hair/HairMeshSample.cs" Link="Production/HairMeshSample.cs" />
+    <Compile Include="../../AdvancedRagdoll/Hair/HairInputTiming.cs" Link="Production/HairInputTiming.cs" />
+    <Compile Include="../../AdvancedRagdoll/MeshVolume/PosedSurfaceRegion.cs" Link="Production/PosedSurfaceRegion.cs" />
+    <Compile Include="../../AdvancedRagdoll/MeshVolume/SurfaceSmoothing.cs" Link="Production/SurfaceSmoothing.cs" />
+    <Compile Include="../../AdvancedRagdoll/MeshVolume/BodyMeshGeometry.cs" Link="Production/BodyMeshGeometry.cs" />
+    <Compile Include="../../AdvancedRagdoll/MeshVolume/SurfaceMeshBvh.cs" Link="Production/SurfaceMeshBvh.cs" />
   </ItemGroup>
 </Project>

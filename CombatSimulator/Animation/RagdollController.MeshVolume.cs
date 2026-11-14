@@ -85,7 +85,7 @@ public unsafe partial class RagdollController
             foreach (var entry in activeIndices)
                 if (definitions.TryGetValue(entry.Key, out var definition)) byIndex[entry.Value] = definition;
             var omittedRoots = new HashSet<int>();
-            var severed = useLocalDismemberBones ? localDismemberBones : config.DismemberPocBones;
+            var severed = useLocalDismemberBones ? localDismemberBones : settings.DismemberPocBones;
             if (severed != null)
                 foreach (var name in severed)
                 {
@@ -105,7 +105,7 @@ public unsafe partial class RagdollController
                     // its bodies were removed before the visual scale masks were applied.
                     if (omittedRoots.Contains(bone)) return -1;
                     if (byIndex.TryGetValue(bone, out var def) &&
-                        (!def.SoftBody || config.RagdollSoftTissueCollision) &&
+                        (!def.SoftBody || settings.RagdollSoftTissueCollision) &&
                         !def.Name.StartsWith("j_sk_", StringComparison.Ordinal) &&
                         !def.Name.StartsWith("j_buki", StringComparison.Ordinal)) return bone;
                     bone = skel.HavokSkeleton->ParentIndices[bone];
@@ -179,7 +179,7 @@ public unsafe partial class RagdollController
                 throw new InvalidOperationException("Degenerate body surface inertia.");
             for (int i = 0; i < points.Length; i++) points[i] -= localCenter;
             localGeometry = new BodyMeshGeometry(points, indices, worldGeometry.SourceBindings);
-            if (config.RagdollMeshCollisionLod && frozenMeshCache != null &&
+            if (settings.RagdollMeshCollisionLod && frozenMeshCache != null &&
                 frozenMeshCache.TryCreateLod(boneName, localGeometry, out var cachedLod))
             {
                 var reduced = CreateBodyTriangleMesh(cachedLod.Geometry);

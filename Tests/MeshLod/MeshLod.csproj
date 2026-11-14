@@ -2,10 +2,10 @@
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
   <ItemGroup>
     <RuntimeHostConfigurationOption Include="System.Runtime.TieredCompilation" Value="false" />
-    <Compile Include="../../RagdollLib/MeshVolume/BodyMeshGeometry.cs" Link="Production/BodyMeshGeometry.cs" />
-    <Compile Include="../../RagdollLib/MeshVolume/SurfaceMeshBvh.cs" Link="Production/SurfaceMeshBvh.cs" />
-    <Compile Include="../../RagdollLib/MeshVolume/MeshCollisionLod.cs" Link="Production/MeshCollisionLod.cs" />
-    <Compile Include="../../RagdollLib/MeshVolume/MeshLodBuildQueue.cs" Link="Production/MeshLodBuildQueue.cs" />
-    <Compile Include="../../RagdollLib/MeshVolume/FrozenMeshGeometryCache.cs" Link="Production/FrozenMeshGeometryCache.cs" />
+    <Compile Include="../../AdvancedRagdoll/MeshVolume/BodyMeshGeometry.cs" Link="Production/BodyMeshGeometry.cs" />
+    <Compile Include="../../AdvancedRagdoll/MeshVolume/SurfaceMeshBvh.cs" Link="Production/SurfaceMeshBvh.cs" />
+    <Compile Include="../../AdvancedRagdoll/MeshVolume/MeshCollisionLod.cs" Link="Production/MeshCollisionLod.cs" />
+    <Compile Include="../../AdvancedRagdoll/MeshVolume/MeshLodBuildQueue.cs" Link="Production/MeshLodBuildQueue.cs" />
+    <Compile Include="../../AdvancedRagdoll/MeshVolume/FrozenMeshGeometryCache.cs" Link="Production/FrozenMeshGeometryCache.cs" />
   </ItemGroup>
 </Project>

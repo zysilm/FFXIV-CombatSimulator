@@ -5,6 +5,6 @@
     <Compile Include="../../CombatSimulator/Animation/ModelGeometryData.cs" Link="Production/ModelGeometryData.cs" />
     <Compile Include="../../CombatSimulator/Animation/RenderedGeometryDecoder.cs" Link="Production/RenderedGeometryDecoder.cs" />
     <Compile Include="../../CombatSimulator/Animation/RenderedRaceDeformation.cs" Link="Production/RenderedRaceDeformation.cs" />
-    <Compile Include="../../RagdollLib/RenderedPartialGeometry.cs" Link="Production/RenderedPartialGeometry.cs" />
+    <Compile Include="../../AdvancedRagdoll/RenderedPartialGeometry.cs" Link="Production/RenderedPartialGeometry.cs" />
   </ItemGroup>
 </Project>

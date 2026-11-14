@@ -3,7 +3,7 @@
 Stage A0 of the refactor (`docs/REFACTOR_PLAN.md`). The plugin can record a ragdoll run in the game
 (`/combatsim ragdollrec start|stop|status`); each ragdoll activation writes one `.rgdrec` file under the
 plugin configuration directory, sub-folder `ragdoll-rec/`. This project reads those files offline. It links
-the production format code from `RagdollLib/Recording/` and the plugin's exact BepuPhysics package.
+the production format code from `AdvancedRagdoll/Recording/` and the plugin's exact BepuPhysics package.
 
 ```
 dotnet run -c Release                          # self-checks (exit code 0 = all passed)

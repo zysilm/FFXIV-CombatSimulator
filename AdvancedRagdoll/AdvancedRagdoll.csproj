@@ -1,17 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Ragdoll physics library (working name). Holds the parts of CombatSimulator/Animation that do
-       not depend on the game: no Dalamud SDK, FFXIVClientStructs, Lumina or ImGui here, and nothing
+  <!-- AdvancedRagdoll: the ragdoll physics library. Holds the parts of CombatSimulator/Animation that
+       do not depend on the game: no Dalamud SDK, FFXIVClientStructs, Lumina or ImGui here, and nothing
        from the plugin. The plugin references this project; the offline tests under Tests/ link these
-       sources directly. See docs/REFACTOR_PLAN.md (track A). -->
+       sources directly. See docs/REFACTOR_PLAN.md (track A) and docs/RAGDOLL_LIBRARY_ARCHITECTURE.md.
+       The namespaces are still CombatSimulator.Animation.*; they become AdvancedRagdoll.* in stage A4. -->
   <PropertyGroup>
     <!-- BepuPhysics 2.5.0-beta.22 only targets net8.0, so that is the floor. -->
     <TargetFramework>net8.0</TargetFramework>
-    <AssemblyName>CombatSimulator.RagdollLib</AssemblyName>
-    <!-- Not a NuGet identity (IsPackable is false). NuGet names a referenced project by PackageId,
-         which defaults to the assembly name, while the SDK looks it up by project file name when it
-         writes the plugin's deps.json. If the two differ, the DLL is listed there twice (once more as
-         "CombatSimulator.RagdollLib.Reference"). Keep this equal to the project file name. -->
-    <PackageId>RagdollLib</PackageId>
+    <AssemblyName>AdvancedRagdoll</AssemblyName>
+    <!-- The NuGet identity. NuGet names a referenced project by PackageId, while the SDK looks it up by
+         project file name when it writes the plugin's deps.json. If the two differ, the DLL is listed
+         there twice (once more as "AdvancedRagdoll.Reference"). Keep this equal to the project file name. -->
+    <PackageId>AdvancedRagdoll</PackageId>
     <!-- Folders mirror the namespaces below CombatSimulator.Animation (as they did in the plugin). -->
     <RootNamespace>CombatSimulator.Animation</RootNamespace>
     <Nullable>enable</Nullable>
@@ -24,6 +24,7 @@
          plugin DLL untouched, so nothing would reload. Without one, any change here recompiles the
          plugin as well (the Dalamud SDK sets the same for the plugin). -->
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <!-- Not published yet: the code stays in this repository until stage A4. -->
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
@@ -31,5 +32,7 @@
     <PackageReference Include="BepuPhysics" Version="2.5.0-beta.22" />
     <!-- The plugin (and the private module compiled into it) uses the internal types. -->
     <InternalsVisibleTo Include="CombatSimulator" />
+    <!-- The offline replay (Tests/RagdollReplay) hands recorded fit results back to the controller. -->
+    <InternalsVisibleTo Include="RagdollReplay" />
   </ItemGroup>
 </Project>

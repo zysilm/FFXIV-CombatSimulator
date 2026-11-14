@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using CombatSimulator.Animation.Hair;
 using CombatSimulator.Animation.MeshVolume;
-using FFXIVClientStructs.FFXIV.Client.Game.Object;
+using CombatSimulator.Animation.Hosting;
 
 namespace CombatSimulator.Animation;
 
@@ -42,16 +42,16 @@ public unsafe partial class RagdollController
     private FrozenMeshGeometryCache? CachedSurfaceFor(nint address)
     {
         if (address == 0) return null;
-        var entity = ((GameObject*)address)->EntityId;
+        var entity = actors.GetEntityId(address);
         if (frozenMeshCache != null && frozenMeshActor == address && frozenMeshEntity == entity) return frozenMeshCache;
         return weaponContactMeshes.TryGetValue(address, out var known) && known.Entity == entity ? known.Cache : null;
     }
 
     /// <summary>Bind cached regions to this skeleton (animated) or to ragdoll bodies. Rebinds only
     /// when the cache itself is replaced (refresh, actor change).</summary>
-    private void RefreshHairSurfaceRegions(in SkeletonAccess skel, nint address)
+    private void RefreshHairSurfaceRegions(ISkeletonPose? skel, nint address)
     {
-        var cache = config.RagdollHairBodyMesh ? CachedSurfaceFor(address) : null;
+        var cache = settings.RagdollHairBodyMesh ? CachedSurfaceFor(address) : null;
         if (cache == hairSurfaceCache) return;
         hairSurfaceCache = cache;
         if (rec != null) RecMeshCache(cache, "hairSurface");
@@ -61,7 +61,7 @@ public unsafe partial class RagdollController
         {
             if (!cache.TryGetSurfaceGeometry(name, out var geometry)) continue;
             var region = new HairSurfaceRegion { Region = SmoothedHairSurface(cache, name, geometry) };
-            if (animatedHair) region.Bone = boneService.ResolveBoneIndex(skel, name);
+            if (animatedHair) region.Bone = ResolveBoneIndex(skel!, name);
             else
                 for (int i = 0; i < ragdollBones.Count; i++)
                     if (ragdollBones[i].Name == name) { region.RagdollIndex = i; break; }
@@ -97,7 +97,7 @@ public unsafe partial class RagdollController
     }
 
     /// <summary>Animated hair, once per render frame: snapshot body inputs; steps blend toward them.</summary>
-    private void CaptureAnimatedHairFrame(in SkeletonAccess skel, bool reset)
+    private void CaptureAnimatedHairFrame(ISkeletonPose skel, bool reset)
     {
         Array.Copy(animatedContactsNow, animatedContactsPrevious, animatedContactsNowCount);
         animatedContactsPreviousCount = reset ? 0 : animatedContactsNowCount;
@@ -107,8 +107,8 @@ public unsafe partial class RagdollController
             region.FramePreviousOrigin = region.FrameOrigin; region.FramePreviousRotation = region.FrameRotation;
             region.FramePreviousValid = region.FrameValid && !reset;
             region.FrameValid = false;
-            if (region.Bone < 0 || region.Bone >= skel.Pose->ModelPose.Length) continue;
-            ref var mt = ref skel.Pose->ModelPose.Data[region.Bone];
+            if (region.Bone < 0 || region.Bone >= skel.ModelPose.Length) continue;
+            ref var mt = ref skel.ModelPose[region.Bone];
             region.FrameOrigin = ModelToWorld(new(mt.Translation.X, mt.Translation.Y, mt.Translation.Z));
             region.FrameRotation = ModelRotToWorld(new(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W));
             region.FrameValid = FlexibleHairSolver.Finite(region.FrameOrigin) && FlexibleHairSolver.Finite(region.FrameRotation);

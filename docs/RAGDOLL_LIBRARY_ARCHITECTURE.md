@@ -466,7 +466,7 @@ A0 的录制器现在是主类里的一个 partial（`RagdollController.Recordin
 | 50 个包装方法、`RecCall` / `RecReturn` | `Ragdoll` 内部一个调用观察点（`IRagdollObserver.OnCall`），嵌套深度的规则不变 |
 | `RecStep`、`RecInitEnd`（每步刚体、建成的刚体表） | `IRagdollObserver.OnStep / OnInitialized`（库内部的只读观察接口） |
 
-`RecordingHost.Wrap(host, writer)` 一次包好全部接口。格式和读写器（`RagdollLib/Recording/`）不变。
+`RecordingHost.Wrap(host, writer)` 一次包好全部接口。格式和读写器（`AdvancedRagdoll/Recording/`）不变。
 
 **回放宿主**（新，`Tests/RagdollReplay`）：`ReplayHost` 用同一份文件实现上面每个接口——每次被调用就取下一条对应记录，核对参数与记录一致（不一致即报“第几帧、哪个调用点、哪个参数”），返回记录的应答；驱动器按记录的顺序重放深度为 0 的外部调用和每帧的 `dt`；`ReplayObserver` 把每步刚体和每帧写回与文件里的输出逐位比较。现有的 `Tests/RagdollRecording` 只做自检、摘要和两个文件的对比，**还没有回放器**。
 
@@ -498,7 +498,7 @@ A0 的录制器现在是主类里的一个 partial（`RagdollController.Recordin
 
 ## 10. 命名与打包
 
-- **现状**：项目 `RagdollLib/`，程序集 `CombatSimulator.RagdollLib`，命名空间仍是 `CombatSimulator.Animation.*`，`IsPackable=false`（`RagdollLib.csproj`）。
+- **现状**（A2a 之后）：项目 `AdvancedRagdoll/`，程序集与 PackageId `AdvancedRagdoll`（用户定名，2026-11-14），命名空间仍是 `CombatSimulator.Animation.*`（A4 改为 `AdvancedRagdoll.*`），`IsPackable=false`（`AdvancedRagdoll.csproj`）。
 - **建议**：A4 时一次定名并改命名空间（纯机械改动，单独一个提交）。名字不带游戏名、不带插件名；结构：`<Name>`（`Ragdoll`、`SkeletonProfile`、设置）、`<Name>.Hosting`（宿主接口与自带的最简实现）、`<Name>.Bepu`（进阶与扩展点）、`<Name>.Recording`、`<Name>.Meshes`、`<Name>.Hair`。名字本身见问题 5。
 - **目标框架**：`net8.0`（BepuPhysics 2.5.0-beta.22 只有这个目标）。依赖只有 BepuPhysics（及其带来的 BepuUtilities）。
 - **版本**：发布前 `0.x`，不承诺兼容。核心命名空间按语义化版本；`<Name>.Bepu` 明说不稳定。录制格式有自己的版本号（文件头已有）。库依赖的是 Bepu 的 beta 包，库自己的 NuGet 版本也只能带预发布标记（NuGet 不允许稳定包依赖预发布包）。

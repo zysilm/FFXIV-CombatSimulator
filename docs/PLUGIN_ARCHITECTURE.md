@@ -635,7 +635,7 @@ public interface ITargetingSettings { bool EnableCombatCompanions { get; } }   /
 | B8 | §7 | `Configuration.cs`（只加接口声明） | 无 |
 | B9 | 一个控制器、一个状态枚举 | `Ai/`、`Companions/` | 无 |
 
-B0–B5 不碰 `Animation/` 和 `RagdollLib/`；真正共用的文件只有 `Plugin.cs` 和 `CombatEngine.cs`。
+B0–B5 不碰 `Animation/` 和 `AdvancedRagdoll/`；真正共用的文件只有 `Plugin.cs` 和 `CombatEngine.cs`。
 
 建议的三处调整：
 

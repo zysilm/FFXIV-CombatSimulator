@@ -15,6 +15,8 @@ using CombatSimulator.Animation.Hair;
 using CombatSimulator.Animation.SurfaceProfiles;
 using HkaPose = FFXIVClientStructs.Havok.Animation.Rig.hkaPose;
 using CombatSimulator.Core;
+using CombatSimulator.Animation.Hosting;
+using CombatSimulator.Animation.Recording;
 
 namespace CombatSimulator.Animation;
 
@@ -81,7 +83,7 @@ public unsafe partial class RagdollController
         return FlexibleHairSolver.Finite(position) && FlexibleHairSolver.Finite(rotation);
     }
 
-    private void BuildHairRig(in SkeletonAccess skel)
+    private void BuildHairRig(ISkeletonPose skel)
     {
         var meshBinding = hairMesh;
         if (rec != null) RecHairMesh(meshBinding);
@@ -94,23 +96,23 @@ public unsafe partial class RagdollController
                 if (ragdollBones[i].Name == "j_kao") { hairKaoRagdollBodyIndex = i; break; }
         }
         if (!TryGetHairHead(out var head, out var headRot, out var linear, out var angular)) return;
-        var skeleton = skel.CharBase->Skeleton; if (skeleton == null) return;
+        if (!skel.HasRoot) return;
         int totalBones = 0;
-        for (int ps = 1; ps < skeleton->PartialSkeletonCount && totalBones < MaxHairRigBones; ps++)
+        for (int ps = 1; ps < skel.PartCount && totalBones < MaxHairRigBones; ps++)
         {
-            var pose = skeleton->PartialSkeletons[ps].GetHavokPose(0);
-            if (pose == null || pose->Skeleton == null || !IsHairPartial(pose)) continue;
-            if (!TryHairPoseAttachment(skel, ps, pose, out var poseAttachment, out _, out var attachmentRotation)) continue;
-            int count = Math.Min(2048, Math.Min(pose->ModelPose.Length, Math.Min(pose->Skeleton->Bones.Length, pose->Skeleton->ParentIndices.Length)));
+            if (!skel.PartAvailable(ps) || !IsHairPartial(skel, ps)) continue;
+            if (!TryHairPoseAttachment(skel, ps, out var poseAttachment, out _, out var attachmentRotation)) continue;
+            var pose = skel.PartModelPose(ps);
+            int count = Math.Min(2048, Math.Min(skel.PartModelPoseLength(ps), Math.Min(skel.PartBoneNameCount(ps), skel.PartParentCount(ps))));
             var marked = new bool[count];
-            for (int i = 1; i < count; i++) marked[i] = IsHairBoneName(pose->Skeleton->Bones[i].Name.String);
+            for (int i = 1; i < count; i++) marked[i] = IsHairBoneName(skel.PartBoneName(ps, i));
             // Mod skeletons need not have sorted parent indices.
             for (int pass = 0; pass < count; pass++)
             {
                 bool changed = false;
                 for (int i = 1; i < count; i++)
                 {
-                    int p = pose->Skeleton->ParentIndices[i];
+                    int p = skel.PartParent(ps, i);
                     if (!marked[i] && p > 0 && p < count && marked[p]) { marked[i] = true; changed = true; }
                 }
                 if (!changed) break;
@@ -125,9 +127,9 @@ public unsafe partial class RagdollController
                 for (int b = 1; b < count && totalBones < MaxHairRigBones; b++)
                 {
                     if (!marked[b] || map[b] >= 0) continue;
-                    int p = pose->Skeleton->ParentIndices[b];
+                    int p = skel.PartParent(ps, b);
                     if (p < 0 || p >= count || (marked[p] && map[p] < 0)) continue;
-                    ref var mt = ref pose->ModelPose.Data[b];
+                    ref var mt = ref pose[b];
                     var world = ModelToWorld(Vector3.Transform(new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z), poseAttachment));
                     var rotation = ModelRotToWorld(attachmentRotation * new Quaternion(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W));
                     if (!FlexibleHairSolver.Finite(world) || !FlexibleHairSolver.Finite(rotation)) continue;
@@ -139,10 +141,10 @@ public unsafe partial class RagdollController
                 if (!added) break;
             }
             if (boneIndices.Count == 0) continue;
-            var referenceModels = BuildHairReferenceModels(pose);
-            var baseReferences = BuildHairReferenceModels(skel.Pose);
-            int connected = skeleton->PartialSkeletons[ps].ConnectedBoneIndex;
-            int parentBone = skeleton->PartialSkeletons[ps].ConnectedParentBoneIndex;
+            var referenceModels = BuildHairReferenceModels(skel, ps);
+            var baseReferences = BuildHairReferenceModels(skel, 0);
+            int connected = skel.PartConnectedBone(ps);
+            int parentBone = skel.PartConnectedParentBone(ps);
             if (connected >= 0 && connected < referenceModels.Length && parentBone >= 0 && parentBone < baseReferences.Length &&
                 Matrix4x4.Invert(referenceModels[connected], out var invConnection))
             {
@@ -150,8 +152,8 @@ public unsafe partial class RagdollController
                 for (int i = 0; i < referenceModels.Length; i++) referenceModels[i] *= attachment;
             }
             var skin = new Dictionary<string, Matrix4x4>(StringComparer.Ordinal);
-            AddHairSkinMatrices(skel.Pose, baseReferences, Matrix4x4.Identity, skin);
-            AddHairSkinMatrices(pose, referenceModels, poseAttachment, skin);
+            AddHairSkinMatrices(skel, 0, baseReferences, Matrix4x4.Identity, skin);
+            AddHairSkinMatrices(skel, ps, referenceModels, poseAttachment, skin);
             var radii = new List<float>();
             for (int i = 0; i < points.Count; i++) radii.Add(0);
             var childPoints = new int[boneIndices.Count]; Array.Fill(childPoints, -1);
@@ -170,7 +172,7 @@ public unsafe partial class RagdollController
                 var tip = points[point] + direction * Math.Clamp(length * .7f, .025f, .12f);
                 float meshRadius = 0;
                 int bone = boneIndices[i];
-                string name = pose->Skeleton->Bones[bone].Name.String ?? string.Empty;
+                string name = skel.PartBoneName(ps, bone) ?? string.Empty;
                 if (meshBinding != null && meshBinding.Samples.TryGetValue(name, out var samples))
                 {
                     var cloud = new Vector3[samples.Length];
@@ -192,7 +194,7 @@ public unsafe partial class RagdollController
             radii.CopyTo(solver.ContactRadii);
             hairRigChains.Add(new HairRigChain
             {
-                PartialSkeletonIndex = ps, PoseIdentity = (nint)pose, SkeletonIdentity = (nint)pose->Skeleton,
+                PartialSkeletonIndex = ps, PoseIdentity = skel.PartPoseIdentity(ps), SkeletonIdentity = skel.PartIdentity(ps),
                 Solver = solver, BoneIndices = boneIndices.ToArray(), PointIndices = pointIndices.ToArray(), ChildPoints = childPoints,
                 RestRotations = restRotations.ToArray(), RenderFrames = new Quaternion[solver.Count],
                 RenderPositions = new Vector3[solver.Count], Ground = new HairContactPlane[solver.Count],
@@ -202,7 +204,7 @@ public unsafe partial class RagdollController
         }
         hairRigActive = hairRigChains.Count > 0;
         if (hairRigActive)
-            RefreshHairSurfaceRegions(skel, animatedHair ? Services.ObjectTable.LocalPlayer?.Address ?? 0 : targetCharacterAddress);
+            RefreshHairSurfaceRegions(skel, animatedHair ? actors.LocalPlayer : targetCharacterAddress);
         if (hairRigActive) log.Info($"HairRig: flexible guides built, partials={hairRigChains.Count}, drivenBones={totalBones}; one-way contacts, persistent rest curvature.");
         else log.Info("HairRig: no supported hair guides; original hair retained.");
     }
@@ -224,7 +226,7 @@ public unsafe partial class RagdollController
     private void StepHairRig()
     {
         if (!hairRigActive || !TryGetHairHead(out var head, out var rotation, out _, out _)) return;
-        if (!animatedHair) RefreshHairSurfaceRegions(default, targetCharacterAddress);
+        if (!animatedHair) RefreshHairSurfaceRegions(null, targetCharacterAddress);
         int contactCount = PrepareHairStepContacts();
         if (!animatedHair)
         {
@@ -253,19 +255,21 @@ public unsafe partial class RagdollController
         }
     }
 
-    private void ReadbackHairRig(in SkeletonAccess skel)
+    private void ReadbackHairRig(ISkeletonPose skel)
     {
         if (!hairRigActive) return;
-        var skeleton = skel.CharBase->Skeleton; if (skeleton == null) return;
+        if (!skel.HasRoot) return;
         float alpha = animatedHair ? Math.Clamp(animatedHairAccumulator / FixedTimestep, 0, 1) :
             hasPrevPhysicsState ? Math.Clamp(physicsAccumulator / FixedTimestep, 0, 1) : 1;
         foreach (var c in hairRigChains)
         {
-            if (c.PartialSkeletonIndex >= skeleton->PartialSkeletonCount) continue;
-            var pose = skeleton->PartialSkeletons[c.PartialSkeletonIndex].GetHavokPose(0);
-            if (pose == null || (nint)pose != c.PoseIdentity || (nint)pose->Skeleton != c.SkeletonIdentity || pose->ModelPose.Length == 0) continue;
-            if (!TryHairPoseAttachment(skel, c.PartialSkeletonIndex, pose, out var attachment, out var inverseAttachment, out var attachmentRotation)) continue;
-            ref var root = ref pose->ModelPose.Data[0];
+            if (c.PartialSkeletonIndex >= skel.PartCount) continue;
+            var ps = c.PartialSkeletonIndex;
+            var poseIdentity = skel.PartPoseIdentity(ps);
+            if (poseIdentity == 0 || poseIdentity != c.PoseIdentity || skel.PartIdentity(ps) != c.SkeletonIdentity || skel.PartModelPoseLength(ps) == 0) continue;
+            if (!TryHairPoseAttachment(skel, ps, out var attachment, out var inverseAttachment, out var attachmentRotation)) continue;
+            var pose = skel.PartModelPose(ps);
+            ref var root = ref pose[0];
             var renderedHead = ModelToWorld(Vector3.Transform(new Vector3(root.Translation.X, root.Translation.Y, root.Translation.Z), attachment));
             var renderedRotation = ModelRotToWorld(attachmentRotation * new Quaternion(root.Rotation.X, root.Rotation.Y, root.Rotation.Z, root.Rotation.W));
             if (!FlexibleHairSolver.Finite(renderedHead) || !FlexibleHairSolver.Finite(renderedRotation)) continue;
@@ -281,7 +285,7 @@ public unsafe partial class RagdollController
             }
             for (int b = 0; b < c.BoneIndices.Length; b++)
             {
-                int bone = c.BoneIndices[b]; if (bone >= pose->ModelPose.Length) continue;
+                int bone = c.BoneIndices[b]; if (bone >= pose.Length) continue;
                 int point = c.PointIndices[b], child = c.ChildPoints[b];
                 var frame = c.RenderFrames[point];
                 var swing = FlexibleHairSolver.FromTo(Vector3.Transform(c.Solver.Rest[child] - c.Solver.Rest[point], frame),
@@ -290,7 +294,7 @@ public unsafe partial class RagdollController
                 var modelPos = Vector3.Transform(WorldToModel(c.RenderPositions[point]), inverseAttachment);
                 var modelRot = Quaternion.Normalize(Quaternion.Inverse(attachmentRotation) * WorldRotToModel(worldRot));
                 if (!FlexibleHairSolver.Finite(modelPos) || !FlexibleHairSolver.Finite(modelRot)) continue;
-                ref var mt = ref pose->ModelPose.Data[bone];
+                ref var mt = ref pose[bone];
                 mt.Translation.X = modelPos.X; mt.Translation.Y = modelPos.Y; mt.Translation.Z = modelPos.Z;
                 mt.Rotation.X = modelRot.X; mt.Rotation.Y = modelRot.Y; mt.Rotation.Z = modelRot.Z; mt.Rotation.W = modelRot.W;
             }
@@ -319,46 +323,47 @@ public unsafe partial class RagdollController
     private void OnAnimatedHairFrameCore()
     {
         if (!RunAnimatedHair) return;
-        if (!config.RagdollHairPhysics) { if (animatedHair) RemoveHairRig(); return; }
-        var player = Services.ObjectTable.LocalPlayer;
-        if (player == null) { if (animatedHair) RemoveHairRig(); return; }
-        var access = boneService.TryGetSkeleton(player.Address);
-        if (access == null) return;
-        var skel = access.Value;
-        bool changed = !animatedHair || animatedHairDraw != (nint)skel.CharBase || animatedHairObject != player.GameObjectId || hairMeshReadyRebuild;
+        if (!settings.RagdollHairPhysics) { if (animatedHair) RemoveHairRig(); return; }
+        var playerAddress = actors.LocalPlayer;
+        if (playerAddress == 0) { if (animatedHair) RemoveHairRig(); return; }
+        var skel = skeletons.TryGetSkeleton(playerAddress);
+        if (skel == null) return;
+        var playerObjectId = actors.GetGameObjectId(playerAddress);
+        bool changed = !animatedHair || animatedHairDraw != skel.DrawIdentity || animatedHairObject != playerObjectId || hairMeshReadyRebuild;
         hairMeshReadyRebuild = false;
         if (!changed)
             foreach (var c in hairRigChains)
             {
-                if (c.PartialSkeletonIndex >= skel.CharBase->Skeleton->PartialSkeletonCount) { changed = true; break; }
-                var pose = skel.CharBase->Skeleton->PartialSkeletons[c.PartialSkeletonIndex].GetHavokPose(0);
-                if ((nint)pose != c.PoseIdentity || pose == null || (nint)pose->Skeleton != c.SkeletonIdentity) { changed = true; break; }
+                if (c.PartialSkeletonIndex >= skel.PartCount) { changed = true; break; }
+                var poseIdentity = skel.PartPoseIdentity(c.PartialSkeletonIndex);
+                if (poseIdentity != c.PoseIdentity || poseIdentity == 0 || skel.PartIdentity(c.PartialSkeletonIndex) != c.SkeletonIdentity) { changed = true; break; }
             }
-        var skeleton = skel.CharBase->Skeleton;
-        skelWorldPos = new(skeleton->Transform.Position.X, skeleton->Transform.Position.Y, skeleton->Transform.Position.Z);
-        skelWorldRot = new(skeleton->Transform.Rotation.X, skeleton->Transform.Rotation.Y, skeleton->Transform.Rotation.Z, skeleton->Transform.Rotation.W);
+        var skeletonRoot = skel.Root;
+        skelWorldPos = skeletonRoot.Position;
+        skelWorldRot = skeletonRoot.Rotation;
         if (!FlexibleHairSolver.Finite(skelWorldPos) || !FlexibleHairSolver.Finite(skelWorldRot)) return;
         skelWorldRot = Quaternion.Normalize(skelWorldRot); skelWorldRotInv = Quaternion.Inverse(skelWorldRot);
-        skelWorldScale = GetCharacterScale(player.Address, skel);
-        int headBone = boneService.ResolveBoneIndex(skel, "j_kao");
-        if (headBone < 0 || headBone >= skel.Pose->ModelPose.Length) return;
-        ref var head = ref skel.Pose->ModelPose.Data[headBone];
+        skelWorldScale = GetCharacterScale(playerAddress, skel);
+        int headBone = ResolveBoneIndex(skel, "j_kao");
+        var bodyPose = skel.ModelPose;
+        if (headBone < 0 || headBone >= bodyPose.Length) return;
+        ref var head = ref bodyPose[headBone];
         animatedPreviousFrameHead = animatedFrameHead; animatedPreviousFrameHeadRotation = animatedFrameHeadRotation;
         animatedFrameHead = ModelToWorld(new(head.Translation.X, head.Translation.Y, head.Translation.Z));
         animatedFrameHeadRotation = ModelRotToWorld(new(head.Rotation.X, head.Rotation.Y, head.Rotation.Z, head.Rotation.W));
         animatedHead = animatedFrameHead; animatedHeadRotation = animatedFrameHeadRotation;
-        long now = Stopwatch.GetTimestamp();
+        long now = clock.GetTimestamp(ClockSite.AnimatedHair);
         float dt = animatedHairTimestamp == 0 ? FixedTimestep : Math.Clamp((float)Stopwatch.GetElapsedTime(animatedHairTimestamp, now).TotalSeconds, 0, .1f);
         animatedHairTimestamp = now;
         if (changed)
         {
             RestoreAnimatedHairPose();
-            animatedHair = true; animatedHairDraw = (nint)skel.CharBase; animatedHairObject = player.GameObjectId;
+            animatedHair = true; animatedHairDraw = skel.DrawIdentity; animatedHairObject = playerObjectId;
             animatedHairAccumulator = 0;
             animatedPreviousFrameHead = animatedFrameHead; animatedPreviousFrameHeadRotation = animatedFrameHeadRotation;
             BuildHairRig(skel);
         }
-        else RefreshHairSurfaceRegions(skel, player.Address);
+        else RefreshHairSurfaceRegions(skel, playerAddress);
         // A teleport/redraw must reach the solver as one discontinuity it can carry, not be
         // spread over interpolated steps that each look like (very fast) ordinary motion.
         bool discontinuous = changed || Vector3.DistanceSquared(animatedPreviousFrameHead, animatedFrameHead) > 1f ||
@@ -382,32 +387,31 @@ public unsafe partial class RagdollController
     private void RestoreAnimatedHairPose()
     {
         if (!animatedHair) return;
-        var player = Services.ObjectTable.LocalPlayer;
-        if (player == null || player.GameObjectId != animatedHairObject) return;
-        var access = boneService.TryGetSkeleton(player.Address);
-        if (access == null || (nint)access.Value.CharBase != animatedHairDraw) return;
-        var skeleton = access.Value.CharBase->Skeleton;
+        var playerAddress = actors.LocalPlayer;
+        if (playerAddress == 0 || actors.GetGameObjectId(playerAddress) != animatedHairObject) return;
+        var skel = skeletons.TryGetSkeleton(playerAddress);
+        if (skel == null || skel.DrawIdentity != animatedHairDraw) return;
         foreach (var c in hairRigChains)
         {
-            if (c.PartialSkeletonIndex >= skeleton->PartialSkeletonCount) continue;
-            var pose = skeleton->PartialSkeletons[c.PartialSkeletonIndex].GetHavokPose(0);
-            if (pose == null || (nint)pose != c.PoseIdentity || (nint)pose->Skeleton != c.SkeletonIdentity) continue;
+            if (c.PartialSkeletonIndex >= skel.PartCount) continue;
+            var poseIdentity = skel.PartPoseIdentity(c.PartialSkeletonIndex);
+            if (poseIdentity == 0 || poseIdentity != c.PoseIdentity || skel.PartIdentity(c.PartialSkeletonIndex) != c.SkeletonIdentity) continue;
             // LocalPose remains the game's animation input. Rebuild ModelPose
             // from it on disable/unload; never leave the last guide pose held.
-            pose->ModelInSync = 0; pose->SyncModelSpace();
+            skel.ResyncPartModelPose(c.PartialSkeletonIndex);
         }
     }
 
-    private int CaptureAnimatedHairContacts(in SkeletonAccess skel)
+    private int CaptureAnimatedHairContacts(ISkeletonPose skel)
     {
         int count = 0;
         foreach (var def in AllBoneDefaults)
         {
             // Regions with a cached rendered surface use it instead of an approximate capsule.
             if (!IsHairContactBone(def.Name) || hairSurfaceNames.Contains(def.Name)) continue;
-            int bone = boneService.ResolveBoneIndex(skel, def.Name);
-            if (bone < 0 || bone >= skel.Pose->ModelPose.Length || count == animatedContactsNow.Length) continue;
-            ref var mt = ref skel.Pose->ModelPose.Data[bone];
+            int bone = ResolveBoneIndex(skel, def.Name);
+            if (bone < 0 || bone >= skel.ModelPose.Length || count == animatedContactsNow.Length) continue;
+            ref var mt = ref skel.ModelPose[bone];
             var origin = ModelToWorld(new(mt.Translation.X, mt.Translation.Y, mt.Translation.Z));
             var rotation = ModelRotToWorld(new(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W));
             float scale = MathF.Max(skelWorldScale.X, MathF.Max(skelWorldScale.Y, skelWorldScale.Z));
@@ -419,8 +423,8 @@ public unsafe partial class RagdollController
 
     private void SampleAnimatedHairTerrain()
     {
-        UpdateHairMeshMetadata();
-        if (!RunAnimatedHair || !animatedHair || !config.RagdollHairPhysics || !Monitor.TryEnter(animatedHairGate)) return;
+        if (ReadsGameModels) UpdateHairMeshMetadata();
+        if (!RunAnimatedHair || !animatedHair || !settings.RagdollHairPhysics || !Monitor.TryEnter(animatedHairGate)) return;
         try
         {
             if (!animatedHair) return;
@@ -433,7 +437,7 @@ public unsafe partial class RagdollController
                 var c = hairRigChains[picks[k].Chain]; int index = picks[k].Point;
                 var point = c.Solver.Positions[index];
                 HairContactPlane plane = default;
-                if (BGCollisionModule.RaycastMaterialFilter(point + Vector3.UnitY * .35f, -Vector3.UnitY, out var hit, .7f))
+                if (world.Raycast(RaycastSite.AnimatedHair, point + Vector3.UnitY * .35f, -Vector3.UnitY, .7f, out var hit))
                 {
                     var normal = hit.Normal;
                     if (FlexibleHairSolver.Finite(normal) && normal.LengthSquared() > 1e-8f)
@@ -448,46 +452,47 @@ public unsafe partial class RagdollController
         finally { Monitor.Exit(animatedHairGate); }
     }
 
-    private static Matrix4x4[] BuildHairReferenceModels(HkaPose* pose)
+    private static Matrix4x4[] BuildHairReferenceModels(ISkeletonPose skel, int part)
     {
-        int count = Math.Min(2048, Math.Min(pose->Skeleton->ReferencePose.Length, pose->Skeleton->ParentIndices.Length));
+        var reference = skel.PartReferencePose(part);
+        int count = Math.Min(2048, Math.Min(skel.PartReferenceCount(part), skel.PartParentCount(part)));
         var models = new Matrix4x4[count];
         for (int i = 0; i < count; i++)
         {
-            int parent = pose->Skeleton->ParentIndices[i];
-            models[i] = QsToMatrix(pose->Skeleton->ReferencePose.Data[i]);
+            int parent = skel.PartParent(part, i);
+            models[i] = QsToMatrix(reference[i]);
             if (parent >= 0 && parent < i) models[i] *= models[parent];
         }
         return models;
     }
 
-    private static void AddHairSkinMatrices(HkaPose* pose, Matrix4x4[] references,
+    private static void AddHairSkinMatrices(ISkeletonPose skel, int part, Matrix4x4[] references,
         Matrix4x4 attachment, Dictionary<string, Matrix4x4> skin)
     {
-        int count = Math.Min(references.Length, Math.Min(pose->ModelPose.Length, pose->Skeleton->Bones.Length));
+        var pose = skel.PartModelPose(part);
+        int count = Math.Min(references.Length, Math.Min(skel.PartModelPoseLength(part), skel.PartBoneNameCount(part)));
         for (int i = 0; i < count; i++)
         {
-            string? name = pose->Skeleton->Bones[i].Name.String;
+            string? name = skel.PartBoneName(part, i);
             if (string.IsNullOrEmpty(name) || !Matrix4x4.Invert(references[i], out var inverse)) continue;
-            skin[name] = inverse * QsToMatrix(pose->ModelPose.Data[i]) * attachment;
+            skin[name] = inverse * QsToMatrix(pose[i]) * attachment;
         }
     }
 
-    private static bool TryHairPoseAttachment(SkeletonAccess skel, int partialIndex, HkaPose* pose,
+    private static bool TryHairPoseAttachment(ISkeletonPose skel, int partialIndex,
         out Matrix4x4 attachment, out Matrix4x4 inverse, out Quaternion rotation)
     {
         attachment = inverse = Matrix4x4.Identity; rotation = Quaternion.Identity;
-        var partial = skel.CharBase->Skeleton->PartialSkeletons[partialIndex];
-        int connected = partial.ConnectedBoneIndex, parent = partial.ConnectedParentBoneIndex;
-        if (connected < 0 || connected >= pose->ModelPose.Length || parent < 0 || parent >= skel.Pose->ModelPose.Length) return false;
-        if (!Matrix4x4.Invert(QsToMatrix(pose->ModelPose.Data[connected]), out var invConnection)) return false;
-        attachment = invConnection * QsToMatrix(skel.Pose->ModelPose.Data[parent]);
+        int connected = skel.PartConnectedBone(partialIndex), parent = skel.PartConnectedParentBone(partialIndex);
+        if (connected < 0 || connected >= skel.PartModelPoseLength(partialIndex) || parent < 0 || parent >= skel.BoneCount) return false;
+        if (!Matrix4x4.Invert(QsToMatrix(skel.PartModelPose(partialIndex)[connected]), out var invConnection)) return false;
+        attachment = invConnection * QsToMatrix(skel.ModelPose[parent]);
         return Matrix4x4.Invert(attachment, out inverse) && Matrix4x4.Decompose(attachment, out _, out rotation, out _) && FlexibleHairSolver.Finite(rotation);
     }
 
     private void UpdateHairMeshMetadata()
     {
-        if (!RunAnimatedHair || !config.RagdollHairPhysics || !Monitor.TryEnter(animatedHairGate)) return;
+        if (!RunAnimatedHair || !settings.RagdollHairPhysics || !Monitor.TryEnter(animatedHairGate)) return;
         try
         {
             var player = Services.ObjectTable.LocalPlayer; if (player == null) return;
@@ -519,7 +524,7 @@ public unsafe partial class RagdollController
             string path = Encoding.UTF8.GetString(fileName.AsSpan());
             if (path.StartsWith('|')) { int end = path.IndexOf('|', 1); if (end >= 0) path = path[(end + 1)..]; }
             var gameData = Services.DataManager.GameData; uint attributes = hairMeshAttributes;
-            hairMeshLoad = Task.Run(() =>
+            hairMeshLoad = scheduler.Run<HairMeshBinding?>(() =>
             {
                 try
                 {
@@ -540,11 +545,11 @@ public unsafe partial class RagdollController
     private static bool IsHairBoneName(string? name) => name != null &&
         (name.StartsWith("j_kami_", StringComparison.Ordinal) ||
          (name.StartsWith("j_ex_h", StringComparison.Ordinal) && name.Length > 6 && (char.IsDigit(name[6]) || name.Contains("_ke_", StringComparison.Ordinal))));
-    private static bool IsHairPartial(HkaPose* pose)
+    private static bool IsHairPartial(ISkeletonPose skel, int part)
     {
-        var bones = pose->Skeleton->Bones;
-        if (bones.Length < 2 || bones[0].Name.String != "j_kao") return false;
-        for (int i = 1; i < bones.Length; i++) if (IsHairBoneName(bones[i].Name.String)) return true;
+        var bones = skel.PartBoneNameCount(part);
+        if (bones < 2 || skel.PartBoneName(part, 0) != "j_kao") return false;
+        for (int i = 1; i < bones; i++) if (IsHairBoneName(skel.PartBoneName(part, i))) return true;
         return false;
     }
 }

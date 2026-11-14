@@ -8,7 +8,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using CombatSimulator.Animation.Recording;
-using Dalamud.Plugin.Services;
+using CombatSimulator.Animation.Hosting;
 
 namespace CombatSimulator.Animation;
 
@@ -25,6 +25,9 @@ internal static class RagdollRecordingSession
     // follows it. So a file holds at most MaxBytesPerFile and a session at most MaxBytesPerSession, plus one
     // End record (well under 1 KiB) per file. The time limit is looked at once per render frame.
     public const double MaxSecondsPerFile = 300;
+    /// <summary>The time limit actually applied: the offline replay (Tests/RagdollReplay), which runs slower than
+    /// the game, lifts it so its re-recording is not cut short.</summary>
+    internal static double SecondsLimit = MaxSecondsPerFile;
     public const long MaxBytesPerFile = 512L * 1024 * 1024;
     public const long MaxBytesPerSession = 4L * 1024 * 1024 * 1024;
     public const int MaxFilesPerSession = 200;
@@ -46,7 +49,7 @@ internal static class RagdollRecordingSession
     private static readonly List<RecordingFile> Open = new();
     private static volatile bool enabled;
     private static string directory = string.Empty;
-    private static IPluginLog? log;
+    private static IRagdollLog? log;
     private static string sessionId = string.Empty;
     private static int filesOpened;
     private static int filesClosed;
@@ -63,7 +66,7 @@ internal static class RagdollRecordingSession
     public static bool Enabled => enabled;
     public static string SessionId => sessionId;
 
-    public static void Configure(string recordingDirectory, IPluginLog pluginLog)
+    public static void Configure(string recordingDirectory, IRagdollLog pluginLog)
     {
         directory = recordingDirectory;
         log = pluginLog;

@@ -40,11 +40,15 @@
     <PackageReference Include="Silk.NET.Direct3D11" Version="2.21.0" />
   </ItemGroup>
   <ItemGroup>
-    <!-- Game-independent ragdoll physics (docs/REFACTOR_PLAN.md, track A). Its DLL is copied next to
-         the plugin DLL and into the packaged zip. DefineConstants is not passed down: the public
+    <!-- AdvancedRagdoll, the game-independent ragdoll physics library (docs/REFACTOR_PLAN.md, track A).
+         Its DLL is copied next to the plugin DLL and into the packaged zip. DefineConstants is not passed down: the public
          build sets it on the command line (-p:DefineConstants=PUBLIC_BUILD), which would otherwise
          replace the library's own constants; the library is the same in every configuration. -->
-    <ProjectReference Include="..\RagdollLib\RagdollLib.csproj" GlobalPropertiesToRemove="DefineConstants" />
+    <ProjectReference Include="..\AdvancedRagdoll\AdvancedRagdoll.csproj" GlobalPropertiesToRemove="DefineConstants" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The offline replay (Tests/RagdollReplay) drives RagdollController through its internal host constructor. -->
+    <InternalsVisibleTo Include="RagdollReplay" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Npcs\NpcNames.json" />

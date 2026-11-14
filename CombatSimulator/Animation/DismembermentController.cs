@@ -41,6 +41,10 @@ public unsafe partial class DismembermentController : IDisposable
     private readonly AnimationController animationController;
     private readonly IObjectTable objectTable;
     private readonly Configuration config;
+    // What the local simulation's contact callbacks read on the physics worker threads: a copy of the
+    // settings taken before each step, never the Configuration itself.
+    private readonly Hosting.RagdollSettings contactSettings = new();
+    private Hosting.ConfigRagdollSettings? contactSettingsSource;
     private readonly IPluginLog log;
 
     // Limb physics proxy (one capsule shape shared by all limb bodies). Generic limb-sized chunk.
@@ -790,7 +794,11 @@ public unsafe partial class DismembermentController : IDisposable
             substepsThisFrame = 0;
             while (physicsAccumulator >= FixedStep && substepsThisFrame < MaxSubstepsPerFrame)
             {
-                if (simulation != null) simulation.Timestep(FixedStep);
+                if (simulation != null)
+                {
+                    (contactSettingsSource ??= new Hosting.ConfigRagdollSettings(config)).Refresh(contactSettings);
+                    simulation.Timestep(FixedStep);
+                }
                 physicsAccumulator -= FixedStep;
                 substepsThisFrame++;
             }
@@ -7603,7 +7611,7 @@ public unsafe partial class DismembermentController : IDisposable
                 ExternalRigNoRagdollContactBodies = gearNoBodyContactHandles,
                 ExternalRigConnectedPairs = gearRigConnectedPairs,
                 Friction = RagdollTuning.Friction,
-                Config = config,
+                Config = contactSettings,
                 RestrictedStatics = restrictedStaticHandles,
                 AllowedDynamicBodiesForRestrictedStatics = pcCollisionBodyHandles,
             },

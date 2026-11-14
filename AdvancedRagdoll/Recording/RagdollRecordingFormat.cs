@@ -343,6 +343,8 @@ public enum RaycastSite
     PatchCenter = 1,
     PatchGrid = 2,
     SkeletonMoved = 3,
+    /// <summary>The live (animated) hair's ground samples. Not part of a ragdoll activation: never recorded.</summary>
+    AnimatedHair = 4,
 }
 
 public enum ActorSite

@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using CombatSimulator.Animation.MeshVolume;
+using CombatSimulator.Animation.Hosting;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
 
 namespace CombatSimulator.Animation;
@@ -24,32 +25,32 @@ public unsafe partial class RagdollController
     private readonly List<nint> weaponContactMeshOrder = new();
 
     // Weapon and hair contacts need the cache on the main controller only; body mesh volumes need it everywhere.
-    private bool FrozenMeshCacheWanted => config.RagdollMeshVolumes ||
-        (config.WeaponBodyMeshContacts || config.RagdollHairPhysics && config.RagdollHairBodyMesh) && RunAnimatedHair;
+    private bool FrozenMeshCacheWanted => settings.RagdollMeshVolumes ||
+        (settings.WeaponBodyMeshContacts || settings.RagdollHairPhysics && settings.RagdollHairBodyMesh) && RunAnimatedHair;
 
     // Called from the render owner even while inactive. Only the main controller preloads
     // the local player; other controllers capture their own target on first activation.
     private void UpdateFrozenMeshCache()
     {
         var wanted = FrozenMeshCacheWanted;
-        if (observedMeshEnabled != wanted || observedMeshCacheRevision != config.RagdollMeshCacheRevision)
+        if (observedMeshEnabled != wanted || observedMeshCacheRevision != settings.RagdollMeshCacheRevision)
         {
             frozenMeshCache?.Dispose(); frozenMeshCache = null;
             frozenMeshActor = 0; nextMeshCacheAttempt = 0;
             ClearWeaponContactMeshes();
             observedMeshEnabled = wanted;
-            observedMeshCacheRevision = config.RagdollMeshCacheRevision;
+            observedMeshCacheRevision = settings.RagdollMeshCacheRevision;
         }
         if (!wanted) return;
         // Body LOD follows the user's setting; weapon contacts always use the coarse LOD (hair queries the full surface).
-        var lodEnabled = config.RagdollMeshCollisionLod || config.WeaponBodyMeshContacts;
-        var tolerance = config.RagdollMeshCollisionLod
-            ? (float.IsFinite(config.RagdollMeshLodToleranceMm) ? Math.Clamp(config.RagdollMeshLodToleranceMm, .5f, 50f) : 3f) * .001f
+        var lodEnabled = settings.RagdollMeshCollisionLod || settings.WeaponBodyMeshContacts;
+        var tolerance = settings.RagdollMeshCollisionLod
+            ? (float.IsFinite(settings.RagdollMeshLodToleranceMm) ? Math.Clamp(settings.RagdollMeshLodToleranceMm, .5f, 50f) : 3f) * .001f
             : Configuration.WeaponBodyMeshLodToleranceMm * .001f;
         PollWeaponContactMeshes();
         var localPlayer = Core.Services.ObjectTable.LocalPlayer?.Address ?? 0;
         nint address;
-        if (config.RagdollMeshVolumes)
+        if (settings.RagdollMeshVolumes)
         {
             if (isActive && !TargetObjectAlive()) return;
             address = isActive ? targetCharacterAddress : RunAnimatedHair ? localPlayer : 0;
@@ -82,7 +83,7 @@ public unsafe partial class RagdollController
     /// own cache when it holds that actor; otherwise captures once (synchronously) per actor.</summary>
     internal FrozenMeshGeometryCache? GetWeaponContactMesh(nint address)
     {
-        if (!config.WeaponBodyMeshContacts || address == 0) return null;
+        if (!settings.WeaponBodyMeshContacts || address == 0) return null;
         var entity = ((GameObject*)address)->EntityId;
         if (frozenMeshCache != null && frozenMeshActor == address && frozenMeshEntity == entity) return frozenMeshCache;
         // Client-spawned actors can reuse an address and entity id; a new draw object means a new model.
@@ -141,8 +142,8 @@ public unsafe partial class RagdollController
         FrozenMeshGeometryCache? next = null;
         try
         {
-            if (config.RagdollSoftTissueModBones && address == Core.Services.ObjectTable.LocalPlayer?.Address)
-                AppendModSoftTissueDefs(skel, defs, names, byName);
+            if (settings.RagdollSoftTissueModBones && address == Core.Services.ObjectTable.LocalPlayer?.Address)
+                AppendModSoftTissueDefs(new FfxivSkeletonPose(address, skel), defs, names, byName);
             var worldParts = CaptureBodyMeshVolumes(skel, byName, names);
             if (worldParts.Count == 0) return null;
             next = new();

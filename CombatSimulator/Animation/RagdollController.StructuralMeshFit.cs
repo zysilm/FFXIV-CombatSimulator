@@ -12,6 +12,7 @@ using System.Text;
 using System.Threading.Tasks;
 using BepuPhysics.Collidables;
 using CombatSimulator.Core;
+using CombatSimulator.Animation.Hosting;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using FFXIVClientStructs.FFXIV.Client.System.Resource.Handle;
@@ -28,7 +29,7 @@ public unsafe partial class RagdollController
     // armed and computed on a worker; the death animation's delay is ample time. One appearance is
     // fitted once and shared by every ragdoll that wears it.
 
-    private sealed record StructuralFitResult(Dictionary<string, StructuralMeshFitter.Fit> Fits, string Summary);
+    internal sealed record StructuralFitResult(Dictionary<string, StructuralMeshFitter.Fit> Fits, string Summary);
 
     // What a worker needs of one drawn model, taken on the framework thread.
     private sealed record StructuralFitModel(ModelGeometryData Data, uint Attributes, bool[] Shapes, ushort SourceRace);
@@ -49,9 +50,9 @@ public unsafe partial class RagdollController
         structuralFitTask = null;
         try
         {
-            var skel = boneService.TryGetSkeleton(targetCharacterAddress);
+            var skel = skeletons.TryGetSkeleton(targetCharacterAddress);
             if (skel != null)
-                structuralFitTask = StartStructuralMeshFit(skel.Value);
+                structuralFitTask = StartStructuralMeshFit(skel);
         }
         catch (Exception ex)
         {
@@ -60,7 +61,7 @@ public unsafe partial class RagdollController
     }
 
     /// <summary>The fitted volumes for the target, or none: every body then keeps its built-in volume.</summary>
-    private Dictionary<string, StructuralMeshFitter.Fit> ResolveStructuralMeshFits(SkeletonAccess skel)
+    private Dictionary<string, StructuralMeshFitter.Fit> ResolveStructuralMeshFits(ISkeletonPose skel)
     {
         try
         {
@@ -74,13 +75,12 @@ public unsafe partial class RagdollController
 
             // Normally long finished. With no activation delay the first death of an appearance
             // waits here once, briefly; past that the built-in volumes are better than a stall.
-            if (!task.IsCompleted && !task.Wait(150))
+            if (!scheduler.TryWait(task, 150, out var result))
             {
                 log.Info("Ragdoll mesh geometry: fit not ready yet; built-in volumes used for this ragdoll.");
                 if (rec != null) recFitOutcome = 2;
                 return NoStructuralFits;
             }
-            var result = task.Result;
             if (rec != null) recFitOutcome = 3;
             log.Info($"Ragdoll mesh geometry: {result.Summary}");
             return result.Fits;
@@ -92,6 +92,12 @@ public unsafe partial class RagdollController
             return NoStructuralFits;
         }
     }
+
+    /// <summary>Starts the hull fit. Offline the products of a recording stand in for the model reading (stage A2a).</summary>
+    private Task<StructuralFitResult>? StartStructuralMeshFit(ISkeletonPose skel)
+        => host.MeshProducts is { } products
+            ? products.StartStructuralFit(targetCharacterAddress)
+            : StartStructuralMeshFit(GameSkeleton(skel));
 
     private Task<StructuralFitResult>? StartStructuralMeshFit(SkeletonAccess skel)
     {
@@ -197,7 +203,7 @@ public unsafe partial class RagdollController
 
         if (StructuralFitCache.Count >= StructuralFitCacheLimit)
             StructuralFitCache.Clear();
-        var worker = Task.Run(() => ComputeStructuralMeshFits(models, deformer, targetRace, boneNames, boneParents, referenceModel, notes));
+        var worker = scheduler.Run(() => ComputeStructuralMeshFits(models, deformer, targetRace, boneNames, boneParents, referenceModel, notes));
         StructuralFitCache[cacheKey] = worker;
         return worker;
     }
@@ -312,20 +318,33 @@ public unsafe partial class RagdollController
         SkeletonAccess skel,
         out Matrix4x4[] referenceModel)
     {
+        if (skel.HavokSkeleton == null)
+        {
+            referenceModel = Array.Empty<Matrix4x4>();
+            return false;
+        }
+        return TryBuildReferenceModelTransforms(new FfxivSkeletonPose(0, skel), out referenceModel);
+    }
+
+    private static bool TryBuildReferenceModelTransforms(
+        ISkeletonPose skel,
+        out Matrix4x4[] referenceModel)
+    {
         referenceModel = Array.Empty<Matrix4x4>();
-        if (skel.HavokSkeleton == null || skel.HavokSkeleton->ReferencePose.Data == null)
+        var reference = skel.ReferencePose;
+        if (reference.IsEmpty)
             return false;
 
         var count = Math.Min(skel.BoneCount,
-            Math.Min(skel.ParentCount, skel.HavokSkeleton->ReferencePose.Length));
+            Math.Min(skel.ParentCount, reference.Length));
         if (count <= 0)
             return false;
 
         referenceModel = new Matrix4x4[count];
         for (var i = 0; i < count; i++)
         {
-            var local = QsToMatrix(skel.HavokSkeleton->ReferencePose.Data[i]);
-            var parent = skel.HavokSkeleton->ParentIndices[i];
+            var local = QsToMatrix(reference[i]);
+            var parent = skel.Parent(i);
             referenceModel[i] = parent >= 0 && parent < i
                 ? local * referenceModel[parent]
                 : local;

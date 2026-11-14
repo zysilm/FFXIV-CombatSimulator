@@ -12,6 +12,7 @@ using BepuPhysics;
 using BepuPhysics.Collidables;
 using CombatSimulator.Animation.Hair;
 using CombatSimulator.Animation.MeshVolume;
+using CombatSimulator.Animation.Hosting;
 using CombatSimulator.Animation.Recording;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
@@ -28,7 +29,7 @@ namespace CombatSimulator.Animation;
 // was activated, so each call site in the controller costs one null check. The helpers below read
 // the same game memory the surrounding code reads at that moment, never throw into the caller, and
 // write records in the order things happen. The format is described in
-// RagdollLib/Recording/RagdollRecordingFormat.cs.
+// AdvancedRagdoll/Recording/RagdollRecordingFormat.cs.
 public unsafe partial class RagdollController
 {
     private static int recNextControllerId;
@@ -96,7 +97,7 @@ public unsafe partial class RagdollController
     };
 
     private static readonly PropertyInfo?[] RecConfigProperties = Array.ConvertAll(RecConfigNames,
-        name => typeof(Configuration).GetProperty(name, BindingFlags.Public | BindingFlags.Instance));
+        name => typeof(RagdollSettings).GetProperty(name, BindingFlags.Public | BindingFlags.Instance));
 
     // ------------------------------------------------------------------ lifetime
 
@@ -106,7 +107,6 @@ public unsafe partial class RagdollController
         if (!RagdollRecordingSession.Enabled) return;
         try
         {
-            var go = (GameObject*)targetCharacterAddress;
             var file = RagdollRecordingSession.TryOpen(targetIsLocalPlayer, targetEntityId);
             if (file == null) return;
 
@@ -157,7 +157,7 @@ public unsafe partial class RagdollController
                 w.Bool(RunAnimatedHair);
                 w.U64((ulong)targetCharacterAddress);
                 w.U32(targetEntityId);
-                w.I32(go->ObjectIndex);
+                w.I32(actors.GetObjectIndex(targetCharacterAddress));
                 w.Bool(targetIsLocalPlayer);
             }
 
@@ -170,11 +170,11 @@ public unsafe partial class RagdollController
                 w.F32(stagger);
                 w.V3(savedCharacterPosition);
                 w.U32(targetEntityId);
-                w.I32(go->ObjectIndex);
+                w.I32(actors.GetObjectIndex(targetCharacterAddress));
                 w.Bool(targetIsLocalPlayer);
-                w.Bool(npcSelector != null);
-                w.Bool(movementBlockHook != null);
-                w.Bool(extraCollisionProvider != null);
+                w.Bool(colliders.HasSelector);
+                w.Bool(colliders.HasMovementBlock);
+                w.Bool(colliders.HasExtraColliders);
                 w.Bool(RunAnimatedHair);
                 w.Bool(GrabRigid);
                 w.Bool(CarryExternalRigOnAnchor != null);
@@ -223,7 +223,7 @@ public unsafe partial class RagdollController
                     }
                 }
             }
-            RecIdentity(boneService.TryGetSkeleton(targetCharacterAddress));
+            RecIdentity(skeletons.TryGetSkeleton(targetCharacterAddress));
         }
         catch (Exception ex) when (RecAbortPartial())
         {
@@ -306,7 +306,7 @@ public unsafe partial class RagdollController
         if (property == null) return "<missing property>";
         try
         {
-            var value = property.GetValue(config);
+            var value = property.GetValue(settings);
             return value switch
             {
                 null => null,
@@ -346,7 +346,7 @@ public unsafe partial class RagdollController
             values[i] = RecConfigValue(i);
             // The first look only remembers the value the snapshot holds.
             var watch = recConfigWatches[i] = prototypes[i]?.Clone();
-            try { watch?.Changed(config); }
+            try { watch?.Changed(settings); }
             catch { recConfigWatches[i] = null; /* unreadable: the snapshot says so; nothing to watch */ }
         }
         using (w.Begin(RecordType.ConfigSnapshot))
@@ -373,7 +373,7 @@ public unsafe partial class RagdollController
             var watch = watches[i];
             if (watch == null) continue;
             bool changed;
-            try { changed = watch.Changed(config); }
+            try { changed = watch.Changed(settings); }
             catch { changed = false; }
             if (!changed) continue;
             var now = RecConfigValue(i);
@@ -437,33 +437,24 @@ public unsafe partial class RagdollController
     /// type is asked of the draw object only when the ragdoll code itself would ask at this point: once a
     /// skeleton with models and a Havok skeleton was obtained (the condition in StartStructuralMeshFit).
     /// Otherwise the record says -1.</param>
-    private void RecIdentity(SkeletonAccess? skeleton)
+    private void RecIdentity(ISkeletonPose? skeleton)
     {
         var w = rec;
         if (w == null || targetCharacterAddress == nint.Zero) return;
         try
         {
-            var go = (GameObject*)targetCharacterAddress;
-            var character = (Character*)targetCharacterAddress;
-            var customize = new ReadOnlySpan<byte>(&character->DrawData.CustomizeData, 0x1A);
-            var modelType = -1;
-            var raceSex = -1;
-            var cb = skeleton.HasValue ? skeleton.Value.CharBase : null;
-            if (cb != null && cb->Models != null && skeleton!.Value.HavokSkeleton != null)
-            {
-                var type = cb->GetModelType();
-                modelType = (int)type;
-                if (type == CharacterBase.ModelType.Human) raceSex = ((Human*)cb)->RaceSexId;
-            }
+            Span<byte> customize = stackalloc byte[0x1A];
+            actors.ReadAppearance(targetCharacterAddress, customize, out var modelCharaId);
+            actors.ReadModelType(targetCharacterAddress, skeleton, out var modelType, out var raceSex);
             using (w.Begin(RecordType.Identity))
             {
                 w.U64((ulong)targetCharacterAddress);
                 w.Bytes(customize);
-                w.I32((int)character->ModelContainer.ModelCharaId);
+                w.I32(modelCharaId);
                 w.I32(modelType);
                 w.I32(raceSex);
-                w.F32(go->Rotation);
-                w.V3(go->Position);
+                w.F32(actors.GetFacing(targetCharacterAddress, ActorReadSite.Facing));
+                w.V3(actors.GetPosition(targetCharacterAddress, ActorReadSite.Identity));
             }
         }
         catch (Exception ex) when (RecAbortPartial())
@@ -472,31 +463,30 @@ public unsafe partial class RagdollController
         }
     }
 
-    private void RecTopology(RagdollRecordingWriter w, ulong actor, FFXIVClientStructs.FFXIV.Client.Graphics.Render.Skeleton* skeleton, int partial, HkaPose* pose)
+    private void RecTopology(RagdollRecordingWriter w, ulong actor, ISkeletonPose skeleton, int partial)
     {
-        if (pose == null || pose->Skeleton == null) return;
-        var havok = pose->Skeleton;
-        var bones = pose->ModelPose.Length;
-        if (recTopologies.TryGetValue((actor, partial), out var seen) && seen == ((nint)havok, bones)) return;
-        recTopologies[(actor, partial)] = ((nint)havok, bones);
+        if (!skeleton.PartAvailable(partial)) return;
+        var havok = skeleton.PartIdentity(partial);
+        var bones = skeleton.PartModelPoseLength(partial);
+        if (recTopologies.TryGetValue((actor, partial), out var seen) && seen == (havok, bones)) return;
+        recTopologies[(actor, partial)] = (havok, bones);
 
-        var nameCount = havok->Bones.Length;
-        var parentCount = havok->ParentIndices.Length;
+        var nameCount = skeleton.PartBoneNameCount(partial);
+        var parentCount = skeleton.PartParentCount(partial);
         var parents = new int[parentCount];
-        for (var i = 0; i < parentCount; i++) parents[i] = havok->ParentIndices[i];
-        var referenceCount = havok->ReferencePose.Data == null ? 0 : havok->ReferencePose.Length;
+        for (var i = 0; i < parentCount; i++) parents[i] = skeleton.PartParent(partial, i);
         using (w.Begin(RecordType.SkeletonTopology))
         {
             w.U64(actor);
             w.I32(partial);
             w.I32(bones);
             w.I32(parentCount);
-            w.I32(skeleton->PartialSkeletons[partial].ConnectedBoneIndex);
-            w.I32(skeleton->PartialSkeletons[partial].ConnectedParentBoneIndex);
+            w.I32(skeleton.PartConnectedBone(partial));
+            w.I32(skeleton.PartConnectedParentBone(partial));
             w.List(nameCount);
-            for (var i = 0; i < nameCount; i++) w.Str(havok->Bones[i].Name.String);
+            for (var i = 0; i < nameCount; i++) w.Str(skeleton.PartBoneName(partial, i));
             w.Ints(parents);
-            w.Bytes(new ReadOnlySpan<byte>(havok->ReferencePose.Data, referenceCount * sizeof(HkQsTransform)));
+            w.Bytes(MemoryMarshal.AsBytes(skeleton.PartReferencePose(partial)));
         }
     }
 
@@ -505,15 +495,14 @@ public unsafe partial class RagdollController
     /// written it): the root transform, the scale sources and the model pose of the body skeleton
     /// (and of every attached partial skeleton when asked).
     /// </summary>
-    private void RecSkeleton(RecordType type, PosePurpose purpose, nint address, SkeletonAccess? access, bool allPartials)
+    private void RecSkeleton(RecordType type, PosePurpose purpose, nint address, ISkeletonPose? access, bool allPartials)
     {
         var w = rec;
         if (w == null) return;
         try
         {
             var actor = (ulong)address;
-            if (access == null || access.Value.CharBase == null || access.Value.CharBase->Skeleton == null ||
-                access.Value.Pose == null)
+            if (access == null || !access.HasRoot)
             {
                 using (w.Begin(type))
                 {
@@ -524,38 +513,36 @@ public unsafe partial class RagdollController
                 return;
             }
 
-            var skel = access.Value;
-            var skeleton = skel.CharBase->Skeleton;
-            var partials = allPartials && skeleton->PartialSkeletons != null
-                ? Math.Clamp((int)skeleton->PartialSkeletonCount, 1, 64)
+            var skel = access;
+            var partials = allPartials
+                ? Math.Clamp(skel.PartCount, 1, 64)
                 : 1;
             for (var p = 0; p < partials; p++)
-                RecTopology(w, actor, skeleton, p, p == 0 ? skel.Pose : skeleton->PartialSkeletons[p].GetHavokPose(0));
+                RecTopology(w, actor, skel, p);
 
             var drawScaleValid = TryGetDrawObjectScale(address, out var drawScale);
+            var root = skel.Root;
             using (w.Begin(type))
             {
                 w.U64(actor);
                 w.I32((int)purpose);
                 w.Bool(true);
-                w.V3(new Vector3(skeleton->Transform.Position.X, skeleton->Transform.Position.Y, skeleton->Transform.Position.Z));
-                w.Quat(new Quaternion(skeleton->Transform.Rotation.X, skeleton->Transform.Rotation.Y,
-                    skeleton->Transform.Rotation.Z, skeleton->Transform.Rotation.W));
-                w.V3(new Vector3(skeleton->Transform.Scale.X, skeleton->Transform.Scale.Y, skeleton->Transform.Scale.Z));
+                w.V3(root.Position);
+                w.Quat(root.Rotation);
+                w.V3(root.Scale);
                 w.Bool(drawScaleValid);
                 w.V3(drawScale);
                 w.I32(partials);
                 for (var p = 0; p < partials; p++)
                 {
-                    var pose = p == 0 ? skel.Pose : skeleton->PartialSkeletons[p].GetHavokPose(0);
                     w.I32(p);
-                    if (pose == null || pose->ModelPose.Data == null)
+                    if (!skel.PartHasPose(p))
                     {
                         w.I32(2);
                         continue;
                     }
-                    var notInSync = pose->ModelInSync == 0 ? 4 : 0;
-                    var bytes = new ReadOnlySpan<byte>(pose->ModelPose.Data, pose->ModelPose.Length * sizeof(HkQsTransform));
+                    var notInSync = skel.PartInSync(p) ? 0 : 4;
+                    var bytes = MemoryMarshal.AsBytes((ReadOnlySpan<BoneQs>)skel.PartModelPose(p));
                     var key = (actor, (int)purpose, p);
                     if (recLastPose.TryGetValue(key, out var last) && bytes.SequenceEqual(last))
                     {
@@ -616,15 +603,15 @@ public unsafe partial class RagdollController
     }
 
     /// <summary>The selected NPCs in the order the collision build walks them (those without a character last, flagged).</summary>
-    private void RecSelectedNpcs(string site)
+    private void RecSelectedNpcs(string site, List<ColliderCandidate> selected)
     {
-        if (rec == null || npcSelector == null) return;
+        if (rec == null || !colliders.HasSelector) return;
         try
         {
             var present = new List<nint>();
             var missing = new List<nint>();
-            foreach (var npc in npcSelector.SelectedNpcs)
-                (npc.BattleChara == null ? missing : present).Add(npc.Address);
+            foreach (var npc in selected)
+                (!npc.HasCharacter ? missing : present).Add(npc.Address);
             RecActorList(site, present);
             if (missing.Count > 0) RecActorList(site + ".withoutCharacter", missing);
         }
@@ -660,64 +647,10 @@ public unsafe partial class RagdollController
         }
     }
 
-    // ------------------------------------------------------------------ world queries
+    // World queries, random draws and clock stamps are recorded by the decorators in
+    // Hosting/RecordingDecorators.cs.
 
-    private bool RecordedRaycast(RaycastSite site, Vector3 origin, Vector3 direction, out RaycastHit hit, float maxDistance)
-    {
-        var result = BGCollisionModule.RaycastMaterialFilter(origin, direction, out hit, maxDistance);
-        var w = rec;
-        if (w == null) return result;
-        using (w.Begin(RecordType.Raycast))
-        {
-            w.I32((int)site);
-            w.V3(origin);
-            w.V3(direction);
-            w.F32(maxDistance);
-            w.Bool(result);
-            w.V3(hit.Point);
-            w.V3(hit.Normal);
-            w.F32(hit.Distance);
-            w.U64(hit.Material);
-            w.V3(hit.V1);
-            w.V3(hit.V2);
-            w.V3(hit.V3);
-        }
-        return result;
-    }
-
-    private bool RecordedCollectGround(Vector3 min, Vector3 max, List<Vector3> triangles, int maxTriangles)
-    {
-        var result = WorldCollisionMesh.TryCollectGround(min, max, triangles, maxTriangles);
-        var w = rec;
-        if (w == null) return result;
-        using (w.Begin(RecordType.GroundTriangles))
-        {
-            w.V3(min);
-            w.V3(max);
-            w.I32(maxTriangles);
-            w.Bool(result);
-            w.V3s(CollectionsMarshal.AsSpan(triangles));
-        }
-        return result;
-    }
-
-    private bool RecordedFindWaterSurface(Vector3 position, float searchAbove, float searchBelow, out float surfaceY)
-    {
-        var result = WorldCollisionMesh.TryFindWaterSurface(position, searchAbove, searchBelow, out surfaceY);
-        var w = rec;
-        if (w == null) return result;
-        using (w.Begin(RecordType.WaterSurface))
-        {
-            w.V3(position);
-            w.F32(searchAbove);
-            w.F32(searchBelow);
-            w.Bool(result);
-            w.F32(surfaceY);
-        }
-        return result;
-    }
-
-    // ------------------------------------------------------------------ clocks, dice, decisions
+    // ------------------------------------------------------------------ decisions
 
     private bool RecDecision(string site, bool value)
     {
@@ -731,35 +664,6 @@ public unsafe partial class RagdollController
         return value;
     }
 
-    private double RecRandom(string site, double value)
-    {
-        var w = rec;
-        if (w == null) return value;
-        using (w.Begin(RecordType.Random))
-        {
-            w.Str(site);
-            w.F64(value);
-        }
-        return value;
-    }
-
-    private int RecRandom(string site, int value)
-    {
-        RecRandom(site, (double)value);
-        return value;
-    }
-
-    private long RecClock(string site, long ticks)
-    {
-        var w = rec;
-        if (w == null) return ticks;
-        using (w.Begin(RecordType.Clock))
-        {
-            w.Str(site);
-            w.I64(ticks);
-        }
-        return ticks;
-    }
 
     private void RecEvent(string name, float value)
     {
@@ -794,7 +698,7 @@ public unsafe partial class RagdollController
             RecEndActivation(RagdollRecordingSession.SessionBytesReason);
             return;
         }
-        if (file.Seconds > RagdollRecordingSession.MaxSecondsPerFile || w.FileLimitReached)
+        if (file.Seconds > RagdollRecordingSession.SecondsLimit || w.FileLimitReached)
         {
             RecEndActivation(w.FileLimitReached
                 ? $"size limit of {RagdollRecordingSession.MaxBytesPerFile / (1024 * 1024)} MiB reached"
@@ -828,7 +732,7 @@ public unsafe partial class RagdollController
         try
         {
             RecSkeleton(RecordType.SkeletonPose, PosePurpose.PreFrame, targetCharacterAddress,
-                boneService.TryGetSkeleton(targetCharacterAddress), false);
+                skeletons.TryGetSkeleton(targetCharacterAddress, SkeletonReadSite.PreFrame), false);
         }
         catch (Exception ex) when (RecAbortPartial())
         {
@@ -853,7 +757,7 @@ public unsafe partial class RagdollController
         }
     }
 
-    private void RecFrameBegin(float dt, SkeletonAccess skel)
+    private void RecFrameBegin(float dt, ISkeletonPose skel)
     {
         var w = rec;
         var file = recFile;
@@ -861,15 +765,14 @@ public unsafe partial class RagdollController
         try
         {
             file.PhysicsFrames = ++recPhysicsFrame;
-            var go = (GameObject*)targetCharacterAddress;
             using (w.Begin(RecordType.FrameBegin))
             {
                 w.I32(recPhysicsFrame);
                 w.F32(dt);
                 w.F32(physicsAccumulator);
                 w.Bool(prevAllAsleep);
-                w.U32(go->EntityId);
-                w.I32(go->ObjectIndex);
+                w.U32(actors.GetEntityId(targetCharacterAddress));
+                w.I32(actors.GetObjectIndex(targetCharacterAddress));
                 w.Bool(followWasActive);
                 w.F32(impactFreezeRemaining);
                 w.F32(biomechanicalSettleRemaining);
@@ -920,7 +823,7 @@ public unsafe partial class RagdollController
 
     // ------------------------------------------------------------------ InitializePhysics
 
-    private void RecInitBegin(SkeletonAccess skel)
+    private void RecInitBegin(ISkeletonPose skel)
     {
         var w = rec;
         if (w == null) return;

@@ -3,9 +3,9 @@
   <ItemGroup><PackageReference Include="BepuPhysics" Version="2.5.0-beta.22" /></ItemGroup>
   <ItemGroup><RuntimeHostConfigurationOption Include="System.Runtime.TieredCompilation" Value="false" /></ItemGroup>
   <ItemGroup>
-    <Compile Include="../../RagdollLib/MeshVolume/BodyMeshGeometry.cs" Link="Production/BodyMeshGeometry.cs" />
-    <Compile Include="../../RagdollLib/MeshVolume/SurfaceMeshBvh.cs" Link="Production/SurfaceMeshBvh.cs" />
-    <Compile Include="../../RagdollLib/MeshVolume/MeshSkinDeformer.cs" Link="Production/MeshSkinDeformer.cs" />
-    <Compile Include="../../RagdollLib/MeshVolume/MeshSurfaceRefitter.cs" Link="Production/MeshSurfaceRefitter.cs" />
+    <Compile Include="../../AdvancedRagdoll/MeshVolume/BodyMeshGeometry.cs" Link="Production/BodyMeshGeometry.cs" />
+    <Compile Include="../../AdvancedRagdoll/MeshVolume/SurfaceMeshBvh.cs" Link="Production/SurfaceMeshBvh.cs" />
+    <Compile Include="../../AdvancedRagdoll/MeshVolume/MeshSkinDeformer.cs" Link="Production/MeshSkinDeformer.cs" />
+    <Compile Include="../../AdvancedRagdoll/MeshVolume/MeshSurfaceRefitter.cs" Link="Production/MeshSurfaceRefitter.cs" />
   </ItemGroup>
 </Project>

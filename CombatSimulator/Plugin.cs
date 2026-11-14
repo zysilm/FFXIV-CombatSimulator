@@ -234,7 +234,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         navMesh = new Navigation.NavMeshService(worldGeometryRenderer, log);
         crowdMover = new Navigation.CrowdMover(navMesh, log);
         navMesh.DumpPath = System.IO.Path.Combine(pluginInterface.GetPluginConfigDirectory(), "navmesh-last-input.bin");
-        RagdollRecordingSession.Configure(System.IO.Path.Combine(pluginInterface.GetPluginConfigDirectory(), "ragdoll-rec"), log);
+        RagdollRecordingSession.Configure(System.IO.Path.Combine(pluginInterface.GetPluginConfigDirectory(), "ragdoll-rec"), new Animation.Hosting.DalamudRagdollLog(log));
         dismembermentController = new DismembermentController(boneTransformService, glamourerIpc, animationController, objectTable, config, log);
         dismembermentController.PlayerRagdollController = ragdollController;
         // Clothes still on the corpse ride along when it is picked up; the dismemberment side owns the

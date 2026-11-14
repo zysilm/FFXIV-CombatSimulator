@@ -4,10 +4,11 @@
 
 using System;
 using System.Numerics;
+using CombatSimulator.Animation.Hosting;
 
 namespace CombatSimulator.Animation;
 
-// Soft-tissue squash & stretch (EXPERIMENTAL, config.RagdollSquashStretch).
+// Soft-tissue squash & stretch (EXPERIMENTAL, settings.RagdollSquashStretch).
 //
 // The SoftBody jiggle bodies move the flesh, but bone rotation/translation alone cannot show
 // COMPRESSION — flesh flattening under a hard landing or under the corpse's own weight at rest.
@@ -65,9 +66,9 @@ public unsafe partial class RagdollController
     /// propagation) so the scale annotation is never clobbered downstream. Cheap no-op when
     /// the feature is off and nothing needs restoring.
     /// </summary>
-    private void UpdateSquashAndStretch(SkeletonAccess skel, float dt)
+    private void UpdateSquashAndStretch(ISkeletonPose skel, float dt)
     {
-        if (!config.RagdollSquashStretch)
+        if (!settings.RagdollSquashStretch)
         {
             // Feature switched off mid-ragdoll: put every touched bone back once.
             if (squashStates != null) { RestoreSquashScales(skel); squashStates = null; }
@@ -84,8 +85,8 @@ public unsafe partial class RagdollController
                 squashStates[s].CompressAxis = -1;
         }
 
-        var intensity = Math.Clamp(config.RagdollSquashIntensity, 0f, 1f);
-        var pose = skel.Pose;
+        var intensity = Math.Clamp(settings.RagdollSquashIntensity, 0f, 1f);
+        var pose = skel.ModelPose;
 
         for (int i = 0; i < ragdollBones.Count; i++)
         {
@@ -156,7 +157,7 @@ public unsafe partial class RagdollController
             if (k < 0.005f && !state.TouchedScale)
                 continue; // never visibly compressed — leave the bone's scale untouched
 
-            ref var mt = ref pose->ModelPose.Data[rb.BoneIndex];
+            ref var mt = ref pose[rb.BoneIndex];
             if (!state.TouchedScale)
             {
                 state.BaseScale = new Vector3(mt.Scale.X, mt.Scale.Y, mt.Scale.Z);
@@ -183,7 +184,7 @@ public unsafe partial class RagdollController
             // Field diagnostic: proves whether the scale write is actually happening while the
             // user reports "no visible change" — separates a tuning problem from the game
             // ignoring model-pose scale entirely.
-            if (config.RagdollVerboseLog && k > 0.02f && frameCount % 30 == 0)
+            if (settings.RagdollVerboseLog && k > 0.02f && frameCount % 30 == 0)
                 log.Info($"[SoftTissue F{frameCount}] '{rb.Name}' c={state.Compression:F3} k={k:F3} " +
                          $"axis={state.CompressAxis} scale=({mt.Scale.X:F3},{mt.Scale.Y:F3},{mt.Scale.Z:F3})");
         }
@@ -194,17 +195,17 @@ public unsafe partial class RagdollController
     /// ragdoll, so the game will NOT refresh scale for us until animation resumes — without
     /// this a revived character keeps squashed flesh.
     /// </summary>
-    private void RestoreSquashScales(SkeletonAccess skel)
+    private void RestoreSquashScales(ISkeletonPose skel)
     {
         if (squashStates == null) return;
-        var pose = skel.Pose;
+        var pose = skel.ModelPose;
         for (int i = 0; i < squashStates.Length && i < ragdollBones.Count; i++)
         {
             ref var state = ref squashStates[i];
             if (!state.TouchedScale) continue;
             var boneIndex = ragdollBones[i].BoneIndex;
             if (boneIndex < 0 || boneIndex >= skel.BoneCount) continue;
-            ref var mt = ref pose->ModelPose.Data[boneIndex];
+            ref var mt = ref pose[boneIndex];
             mt.Scale.X = state.BaseScale.X;
             mt.Scale.Y = state.BaseScale.Y;
             mt.Scale.Z = state.BaseScale.Z;
@@ -277,8 +278,8 @@ public unsafe partial class RagdollController
         try
         {
             if (targetCharacterAddress != nint.Zero &&
-                Core.Services.ObjectTable.LocalPlayer != null &&
-                boneService.TryGetSkeleton(targetCharacterAddress) is { } skel)
+                actors.GameRunning &&
+                skeletons.TryGetSkeleton(targetCharacterAddress) is { } skel)
             {
                 RestoreSquashScales(skel);
             }

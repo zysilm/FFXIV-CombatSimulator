@@ -12,8 +12,8 @@ public unsafe partial class RagdollController
     // Only newly completed cached LODs can replace a shape, once, outside worker steps.
     private void ApplyCachedMeshLod()
     {
-        if (simulation == null || bufferPool == null || frozenMeshCache == null || !config.RagdollMeshCollisionLod) return;
-        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (simulation == null || bufferPool == null || frozenMeshCache == null || !settings.RagdollMeshCollisionLod) return;
+        var now = clock.GetTimestamp(Hosting.ClockSite.MeshLodInstall);
         if (lastMeshLodInstall != 0 && System.Diagnostics.Stopwatch.GetElapsedTime(lastMeshLodInstall, now).TotalMilliseconds < 16.7) return;
         for (int index = 0; index < ragdollBones.Count; index++)
         {

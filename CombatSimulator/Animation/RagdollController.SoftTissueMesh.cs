@@ -18,7 +18,7 @@ public unsafe partial class RagdollController
     private const float SoftTissueFallbackHalfLength = 0.004f;
     private const int SoftTissueMeshMinimumSamples = 8;
 
-    private readonly struct SoftTissueMeshFit
+    internal readonly struct SoftTissueMeshFit
     {
         public readonly float Radius;
         public readonly float HalfLength;
@@ -133,7 +133,7 @@ public unsafe partial class RagdollController
             result[target] = fit;
         }
 
-        if (result.Count > 0 || config.RagdollVerboseLog)
+        if (result.Count > 0 || settings.RagdollVerboseLog)
         {
             log.Info($"SoftTissue mesh fit: {result.Count}/{targetBoneIndices.Count} bone(s) fitted " +
                      $"from {loadedBodyModels} body model(s), {sampledMeshes} mesh(es).");
@@ -325,7 +325,7 @@ public unsafe partial class RagdollController
             centerOffset,
             axis,
             radial.Count);
-        if (config.RagdollVerboseLog)
+        if (settings.RagdollVerboseLog)
         {
             var name = skel.HavokSkeleton->Bones[boneIndex].Name.String ?? $"bone_{boneIndex}";
             log.Info($"SoftTissue mesh fit '{name}': samples={radial.Count}, " +

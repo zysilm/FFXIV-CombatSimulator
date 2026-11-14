@@ -12,7 +12,7 @@ public unsafe partial class RagdollController
 {
     public WeaponMeshGeometry? TryBuildWeaponMesh(DrawObject* draw)
     {
-        if (!config.WeaponDropMeshCollision || draw == null) return null;
+        if (!settings.WeaponDropMeshCollision || draw == null) return null;
         var result = BuildWeaponMesh(draw);
         if (result == null) log.Warning("Weapon mesh: geometry unavailable or unsupported; using simple collision for this drop.");
         return result;

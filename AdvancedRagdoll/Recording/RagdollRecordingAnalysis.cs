@@ -172,8 +172,14 @@ public static class RagdollRecordingAnalysis
     /// Compares the output records of two recordings in order and reports the first difference
     /// (tick, body, field), or that they are identical. Also reports the first differing input.
     /// </summary>
-    public static RagdollRecordingDifference Compare(string pathA, string pathB)
+    public static RagdollRecordingDifference Compare(string pathA, string pathB) => Compare(pathA, pathB, null);
+
+    /// <param name="isComparableInput">Which input records to compare; null for the default (every input except
+    /// the header, the end, notes and wall-clock stamps). The offline replay feeds the recorded clock stamps back,
+    /// so it compares those too.</param>
+    public static RagdollRecordingDifference Compare(string pathA, string pathB, Func<RecordType, bool>? isComparableInput)
     {
+        isComparableInput ??= IsComparableInput;
         var result = new RagdollRecordingDifference();
         using var a = RagdollRecordingReader.Open(pathA);
         using var b = RagdollRecordingReader.Open(pathB);
@@ -204,7 +210,7 @@ public static class RagdollRecordingAnalysis
             while (reader.Read() is { } record)
             {
                 if (RagdollRecordingFormat.IsOutput(record.Type)) return record;
-                if (IsComparableInput(record.Type) && result.InputDifference == null) inputs.Enqueue(record);
+                if (isComparableInput(record.Type) && result.InputDifference == null) inputs.Enqueue(record);
             }
             return null;
         }

@@ -8,13 +8,13 @@ using System.IO;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Dalamud.Plugin.Services;
+using CombatSimulator.Animation.Hosting;
 
 namespace CombatSimulator.Animation.CollapseProfiles;
 
 public sealed class CollapseProfileBook
 {
-    private readonly IPluginLog log;
+    private readonly IRagdollLog log;
     private List<CollapseProfile>? profiles;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -23,7 +23,7 @@ public sealed class CollapseProfileBook
         Converters = { new JsonStringEnumConverter() },
     };
 
-    public CollapseProfileBook(IPluginLog log)
+    public CollapseProfileBook(IRagdollLog log)
     {
         this.log = log;
     }
