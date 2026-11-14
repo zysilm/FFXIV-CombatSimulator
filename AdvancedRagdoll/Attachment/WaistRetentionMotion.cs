@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using CombatSimulator.Animation.SkeletonProfiles;
 
 namespace CombatSimulator.Animation.Attachment;
 
@@ -27,12 +28,17 @@ public sealed class WaistRetentionMotion
     public Vector3 Correction(Vector3 slide, float waistWeight)
         => -slide * (Strength * Math.Clamp(waistWeight, 0, 1));
 
-    public static float BoneWeight(string name, float parentWeight) => name switch
+    /// <summary>
+    /// How strongly a rig segment (named after the bone it starts at) is held by the waistband: fully at
+    /// the pelvis, less down the legs, not at all from the calves; a cloth bone carries part of its parent's.
+    /// </summary>
+    public static float BoneWeight(SkeletonProfile profile, string name, float parentWeight)
     {
-        "j_kosi" => 1,
-        "j_asi_a_l" or "j_asi_a_r" => .8f,
-        "j_asi_b_l" or "j_asi_b_r" => .25f,
-        "j_asi_c_l" or "j_asi_c_r" or "j_asi_d_l" or "j_asi_d_r" => 0,
-        _ => name.StartsWith("j_sk_", StringComparison.Ordinal) ? parentWeight * .65f : parentWeight,
-    };
+        var bones = profile.Landmarks;
+        if (name == bones.Pelvis) return 1;
+        if (name == bones.Thigh.Left || name == bones.Thigh.Right) return .8f;
+        if (name == bones.Shin.Left || name == bones.Shin.Right) return .25f;
+        if (name == bones.Calf.Left || name == bones.Calf.Right || name == bones.Foot.Left || name == bones.Foot.Right) return 0;
+        return profile.Classes.Cloth.Matches(name) ? parentWeight * .65f : parentWeight;
+    }
 }

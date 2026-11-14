@@ -8,8 +8,8 @@ var cases = new (string, Action)[]
         var waist=new WaistRetentionMotion(); var slide=new Vector3(0,-.26f,0);
         for(var i=0;i<600;i++)waist.Advance(1f/60,new Vector3(-.866f,-.5f,0),new Vector3(.866f,-.5f,0));
         Check((slide+waist.Correction(slide,1)).Length()<.0001f,"waist floated away from pelvis");
-        var rootWeight=WaistRetentionMotion.BoneWeight("j_sk_a_l",1);
-        var tipWeight=WaistRetentionMotion.BoneWeight("j_sk_b_l",rootWeight);
+        var rootWeight=WaistRetentionMotion.BoneWeight(CombatSimulator.Animation.FfxivHumanoidProfile.Profile, "j_sk_a_l",1);
+        var tipWeight=WaistRetentionMotion.BoneWeight(CombatSimulator.Animation.FfxivHumanoidProfile.Profile, "j_sk_b_l",rootWeight);
         Check((slide+waist.Correction(slide,tipWeight)).Length()>(slide+waist.Correction(slide,rootWeight)).Length(),"skirt pulled as one rigid shell");
         for(var i=0;i<600;i++)waist.Advance(1f/60,-Vector3.UnitY,-Vector3.UnitY);
         Check(waist.Correction(slide,1).Length()<.0001f,"closed stance lost its full slide");
@@ -67,21 +67,21 @@ var cases = new (string, Action)[]
     ("half off: the top stays on at the waist, a lower garment at both shins", () => {
         var top = new[] { "j_kosi", "j_sebo_a", "j_sebo_b", "j_sebo_c", "j_sako_l", "j_ude_a_l", "j_ude_b_l", "j_sako_r", "j_ude_a_r", "j_ude_b_r" };
         var lower = new[] { "j_kosi", "j_asi_a_l", "j_asi_b_l", "j_asi_a_r", "j_asi_b_r" };
-        string Held(int slot, string[] bones, int holds) => string.Join(",", bones.Where(b => GarmentTether.IsPinned(slot, b, holds)));
+        string Held(int slot, string[] bones, int holds) => string.Join(",", bones.Where(b => GarmentTether.IsPinned(CombatSimulator.Animation.FfxivHumanoidProfile.Profile, slot, b, holds)));
         Check(Held(1, top, GarmentTether.DefaultTopHold) == "j_kosi", "default top hold");
         Check(Held(3, lower, GarmentTether.DefaultLowerHold) == "j_asi_b_l,j_asi_b_r", "default lower hold");
         Check(Held(1, top, 0) == "" && Held(3, lower, 0) == "", "no holds still pinned something");
         // Every segment of both rigs has exactly one hold bit, and every bit holds at least one segment.
         foreach (var (slot, bones, bits) in new[] { (1, top, 8), (3, lower, 5) })
         {
-            Check(bones.All(b => GarmentTether.HoldBit(slot, b) is var bit && bit != 0 && (bit & (bit - 1)) == 0), $"slot {slot} segment without a single hold");
+            Check(bones.All(b => GarmentTether.HoldBit(CombatSimulator.Animation.FfxivHumanoidProfile.Profile, slot, b) is var bit && bit != 0 && (bit & (bit - 1)) == 0), $"slot {slot} segment without a single hold");
             for (var i = 0; i < bits; i++) Check(Held(slot, bones, 1 << i) != "", $"slot {slot} hold {1 << i} holds nothing");
             Check(Held(slot, bones, (1 << bits) - 1) == string.Join(",", bones), $"slot {slot} all holds leave a segment loose");
         }
         // Several holds combine; the shoulder piece goes with its upper arm.
         Check(Held(1, top, GarmentTether.TopWaist | GarmentTether.TopLeftUpperArm) == "j_kosi,j_sako_l,j_ude_a_l", "combined top holds");
         Check(Held(3, lower, GarmentTether.LowerWaist | GarmentTether.LowerRightShin) == "j_kosi,j_asi_b_r", "combined lower holds");
-        Check(!GarmentTether.IsPinned(2, "j_te_l", 255) && !GarmentTether.IsPinned(4, "j_asi_b_l", 255), "gloves or boots pinned");
+        Check(!GarmentTether.IsPinned(CombatSimulator.Animation.FfxivHumanoidProfile.Profile, 2, "j_te_l", 255) && !GarmentTether.IsPinned(CombatSimulator.Animation.FfxivHumanoidProfile.Profile, 4, "j_asi_b_l", 255), "gloves or boots pinned");
         // The earlier single-choice dropdown values map to the same segments as before.
         Check(Held(1, top, GarmentTether.HoldsFromLegacyChoice(1, 0)) == "j_kosi" && Held(1, top, GarmentTether.HoldsFromLegacyChoice(1, 2)) == "j_sebo_c", "legacy top choice");
         Check(Held(1, top, GarmentTether.HoldsFromLegacyChoice(1, 3)) == "j_sako_l,j_ude_a_l,j_ude_b_l", "legacy left sleeve now includes the shoulder piece");

@@ -422,7 +422,7 @@ public unsafe class WeaponDropController : IDisposable
                 PreviousPosition = c.Center,
                 TargetPosition = c.Center,
                 Reach = c.HalfLen + c.Radius,
-                ReleaseArm = WeaponReleaseContacts.IsReleaseArm(
+                ReleaseArm = WeaponReleaseContacts.IsReleaseArm(FfxivHumanoidProfile.Profile,
                     skel.HavokSkeleton->Bones[c.ParentIdx].Name.String,
                     skel.HavokSkeleton->Bones[c.BoneIdx].Name.String),
             });
@@ -469,7 +469,7 @@ public unsafe class WeaponDropController : IDisposable
                 PreviousPosition = position,
                 TargetPosition = position,
                 Reach = reach,
-                ReleaseArm = WeaponReleaseContacts.IsReleaseArm(name, null),
+                ReleaseArm = WeaponReleaseContacts.IsReleaseArm(FfxivHumanoidProfile.Profile, name, null),
             });
         }
         return result.Count > 0 ? result : null;

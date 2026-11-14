@@ -1,6 +1,7 @@
 // This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
 using System;
 using System.Numerics;
+using CombatSimulator.Animation.SkeletonProfiles;
 
 namespace CombatSimulator.Animation.Attachment;
 
@@ -41,34 +42,33 @@ public static class GarmentTether
     /// The hold bit of a rig segment (named after the bone it starts at) of a top (slot 1) or a lower
     /// garment (slot 3); 0 for a segment that can never be held. The shoulder piece goes with the upper arm.
     /// </summary>
-    public static int HoldBit(int slot, string boneName) => slot switch
+    public static int HoldBit(SkeletonProfile profile, int slot, string boneName)
     {
-        1 => boneName switch
+        var bones = profile.Landmarks;
+        return slot switch
         {
-            "j_kosi" => TopWaist,
-            "j_sebo_a" => TopBelly,
-            "j_sebo_b" => TopChest,
-            "j_sebo_c" => TopCollar,
-            "j_sako_l" or "j_ude_a_l" => TopLeftUpperArm,
-            "j_ude_b_l" => TopLeftForearm,
-            "j_sako_r" or "j_ude_a_r" => TopRightUpperArm,
-            "j_ude_b_r" => TopRightForearm,
+            1 => boneName == bones.Pelvis ? TopWaist
+                : boneName == bones.LowerSpine ? TopBelly
+                : boneName == bones.MidSpine ? TopChest
+                : boneName == bones.Chest ? TopCollar
+                : boneName == bones.Clavicle.Left || boneName == bones.UpperArm.Left ? TopLeftUpperArm
+                : boneName == bones.Forearm.Left ? TopLeftForearm
+                : boneName == bones.Clavicle.Right || boneName == bones.UpperArm.Right ? TopRightUpperArm
+                : boneName == bones.Forearm.Right ? TopRightForearm
+                : 0,
+            3 => boneName == bones.Pelvis ? LowerWaist
+                : boneName == bones.Thigh.Left ? LowerLeftThigh
+                : boneName == bones.Shin.Left ? LowerLeftShin
+                : boneName == bones.Thigh.Right ? LowerRightThigh
+                : boneName == bones.Shin.Right ? LowerRightShin
+                : 0,
             _ => 0,
-        },
-        3 => boneName switch
-        {
-            "j_kosi" => LowerWaist,
-            "j_asi_a_l" => LowerLeftThigh,
-            "j_asi_b_l" => LowerLeftShin,
-            "j_asi_a_r" => LowerRightThigh,
-            "j_asi_b_r" => LowerRightShin,
-            _ => 0,
-        },
-        _ => 0,
-    };
+        };
+    }
 
     /// <summary>True for the rig segments that stay on the body under the chosen set of holds.</summary>
-    public static bool IsPinned(int slot, string boneName, int holds) => (HoldBit(slot, boneName) & holds) != 0;
+    public static bool IsPinned(SkeletonProfile profile, int slot, string boneName, int holds)
+        => (HoldBit(profile, slot, boneName) & holds) != 0;
 
     /// <summary>The set of holds equal to a choice made with the earlier single-choice dropdowns.</summary>
     public static int HoldsFromLegacyChoice(int slot, int choice) => slot switch

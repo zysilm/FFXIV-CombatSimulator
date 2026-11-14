@@ -82,7 +82,7 @@ public unsafe partial class DismembermentController
                 for (var i = 0; i < created.WaistWeights.Length; i++)
                 {
                     var parent = i < source.ParentCount ? source.HavokSkeleton->ParentIndices[i] : -1;
-                    created.WaistWeights[i] = WaistRetentionMotion.BoneWeight(
+                    created.WaistWeights[i] = WaistRetentionMotion.BoneWeight(FfxivHumanoidProfile.Profile,
                         source.HavokSkeleton->Bones[i].Name.String ?? "",
                         parent >= 0 && parent < i ? created.WaistWeights[parent] : 1);
                 }

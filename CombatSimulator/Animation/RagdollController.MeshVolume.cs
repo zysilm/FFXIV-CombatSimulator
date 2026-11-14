@@ -107,8 +107,8 @@ public unsafe partial class RagdollController
                     if (omittedRoots.Contains(bone)) return -1;
                     if (byIndex.TryGetValue(bone, out var def) &&
                         (!def.SoftBody || settings.RagdollSoftTissueCollision) &&
-                        !def.Name.StartsWith("j_sk_", StringComparison.Ordinal) &&
-                        !def.Name.StartsWith("j_buki", StringComparison.Ordinal)) return bone;
+                        !BoneClasses.Cloth.Matches(def.Name) &&
+                        !BoneClasses.Weapon.Matches(def.Name)) return bone;
                     bone = skel.Parent(bone);
                 }
                 return -1;

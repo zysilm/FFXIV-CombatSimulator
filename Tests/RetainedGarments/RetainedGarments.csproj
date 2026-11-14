@@ -1,4 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
   <ItemGroup><Compile Include="../../AdvancedRagdoll/Attachment/*.cs" Link="Production/%(Filename)%(Extension)" /></ItemGroup>
+  <ItemGroup>
+    <!-- Skeleton profile (stage A3): the library types and the FFXIV humanoid profile the helpers ask for bone names. -->
+    <Compile Include="../../AdvancedRagdoll/SkeletonProfiles/*.cs" Link="Production/SkeletonProfiles/%(Filename)%(Extension)" />
+    <Compile Include="../../CombatSimulator/Animation/FfxivHumanoidProfile.cs" Link="Production/FfxivHumanoidProfile.cs" />
+    <Compile Include="../../AdvancedRagdoll/StructuralMeshFitter.cs" Link="Production/StructuralMeshFitter.cs" />
+  </ItemGroup>
 </Project>

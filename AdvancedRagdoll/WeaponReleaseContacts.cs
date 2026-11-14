@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using BepuPhysics;
+using CombatSimulator.Animation.SkeletonProfiles;
 
 namespace CombatSimulator.Animation;
 
@@ -26,10 +27,11 @@ internal sealed class WeaponReleaseContacts
             if (key.Weapon == handle || key.Arm == handle) waiting.Remove(key);
     }
 
-    public static bool IsReleaseArm(string? parent, string? child)
-        => parent != null && (parent.StartsWith("j_ude_b_", StringComparison.Ordinal) ||
-            parent.StartsWith("j_te_", StringComparison.Ordinal)) ||
-            child != null && child.StartsWith("j_te_", StringComparison.Ordinal);
+    /// <summary>True for a body on the forearm or hand (by its own bone, or by the bone it leads to).</summary>
+    public static bool IsReleaseArm(SkeletonProfile profile, string? parent, string? child)
+        => parent != null && (profile.Classes.Forearm.Matches(parent) ||
+            profile.Classes.Hand.Matches(parent)) ||
+            child != null && profile.Classes.Hand.Matches(child);
 
     // Conservative separation: the capsule's complete rotational sweep is contained in
     // a sphere swept between the previous and target centres. No timer can expire inside it.

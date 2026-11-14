@@ -79,15 +79,15 @@ var cases = new (string, Action)[]
             ("j_asi_a_l", .100f), ("j_asi_a_r", .100f), ("j_asi_b_l", .061f), ("j_asi_b_r", .061f),
             ("j_ude_a_l", .028f), ("j_ude_a_r", .028f), ("j_ude_b_l", .022f), ("j_ude_b_r", .022f),
         };
-        float Whole(int liquid) => parts.Sum(p => p.Mass) / parts.Sum(p => p.Mass / WaterBuoyancy.RelativeDensity(p.Bone, WaterBuoyancy.LiquidDensity(liquid)));
+        float Whole(int liquid) => parts.Sum(p => p.Mass) / parts.Sum(p => p.Mass / WaterBuoyancy.RelativeDensity(FfxivHumanoidProfile.Profile, p.Bone, WaterBuoyancy.LiquidDensity(liquid)));
         var water = Whole(0); var dense = Whole(1);
         Check(WaterBuoyancy.LiquidLabels.Length == 2 && WaterBuoyancy.LiquidDensity(0) == 1 && WaterBuoyancy.LiquidDensity(99) == 1, "liquids");
         Check(water > .90f && water < .99f, $"whole-body density in water {water:F3}");
         Check(dense > .40f && dense <= .50f, $"whole-body density in the dense liquid {dense:F3}: at least half must ride above the surface");
-        Check(WaterBuoyancy.RelativeDensity("j_sebo_b") < WaterBuoyancy.RelativeDensity("j_kosi") && WaterBuoyancy.RelativeDensity("j_kosi") < WaterBuoyancy.RelativeDensity("j_asi_b_l"), "density order");
-        Check(WaterBuoyancy.RelativeDensity("") == 1 && WaterBuoyancy.RelativeDensity("n_unknown") == 1 && WaterBuoyancy.RelativeDensity("j_kosi", 0) == WaterBuoyancy.RelativeDensity("j_kosi"), "fallback densities");
+        Check(WaterBuoyancy.RelativeDensity(FfxivHumanoidProfile.Profile, "j_sebo_b") < WaterBuoyancy.RelativeDensity(FfxivHumanoidProfile.Profile, "j_kosi") && WaterBuoyancy.RelativeDensity(FfxivHumanoidProfile.Profile, "j_kosi") < WaterBuoyancy.RelativeDensity(FfxivHumanoidProfile.Profile, "j_asi_b_l"), "density order");
+        Check(WaterBuoyancy.RelativeDensity(FfxivHumanoidProfile.Profile, "") == 1 && WaterBuoyancy.RelativeDensity(FfxivHumanoidProfile.Profile, "n_unknown") == 1 && WaterBuoyancy.RelativeDensity(FfxivHumanoidProfile.Profile, "j_kosi", 0) == WaterBuoyancy.RelativeDensity(FfxivHumanoidProfile.Profile, "j_kosi"), "fallback densities");
         // The lightest and thinnest part must still settle in the dense liquid: a chest lying flat, 12 cm deep.
-        var chest = Float(0.3f, 0, 0.12f, WaterBuoyancy.RelativeDensity("j_sebo_b", WaterBuoyancy.LiquidDensity(1)), 15).Where(p => p.T > 10).ToList();
+        var chest = Float(0.3f, 0, 0.12f, WaterBuoyancy.RelativeDensity(FfxivHumanoidProfile.Profile, "j_sebo_b", WaterBuoyancy.LiquidDensity(1)), 15).Where(p => p.T > 10).ToList();
         Check(chest.Max(p => MathF.Abs(p.V)) < .6f && chest.Max(p => p.Y) - chest.Min(p => p.Y) < .2f, "the lightest part does not settle in the dense liquid");
         Console.WriteLine($"      above the surface: {1 - water:P0} of the body in water, {1 - dense:P0} in the dense liquid");
     }),

@@ -3,5 +3,9 @@
   <ItemGroup>
     <PackageReference Include="BepuPhysics" Version="2.5.0-beta.22" />
     <Compile Include="../../AdvancedRagdoll/WeaponReleaseContacts.cs" Link="WeaponReleaseContacts.cs" />
+    <!-- Skeleton profile (stage A3): the library types and the FFXIV humanoid profile the helpers ask for bone names. -->
+    <Compile Include="../../AdvancedRagdoll/SkeletonProfiles/*.cs" Link="Production/SkeletonProfiles/%(Filename)%(Extension)" />
+    <Compile Include="../../CombatSimulator/Animation/FfxivHumanoidProfile.cs" Link="Production/FfxivHumanoidProfile.cs" />
+    <Compile Include="../../AdvancedRagdoll/StructuralMeshFitter.cs" Link="Production/StructuralMeshFitter.cs" />
   </ItemGroup>
 </Project>

@@ -23,10 +23,10 @@ Check(policy.Allows(1, 10), "later contact disabled again");
 Console.WriteLine("PASS stable separation re-enables each weapon independently and permanently");
 policy.Remove(10);
 Check(policy.Allows(2, 10), "recycled body handle inherited suppression");
-Check(WeaponReleaseContacts.IsReleaseArm("j_ude_b_r", "j_te_r") &&
-      WeaponReleaseContacts.IsReleaseArm("j_te_l", "j_oya_a_l") &&
-      !WeaponReleaseContacts.IsReleaseArm("j_sebo_a", "j_sebo_b") &&
-      !WeaponReleaseContacts.IsReleaseArm("j_asi_b_l", "j_asi_c_l"), "incorrect body region");
+Check(WeaponReleaseContacts.IsReleaseArm(FfxivHumanoidProfile.Profile, "j_ude_b_r", "j_te_r") &&
+      WeaponReleaseContacts.IsReleaseArm(FfxivHumanoidProfile.Profile, "j_te_l", "j_oya_a_l") &&
+      !WeaponReleaseContacts.IsReleaseArm(FfxivHumanoidProfile.Profile, "j_sebo_a", "j_sebo_b") &&
+      !WeaponReleaseContacts.IsReleaseArm(FfxivHumanoidProfile.Profile, "j_asi_b_l", "j_asi_c_l"), "incorrect body region");
 Console.WriteLine("PASS cleanup and forearm/hand classification");
 var half = new Vector3(.02f, 1.5f, .01f);
 var rotated = new RigidPose(Vector3.Zero, Quaternion.CreateFromAxisAngle(Vector3.UnitZ, MathF.PI / 2));

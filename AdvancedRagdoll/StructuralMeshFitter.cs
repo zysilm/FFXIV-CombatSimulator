@@ -25,8 +25,13 @@ internal static class StructuralMeshFitter
     /// <param name="Area">Surface area the point stands for, so dense mesh regions do not outvote sparse ones.</param>
     public readonly record struct Sample(Vector3 Position, float Influence, float Area);
 
+    /// <summary>What a fitted segment is, for its plausibility limits. Set by the skeleton profile from its bone classes.</summary>
+    public enum SegmentKind { Other, Foot, Hand, UpperKnee, Thigh }
+
     /// <param name="HullSlices">Slices along the segment for the convex hull; 0 keeps the plain envelope.</param>
-    public readonly record struct Target(string Bone, string Child, bool UseBox, int MinimumSamples, int HullSlices = 0);
+    /// <param name="Kind">What the segment is; the skeleton profile names its targets (<c>SkeletonProfile.FitTargets</c>).</param>
+    public readonly record struct Target(string Bone, string Child, bool UseBox, int MinimumSamples, int HullSlices = 0,
+        SegmentKind Kind = SegmentKind.Other);
 
     public sealed class Fit
     {
@@ -46,22 +51,6 @@ internal static class StructuralMeshFitter
         /// </summary>
         public Vector3[]? HullPoints;
     }
-
-    // Only the torso and the thighs are fitted: they are what a lying body rests on, and where a
-    // fixed volume around the bone is furthest from the surface (the spine runs along the back of
-    // the torso, not through its middle). Arms, shins, hands and feet keep their built-in volumes.
-    public static readonly Target[] Targets =
-    {
-        new("j_kosi",    "j_sebo_a", true,  30, HullSlices: 3),
-        new("j_sebo_a",  "j_sebo_b", true,  30, HullSlices: 3),
-        new("j_sebo_b",  "j_sebo_c", true,  30, HullSlices: 3),
-        new("j_sebo_c",  "j_kubi",   true,  30, HullSlices: 3),
-        new("j_asi_a_l", "j_asi_b_l", false, 24, HullSlices: 4),
-        new("j_asi_a_r", "j_asi_b_r", false, 24, HullSlices: 4),
-    };
-
-    /// <summary>Left/right pairs that must agree; a one-sided or lopsided result is a broken mesh, not anatomy.</summary>
-    public static readonly (string Left, string Right)[] Pairs = { ("j_asi_a_l", "j_asi_a_r") };
 
     // Directions around the segment the hull is measured in. A multiple of four, so the front, back
     // and both sides each get a flat facet of their own: the most protruding part of the surface
@@ -562,7 +551,7 @@ internal static class StructuralMeshFitter
 
         var smaller = MathF.Min(radiusX, radiusZ);
         var larger = MathF.Max(radiusX, radiusZ);
-        if (target.Bone.StartsWith("j_asi_d_", StringComparison.Ordinal))
+        if (target.Kind == SegmentKind.Foot)
         {
             // A foot is box-like but must not use the torso envelope. X/Z are the two transverse
             // dimensions around the ankle-to-toe axis; accept either ordering because reference
@@ -576,7 +565,7 @@ internal static class StructuralMeshFitter
             return true;
         }
 
-        if (target.Bone.StartsWith("j_te_", StringComparison.Ordinal))
+        if (target.Kind == SegmentKind.Hand)
         {
             if (smaller < referenceHeight * 0.0035f || smaller > referenceHeight * 0.020f ||
                 larger < referenceHeight * 0.009f || larger > referenceHeight * 0.045f || larger / smaller > 5f)
@@ -608,7 +597,7 @@ internal static class StructuralMeshFitter
 
         // j_asi_b is a short (~6 cm) proximal stub, wider than it is long: an envelope scaled by
         // the segment length would reject every measurement, so it is a pure stature ratio.
-        if (target.Bone.StartsWith("j_asi_b_", StringComparison.Ordinal))
+        if (target.Kind == SegmentKind.UpperKnee)
         {
             if (radius < referenceHeight * 0.018f || radius > referenceHeight * 0.038f)
             {
@@ -618,7 +607,7 @@ internal static class StructuralMeshFitter
             return true;
         }
 
-        var thigh = target.Bone.StartsWith("j_asi_a_", StringComparison.Ordinal);
+        var thigh = target.Kind == SegmentKind.Thigh;
         var minimum = MathF.Max(referenceHeight * (thigh ? 0.020f : 0.011f), segmentLength * (thigh ? 0.10f : 0.06f));
         var maximum = MathF.Min(referenceHeight * (thigh ? 0.070f : 0.055f), segmentLength * (thigh ? 0.40f : 0.27f));
         if (maximum <= minimum || radius < minimum || radius > maximum)

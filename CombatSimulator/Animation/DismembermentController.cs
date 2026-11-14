@@ -1666,7 +1666,7 @@ public unsafe partial class DismembermentController : IDisposable
         for (var i = 0; i < rig.Bodies.Count; i++)
         {
             var rb = rig.Bodies[i];
-            if (!GarmentTether.IsPinned(c.GearKeepModelSlot, rb.BoneName,
+            if (!GarmentTether.IsPinned(FfxivHumanoidProfile.Profile, c.GearKeepModelSlot, rb.BoneName,
                     c.GearKeepModelSlot == 1 ? config.KoStripTopHolds : config.KoStripLowerHolds)) continue;
             rb.Pinned = true;
             rig.Bodies[i] = rb;

@@ -94,7 +94,7 @@ internal static class Harness
                 : game.GetFile($"chara/human/c{body.Race:D4}/skeleton/base/b0001/skl_c{body.Race:D4}b0001.sklb")?.Data;
             if (sklb == null) { Console.WriteLine($"{body.Label}: no skeleton"); continue; }
             var skeleton = Skeleton.Read(sklb);
-            var targets = new HashSet<string>(Fitter.Targets.Select(t => t.Bone));
+            var targets = new HashSet<string>(FfxivHumanoidProfile.Profile.FitTargets.Select(t => t.Bone));
             var samples = new Dictionary<string, List<Sample>>();
             var loaded = 0;
             var watch = new Stopwatch();
@@ -120,7 +120,7 @@ internal static class Harness
 
             var fits = new Dictionary<string, Fitter.Fit>();
             var reasons = new List<string>();
-            foreach (var target in Fitter.Targets)
+            foreach (var target in FfxivHumanoidProfile.Profile.FitTargets)
             {
                 int bone = skeleton.Index(target.Bone), child = skeleton.Index(target.Child);
                 if (bone < 0 || child < 0 || !samples.TryGetValue(target.Bone, out var list)) { reasons.Add($"{target.Bone}: no samples"); continue; }
@@ -128,13 +128,13 @@ internal static class Harness
                     fits[target.Bone] = fit;
                 else reasons.Add($"{target.Bone}: {reason}");
             }
-            foreach (var (left, right) in Fitter.Pairs)
+            foreach (var (left, right) in FfxivHumanoidProfile.Profile.FitPairs)
                 if (Fitter.ValidatePair(fits, left, right) is { } pairReason) reasons.Add(pairReason);
             var fitTime = watch.Elapsed.TotalMilliseconds;
 
-            Console.WriteLine($"== {body.Label}: height {height:F2} m, fitted {fits.Count}/{Fitter.Targets.Length} ({samples.Values.Sum(l => l.Count)} samples; read {sampleTime:F0} ms, fit {fitTime:F0} ms)" +
+            Console.WriteLine($"== {body.Label}: height {height:F2} m, fitted {fits.Count}/{FfxivHumanoidProfile.Profile.FitTargets.Length} ({samples.Values.Sum(l => l.Count)} samples; read {sampleTime:F0} ms, fit {fitTime:F0} ms)" +
                               (reasons.Count > 0 ? $"  [{string.Join("; ", reasons)}]" : ""));
-            if (body.Naked && body.Verified) Check(fits.Count == Fitter.Targets.Length, "a naked body must fit every segment");
+            if (body.Naked && body.Verified) Check(fits.Count == FfxivHumanoidProfile.Profile.FitTargets.Length, "a naked body must fit every segment");
 
             var oldVolumes = new List<Volume>();
             var newVolumes = new List<Volume>();
@@ -186,7 +186,7 @@ internal static class Harness
             var driftBefore = Lie(pool, skeleton, oldVolumes, skin, -forward, weightless: true).Drift;
             var driftAfter = Lie(pool, skeleton, newVolumes, skin, -forward, weightless: true).Drift;
             Console.WriteLine($"   weightless in the reference pose, furthest any body is pushed by the others: {driftBefore * 100:F1} -> {driftAfter * 100:F1} cm");
-            if (body.Verified && body.Naked && fits.Count == Fitter.Targets.Length)
+            if (body.Verified && body.Naked && fits.Count == FfxivHumanoidProfile.Profile.FitTargets.Length)
                 Check(driftAfter < MathF.Max(0.01f, driftBefore + 0.005f), $"fitted volumes push each other apart: {driftAfter * 100:F1} cm");
             foreach (var (slot, name, direction) in new[] { (0, "supine", -forward), (2, "prone", forward), (4, "side", Vector3.UnitX) })
             {
@@ -196,7 +196,7 @@ internal static class Harness
                 for (var i = 0; i < Reported.Length; i++)
                     line += $"  {ReportedNames[i]} {before.Clearance[i] * 100:+0.0;-0.0}->{after.Clearance[i] * 100:+0.0;-0.0}|{after.Natural[i] * 100:0.0}";
                 Console.WriteLine(line + $"   speed {before.Speed * 100:F1}->{after.Speed * 100:F1} cm/s, waist bend {before.Twist * 57.3f:F0}->{after.Twist * 57.3f:F0} deg, arm peak {before.ArmSpeed:F1}->{after.ArmSpeed:F1} m/s");
-                if (!body.Verified || fits.Count < Fitter.Targets.Length) continue;
+                if (!body.Verified || fits.Count < FfxivHumanoidProfile.Profile.FitTargets.Length) continue;
 
                 if (slot == 4)
                 {
@@ -241,8 +241,8 @@ internal static class Harness
         Console.WriteLine();
         foreach (var (title, set) in new[]
                  {
-                     ("naked bodies", results.Where(r => r.Body.Naked && r.Body.Verified && r.Fits == Fitter.Targets.Length).ToList()),
-                     ("clothed bodies", results.Where(r => !r.Body.Naked && r.Fits == Fitter.Targets.Length).ToList()),
+                     ("naked bodies", results.Where(r => r.Body.Naked && r.Body.Verified && r.Fits == FfxivHumanoidProfile.Profile.FitTargets.Length).ToList()),
+                     ("clothed bodies", results.Where(r => !r.Body.Naked && r.Fits == FfxivHumanoidProfile.Profile.FitTargets.Length).ToList()),
                  })
         {
             if (set.Count == 0) continue;
@@ -261,7 +261,7 @@ internal static class Harness
                 Console.WriteLine(line);
             }
         }
-        Check(results.Count(r => r.Body.Naked && r.Body.Verified && r.Fits == Fitter.Targets.Length) >= 12, "fewer than 12 naked bodies were verified");
+        Check(results.Count(r => r.Body.Naked && r.Body.Verified && r.Fits == FfxivHumanoidProfile.Profile.FitTargets.Length) >= 12, "fewer than 12 naked bodies were verified");
 
         UnitChecks();
         Performance(pool);

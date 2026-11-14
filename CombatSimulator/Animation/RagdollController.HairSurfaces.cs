@@ -142,7 +142,7 @@ public unsafe partial class RagdollController
                 if (!IsHairContactBone(rb.Name)) continue;
                 var body = simulation!.Bodies.GetBodyReference(rb.BodyHandle);
                 var edge = Vector3.Transform(Vector3.UnitY * rb.CapsuleHalfLength, body.Pose.Orientation);
-                hairContacts[count++] = new(body.Pose.Position - edge, body.Pose.Position + edge, rb.CapsuleRadius, rb.Name == "j_kao");
+                hairContacts[count++] = new(body.Pose.Position - edge, body.Pose.Position + edge, rb.CapsuleRadius, rb.Name == Bones.Head);
             }
         foreach (var region in hairSurfaceRegions)
         {
@@ -165,9 +165,7 @@ public unsafe partial class RagdollController
         return count;
     }
 
-    private static bool IsHairContactBone(string name) =>
-        name == "j_kao" || name == "j_kubi" || name == "j_kosi" ||
-        name.StartsWith("j_sebo_", StringComparison.Ordinal) || name.StartsWith("j_ude_", StringComparison.Ordinal);
+    private static bool IsHairContactBone(string name) => BoneClasses.HairContact.Matches(name);
 
     /// <summary>Deepest/nearest rendered surface under each guide point and segment midpoint.</summary>
     private void UpdateHairBodySurface(HairRigChain chain, Vector3 head, Quaternion rotation)
@@ -197,7 +195,7 @@ public unsafe partial class RagdollController
         }
         if (best == null) return default;
         // Preserve authored scalp overlap rather than ejecting mod hair roots.
-        if (best.Region.Name == "j_kao")
+        if (best.Region.Name == Bones.Head)
         {
             var restDepth = Vector3.Dot(restPoint - bestPoint, bestNormal);
             if (restDepth < 0f) bestPoint += bestNormal * restDepth;

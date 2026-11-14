@@ -9,6 +9,9 @@
     <Compile Include="../../CombatSimulator/Animation/RenderedGeometryDecoder.cs" Link="Production/RenderedGeometryDecoder.cs" />
     <Compile Include="../../CombatSimulator/Animation/RenderedRaceDeformation.cs" Link="Production/RenderedRaceDeformation.cs" />
     <Compile Include="../../AdvancedRagdoll/StructuralMeshFitter.cs" Link="Production/StructuralMeshFitter.cs" />
+    <!-- Skeleton profile (stage A3): the library types and the FFXIV humanoid profile the helpers ask for bone names. -->
+    <Compile Include="../../AdvancedRagdoll/SkeletonProfiles/*.cs" Link="Production/SkeletonProfiles/%(Filename)%(Extension)" />
+    <Compile Include="../../CombatSimulator/Animation/FfxivHumanoidProfile.cs" Link="Production/FfxivHumanoidProfile.cs" />
     <Compile Include="../../CombatSimulator/Animation/StructuralMeshSampler.cs" Link="Production/StructuralMeshSampler.cs" />
     <Compile Include="../../AdvancedRagdoll/RagdollTuning.cs" Link="Production/RagdollTuning.cs" />
     <Compile Include="../../AdvancedRagdoll/StructuralHullShape.cs" Link="Production/StructuralHullShape.cs" />

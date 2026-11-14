@@ -82,7 +82,7 @@ public unsafe partial class RagdollController
         {
             if (simulation == null) return;
             for (int i = 0; i < ragdollBones.Count; i++)
-                if (ragdollBones[i].Name == "j_kao") { hairKaoRagdollBodyIndex = i; break; }
+                if (ragdollBones[i].Name == Bones.Head) { hairKaoRagdollBodyIndex = i; break; }
         }
         if (!TryGetHairHead(out var head, out var headRot, out var linear, out var angular)) return;
         if (!skel.HasRoot) return;
@@ -333,7 +333,7 @@ public unsafe partial class RagdollController
         if (!FlexibleHairSolver.Finite(skelWorldPos) || !FlexibleHairSolver.Finite(skelWorldRot)) return;
         skelWorldRot = Quaternion.Normalize(skelWorldRot); skelWorldRotInv = Quaternion.Inverse(skelWorldRot);
         skelWorldScale = GetCharacterScale(playerAddress, skel);
-        int headBone = ResolveBoneIndex(skel, "j_kao");
+        int headBone = ResolveBoneIndex(skel, Bones.Head);
         var bodyPose = skel.ModelPose;
         if (headBone < 0 || headBone >= bodyPose.Length) return;
         ref var head = ref bodyPose[headBone];
@@ -405,7 +405,7 @@ public unsafe partial class RagdollController
             var rotation = ModelRotToWorld(new(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W));
             float scale = MathF.Max(skelWorldScale.X, MathF.Max(skelWorldScale.Y, skelWorldScale.Z));
             var edge = Vector3.Transform(Vector3.UnitY * def.CapsuleHalfLength * scale, rotation);
-            animatedContactsNow[count++] = new(origin, origin + edge * 2, def.CapsuleRadius * scale, def.Name == "j_kao");
+            animatedContactsNow[count++] = new(origin, origin + edge * 2, def.CapsuleRadius * scale, def.Name == Bones.Head);
         }
         return count;
     }
@@ -486,13 +486,11 @@ public unsafe partial class RagdollController
         try { meshes.PollHairMesh(); }
         finally { Monitor.Exit(animatedHairGate); }
     }
-    private static bool IsHairBoneName(string? name) => name != null &&
-        (name.StartsWith("j_kami_", StringComparison.Ordinal) ||
-         (name.StartsWith("j_ex_h", StringComparison.Ordinal) && name.Length > 6 && (char.IsDigit(name[6]) || name.Contains("_ke_", StringComparison.Ordinal))));
+    private static bool IsHairBoneName(string? name) => HumanoidSkeleton.HairBones.IsHairBone(name);
     private static bool IsHairPartial(ISkeletonPose skel, int part)
     {
         var bones = skel.PartBoneNameCount(part);
-        if (bones < 2 || skel.PartBoneName(part, 0) != "j_kao") return false;
+        if (bones < 2 || skel.PartBoneName(part, 0) != Bones.Head) return false;
         for (int i = 1; i < bones; i++) if (IsHairBoneName(skel.PartBoneName(part, i))) return true;
         return false;
     }

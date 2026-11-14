@@ -31,7 +31,7 @@ internal sealed unsafe partial class FfxivMeshSource
     private const int StructuralFitCacheLimit = 48;
     // Equipment slots that carry the surface of the torso and legs: body, hands, legs, feet.
     private static readonly int[] StructuralFitSlots = { 1, 2, 3, 4 };
-    private static readonly HashSet<string> StructuralFitBones = new(StructuralMeshFitter.Targets.Select(t => t.Bone), StringComparer.Ordinal);
+    private static readonly HashSet<string> StructuralFitBones = new(FfxivHumanoidProfile.Profile.FitTargets.Select(t => t.Bone), StringComparer.Ordinal);
 
     private Task<StructuralFitResult>? StartStructuralMeshFit(nint actor, SkeletonAccess skel)
     {
@@ -167,7 +167,7 @@ internal sealed unsafe partial class FfxivMeshSource
             Vector3? At(string name) => boneIndex.TryGetValue(name, out var i) ? referenceModel[i].Translation : null;
             var referenceHeight = StructuralMeshFitter.ReferenceHeight(At("j_kao"), At("j_asi_e_l"), At("j_asi_e_r"));
             Vector3? trunkAxis = At("j_kosi") is { } pelvis && At("j_kubi") is { } neck ? neck - pelvis : null;
-            foreach (var target in StructuralMeshFitter.Targets)
+            foreach (var target in FfxivHumanoidProfile.Profile.FitTargets)
             {
                 if (!boneIndex.TryGetValue(target.Bone, out var bone) || !boneIndex.TryGetValue(target.Child, out var child) ||
                     !samples.TryGetValue(target.Bone, out var boneSamples))
@@ -181,7 +181,7 @@ internal sealed unsafe partial class FfxivMeshSource
                 else
                     notes.Add($"{target.Bone}: {reason}");
             }
-            foreach (var (left, right) in StructuralMeshFitter.Pairs)
+            foreach (var (left, right) in FfxivHumanoidProfile.Profile.FitPairs)
                 if (StructuralMeshFitter.ValidatePair(fits, left, right) is { } pairReason)
                     notes.Add(pairReason);
         }
@@ -191,7 +191,7 @@ internal sealed unsafe partial class FfxivMeshSource
             notes.Add($"{ex.GetType().Name}: {ex.Message}");
         }
 
-        var summary = $"fitted {fits.Count}/{StructuralMeshFitter.Targets.Length} segment(s) from {models.Count} model(s)" +
+        var summary = $"fitted {fits.Count}/{FfxivHumanoidProfile.Profile.FitTargets.Length} segment(s) from {models.Count} model(s)" +
                       (notes.Count > 0 ? $"; built-in volumes kept where not fitted ({string.Join("; ", notes)})" : string.Empty);
         return new StructuralFitResult(fits, summary);
     }

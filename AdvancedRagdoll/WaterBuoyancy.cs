@@ -1,6 +1,7 @@
 // This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
 using System;
 using System.Numerics;
+using CombatSimulator.Animation.SkeletonProfiles;
 
 namespace CombatSimulator.Animation;
 
@@ -79,24 +80,11 @@ public static class WaterBuoyancy
     /// <summary>
     /// Density of a body part relative to the liquid it is in. The proportions are anatomical (the chest
     /// holds the lungs and is lightest, shins and feet are heaviest), so a body floats chest up with the
-    /// legs trailing; how high it rides depends on the liquid.
+    /// legs trailing; how high it rides depends on the liquid. The anatomical proportions come from the
+    /// skeleton profile (<see cref="SkeletonProfile.BuoyancyDensities"/>).
     /// </summary>
-    public static float RelativeDensity(string boneName, float liquidDensity = 1f)
-        => Anatomical(boneName) / (liquidDensity > 0f ? liquidDensity : 1f);
-
-    private static float Anatomical(string boneName)
-    {
-        if (string.IsNullOrEmpty(boneName)) return 1f;
-        if (boneName.StartsWith("j_sebo", StringComparison.Ordinal) || boneName.StartsWith("j_mune", StringComparison.Ordinal)) return 0.78f;
-        if (boneName == "j_kosi") return 0.96f;
-        if (boneName.StartsWith("j_kubi", StringComparison.Ordinal) || boneName.StartsWith("j_kao", StringComparison.Ordinal)) return 1.02f;
-        if (boneName.StartsWith("j_asi_a", StringComparison.Ordinal)) return 1.03f;
-        if (boneName.StartsWith("j_asi", StringComparison.Ordinal)) return 1.09f;
-        if (boneName.StartsWith("j_sako", StringComparison.Ordinal) || boneName.StartsWith("j_ude", StringComparison.Ordinal)) return 1.04f;
-        if (boneName.StartsWith("j_te", StringComparison.Ordinal)) return 1.08f;
-        if (boneName.StartsWith("j_sk_", StringComparison.Ordinal)) return 1.0f;
-        return 1.0f;
-    }
+    public static float RelativeDensity(SkeletonProfile profile, string boneName, float liquidDensity = 1f)
+        => profile.BuoyancyDensity(boneName) / (liquidDensity > 0f ? liquidDensity : 1f);
 
     /// <summary>
     /// One step of water forces on a body's velocity: lift on the submerged share, then drag toward the

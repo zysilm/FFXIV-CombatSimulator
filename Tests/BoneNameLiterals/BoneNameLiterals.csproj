@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Stage A3 completion check (docs/RAGDOLL_LIBRARY_ARCHITECTURE.md §5): no FFXIV bone-name literals
+       ("j_..." / "n_...") in the ragdoll library or in the ragdoll core files that move into it in A4.
+       Bone names live in the skeleton profile (CombatSimulator/Animation/FfxivHumanoidProfile.cs).
+       Run: dotnet run -c Release   (exit code 0 = clean). -->
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+</Project>

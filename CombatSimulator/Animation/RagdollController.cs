@@ -11,6 +11,8 @@ using CombatSimulator.Animation.CollapseProfiles;
 using CombatSimulator.Animation.SurfaceProfiles;
 using CombatSimulator.Animation.MeshVolume;
 using CombatSimulator.Animation.Recording;
+using CombatSimulator.Animation.SkeletonProfiles;
+using System.Collections.Immutable;
 using CombatSimulator.Core;
 using BepuPhysics;
 using BepuPhysics.Collidables;
@@ -129,7 +131,7 @@ public unsafe partial class RagdollController : IDisposable
 
     // The character's facing at activation (deaths start standing, so the root yaw is trustworthy).
     // Anatomical anchor for hinge axes that must not depend on the pose the body died in.
-    private Vector3 anatomicalForward = Vector3.UnitZ;
+    private Vector3 anatomicalForward = HumanoidSkeleton.Forward;
 
     // Skeleton world transform (captured at activation from Skeleton.Transform)
     // ModelPose is in skeleton-local space; these convert to/from world space.
@@ -211,18 +213,18 @@ public unsafe partial class RagdollController : IDisposable
     private bool useLocalDismemberBones;
     private readonly List<string> localDismemberBones = new();
 
-    // Generic (non-humanoid) ragdoll generation tuning.
-    // The min-segment threshold is adaptive to skeleton size (see BuildGenericSkeletonDefs):
-    // large rigs (toads) use the cap so we don't simulate a dense cluster of tiny bodies;
-    // small rigs (bats) use the floor so their small bones (wings/limbs) still get bodies and
-    // the ragdoll actually articulates instead of falling as one rigid clump.
-    private const float GenericMinSegmentCap = 0.08f;    // upper bound for big skeletons
-    private const float GenericMinSegmentFloor = 0.02f;  // lower bound for small skeletons (bats)
-    private const float GenericMinSegmentFactor = 0.06f; // fraction of the skeleton's largest segment
-    private const int GenericMaxBodies = 40;             // cap solver load on large rigs
-    private const float GenericSwingLimit = 0.6f;        // ball cone half-angle (rad)
-    private const float GenericTwistLimit = 0.35f;       // ball axial twist (rad)
-    private const int GenericSolverIterations = 16;      // generic rigs need more iterations to converge
+    // The skeleton profile (docs/RAGDOLL_LIBRARY_ARCHITECTURE.md §5): which bone plays which part,
+    // the bone table, ranges of motion, mass budget and the rest. The named bones (landmarks, bone
+    // classes) always come from the humanoid profile, as the literal names did before, whatever rig
+    // is active; only the per-class tuning switches to SkeletonProfile.Auto() for a generated rig.
+    internal static SkeletonProfile HumanoidSkeleton => FfxivHumanoidProfile.Profile;
+    private static SkeletonLandmarks Bones => FfxivHumanoidProfile.Profile.Landmarks;
+    private static SkeletonBoneClasses BoneClasses => FfxivHumanoidProfile.Profile.Classes;
+    /// <summary>The profile whose class tuning applies: the generated rig's, or the humanoid profile's.</summary>
+    private SkeletonProfile ActiveClassProfile => activeRagdollIsGeneric ? SkeletonProfile.Auto() : HumanoidSkeleton;
+
+    // Generic (non-humanoid) ragdoll generation tuning lives in SkeletonProfile.Auto().GenericRig
+    // (see BuildGenericSkeletonDefs), its velocity clamp and solver floor in its ClassConstants.
     private const int PartyMinSolverIterations = 8;      // floor while party ragdolls add bodies/statics
 
     /// <summary>
@@ -231,14 +233,6 @@ public unsafe partial class RagdollController : IDisposable
     /// both of which are spent on a body the camera is very likely not framing.
     /// </summary>
     private bool targetIsLocalPlayer;
-    private const float GenericMaxLinearVelocity = 12f;  // m/s — clamp per frame to stop energy blow-up
-    private const float GenericMaxAngularVelocity = 16f; // rad/s — clamp per frame (tiny bodies spin up fastest)
-
-    // Human/player rigs are hand-tuned and normally stable, but their constraint solver can
-    // still occasionally diverge. Keep the ceiling above normal ragdoll motion so it only
-    // catches runaway energy, not ordinary falls or cinematic drags.
-    private const float HumanMaxLinearVelocity = 18f;
-    private const float HumanMaxAngularVelocity = 14f;
     // Ground patch size. Set per ragdoll from how far its body reaches (CollisionMeshGeometry.PatchFor):
     // 6 m / 1 m samples for a human, larger for a large monster.
     private float terrainPatchRadius = 6.0f;
@@ -1324,16 +1318,11 @@ public unsafe partial class RagdollController : IDisposable
     /// </summary>
     private static RagdollBoneDef[] GetBoneDefs() => BuildBoneDefsFromConfigs(AllBoneDefaults);
 
-    // Structural bones every humanoid skeleton has. If all resolve, the hand-tuned
-    // human profile fits and the existing passes run unchanged. If any is missing
-    // (bats, birds, dragons, quadrupeds, voidsent) the skeleton is treated as
-    // non-humanoid and gets a generated ragdoll instead.
-    private static readonly string[] HumanoidSignatureBones =
-    {
-        "j_kosi", "j_sebo_a", "j_kubi",
-        "j_ude_a_l", "j_ude_a_r",
-        "j_asi_a_l", "j_asi_a_r",
-    };
+    // Structural bones every humanoid skeleton has (the profile's signature bones). If all resolve,
+    // the hand-tuned human profile fits and the existing passes run unchanged. If any is missing
+    // (bats, birds, dragons, quadrupeds, voidsent) the skeleton is treated as non-humanoid and gets
+    // a generated ragdoll instead (SkeletonProfile.Auto).
+    private static ImmutableArray<string> HumanoidSignatureBones => HumanoidSkeleton.SignatureBones;
 
     private bool IsHumanoidSkeleton(Dictionary<string, int> humanNameToIndex)
     {
@@ -1362,6 +1351,7 @@ public unsafe partial class RagdollController : IDisposable
     /// </summary>
     private (RagdollBoneDef[] Defs, Dictionary<string, int> NameToIndex) BuildGenericSkeletonDefs(ISkeletonPose skel)
     {
+        var genericRig = SkeletonProfile.Auto().GenericRig!;
         var pose = skel.ModelPose;
         int n = skel.BoneCount;
         int pc = skel.ParentCount;
@@ -1395,7 +1385,7 @@ public unsafe partial class RagdollController : IDisposable
         float maxSegment = 0f;
         for (int i = 0; i < n; i++)
             if (longestChildLen[i] > maxSegment) maxSegment = longestChildLen[i];
-        float minSegment = Math.Clamp(maxSegment * GenericMinSegmentFactor, GenericMinSegmentFloor, GenericMinSegmentCap);
+        float minSegment = Math.Clamp(maxSegment * genericRig.MinSegmentFactor, genericRig.MinSegmentFloor, genericRig.MinSegmentCap);
         log.Info($"RagdollController: generic min-segment threshold {minSegment:F3}m (skeleton largest segment {maxSegment:F3}m)");
 
         // A bone gets a body if it owns a real forward segment. Coincident/twig bones
@@ -1414,7 +1404,7 @@ public unsafe partial class RagdollController : IDisposable
         // Cap body count on large rigs: keep the longest segments, but force-keep the
         // significant ancestors of kept bones so the constraint tree stays connected
         // (a kept bone whose ancestors were dropped would become a free-floating root).
-        if (significantCount > GenericMaxBodies)
+        if (significantCount > genericRig.MaxBodies)
         {
             var ranked = new List<int>();
             for (int i = 0; i < n; i++)
@@ -1422,7 +1412,7 @@ public unsafe partial class RagdollController : IDisposable
             ranked.Sort((a, b) => longestChildLen[b].CompareTo(longestChildLen[a]));
 
             var keep = new bool[n];
-            for (int k = 0; k < GenericMaxBodies && k < ranked.Count; k++)
+            for (int k = 0; k < genericRig.MaxBodies && k < ranked.Count; k++)
             {
                 keep[ranked[k]] = true;
                 int p = ParentOf(ranked[k]);
@@ -1479,10 +1469,10 @@ public unsafe partial class RagdollController : IDisposable
                 CapsuleRadius = Math.Clamp(segLen * 0.28f, 0.02f, 0.18f),
                 CapsuleHalfLength = segLen * 0.45f,
                 Mass = Math.Clamp(segLen * 20f, 0.5f, 12f),
-                SwingLimit = GenericSwingLimit,
+                SwingLimit = genericRig.SwingLimit,
                 Joint = JointType.Ball,
-                TwistMinAngle = -GenericTwistLimit,
-                TwistMaxAngle = GenericTwistLimit,
+                TwistMinAngle = -genericRig.TwistLimit,
+                TwistMaxAngle = genericRig.TwistLimit,
                 AnatomicalRole = AnatomicalRole.Generic,
                 ColliderShape = RagdollColliderShape.Capsule,
                 BoxHalfExtents = new Vector3(Math.Clamp(segLen * 0.28f, 0.02f, 0.18f), segLen * 0.45f, Math.Clamp(segLen * 0.28f, 0.02f, 0.18f)),
@@ -1653,32 +1643,13 @@ public unsafe partial class RagdollController : IDisposable
         return merged;
     }
 
-    // Finger name roots (thumb/index/middle/ring/pinky) as their own '_'-delimited segment —
-    // e.g. "j_oya_a_l", or on a mod skeleton's individual toes "iv_asi_hito_a_l". Matched as a
-    // whole segment (not a substring) so this never catches something like "j_kosi" (pelvis).
-    private static readonly HashSet<string> DigitNameTokens =
-        new(StringComparer.Ordinal) { "oya", "hito", "naka", "kusu", "ko" };
-
     /// <summary>
-    /// True for a finger bone (any skeleton) or a toe bone — the vanilla combined toe cluster
-    /// (j_asi_e_l/r) and a mod skeleton's individual toe joints (iv_asi_oya_a_l, and so on),
-    /// which mirror the finger names with "asi_" inserted. Used by Standard and "All bones except
-    /// digits" coverage to keep the (larger, cheaper-per-bone) capsules away from digits, where a
-    /// wobbling fingertip or toe reads as wrong rather than fleshy.
+    /// True for a finger bone (any skeleton) or a toe bone (the combined toe cluster, or a mod
+    /// skeleton's individual toe joints), by the profile's digit naming (SkeletonProfile.Digits). Used by
+    /// Standard and "All bones except digits" coverage to keep the (larger, cheaper-per-bone) capsules
+    /// away from digits, where a wobbling fingertip or toe reads as wrong rather than fleshy.
     /// </summary>
-    private static bool IsDigitBone(string name)
-    {
-        var parts = name.Split('_');
-
-        foreach (var part in parts)
-            if (DigitNameTokens.Contains(part)) return true;
-
-        for (int i = 0; i < parts.Length - 1; i++)
-            if (parts[i] == "asi" && (parts[i + 1] == "e" || DigitNameTokens.Contains(parts[i + 1])))
-                return true;
-
-        return false;
-    }
+    private static bool IsDigitBone(string name) => HumanoidSkeleton.Digits.IsDigitBone(name);
     // Catalog hint for generic authored joints. Core anatomical joints override it by bone:
     // knees are signed one-coordinate hinges; elbows are two-coordinate swivel hinges; distal
     // joints use dedicated frames. Every rigid joint adds only finite angular friction.
@@ -1987,158 +1958,66 @@ public unsafe partial class RagdollController : IDisposable
         float Radius,
         float HalfLength);
 
-    // Bone catalog values author generic ball joints and fallback collision volumes. The core
-    // knee/elbow/wrist/ankle/toe topology and signed ranges are anatomical runtime invariants.
     /// <summary>
     /// Complete core bone catalog with skeleton parents, default enabled state, and physics
-    /// parameters. The core body plus each finger's proximal joint are enabled by default;
-    /// additional skeleton-specific bones are discovered by the Advanced UI and default disabled.
-    ///
-    /// Skeleton hierarchy (from Ktisis/xivmodding):
-    ///   j_kosi (pelvis, root)
-    ///     j_sebo_a (lumbar) → j_sebo_b (thoracic) → j_sebo_c (chest)
-    ///       j_kubi (neck) → j_kao (head)
-    ///       j_sako_l/r (clavicle) → j_ude_a (upper arm) → j_ude_b (forearm) → j_te (hand)
-    ///       j_mune_l/r (breast, child of j_sebo_b)
-    ///     j_asi_a (thigh) → j_asi_b (upper knee) → j_asi_c (lower knee/calf) → j_asi_d (foot) → j_asi_e (toes)
+    /// parameters: the skeleton profile's bone definitions (<see cref="FfxivHumanoidProfile"/>), as
+    /// the per-bone configuration records the bone-def builder and the Advanced UI use. The core body
+    /// plus each finger's proximal joint are enabled by default; additional skeleton-specific bones
+    /// are discovered by the Advanced UI and default disabled.
     /// </summary>
-    public static readonly RagdollBoneConfig[] AllBoneDefaults = new[]
+    public static readonly RagdollBoneConfig[] AllBoneDefaults = ToBoneConfigs(FfxivHumanoidProfile.Profile.BoneDefinitions);
+
+    // Field by field: the configuration record has the same fields, with the same defaults.
+    private static RagdollBoneConfig[] ToBoneConfigs(ImmutableArray<SkeletonBoneDefinition> definitions)
     {
-        // === SPINE CHAIN === (all enabled by default — core of ragdoll)
-        new RagdollBoneConfig { Name = "j_kosi",    SkeletonParent = null,       Enabled = true,  CapsuleRadius = 0.105f, CapsuleHalfLength = 0.06f, Mass = 8.0f,  SwingLimit = 0.2f,                JointType = 0, TwistMinAngle = 0f,     TwistMaxAngle = 0f,    Description = "Pelvis" },
-        new RagdollBoneConfig { Name = "j_sebo_a",  SkeletonParent = "j_kosi",   Enabled = true,  CapsuleRadius = 0.10f,  CapsuleHalfLength = 0.05f, Mass = 10.0f, SwingLimit = 0.2f,                JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Lower Spine" },
-        new RagdollBoneConfig { Name = "j_sebo_b",  SkeletonParent = "j_sebo_a", Enabled = true,  CapsuleRadius = 0.09f,  CapsuleHalfLength = 0.05f, Mass = 5.0f,  SwingLimit = 0.15f,               JointType = 0, TwistMinAngle = -0.15f, TwistMaxAngle = 0.15f, Description = "Mid Spine" },
-        new RagdollBoneConfig { Name = "j_sebo_c",  SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.09f,  CapsuleHalfLength = 0.05f, Mass = 6.0f,  SwingLimit = 0.15f,               JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Chest" },
-        new RagdollBoneConfig { Name = "j_kubi",    SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.04f,  CapsuleHalfLength = 0.03f, Mass = 2.0f,  SwingLimit = 0.5f,                JointType = 0, TwistMinAngle = -0.3f,  TwistMaxAngle = 0.3f,  Description = "Neck" },
-        new RagdollBoneConfig { Name = "j_kao",     SkeletonParent = "j_kubi",   Enabled = true,  CapsuleRadius = 0.08f,  CapsuleHalfLength = 0.04f, Mass = 3.5f,  SwingLimit = 0.35f,               JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Head" },
-
-        // === CLOTH/SKIRT BONES === (chained per radial slot: A→j_sebo_a, B→matching A, C→matching B; b=back, f=front, s=side)
-        new RagdollBoneConfig { Name = "j_sk_b_a_l", SkeletonParent = "j_sebo_a",  Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Back A L" },
-        new RagdollBoneConfig { Name = "j_sk_b_a_r", SkeletonParent = "j_sebo_a",  Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Back A R" },
-        new RagdollBoneConfig { Name = "j_sk_f_a_l", SkeletonParent = "j_sebo_a",  Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Front A L" },
-        new RagdollBoneConfig { Name = "j_sk_f_a_r", SkeletonParent = "j_sebo_a",  Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Front A R" },
-        new RagdollBoneConfig { Name = "j_sk_s_a_l", SkeletonParent = "j_sebo_a",  Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Side A L" },
-        new RagdollBoneConfig { Name = "j_sk_s_a_r", SkeletonParent = "j_sebo_a",  Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Side A R" },
-        new RagdollBoneConfig { Name = "j_sk_b_b_l", SkeletonParent = "j_sk_b_a_l", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Back B L" },
-        new RagdollBoneConfig { Name = "j_sk_b_b_r", SkeletonParent = "j_sk_b_a_r", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Back B R" },
-        new RagdollBoneConfig { Name = "j_sk_f_b_l", SkeletonParent = "j_sk_f_a_l", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Front B L" },
-        new RagdollBoneConfig { Name = "j_sk_f_b_r", SkeletonParent = "j_sk_f_a_r", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Front B R" },
-        new RagdollBoneConfig { Name = "j_sk_s_b_l", SkeletonParent = "j_sk_s_a_l", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Side B L" },
-        new RagdollBoneConfig { Name = "j_sk_s_b_r", SkeletonParent = "j_sk_s_a_r", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Side B R" },
-        new RagdollBoneConfig { Name = "j_sk_b_c_l", SkeletonParent = "j_sk_b_b_l", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Back C L" },
-        new RagdollBoneConfig { Name = "j_sk_b_c_r", SkeletonParent = "j_sk_b_b_r", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Back C R" },
-        new RagdollBoneConfig { Name = "j_sk_f_c_l", SkeletonParent = "j_sk_f_b_l", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Front C L" },
-        new RagdollBoneConfig { Name = "j_sk_f_c_r", SkeletonParent = "j_sk_f_b_r", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Front C R" },
-        new RagdollBoneConfig { Name = "j_sk_s_c_l", SkeletonParent = "j_sk_s_b_l", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Side C L" },
-        new RagdollBoneConfig { Name = "j_sk_s_c_r", SkeletonParent = "j_sk_s_b_r", Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.03f, Mass = 0.1f,  SwingLimit = 0.3f,  JointType = 0, TwistMinAngle = -0.2f,  TwistMaxAngle = 0.2f,  Description = "Cloth Side C R" },
-
-        // === WEAPON HOLSTER/SHEATHE === (disabled by default — enable for sheathed weapon physics)
-        new RagdollBoneConfig { Name = "j_buki_kosi_l",  SkeletonParent = "j_kosi",   Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 1.5f,  SwingLimit = 0.1f,  JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Hip Sheathe" },
-        new RagdollBoneConfig { Name = "j_buki_kosi_r",  SkeletonParent = "j_kosi",   Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 1.5f,  SwingLimit = 0.1f,  JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Hip Sheathe" },
-        new RagdollBoneConfig { Name = "j_buki2_kosi_l", SkeletonParent = "j_kosi",   Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 1.5f,  SwingLimit = 0.1f,  JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Hip Holster" },
-        new RagdollBoneConfig { Name = "j_buki2_kosi_r", SkeletonParent = "j_kosi",   Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 1.5f,  SwingLimit = 0.1f,  JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Hip Holster" },
-        new RagdollBoneConfig { Name = "j_buki_sebo_l",  SkeletonParent = "j_sebo_c", Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 1.5f,  SwingLimit = 0.1f,  JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Back Scabbard" },
-        new RagdollBoneConfig { Name = "j_buki_sebo_r",  SkeletonParent = "j_sebo_c", Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 1.5f,  SwingLimit = 0.1f,  JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Back Scabbard" },
-
-        // === BREAST === (child of j_sebo_b — soft tissue)
-        // Soft split: the BallSocket is stiff (10 Hz critical — static gravity sag g/ω² ≈ 2.5mm,
-        // just a flesh-weight offset) and the jiggle lives in the ROTATIONAL dof (3 Hz underdamped
-        // servo swinging the mass about the bone-origin pivot), matching how the game's own phyb
-        // bones move. The old 1 Hz/0.05 socket sagged a quarter meter and rang for seconds.
-        // HalfLength pushes the capsule's mass away from the pivot so gravity/inertia have a lever.
-        new RagdollBoneConfig { Name = "j_mune_l",  SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.06f,  CapsuleHalfLength = 0.045f, Mass = 0.1f,  SwingLimit = 0.25f,               JointType = 1, TwistMinAngle = 0f,     TwistMaxAngle = 0f,    Description = "Left Breast",  SoftBody = true, SoftSpringFreq = 10f, SoftSpringDamp = 1f, SoftServoFreq = 3f, SoftServoDamp = 0.2f },
-        new RagdollBoneConfig { Name = "j_mune_r",  SkeletonParent = "j_sebo_b", Enabled = true,  CapsuleRadius = 0.06f,  CapsuleHalfLength = 0.045f, Mass = 0.1f,  SwingLimit = 0.25f,               JointType = 1, TwistMinAngle = 0f,     TwistMaxAngle = 0f,    Description = "Right Breast",  SoftBody = true, SoftSpringFreq = 10f, SoftSpringDamp = 1f, SoftServoFreq = 3f, SoftServoDamp = 0.2f },
-
-        // === CLAVICLE === (child of j_sebo_c, inserts between chest and arms)
-        new RagdollBoneConfig { Name = "j_sako_l",  SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.04f, Mass = 0.5f,  SwingLimit = 0.35f,               JointType = 0, TwistMinAngle = -0.15f, TwistMaxAngle = 0.15f, Description = "Left Clavicle" },
-        new RagdollBoneConfig { Name = "j_sako_r",  SkeletonParent = "j_sebo_c", Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.04f, Mass = 0.5f,  SwingLimit = 0.35f,               JointType = 0, TwistMinAngle = -0.15f, TwistMaxAngle = 0.15f, Description = "Right Clavicle" },
-
-        // === ARM CHAIN === (all enabled — skeleton: j_sako → j_ude_a → j_ude_b → j_te)
-        new RagdollBoneConfig { Name = "j_ude_a_l", SkeletonParent = "j_sako_l", Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 1.35f,               JointType = 0, TwistMinAngle = -0.65f, TwistMaxAngle = 0.65f, Description = "Left Upper Arm" },
-        new RagdollBoneConfig { Name = "j_ude_a_r", SkeletonParent = "j_sako_r", Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.08f, Mass = 2.0f,  SwingLimit = 1.35f,               JointType = 0, TwistMinAngle = -0.65f, TwistMaxAngle = 0.65f, Description = "Right Upper Arm" },
-        new RagdollBoneConfig { Name = "j_ude_b_l", SkeletonParent = "j_ude_a_l",Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.07f, Mass = 1.2f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -1.25f, TwistMaxAngle = 1.25f, Description = "Left Forearm" },
-        new RagdollBoneConfig { Name = "j_ude_b_r", SkeletonParent = "j_ude_a_r",Enabled = true,  CapsuleRadius = 0.025f, CapsuleHalfLength = 0.07f, Mass = 1.2f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -1.25f, TwistMaxAngle = 1.25f, Description = "Right Forearm" },
-        new RagdollBoneConfig { Name = "j_te_l",    SkeletonParent = "j_ude_b_l",Enabled = true,  CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 0.5f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.15f, TwistMaxAngle = 0.15f, Description = "Left Hand" },
-        new RagdollBoneConfig { Name = "j_te_r",    SkeletonParent = "j_ude_b_r",Enabled = true,  CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.03f, Mass = 0.5f,  SwingLimit = 0.4f,                JointType = 0, TwistMinAngle = -0.15f, TwistMaxAngle = 0.15f, Description = "Right Hand" },
-
-        // === FINGERS === (proximal joint only; distal/helper digits inherit through propagation)
-        new RagdollBoneConfig { Name = "j_oya_a_l",  SkeletonParent = "j_te_l", Enabled = true, CapsuleRadius = 0.01f, CapsuleHalfLength = 0.03f, Mass = 1.0f, SwingLimit = 0.3f, JointType = 0, TwistMinAngle = -0.2f, TwistMaxAngle = 0.2f, Description = "Left Thumb A" },
-        new RagdollBoneConfig { Name = "j_oya_a_r",  SkeletonParent = "j_te_r", Enabled = true, CapsuleRadius = 0.01f, CapsuleHalfLength = 0.03f, Mass = 1.0f, SwingLimit = 0.3f, JointType = 0, TwistMinAngle = -0.2f, TwistMaxAngle = 0.2f, Description = "Right Thumb A" },
-        new RagdollBoneConfig { Name = "j_hito_a_l", SkeletonParent = "j_te_l", Enabled = true, CapsuleRadius = 0.01f, CapsuleHalfLength = 0.03f, Mass = 1.0f, SwingLimit = 0.3f, JointType = 0, TwistMinAngle = -0.2f, TwistMaxAngle = 0.2f, Description = "Left Index A" },
-        new RagdollBoneConfig { Name = "j_hito_a_r", SkeletonParent = "j_te_r", Enabled = true, CapsuleRadius = 0.01f, CapsuleHalfLength = 0.03f, Mass = 1.0f, SwingLimit = 0.3f, JointType = 0, TwistMinAngle = -0.2f, TwistMaxAngle = 0.2f, Description = "Right Index A" },
-        new RagdollBoneConfig { Name = "j_naka_a_l", SkeletonParent = "j_te_l", Enabled = true, CapsuleRadius = 0.01f, CapsuleHalfLength = 0.03f, Mass = 1.0f, SwingLimit = 0.3f, JointType = 0, TwistMinAngle = -0.2f, TwistMaxAngle = 0.2f, Description = "Left Middle A" },
-        new RagdollBoneConfig { Name = "j_naka_a_r", SkeletonParent = "j_te_r", Enabled = true, CapsuleRadius = 0.01f, CapsuleHalfLength = 0.03f, Mass = 1.0f, SwingLimit = 0.3f, JointType = 0, TwistMinAngle = -0.2f, TwistMaxAngle = 0.2f, Description = "Right Middle A" },
-        new RagdollBoneConfig { Name = "j_kusu_a_l", SkeletonParent = "j_te_l", Enabled = true, CapsuleRadius = 0.01f, CapsuleHalfLength = 0.03f, Mass = 1.0f, SwingLimit = 0.3f, JointType = 0, TwistMinAngle = -0.2f, TwistMaxAngle = 0.2f, Description = "Left Ring A" },
-        new RagdollBoneConfig { Name = "j_kusu_a_r", SkeletonParent = "j_te_r", Enabled = true, CapsuleRadius = 0.01f, CapsuleHalfLength = 0.03f, Mass = 1.0f, SwingLimit = 0.3f, JointType = 0, TwistMinAngle = -0.2f, TwistMaxAngle = 0.2f, Description = "Right Ring A" },
-        new RagdollBoneConfig { Name = "j_ko_a_l",   SkeletonParent = "j_te_l", Enabled = true, CapsuleRadius = 0.01f, CapsuleHalfLength = 0.03f, Mass = 1.0f, SwingLimit = 0.3f, JointType = 0, TwistMinAngle = -0.2f, TwistMaxAngle = 0.2f, Description = "Left Little A" },
-        new RagdollBoneConfig { Name = "j_ko_a_r",   SkeletonParent = "j_te_r", Enabled = true, CapsuleRadius = 0.01f, CapsuleHalfLength = 0.03f, Mass = 1.0f, SwingLimit = 0.3f, JointType = 0, TwistMinAngle = -0.2f, TwistMaxAngle = 0.2f, Description = "Right Little A" },
-
-        // === LEG CHAIN === (j_asi_e is enabled by mesh-aware mode)
-        // j_asi_b and j_asi_c are BOTH real knee-region hinges: bind pose measures j_asi_b as a
-        // ~6cm proximal stub (14% of the knee-to-ankle span) and j_asi_c as the other ~86%, and a
-        // real death pose bends j_asi_c (~74°) MORE than j_asi_b (~47°) — see
-        // LogLegBoneStructureDiagnostics. j_asi_c is not a skinning helper; it is where most of
-        // the visible knee bend actually happens.
-        new RagdollBoneConfig { Name = "j_asi_a_l", SkeletonParent = "j_kosi",   Enabled = true,  CapsuleRadius = 0.045f, CapsuleHalfLength = 0.12f, Mass = 10.0f, SwingLimit = 1.3f,                JointType = 0, TwistMinAngle = -0.5f,  TwistMaxAngle = 0.5f,  Description = "Left Thigh" },
-        new RagdollBoneConfig { Name = "j_asi_a_r", SkeletonParent = "j_kosi",   Enabled = true,  CapsuleRadius = 0.045f, CapsuleHalfLength = 0.12f, Mass = 10.0f, SwingLimit = 1.3f,                JointType = 0, TwistMinAngle = -0.5f,  TwistMaxAngle = 0.5f,  Description = "Right Thigh" },
-        new RagdollBoneConfig { Name = "j_asi_b_l", SkeletonParent = "j_asi_a_l",Enabled = true,  CapsuleRadius = 0.035f, CapsuleHalfLength = 0.03f, Mass = 1.0f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Shin (Upper Knee)" },
-        new RagdollBoneConfig { Name = "j_asi_b_r", SkeletonParent = "j_asi_a_r",Enabled = true,  CapsuleRadius = 0.035f, CapsuleHalfLength = 0.03f, Mass = 1.0f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Shin (Upper Knee)" },
-        new RagdollBoneConfig { Name = "j_asi_c_l", SkeletonParent = "j_asi_b_l",Enabled = true,  CapsuleRadius = 0.035f, CapsuleHalfLength = 0.19f, Mass = 3.0f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Calf (Lower Knee)" },
-        new RagdollBoneConfig { Name = "j_asi_c_r", SkeletonParent = "j_asi_b_r",Enabled = true,  CapsuleRadius = 0.035f, CapsuleHalfLength = 0.19f, Mass = 3.0f,  SwingLimit = MathF.PI / 2,        JointType = 1, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Calf (Lower Knee)" },
-        new RagdollBoneConfig { Name = "j_asi_d_l", SkeletonParent = "j_asi_c_l",Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.0f,  Mass = 1.0f,  SwingLimit = 0.29f,               JointType = 0, TwistMinAngle = -0.64f, TwistMaxAngle = 0.65f, Description = "Left Foot (Ankle)" },
-        new RagdollBoneConfig { Name = "j_asi_d_r", SkeletonParent = "j_asi_c_r",Enabled = true,  CapsuleRadius = 0.01f,  CapsuleHalfLength = 0.0f,  Mass = 1.0f,  SwingLimit = 0.3f,                JointType = 0, TwistMinAngle = -0.65f, TwistMaxAngle = 0.65f, Description = "Right Foot (Ankle)" },
-        new RagdollBoneConfig { Name = "j_asi_e_l", SkeletonParent = "j_asi_d_l",Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.02f, Mass = 0.2f,  SwingLimit = 0.3f,                JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Left Toes" },
-        new RagdollBoneConfig { Name = "j_asi_e_r", SkeletonParent = "j_asi_d_r",Enabled = false, CapsuleRadius = 0.02f,  CapsuleHalfLength = 0.02f, Mass = 0.2f,  SwingLimit = 0.3f,                JointType = 0, TwistMinAngle = -0.1f,  TwistMaxAngle = 0.1f,  Description = "Right Toes" },
-    };
+        var result = new RagdollBoneConfig[definitions.Length];
+        for (var i = 0; i < definitions.Length; i++)
+        {
+            var d = definitions[i];
+            result[i] = new RagdollBoneConfig
+            {
+                Name = d.Name,
+                SkeletonParent = d.SkeletonParent,
+                Enabled = d.Enabled,
+                CapsuleRadius = d.CapsuleRadius,
+                CapsuleHalfLength = d.CapsuleHalfLength,
+                Mass = d.Mass,
+                SwingLimit = d.SwingLimit,
+                SwingMinLimit = d.SwingMinLimit,
+                HingeRestAngle = d.HingeRestAngle,
+                HingeRestSpringFreq = d.HingeRestSpringFreq,
+                HingeRestMaxForce = d.HingeRestMaxForce,
+                JointType = d.JointType,
+                TwistMinAngle = d.TwistMinAngle,
+                TwistMaxAngle = d.TwistMaxAngle,
+                AnatomicalRole = d.AnatomicalRole,
+                ColliderShape = d.ColliderShape,
+                BoxHalfExtentX = d.BoxHalfExtentX,
+                BoxHalfExtentY = d.BoxHalfExtentY,
+                BoxHalfExtentZ = d.BoxHalfExtentZ,
+                Description = d.Description,
+                SoftBody = d.SoftBody,
+                SoftSpringFreq = d.SoftSpringFreq,
+                SoftSpringDamp = d.SoftSpringDamp,
+                SoftServoFreq = d.SoftServoFreq,
+                SoftServoDamp = d.SoftServoDamp,
+            };
+        }
+        return result;
+    }
     /// <summary>Default enabled bones with physics parents resolved through the skeleton tree.</summary>
     public static readonly RagdollBoneDef[] DefaultBoneDefs = BuildDefaultBoneDefs();
 
-    // Tier D — Anthropometric segment masses as fractions of total body mass.
-    // Winter, Biomechanics and Motor Control of Human Movement, Table 3.1.
-    // Keyed by the side-stripped bone name (trailing _l/_r removed). Bones not in
-    // this table (cloth j_sk_*, weapon j_buki*, breast j_mune_*) keep their literal
-    // Mass and are excluded from anthropometric scaling.
-    //
-    // The table uses Winter's values as per-side segment values and adds to 1.0 for the core
-    // humanoid. The extra calf and clavicle bodies are subdivisions of
-    // Winter segments, not additional mass. Hand mass is distributed dynamically below because a
-    // profile may enable any subset of proximal finger bodies.
-    private static readonly Dictionary<string, float> AnthropometricMassFraction = new()
-    {
-        // Lower limb, each side. Winter's shank fraction (.0465) is split between the two real
-        // knee-region bodies by their measured bind-pose length share (b=14%, c=86% — see
-        // LogLegBoneStructureDiagnostics), not folded into one.
-        { "j_asi_a", 0.100f },
-        { "j_asi_b", 0.0065f },
-        { "j_asi_c", 0.0400f },
-        { "j_asi_d", 0.0145f },
-        // Upper limb, each side. j_te + enabled proximal fingers share .006 below.
-        { "j_ude_a", 0.028f },
-        { "j_ude_b", 0.016f },
-        // Head and neck.
-        { "j_kao", 0.036f },
-        { "j_kubi", 0.045f },
-        // Trunk. Two clavicles receive .001 each from the thorax/chest allocation.
-        { "j_kosi", 0.142f },
-        { "j_sebo_a", 0.139f },
-        { "j_sebo_b", 0.110f },
-        { "j_sebo_c", 0.104f },
-        { "j_sako", 0.001f },
-    };
+    // Tier D — Anthropometric segment masses as fractions of total body mass (Winter, Biomechanics
+    // and Motor Control of Human Movement, Table 3.1): profile data (SkeletonProfile.MassBudget),
+    // keyed by the side-stripped bone name. Bones not in it (cloth, weapon, breast) keep their
+    // literal Mass and are excluded from anthropometric scaling.
 
-    private static readonly string[] ProximalFingerRoots =
-        { "j_oya_a", "j_hito_a", "j_naka_a", "j_kusu_a", "j_ko_a" };
-
-    // Strip a trailing "_l" / "_r" side suffix for anthropometric-table lookup.
-    private static string SideStrippedBoneName(string name)
-    {
-        if (name.Length > 2 && (name.EndsWith("_l") || name.EndsWith("_r")))
-            return name.Substring(0, name.Length - 2);
-        return name;
-    }
+    // Strip a trailing side suffix for the side-free table lookups.
+    private static string SideStrippedBoneName(string name) => HumanoidSkeleton.StripSide(name);
 
     // Resolve a bone's effective mass. With anthropometric mass on, bones present in
-    // AnthropometricMassFraction use (fraction x bodyMass); all others fall back to the
+    // the profile's mass budget use (fraction x bodyMass); all others fall back to the
     // hand-picked def.Mass.
     private static float ResolveBoneMass(
         RagdollBoneDef def,
@@ -2150,92 +2029,26 @@ public unsafe partial class RagdollController : IDisposable
     }
 
     // === Tier C — Anatomical range-of-motion (ROM) table ============================
-    // Solver-AGNOSTIC, clinical/ISB-derived per-DOF ranges of motion, stored in RADIANS.
-    // Keyed by the side-stripped bone name (so left/right share one entry, matching the mass
-    // table).
-    //
-    // Source: standard healthy-adult goniometric / clinical ROM (AAOS averages) expressed
-    // in the ISB Grood-Suntay joint coordinate system; rounded to typical means:
-    //   Knee     flexion 0-140 deg, hyperextension 5,        axial (tibial) +/-10
-    //   Elbow    flexion 0-145 deg, hyperextension 5,        axial (pron/sup) +/-80
-    //   Hip      flexion 120, extension 20, abduction 45, adduction 25, axial +/-40
-    //   Shoulder flexion 170, extension 50, abduction 170, adduction 40, axial +/-90
-    //   Ankle    dorsiflexion 20, plantarflexion 45,         inv/eversion +/-20
-    //   Neck     flexion/extension +/-45, lateral +/-40,     axial +/-70
-    //   Spine    (per segment) flex/ext +/-15, lateral +/-15, axial +/-10
-    //
-    // Wired: the AXIAL twist range of every joint and the knee/elbow FLEXION + HYPEREXTENSION
-    // bounds about the hinge axis. Only active while RagdollAnatomicalRom is on; off by
-    // default (the twist governors, hemisphere locks, and profile-table limits stay active
-    // regardless).
-    private readonly struct AnatomicalRom
-    {
-        public readonly float FlexionMax;    // forward bend / dorsiflexion (rad, >=0)  [swing]
-        public readonly float ExtensionMax;  // backward bend / plantarflex / hyperext (rad, >=0)
-        public readonly float AbductionMax;  // (rad) [swing]
-        public readonly float AdductionMax;  // (rad) [swing]
-        public readonly float AxialMin;      // axial twist lower bound (rad, signed)
-        public readonly float AxialMax;      // axial twist upper bound (rad, signed)
-
-        public AnatomicalRom(float flexionMax, float extensionMax, float abductionMax,
-                             float adductionMax, float axialMin, float axialMax)
-        {
-            FlexionMax = flexionMax;
-            ExtensionMax = extensionMax;
-            AbductionMax = abductionMax;
-            AdductionMax = adductionMax;
-            AxialMin = axialMin;
-            AxialMax = axialMax;
-        }
-    }
-
+    // Per-DOF ranges of motion in radians, keyed by side-stripped bone name: profile data
+    // (SkeletonProfile.RangeOfMotion). Bones absent from the table fall back to their hand-set
+    // boneDef twist values (and the fold-stop).
     private static float D2R(float degrees) => DegreesToRadians(degrees);
 
-    // Keyed by side-stripped bone name (see SideStrippedBoneName). Bones absent from this
-    // table fall back to their hand-set boneDef twist values (and the fold-stop).
-    private static readonly Dictionary<string, AnatomicalRom> AnatomicalRomTable = new()
-    {
-        // Hinge joints
-        // Knee flexion: relaxed passive max is ~135-145° (thigh↔shin interior angle
-        // 35-45°). Connected pairs don't collide, so there is no soft-tissue backstop —
-        // use the conservative end or the shin folds visibly INTO the thigh.
-        // The knee's ~135-145° total flexion is now split across two real hinges (j_asi_b then
-        // j_asi_c); a measured death pose bent j_asi_c (lower) more than j_asi_b (upper) — see
-        // LogLegBoneStructureDiagnostics — so the budget below is weighted the same way rather
-        // than split evenly or given to each in full (which would let the pair fold past 180°).
-        { "j_asi_b", new AnatomicalRom(D2R(60f),  D2R(5f),   0f,        0f,        D2R(-10f), D2R(10f)) }, // Knee (upper, shin)
-        { "j_asi_c", new AnatomicalRom(D2R(100f), D2R(5f),   0f,        0f,        D2R(-10f), D2R(10f)) }, // Knee (lower, calf)
-        { "j_ude_b", new AnatomicalRom(D2R(145f), D2R(5f),   0f,        0f,        D2R(-80f), D2R(80f)) }, // Elbow (forearm)
-        // Ball joints (axial wired now; swing fields deferred to Tier A)
-        // Hip flexion: 120° is the CLINICAL value measured with a bent knee. With the knee
-        // extended the two-joint hamstrings cap passive flexion at ~80–90°; death poses mostly
-        // have near-straight legs, so 95° is the relaxed-body compromise (no cross-joint
-        // hamstring constraint is modelled). This is what stops the seated corpse folding
-        // its chest flat onto its legs.
-        { "j_asi_a", new AnatomicalRom(D2R(95f),  D2R(20f),  D2R(45f),  D2R(25f),  D2R(-40f), D2R(40f)) }, // Hip (thigh)
-        { "j_ude_a", new AnatomicalRom(D2R(170f), D2R(50f),  D2R(170f), D2R(40f),  D2R(-90f), D2R(90f)) }, // Shoulder (upper arm)
-        { "j_sako",  new AnatomicalRom(D2R(170f), D2R(50f),  D2R(170f), D2R(40f),  D2R(-90f), D2R(90f)) }, // Shoulder (clavicle)
-        { "j_asi_d", new AnatomicalRom(D2R(20f),  D2R(45f),  0f,        0f,        D2R(-20f), D2R(20f)) }, // Ankle (foot): dorsi/plantar + inv/ev
-        { "j_kubi",  new AnatomicalRom(D2R(45f),  D2R(45f),  D2R(40f),  D2R(40f),  D2R(-70f), D2R(70f)) }, // Neck
-        { "j_sebo_a",new AnatomicalRom(D2R(15f),  D2R(15f),  D2R(15f),  D2R(15f),  D2R(-10f), D2R(10f)) }, // Lower spine
-        { "j_sebo_b",new AnatomicalRom(D2R(15f),  D2R(15f),  D2R(15f),  D2R(15f),  D2R(-10f), D2R(10f)) }, // Mid spine
-        { "j_sebo_c",new AnatomicalRom(D2R(15f),  D2R(15f),  D2R(15f),  D2R(15f),  D2R(-10f), D2R(10f)) }, // Chest
-    };
-
-    private static bool TryGetAnatomicalRom(string boneName, out AnatomicalRom rom)
-        => AnatomicalRomTable.TryGetValue(SideStrippedBoneName(boneName), out rom);
+    private static bool TryGetAnatomicalRom(string boneName, out JointRom rom)
+        => HumanoidSkeleton.TryGetRangeOfMotion(boneName, out rom);
 
     private static Dictionary<string, float> BuildMassBudget(
         RagdollBoneDef[] defs,
         IReadOnlyDictionary<string, int> presentBones,
         float bodyMass)
     {
+        var budget = HumanoidSkeleton.MassBudget;
         var result = new Dictionary<string, float>(StringComparer.Ordinal);
         foreach (var def in defs)
         {
             if (!presentBones.ContainsKey(def.Name))
                 continue;
-            if (AnthropometricMassFraction.TryGetValue(SideStrippedBoneName(def.Name), out var frac))
+            if (budget.Fractions.TryGetValue(SideStrippedBoneName(def.Name), out var frac))
                 result[def.Name] = frac * bodyMass;
         }
 
@@ -2243,48 +2056,47 @@ public unsafe partial class RagdollController : IDisposable
         // profile uses no finger bodies or all five. With digits present, 75% stays in the palm and
         // 25% is divided between the enabled proximal bodies. This removes the former 5 kg per hand
         // without introducing mass when a profile adds or removes a finger.
-        foreach (var side in new[] { "l", "r" })
+        foreach (var left in new[] { true, false })
         {
-            var handName = $"j_te_{side}";
+            var handName = Bones.Hand.For(left);
             if (!presentBones.ContainsKey(handName))
                 continue;
 
-            var fingers = new List<string>(ProximalFingerRoots.Length);
-            foreach (var root in ProximalFingerRoots)
+            var fingers = new List<string>(budget.ProximalFingers.Length);
+            foreach (var finger in budget.ProximalFingers)
             {
-                var name = $"{root}_{side}";
+                var name = finger.For(left);
                 if (presentBones.ContainsKey(name) && defs.Any(d => d.Name == name))
                     fingers.Add(name);
             }
 
-            const float handFraction = 0.006f;
-            var handGroupMass = handFraction * bodyMass;
+            var handGroupMass = budget.HandGroupFraction * bodyMass;
             if (fingers.Count == 0)
             {
                 result[handName] = handGroupMass;
                 continue;
             }
 
-            result[handName] = handGroupMass * 0.75f;
-            var fingerMass = handGroupMass * 0.25f / fingers.Count;
+            result[handName] = handGroupMass * budget.PalmShare;
+            var fingerMass = handGroupMass * budget.FingersShare / fingers.Count;
             foreach (var finger in fingers)
                 result[finger] = fingerMass;
         }
 
-        // j_asi_d + j_asi_e are one anatomical foot segment. Mesh-derived thickness turns the
+        // The foot and the toe cluster are one anatomical foot segment. Mesh-derived thickness turns the
         // terminal toe cluster into a body, so redistribute the existing group mass instead of
         // quietly adding two more literal masses to the rig.
-        foreach (var side in new[] { "l", "r" })
+        foreach (var left in new[] { true, false })
         {
-            var footName = $"j_asi_d_{side}";
-            var toeName = $"j_asi_e_{side}";
+            var footName = Bones.Foot.For(left);
+            var toeName = Bones.Toes.For(left);
             if (!presentBones.ContainsKey(footName) || !presentBones.ContainsKey(toeName) ||
                 !defs.Any(d => d.Name == toeName))
                 continue;
 
-            var footGroupMass = 0.0145f * bodyMass;
-            result[footName] = footGroupMass * 0.85f;
-            result[toeName] = footGroupMass * 0.15f;
+            var footGroupMass = budget.FootGroupFraction * bodyMass;
+            result[footName] = footGroupMass * budget.FootShare;
+            result[toeName] = footGroupMass * budget.ToesShare;
         }
 
         return result;
@@ -2323,39 +2135,27 @@ public unsafe partial class RagdollController : IDisposable
 
     private static AnatomicalRole InferAnatomicalRole(string name, string? description, bool softBody)
     {
-        if (softBody || name.StartsWith("j_mune_", StringComparison.Ordinal)) return AnatomicalRole.SoftBody;
-        if (name.StartsWith("j_sk_", StringComparison.Ordinal)) return AnatomicalRole.Cloth;
-        if (name.StartsWith("j_buki", StringComparison.Ordinal)) return AnatomicalRole.Weapon;
-        if (name == "j_kosi") return AnatomicalRole.Pelvis;
-        if (name.StartsWith("j_sebo_", StringComparison.Ordinal) || name == "j_kubi") return AnatomicalRole.Spine;
-        if (name == "j_kao") return AnatomicalRole.Head;
-        if (name.StartsWith("j_sako_", StringComparison.Ordinal) || name.StartsWith("j_ude_a_", StringComparison.Ordinal)) return AnatomicalRole.Shoulder;
-        if (name.StartsWith("j_ude_b_", StringComparison.Ordinal)) return AnatomicalRole.Elbow;
-        if (name.StartsWith("j_te_", StringComparison.Ordinal)) return AnatomicalRole.Hand;
-        if (name.StartsWith("j_asi_a_", StringComparison.Ordinal)) return AnatomicalRole.Hip;
-        // j_asi_b and j_asi_c are BOTH real knee-region hinges (see LogLegBoneStructureDiagnostics):
-        // j_asi_b is a ~6cm proximal stub and j_asi_c carries the other ~86% of the knee-to-ankle
-        // span, and in a real death pose j_asi_c bends MORE than j_asi_b does. Treating j_asi_c as
-        // "the ankle" (its old inference) is what let it get folded away as an inert helper.
-        if (name.StartsWith("j_asi_b_", StringComparison.Ordinal)) return AnatomicalRole.Knee;
-        if (name.StartsWith("j_asi_c_", StringComparison.Ordinal)) return AnatomicalRole.Knee;
-        if (name.StartsWith("j_asi_d_", StringComparison.Ordinal) || name.StartsWith("j_asi_e_", StringComparison.Ordinal)) return AnatomicalRole.Foot;
+        if (softBody) return AnatomicalRole.SoftBody;
+        // The skeleton profile names the role of its bones (SkeletonProfile.RoleRules); the values
+        // of SkeletonBoneRole are those of AnatomicalRole.
+        if (HumanoidSkeleton.TryGetRole(name, out var profileRole)) return (AnatomicalRole)(int)profileRole;
         if (!string.IsNullOrEmpty(description) && description.Contains("knee", StringComparison.OrdinalIgnoreCase)) return AnatomicalRole.Knee;
         if (!string.IsNullOrEmpty(description) && description.Contains("elbow", StringComparison.OrdinalIgnoreCase)) return AnatomicalRole.Elbow;
         return AnatomicalRole.Generic;
     }
 
-    private static bool IsHandBone(string name) => name.StartsWith("j_te_", StringComparison.Ordinal);
-    private static bool IsFootBone(string name) => name.StartsWith("j_asi_d_", StringComparison.Ordinal);
-    private static bool IsToeBone(string name) => name.StartsWith("j_asi_e_", StringComparison.Ordinal);
-    private static bool IsShinBone(string name) => name.StartsWith("j_asi_b_", StringComparison.Ordinal);
+    private static bool IsHandBone(string name) => BoneClasses.Hand.Matches(name);
+    private static bool IsFootBone(string name) => BoneClasses.Foot.Matches(name);
+    private static bool IsToeBone(string name) => BoneClasses.Toe.Matches(name);
+    // The upper knee-region hinge, a short stub below the knee.
+    private static bool IsShinBone(string name) => BoneClasses.Shin.Matches(name);
     // The lower knee-region hinge (see LogLegBoneStructureDiagnostics): carries most of the
-    // knee-to-ankle span and, in a real death pose, bends more than j_asi_b does. A real
+    // knee-to-ankle span and, in a real death pose, bends more than the shin stub does. A real
     // dynamic body and joint, not a mesh-sampling helper.
-    private static bool IsCalfBone(string name) => name.StartsWith("j_asi_c_", StringComparison.Ordinal);
-    private static bool IsForearmBone(string name) => name.StartsWith("j_ude_b_", StringComparison.Ordinal);
-    private static bool IsUpperArmBone(string name) => name.StartsWith("j_ude_a_", StringComparison.Ordinal);
-    private static bool IsClavicleBone(string name) => name.StartsWith("j_sako_", StringComparison.Ordinal);
+    private static bool IsCalfBone(string name) => BoneClasses.Calf.Matches(name);
+    private static bool IsForearmBone(string name) => BoneClasses.Forearm.Matches(name);
+    private static bool IsUpperArmBone(string name) => BoneClasses.UpperArm.Matches(name);
+    private static bool IsClavicleBone(string name) => BoneClasses.Clavicle.Matches(name);
 
     private static Vector3 DefaultBoxHalfExtents(RagdollBoneConfig bone)
     {
@@ -2379,9 +2179,9 @@ public unsafe partial class RagdollController : IDisposable
 
     private static float DefaultSwingMinLimit(AnatomicalRole role, string name)
     {
-        if (role == AnatomicalRole.Knee || name.StartsWith("j_asi_b_", StringComparison.Ordinal))
+        if (role == AnatomicalRole.Knee || IsShinBone(name))
             return 0.75f;
-        if (role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal))
+        if (role == AnatomicalRole.Elbow || IsForearmBone(name))
             return 0.45f;
 
         return 0f;
@@ -2400,18 +2200,18 @@ public unsafe partial class RagdollController : IDisposable
     // while RagdollAnatomicalHingeRestBias is on.
     private static float DefaultHingeRestSpringFreq(AnatomicalRole role, string name)
     {
-        if (role == AnatomicalRole.Knee || name.StartsWith("j_asi_b_", StringComparison.Ordinal))
+        if (role == AnatomicalRole.Knee || IsShinBone(name))
             return 10.0f;
-        if (role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal))
+        if (role == AnatomicalRole.Elbow || IsForearmBone(name))
             return 10.0f;
         return 0f;
     }
 
     private static float DefaultHingeRestMaxForce(AnatomicalRole role, string name)
     {
-        if (role == AnatomicalRole.Knee || name.StartsWith("j_asi_b_", StringComparison.Ordinal))
+        if (role == AnatomicalRole.Knee || IsShinBone(name))
             return 200.0f;
-        if (role == AnatomicalRole.Elbow || name.StartsWith("j_ude_b_", StringComparison.Ordinal))
+        if (role == AnatomicalRole.Elbow || IsForearmBone(name))
             return 200.0f;
         return 0f;
     }
@@ -2419,8 +2219,8 @@ public unsafe partial class RagdollController : IDisposable
     private static bool HasPassiveHingeRest(AnatomicalRole role, string name)
     {
         return role == AnatomicalRole.Knee || role == AnatomicalRole.Elbow ||
-               name.StartsWith("j_asi_b_", StringComparison.Ordinal) ||
-               name.StartsWith("j_ude_b_", StringComparison.Ordinal);
+               IsShinBone(name) ||
+               IsForearmBone(name);
     }
 
     private static RagdollBoneDef[] BuildDefaultBoneDefs()
@@ -3095,7 +2895,7 @@ public unsafe partial class RagdollController : IDisposable
             var skel = skeletons.TryGetSkeleton(targetCharacterAddress);
             if (skel == null) return;
 
-            var pelvis = ResolveBoneIndex(skel, "j_kosi");
+            var pelvis = ResolveBoneIndex(skel, Bones.Pelvis);
             if (pelvis >= 0 && pelvis < skel.BoneCount)
                 middleHeight = skel.ModelPose[pelvis].Translation.Y * GetCharacterScale(targetCharacterAddress, skel).Y;
 
@@ -3236,7 +3036,7 @@ public unsafe partial class RagdollController : IDisposable
             var cnt = pose.Length;
             if (cnt < 1) continue;
 
-            // This partial attaches to its root bone (e.g. "j_kao"); collapse it only if that bone is
+            // This partial attaches to its root bone (e.g. the head); collapse it only if that bone is
             // inside the hidden subtree.
             var rootName = skel.PartBoneName(ps, 0);
             if (string.IsNullOrEmpty(rootName)) continue;
@@ -3577,15 +3377,9 @@ public unsafe partial class RagdollController : IDisposable
         }
     }
 
-    private readonly record struct BindPoseHingeTarget(string Bone, string Parent, string Child);
-
-    private static readonly BindPoseHingeTarget[] BindPoseHingeTargets =
-    {
-        new("j_asi_b_l", "j_asi_a_l", "j_asi_c_l"), // upper knee: thigh -> shin -> calf
-        new("j_asi_b_r", "j_asi_a_r", "j_asi_c_r"),
-        new("j_asi_c_l", "j_asi_b_l", "j_asi_d_l"), // lower knee: shin -> calf -> ankle
-        new("j_asi_c_r", "j_asi_b_r", "j_asi_d_r"),
-    };
+    // The hinges whose frame comes from the reference pose (thigh -> shin -> calf for the upper knee,
+    // shin -> calf -> ankle for the lower): profile data.
+    private static ImmutableArray<HingeFrameTarget> BindPoseHingeTargets => HumanoidSkeleton.HingeFrameTargets;
 
     private static Dictionary<string, BindPoseHingeFrame> BuildBindPoseHingeFrames(ISkeletonPose skel)
     {
@@ -3655,12 +3449,13 @@ public unsafe partial class RagdollController : IDisposable
 
         var pose = skel.ModelPose;
 
-        foreach (var side in new[] { "l", "r" })
+        foreach (var left in new[] { true, false })
         {
-            var aIdx = ResolveBoneIndex(skel, $"j_asi_a_{side}");
-            var bIdx = ResolveBoneIndex(skel, $"j_asi_b_{side}");
-            var cIdx = ResolveBoneIndex(skel, $"j_asi_c_{side}");
-            var dIdx = ResolveBoneIndex(skel, $"j_asi_d_{side}");
+            var side = left ? "l" : "r"; // log text only
+            var aIdx = ResolveBoneIndex(skel, Bones.Thigh.For(left));
+            var bIdx = ResolveBoneIndex(skel, Bones.Shin.For(left));
+            var cIdx = ResolveBoneIndex(skel, Bones.Calf.For(left));
+            var dIdx = ResolveBoneIndex(skel, Bones.Foot.For(left));
             if (aIdx < 0 || bIdx < 0 || cIdx < 0 || dIdx < 0 ||
                 aIdx >= referenceModel.Length || bIdx >= referenceModel.Length ||
                 cIdx >= referenceModel.Length || dIdx >= referenceModel.Length ||
@@ -3693,10 +3488,10 @@ public unsafe partial class RagdollController : IDisposable
             }
             var bindRelative = Quaternion.Normalize(Quaternion.Inverse(bBindRot) * cBindRot);
 
-            if (!boneWorldPositions.TryGetValue($"j_asi_a_{side}", out var aLivePos) ||
-                !boneWorldPositions.TryGetValue($"j_asi_b_{side}", out var bLivePos) ||
-                !boneWorldPositions.TryGetValue($"j_asi_d_{side}", out var dLivePos) ||
-                !boneWorldRotations.TryGetValue($"j_asi_b_{side}", out var bLiveWorldRot))
+            if (!boneWorldPositions.TryGetValue(Bones.Thigh.For(left), out var aLivePos) ||
+                !boneWorldPositions.TryGetValue(Bones.Shin.For(left), out var bLivePos) ||
+                !boneWorldPositions.TryGetValue(Bones.Foot.For(left), out var dLivePos) ||
+                !boneWorldRotations.TryGetValue(Bones.Shin.For(left), out var bLiveWorldRot))
             {
                 log.Info($"[Ragdoll LegDiag] side={side}: a/b/d not in live pose maps (unexpected).");
                 continue;
@@ -3923,7 +3718,7 @@ public unsafe partial class RagdollController : IDisposable
         Vector3 hingeAxisWorld,
         Vector3 parentSegDir,
         Vector3 segDirWorld,
-        AnatomicalRom rom,
+        JointRom rom,
         SpringSettings limitSpring)
     {
         if (simulation == null)
@@ -4041,7 +3836,7 @@ public unsafe partial class RagdollController : IDisposable
         Vector3 anchorWorld,
         Vector3 anatForwardWorld,
         Vector3 anatLateralWorld,
-        AnatomicalRom rom,
+        JointRom rom,
         SpringSettings coneSpring,
         SpringSettings capSpring)
     {
@@ -4452,7 +4247,7 @@ public unsafe partial class RagdollController : IDisposable
         // This one is a stability requirement of the rig's own topology, not a scene heuristic,
         // so it holds for NPC corpses too.
         if (genericSkeleton)
-            solverIterations = Math.Max(solverIterations, GenericSolverIterations);
+            solverIterations = Math.Max(solverIterations, SkeletonProfile.Auto().ClassConstants.MinSolverIterations);
 
         var solverSubsteps = targetIsLocalPlayer
             ? RagdollTuning.SolverSubsteps
@@ -5002,8 +4797,8 @@ public unsafe partial class RagdollController : IDisposable
             // in-motion animation flows continuously into physics instead of freezing at rest.
             if (handoffSeedVel.TryGetValue(def.Name, out var seed))
             {
-                var maxLin = activeRagdollIsGeneric ? GenericMaxLinearVelocity : HumanMaxLinearVelocity;
-                var maxAng = activeRagdollIsGeneric ? GenericMaxAngularVelocity : HumanMaxAngularVelocity;
+                var maxLin = ActiveClassProfile.ClassConstants.MaxLinearVelocity;
+                var maxAng = ActiveClassProfile.ClassConstants.MaxAngularVelocity;
                 var br = simulation.Bodies.GetBodyReference(bodyHandle);
                 var centerVelocity = seed.Lin;
                 if (meshVolume != null)
@@ -5127,7 +4922,7 @@ public unsafe partial class RagdollController : IDisposable
         // (a non-humanoid), and IsTorsoBody then falls back to treating every body as one.
         torsoBodyIndices.Clear();
         for (int i = 0; i < ragdollBones.Count; i++)
-            if (Array.IndexOf(TorsoBones, ragdollBones[i].Name) >= 0)
+            if (TorsoBones.IndexOf(ragdollBones[i].Name) >= 0)
                 torsoBodyIndices.Add(i);
 
         // Tier D — one-time sanity log: resolved total should be ~RagdollBodyMass minus the
@@ -5389,7 +5184,7 @@ public unsafe partial class RagdollController : IDisposable
                 // SwingMinLimit/HasPassiveHingeRest both default to "off"). Resolved once here so
                 // it drives the fold-stop cap and the passive rest bias below, and (only with the
                 // RagdollAnatomicalRom Advanced Filter on) the directional flexion limit.
-                AnatomicalRom hingeRom = default;
+                JointRom hingeRom = default;
                 bool hasHingeRom = settings.RagdollAnatomicalRom &&
                     (boneDef.AnatomicalRole == AnatomicalRole.Knee || boneDef.AnatomicalRole == AnatomicalRole.Elbow) &&
                     TryGetAnatomicalRom(rb.Name, out hingeRom);
@@ -5504,12 +5299,12 @@ public unsafe partial class RagdollController : IDisposable
                     // anatomical limits below — a symmetric cone cannot hold flexion 95° /
                     // abduction 45° / adduction 25° at once (hip splay). Only while the
                     // RagdollAnatomicalRom Advanced Filter is on (off by default).
-                    AnatomicalRom swingRom = default;
+                    JointRom swingRom = default;
                     var hasSwingRom = settings.RagdollAnatomicalRom &&
                         (boneDef.AnatomicalRole == AnatomicalRole.Hip ||
                          boneDef.AnatomicalRole == AnatomicalRole.Spine ||
                          (boneDef.AnatomicalRole == AnatomicalRole.Shoulder &&
-                          rb.Name.StartsWith("j_ude_a_", StringComparison.Ordinal))) &&
+                          IsUpperArmBone(rb.Name))) &&
                         TryGetAnatomicalRom(rb.Name, out swingRom);
                     var hipKneecapCaps = hasSwingRom && boneDef.AnatomicalRole == AnatomicalRole.Hip;
 
@@ -5524,7 +5319,7 @@ public unsafe partial class RagdollController : IDisposable
                         // it under a fast torso motion and visibly lag/float before snapping back —
                         // a hard wall stops it right at the limit instead.
                         var coneSpring = IsClavicleBone(rb.Name) || IsUpperArmBone(rb.Name) ||
-                                          rb.Name is "j_kubi" or "j_kao"
+                                          rb.Name == Bones.Neck || rb.Name == Bones.Head
                             ? limitSpring
                             : ballSwingSpring;
 
@@ -5726,8 +5521,8 @@ public unsafe partial class RagdollController : IDisposable
         log.Info($"RagdollController: Animation frozen (saved speed={savedOverallSpeed:F2})");
 
         // Resolve ancestor bone — n_hara must follow j_kosi to prevent mesh tearing
-        nHaraIndex = ResolveBoneIndex(skel, "n_hara");
-        kaoBodyBoneIndex = ResolveBoneIndex(skel, "j_kao");
+        nHaraIndex = ResolveBoneIndex(skel, Bones.BellyFollow);
+        kaoBodyBoneIndex = ResolveBoneIndex(skel, Bones.Head);
         CaptureFaceTraversalLandmarks(skel);
         log.Info($"RagdollController: n_hara index={nHaraIndex}, j_kao index={kaoBodyBoneIndex}");
 
@@ -6252,31 +6047,13 @@ public unsafe partial class RagdollController : IDisposable
         }
     }
 
+    // Which of another character's bones it attacks with, and which its light collision body follows:
+    // scored by name fragments, profile data (SkeletonProfile.LightCollisionAttackScores / FollowScores).
     private static int LightweightCollisionRoleScore(string boneName)
-    {
-        var name = boneName.ToLowerInvariant();
-        if (name.Contains("j_te_") || name.Contains("hand") || name.Contains("claw") || name.Contains("talon"))
-            return 6;
-        if (name.Contains("j_kao") || name.Contains("head") || name.Contains("mouth") || name.Contains("jaw"))
-            return 5;
-        if (name.Contains("j_asi_e") || name.Contains("foot") || name.Contains("hoof"))
-            return 4;
-        if (name.Contains("j_kosi") || name.Contains("n_hara") || name.Contains("j_sebo") || name.Contains("body"))
-            return 3;
-        return 0;
-    }
+        => HumanoidSkeleton.LightCollisionAttackScores.Score(boneName);
 
     private static int LightweightFollowRoleScore(string boneName)
-    {
-        var name = boneName.ToLowerInvariant();
-        if (name.Contains("j_kosi") || name.Contains("n_hara") || name.Contains("pelvis") || name.Contains("body"))
-            return 6;
-        if (name.Contains("j_sebo") || name.Contains("spine") || name.Contains("chest") || name.Contains("torso"))
-            return 5;
-        if (name.Contains("j_asi_a") || name.Contains("j_asi_b") || name.Contains("thigh") || name.Contains("leg"))
-            return 3;
-        return 0;
-    }
+        => HumanoidSkeleton.LightCollisionFollowScores.Score(boneName);
 
     private static bool IsNpcBoneProxyActive(in NpcCollisionState state, int boneIndex, bool attackMode)
     {
@@ -6863,8 +6640,7 @@ public unsafe partial class RagdollController : IDisposable
         // the same local-Y tensor change to pelvis, spine, head, palms, fingers, cloth and soft
         // tissue would give unrelated shapes a made-up preferred axis.
         var name = SideStrippedBoneName(def.Name);
-        var isLongLimb = name is "j_ude_a" or "j_ude_b" or
-                                  "j_asi_a" or "j_asi_b";
+        var isLongLimb = BoneClasses.LongLimbRoots.Matches(name);
         if (!isLongLimb)
             return inertia;
 
@@ -6959,7 +6735,7 @@ public unsafe partial class RagdollController : IDisposable
             any = true;
             var linear = body.Velocity.Linear;
             var angular = body.Velocity.Angular;
-            WaterBuoyancy.Apply(ref linear, ref angular, submerged, WaterBuoyancy.RelativeDensity(rb.Name, liquidDensity),
+            WaterBuoyancy.Apply(ref linear, ref angular, submerged, WaterBuoyancy.RelativeDensity(HumanoidSkeleton, rb.Name, liquidDensity),
                 surfaceSpeed, RagdollTuning.Gravity, dt);
             body.Velocity.Linear = linear;
             body.Velocity.Angular = angular;
@@ -7042,8 +6818,7 @@ public unsafe partial class RagdollController : IDisposable
 
     /// <summary>The bodies that actually arrive when a body falls. Everything else is along for the
     /// ride — and the feet, in an ordinary collapse, never left the floor.</summary>
-    private static readonly string[] TorsoBones =
-        { "j_kosi", "n_hara", "j_sebo_a", "j_sebo_b", "j_sebo_c" };
+    private static ImmutableArray<string> TorsoBones => HumanoidSkeleton.ImpactTorsoBones;
 
     /// <summary>
     /// The joints released on impact so the limbs can follow through.
@@ -7060,14 +6835,7 @@ public unsafe partial class RagdollController : IDisposable
     /// let the momentum the limbs already have express itself. The swing limits stay on, so a limb
     /// follows through within its anatomy instead of hyperextending.
     /// </summary>
-    private static readonly string[] FollowThroughBones =
-    {
-        "j_sako_l", "j_sako_r",
-        "j_ude_a_l", "j_ude_a_r",
-        "j_ude_b_l", "j_ude_b_r",
-        "j_te_l", "j_te_r",
-        "j_kubi", "j_kao",
-    };
+    private static ImmutableArray<string> FollowThroughBones => HumanoidSkeleton.ImpactFollowThroughBones;
 
     private float impactFreezeRemaining;
     private float impactCooldownRemaining;
@@ -7641,8 +7409,8 @@ public unsafe partial class RagdollController : IDisposable
             var meshFrameStart = activeRagdollMeshVolumes && !activeRagdollIsGeneric
                 ? clock.GetTimestamp(ClockSite.MeshFrameEarlyOut) : 0;
             meshCollisionTicks = meshSolveTicks = 0;
-            var maxLinear = activeRagdollIsGeneric ? GenericMaxLinearVelocity : HumanMaxLinearVelocity;
-            var maxAngular = activeRagdollIsGeneric ? GenericMaxAngularVelocity : HumanMaxAngularVelocity;
+            var maxLinear = ActiveClassProfile.ClassConstants.MaxLinearVelocity;
+            var maxAngular = ActiveClassProfile.ClassConstants.MaxAngularVelocity;
             // In a slow frame (a crowd of corpses, a hitch) one substep only: catching up with
             // several made each slow frame slower still, every corpse multiplying it. The corpse
             // moves in slow motion for those frames instead.
@@ -7888,7 +7656,7 @@ public unsafe partial class RagdollController : IDisposable
         // Propagate j_kao changes to face/hair partial skeletons
         if (kaoBodyBoneIndex >= 0 && result.HasAccumulated[kaoBodyBoneIndex])
         {
-            PropagateToPartialSkeletons(skel, kaoBodyBoneIndex, "j_kao", result);
+            PropagateToPartialSkeletons(skel, kaoBodyBoneIndex, Bones.Head, result);
         }
 
         // Soft-tissue squash & stretch: annotate per-bone scale after every positional write
@@ -8437,7 +8205,7 @@ public unsafe partial class RagdollController : IDisposable
 
     private float ConfigureGrabTuning(GrabSlot slot, float maxForce, float maxSpeed, float springFreq)
     {
-        var bodySpeedLimit = activeRagdollIsGeneric ? GenericMaxLinearVelocity : HumanMaxLinearVelocity;
+        var bodySpeedLimit = ActiveClassProfile.ClassConstants.MaxLinearVelocity;
         slot.MaxSpeed = Math.Clamp(float.IsFinite(maxSpeed) ? maxSpeed : GrabMaxSpeed, 0.1f,
             MathF.Min(GrabMaxSpeed, bodySpeedLimit));
         var servoForce = ResolveGrabServoForce(float.IsFinite(maxForce) ? maxForce : 1000f);
@@ -8621,7 +8389,7 @@ public unsafe partial class RagdollController : IDisposable
         directedForward = ResolveForwardDirection();
         directedRight = FlatNormalize(Vector3.Transform(Vector3.UnitX, skelWorldRot), Vector3.UnitX);
 
-        var pelvis = FindBodyHandle("j_kosi");
+        var pelvis = FindBodyHandle(Bones.Pelvis);
         if (pelvis.HasValue)
         {
             var pelvisBody = simulation.Bodies.GetBodyReference(pelvis.Value);
@@ -8629,14 +8397,14 @@ public unsafe partial class RagdollController : IDisposable
             directedPelvisStartRot = pelvisBody.Pose.Orientation;
         }
 
-        var chest = FindBodyHandle("j_sebo_c") ?? FindBodyHandle("j_sebo_b");
+        var chest = FindBodyHandle(Bones.Chest) ?? FindBodyHandle(Bones.MidSpine);
         if (chest.HasValue)
             directedChestStartRot = simulation.Bodies.GetBodyReference(chest.Value).Pose.Orientation;
 
-        var leftFoot = FindBodyHandle("j_asi_d_l");
+        var leftFoot = FindBodyHandle(Bones.Foot.Left);
         if (leftFoot.HasValue)
             directedLeftFootTarget = simulation.Bodies.GetBodyReference(leftFoot.Value).Pose.Position;
-        var rightFoot = FindBodyHandle("j_asi_d_r");
+        var rightFoot = FindBodyHandle(Bones.Foot.Right);
         if (rightFoot.HasValue)
             directedRightFootTarget = simulation.Bodies.GetBodyReference(rightFoot.Value).Pose.Position;
 
@@ -8655,10 +8423,10 @@ public unsafe partial class RagdollController : IDisposable
     {
         if (simulation == null || !isActive) return false;
 
-        var leftFoot = FindBodyHandle("j_asi_d_l");
-        var rightFoot = FindBodyHandle("j_asi_d_r");
-        var pelvis = FindBodyHandle("j_kosi");
-        var chest = FindBodyHandle("j_sebo_c") ?? FindBodyHandle("j_sebo_b");
+        var leftFoot = FindBodyHandle(Bones.Foot.Left);
+        var rightFoot = FindBodyHandle(Bones.Foot.Right);
+        var pelvis = FindBodyHandle(Bones.Pelvis);
+        var chest = FindBodyHandle(Bones.Chest) ?? FindBodyHandle(Bones.MidSpine);
         if (!leftFoot.HasValue || !rightFoot.HasValue || !pelvis.HasValue || !chest.HasValue)
         {
             log.Warning("RagdollController: directed kneel-pitch failed - missing foot/pelvis/chest body");
@@ -8915,7 +8683,7 @@ public unsafe partial class RagdollController : IDisposable
             var handle = FindBodyHandle(bone);
             if (!handle.HasValue) continue;
 
-            if (bone.EndsWith("_l", StringComparison.Ordinal))
+            if (bone.EndsWith(HumanoidSkeleton.SideSuffixes[0], StringComparison.Ordinal)) // the left side
             {
                 if (!directedLeftFootConstraint.HasValue)
                 {
@@ -8924,7 +8692,7 @@ public unsafe partial class RagdollController : IDisposable
                         DirectedLinearServo(directedLeftFootTarget, 0f, controller.Frequency > 0 ? controller.Frequency : 90f));
                 }
             }
-            else if (bone.EndsWith("_r", StringComparison.Ordinal))
+            else if (bone.EndsWith(HumanoidSkeleton.SideSuffixes[1], StringComparison.Ordinal)) // the right side
             {
                 if (!directedRightFootConstraint.HasValue)
                 {
@@ -8939,7 +8707,7 @@ public unsafe partial class RagdollController : IDisposable
     private void EnsurePelvisLinearConstraint(CollapseControllerProfile controller)
     {
         if (simulation == null || directedPelvisLinearConstraint.HasValue) return;
-        var handle = FindBodyHandle(string.IsNullOrWhiteSpace(controller.Bone) ? "j_kosi" : controller.Bone);
+        var handle = FindBodyHandle(string.IsNullOrWhiteSpace(controller.Bone) ? Bones.Pelvis : controller.Bone);
         if (!handle.HasValue) return;
         directedPelvisStart = simulation.Bodies.GetBodyReference(handle.Value).Pose.Position;
         directedPelvisLinearConstraint = simulation.Solver.Add(handle.Value,
@@ -8949,7 +8717,7 @@ public unsafe partial class RagdollController : IDisposable
     private void EnsurePelvisAngularConstraint(CollapseControllerProfile controller)
     {
         if (simulation == null || directedPelvisAngularConstraint.HasValue) return;
-        var handle = FindBodyHandle("j_kosi");
+        var handle = FindBodyHandle(Bones.Pelvis);
         if (!handle.HasValue) return;
         directedPelvisStartRot = simulation.Bodies.GetBodyReference(handle.Value).Pose.Orientation;
         directedPelvisAngularConstraint = simulation.Solver.Add(handle.Value,
@@ -8959,8 +8727,8 @@ public unsafe partial class RagdollController : IDisposable
     private void EnsureChestAngularConstraint(CollapseControllerProfile controller)
     {
         if (simulation == null || directedChestAngularConstraint.HasValue) return;
-        var handle = FindBodyHandle(string.IsNullOrWhiteSpace(controller.Bone) ? "j_sebo_c" : controller.Bone)
-            ?? FindBodyHandle("j_sebo_b");
+        var handle = FindBodyHandle(string.IsNullOrWhiteSpace(controller.Bone) ? Bones.Chest : controller.Bone)
+            ?? FindBodyHandle(Bones.MidSpine);
         if (!handle.HasValue) return;
         directedChestStartRot = simulation.Bodies.GetBodyReference(handle.Value).Pose.Orientation;
         directedChestAngularConstraint = simulation.Solver.Add(handle.Value,
@@ -9021,9 +8789,9 @@ public unsafe partial class RagdollController : IDisposable
         return t * t * (3f - 2f * t);
     }
 
-    // The character's facing, flattened onto the ground plane.
+    // The character's facing (the profile's forward axis), flattened onto the ground plane.
     private Vector3 ResolveForwardDirection()
-        => FlatNormalize(Vector3.Transform(Vector3.UnitZ, skelWorldRot), Vector3.UnitZ);
+        => FlatNormalize(Vector3.Transform(HumanoidSkeleton.Forward, skelWorldRot), HumanoidSkeleton.Forward);
 
     private static Vector3 FlatNormalize(Vector3 v, Vector3 fallback)
     {
@@ -9036,12 +8804,11 @@ public unsafe partial class RagdollController : IDisposable
         point = Vector3.Zero;
         if (simulation == null) return false;
 
-        var suffix = left ? "_l" : "_r";
         var names = new[]
         {
-            "j_asi_e" + suffix,
-            "j_asi_d" + suffix,
-            "j_asi_c" + suffix,
+            Bones.Toes.For(left),
+            Bones.Foot.For(left),
+            Bones.Calf.For(left),
         };
 
         var found = false;
@@ -9174,9 +8941,9 @@ public unsafe partial class RagdollController : IDisposable
             + (Math.Clamp(knee.EntryPelvisDownEnd, 0f, 2f) - Math.Clamp(knee.EntryPelvisDownStart, 0f, 2f)) * t;
 
         ApplyEntryKneeSeparation(targetStance, 0.10f * stepScale);
-        ApplyCoreAxisVelocity("j_kosi", -Vector3.UnitY, pelvisDown, 0.075f * stepScale);
-        ApplyCoreAxisVelocity("j_kosi", entryForward, 0.20f + 0.18f * t, 0.055f * stepScale);
-        ApplyCoreAxisVelocity("j_sebo_b", entryForward, 0.10f + 0.10f * t, 0.040f * stepScale);
+        ApplyCoreAxisVelocity(Bones.Pelvis, -Vector3.UnitY, pelvisDown, 0.075f * stepScale);
+        ApplyCoreAxisVelocity(Bones.Pelvis, entryForward, 0.20f + 0.18f * t, 0.055f * stepScale);
+        ApplyCoreAxisVelocity(Bones.MidSpine, entryForward, 0.10f + 0.10f * t, 0.040f * stepScale);
 
         var ready = TryMeasureEntryPose(out var stance, out var leftAngle, out var rightAngle, out _, out _) &&
                     stance >= Math.Clamp(knee.EntryReadyStance, 0.05f, 1.2f) &&
@@ -9205,8 +8972,8 @@ public unsafe partial class RagdollController : IDisposable
         var rightAxis = FlatNormalize(Vector3.Transform(Vector3.UnitX, skelWorldRot), Vector3.UnitX);
         stanceWidth = MathF.Abs(Vector3.Dot(rightSupport - leftSupport, rightAxis));
 
-        leftKneeAngle = MeasureLegBendAngle("j_asi_a_l", "j_asi_b_l", "j_asi_d_l", out leftKnee);
-        rightKneeAngle = MeasureLegBendAngle("j_asi_a_r", "j_asi_b_r", "j_asi_d_r", out rightKnee);
+        leftKneeAngle = MeasureLegBendAngle(Bones.Thigh.Left, Bones.Shin.Left, Bones.Foot.Left, out leftKnee);
+        rightKneeAngle = MeasureLegBendAngle(Bones.Thigh.Right, Bones.Shin.Right, Bones.Foot.Right, out rightKnee);
         return leftKneeAngle >= 0f && rightKneeAngle >= 0f;
     }
 
@@ -9226,8 +8993,8 @@ public unsafe partial class RagdollController : IDisposable
     private void ApplyEntryKneeSeparation(float targetWidth, float maxDelta)
     {
         if (simulation == null) return;
-        var leftHandle = FindBodyHandle("j_asi_b_l");
-        var rightHandle = FindBodyHandle("j_asi_b_r");
+        var leftHandle = FindBodyHandle(Bones.Shin.Left);
+        var rightHandle = FindBodyHandle(Bones.Shin.Right);
         if (!leftHandle.HasValue || !rightHandle.HasValue) return;
 
         var lateral = FlatNormalize(entryRight, Vector3.UnitX);
@@ -9339,14 +9106,14 @@ public unsafe partial class RagdollController : IDisposable
     {
         if (simulation == null || !isActive) return false;
 
-        var leftFoot = FindBodyHandle("j_asi_d_l");
-        var rightFoot = FindBodyHandle("j_asi_d_r");
-        var pelvis = FindBodyHandle("j_kosi");
-        var chest = FindBodyHandle("j_sebo_c") ?? FindBodyHandle("j_sebo_b");
-        var leftKnee = FindBodyHandle("j_asi_b_l");
-        var rightKnee = FindBodyHandle("j_asi_b_r");
-        var leftThigh = FindBodyHandle("j_asi_a_l");
-        var rightThigh = FindBodyHandle("j_asi_a_r");
+        var leftFoot = FindBodyHandle(Bones.Foot.Left);
+        var rightFoot = FindBodyHandle(Bones.Foot.Right);
+        var pelvis = FindBodyHandle(Bones.Pelvis);
+        var chest = FindBodyHandle(Bones.Chest) ?? FindBodyHandle(Bones.MidSpine);
+        var leftKnee = FindBodyHandle(Bones.Shin.Left);
+        var rightKnee = FindBodyHandle(Bones.Shin.Right);
+        var leftThigh = FindBodyHandle(Bones.Thigh.Left);
+        var rightThigh = FindBodyHandle(Bones.Thigh.Right);
 
         if (!leftFoot.HasValue || !rightFoot.HasValue || !pelvis.HasValue || !chest.HasValue ||
             !leftKnee.HasValue || !rightKnee.HasValue || !leftThigh.HasValue || !rightThigh.HasValue)
@@ -9396,9 +9163,9 @@ public unsafe partial class RagdollController : IDisposable
 
         kneeLeftKneeStartTarget = Quaternion.Normalize(Quaternion.Inverse(leftKneeBody.Pose.Orientation) * leftThighBody.Pose.Orientation);
         kneeRightKneeStartTarget = Quaternion.Normalize(Quaternion.Inverse(rightKneeBody.Pose.Orientation) * rightThighBody.Pose.Orientation);
-        TryBuildLegAnatomyFrame("j_asi_a_l", "j_asi_b_l", "j_asi_d_l", "j_asi_e_l",
+        TryBuildLegAnatomyFrame(Bones.Thigh.Left, Bones.Shin.Left, Bones.Foot.Left, Bones.Toes.Left,
             leftKneeBody.Pose.Orientation, out var leftHingeAxis, out var leftHingeForward);
-        TryBuildLegAnatomyFrame("j_asi_a_r", "j_asi_b_r", "j_asi_d_r", "j_asi_e_r",
+        TryBuildLegAnatomyFrame(Bones.Thigh.Right, Bones.Shin.Right, Bones.Foot.Right, Bones.Toes.Right,
             rightKneeBody.Pose.Orientation, out var rightHingeAxis, out var rightHingeForward);
 
         var kneeSettings = EffectiveKneePowerLossSettings();
@@ -9410,8 +9177,8 @@ public unsafe partial class RagdollController : IDisposable
 
         log.Info($"RagdollController: knee power-loss axes L axis=({leftHingeAxis.X:F2},{leftHingeAxis.Y:F2},{leftHingeAxis.Z:F2}) fwd=({leftHingeForward.X:F2},{leftHingeForward.Y:F2},{leftHingeForward.Z:F2}); " +
                  $"R axis=({rightHingeAxis.X:F2},{rightHingeAxis.Y:F2},{rightHingeAxis.Z:F2}) fwd=({rightHingeForward.X:F2},{rightHingeForward.Y:F2},{rightHingeForward.Z:F2})");
-        LogLegAnatomyDiagnostics("L", "j_asi_a_l", "j_asi_b_l", "j_asi_d_l", "j_asi_e_l", leftHingeAxis, leftHingeForward);
-        LogLegAnatomyDiagnostics("R", "j_asi_a_r", "j_asi_b_r", "j_asi_d_r", "j_asi_e_r", rightHingeAxis, rightHingeForward);
+        LogLegAnatomyDiagnostics("L", Bones.Thigh.Left, Bones.Shin.Left, Bones.Foot.Left, Bones.Toes.Left, leftHingeAxis, leftHingeForward);
+        LogLegAnatomyDiagnostics("R", Bones.Thigh.Right, Bones.Shin.Right, Bones.Foot.Right, Bones.Toes.Right, rightHingeAxis, rightHingeForward);
 
         WakeRagdollBodiesForBiomechanicalSettle();
 
@@ -9465,14 +9232,14 @@ public unsafe partial class RagdollController : IDisposable
         kneePowerLossElapsed += dt;
         kneePowerLossPhaseElapsed += dt;
 
-        var pelvis = FindBodyHandle("j_kosi");
-        var chest = FindBodyHandle("j_sebo_c") ?? FindBodyHandle("j_sebo_b");
+        var pelvis = FindBodyHandle(Bones.Pelvis);
+        var chest = FindBodyHandle(Bones.Chest) ?? FindBodyHandle(Bones.MidSpine);
         if (!pelvis.HasValue || !chest.HasValue) { StopKneePowerLossPattern(); return; }
 
         var pelvisBody = simulation.Bodies.GetBodyReference(pelvis.Value);
         var pelvisDrop = MathF.Max(0f, kneePelvisStart.Y - pelvisBody.Pose.Position.Y);
         var kneeSettings = EffectiveKneePowerLossSettings();
-        var kneeNearGround = BoneHeight("j_asi_b_l") < groundY + 0.18f || BoneHeight("j_asi_b_r") < groundY + 0.18f;
+        var kneeNearGround = BoneHeight(Bones.Shin.Left) < groundY + 0.18f || BoneHeight(Bones.Shin.Right) < groundY + 0.18f;
         var minKneeAngle = MeasureCurrentKneePowerLossMinAngle();
         var forwardOffset = MeasureCurrentKneePowerLossForwardOffset();
 
@@ -9567,8 +9334,8 @@ public unsafe partial class RagdollController : IDisposable
     private void ApplyKneeLateralStability(float gain, float maxSpeed)
     {
         if (simulation == null || gain <= 0f) return;
-        var leftKnee = FindBodyHandle("j_asi_b_l");
-        var rightKnee = FindBodyHandle("j_asi_b_r");
+        var leftKnee = FindBodyHandle(Bones.Shin.Left);
+        var rightKnee = FindBodyHandle(Bones.Shin.Right);
         if (!leftKnee.HasValue || !rightKnee.HasValue) return;
 
         var lateral = FlatNormalize(kneeRight, Vector3.UnitX);
@@ -9611,8 +9378,8 @@ public unsafe partial class RagdollController : IDisposable
 
     private float MeasureCurrentKneePowerLossMinAngle()
     {
-        var left = MeasureLegBendAngle("j_asi_a_l", "j_asi_b_l", "j_asi_d_l", out _);
-        var right = MeasureLegBendAngle("j_asi_a_r", "j_asi_b_r", "j_asi_d_r", out _);
+        var left = MeasureLegBendAngle(Bones.Thigh.Left, Bones.Shin.Left, Bones.Foot.Left, out _);
+        var right = MeasureLegBendAngle(Bones.Thigh.Right, Bones.Shin.Right, Bones.Foot.Right, out _);
         if (left < 0f && right < 0f) return 0f;
         if (left < 0f) return right;
         if (right < 0f) return left;
@@ -9622,7 +9389,7 @@ public unsafe partial class RagdollController : IDisposable
     private float MeasureCurrentKneePowerLossForwardOffset()
     {
         if (simulation == null) return 0f;
-        var pelvis = FindBodyHandle("j_kosi");
+        var pelvis = FindBodyHandle(Bones.Pelvis);
         if (!pelvis.HasValue) return 0f;
 
         var pelvisPos = simulation.Bodies.GetBodyReference(pelvis.Value).Pose.Position;
@@ -9784,9 +9551,9 @@ public unsafe partial class RagdollController : IDisposable
 
     public bool IsStandingSupportActive => standingActive;
 
-    private static readonly string[] StandingSpineBones = { "j_sebo_a", "j_sebo_b", "j_sebo_c" };
+    private static ImmutableArray<string> StandingSpineBones => HumanoidSkeleton.StandingSupportSpine;
 
-    private bool CreateStandingSupportCore(Vector3 anchorWorldPos, Quaternion uprightRot, string anchorBoneName = "j_kosi")
+    private bool CreateStandingSupportCore(Vector3 anchorWorldPos, Quaternion uprightRot, string anchorBoneName = FfxivHumanoidProfile.PelvisBoneName)
     {
         if (simulation == null || !isActive || grabSlots.Count > 0) return false;
 
@@ -9806,7 +9573,7 @@ public unsafe partial class RagdollController : IDisposable
     }
 
     /// <summary>Swap the anchor bone/position while the support is already active, without re-waking bodies.</summary>
-    private bool UpdateStandingSupportCore(Vector3 anchorWorldPos, Quaternion uprightRot, string anchorBoneName = "j_kosi")
+    private bool UpdateStandingSupportCore(Vector3 anchorWorldPos, Quaternion uprightRot, string anchorBoneName = FfxivHumanoidProfile.PelvisBoneName)
     {
         if (!standingActive || simulation == null) return false;
 
@@ -9941,8 +9708,8 @@ public unsafe partial class RagdollController : IDisposable
 
         wristForce = force;
         wristFreq  = freq;
-        BuildWristConstraint("j_te_l", leftTarget);
-        BuildWristConstraint("j_te_r", rightTarget);
+        BuildWristConstraint(Bones.Hand.Left, leftTarget);
+        BuildWristConstraint(Bones.Hand.Right, rightTarget);
         BeginBiomechanicalSettle();
         return wristConstraints.Count > 0;
     }
@@ -9955,8 +9722,8 @@ public unsafe partial class RagdollController : IDisposable
             try { simulation.Solver.Remove(h); } catch { }
         wristConstraints.Clear();
 
-        BuildWristConstraint("j_te_l", leftTarget);
-        BuildWristConstraint("j_te_r", rightTarget);
+        BuildWristConstraint(Bones.Hand.Left, leftTarget);
+        BuildWristConstraint(Bones.Hand.Right, rightTarget);
         return true;
     }
 
@@ -10041,7 +9808,7 @@ public unsafe partial class RagdollController : IDisposable
     {
         var lever = MathF.Max(0.04f, bone.CapsuleHalfLength);
         var gravityTorque = MathF.Max(0.01f, bone.Mass) * RagdollTuning.Gravity * lever;
-        var fraction = bone.Name is "j_kubi" or "j_kao"
+        var fraction = bone.Name == Bones.Neck || bone.Name == Bones.Head
             ? HeadNeckJointFrictionFraction
             : JointFrictionFraction;
         return MathF.Max(0.05f, gravityTorque * fraction);
@@ -10844,9 +10611,9 @@ public unsafe partial class RagdollController : IDisposable
             if (preferredCorpseBody.HasValue && rb.BodyHandle.Value != preferredCorpseBody.Value.Value)
                 continue;
             if (rb.Mass < 0.45f ||
-                rb.Name.StartsWith("j_sk_", StringComparison.Ordinal) ||
-                rb.Name.StartsWith("j_mune", StringComparison.Ordinal) ||
-                rb.Name.StartsWith("j_buki", StringComparison.Ordinal))
+                BoneClasses.Cloth.Matches(rb.Name) ||
+                BoneClasses.SoftTissue.Matches(rb.Name) ||
+                BoneClasses.Weapon.Matches(rb.Name))
                 continue;
 
             var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
@@ -10915,64 +10682,23 @@ public unsafe partial class RagdollController : IDisposable
 
     private static bool IsTraversalSurfaceBone(RagdollBone rb)
         => rb.Mass >= 0.45f &&
-           !rb.Name.StartsWith("j_sk_", StringComparison.Ordinal) &&
-           !rb.Name.StartsWith("j_mune", StringComparison.Ordinal) &&
-           !rb.Name.StartsWith("j_buki", StringComparison.Ordinal);
+           !BoneClasses.Cloth.Matches(rb.Name) &&
+           !BoneClasses.SoftTissue.Matches(rb.Name) &&
+           !BoneClasses.Weapon.Matches(rb.Name);
 
-    // Navigation landmarks are deliberately semantic rather than a second copy of the collider
-    // list.  A nearest-collider search tends to collapse onto the large skirt/torso volumes and
-    // gives the swarm no recognizable pose to follow.  These bones describe stable, readable
-    // parts of a humanoid pose.  Mod-specific soft bones may be used as X/Z landmarks, but they
-    // are never promoted to traversal surfaces by IsTraversalSurfaceBone.
-    private static readonly (string Bone, string Label, float Weight, float WanderRadius)[] CorpseTraversalLandmarks =
-    {
-        // Chest and abdomen dominate automatic stomp selection.
-        ("j_mune_l", "chest L", 13f, 0.10f), ("j_mune_r", "chest R", 13f, 0.10f),
-        ("iv_c_mune_l", "chest L", 13f, 0.09f), ("iv_c_mune_r", "chest R", 13f, 0.09f),
-        ("n_hara", "abdomen", 16f, 0.13f),
-        ("iv_fukubu_phys_r", "abdomen", 15f, 0.10f), ("ya_fukubu_phys", "abdomen", 15f, 0.10f),
-        // Pelvis, buttocks and groin are the other high-priority load-bearing landmarks.
-        ("j_kosi", "pelvis", 15f, 0.12f),
-        ("iv_shiri_l", "buttock L", 13f, 0.10f), ("iv_shiri_r", "buttock R", 13f, 0.10f),
-        ("iv_inshin_l", "groin L", 12f, 0.07f), ("iv_inshin_r", "groin R", 12f, 0.07f),
-        ("iv_kougan_l", "groin L", 11f, 0.06f), ("iv_kougan_r", "groin R", 11f, 0.06f),
-        ("iv_omanko", "groin", 12f, 0.06f),
-        // Armpit/shoulder landmarks have medium priority.
-        ("j_sako_l", "armpit L", 7f, 0.075f), ("j_sako_r", "armpit R", 7f, 0.075f),
-        ("n_hkata_l", "armpit L", 6f, 0.07f), ("n_hkata_r", "armpit R", 6f, 0.07f),
-        // Extremities are valid but intentionally much less likely than the torso.
-        ("j_te_l", "hand L", 1.6f, 0.055f), ("j_te_r", "hand R", 1.6f, 0.055f),
-        ("j_asi_e_l", "foot L", 1.8f, 0.06f), ("j_asi_e_r", "foot R", 1.8f, 0.06f),
-    };
+    // Navigation landmarks (where walkers aim on a lying body) are profile data: semantic, readable
+    // parts of a humanoid pose rather than a second copy of the collider list. See
+    // SkeletonProfile.StompLandmarks; mod-specific soft bones there are never promoted to traversal
+    // surfaces by IsTraversalSurfaceBone.
+    private static ImmutableArray<StompLandmark> CorpseTraversalLandmarks => HumanoidSkeleton.StompLandmarks;
 
+    // Face bones are classified (eye / nose / mouth) and ranked by the words they are named with:
+    // profile data (SkeletonProfile.FaceLandmarks).
     private static int FaceLandmarkCategory(string boneName)
-    {
-        var name = boneName.ToLowerInvariant();
-        if (name.Contains("ear") || name.Contains("mimi"))
-            return -1;
-
-        if (name.Contains("lash") || name.Contains("matuge") || name.Contains("mabuta") ||
-            name.Contains("eyelid"))
-        {
-            if (name.EndsWith("_l", StringComparison.Ordinal) || name.Contains("left")) return 0;
-            if (name.EndsWith("_r", StringComparison.Ordinal) || name.Contains("right")) return 1;
-        }
-        if (name.Contains("nose") || name.Contains("hana")) return 2;
-        if (name.Contains("mouth") || name.Contains("lip") || name.Contains("kuchi") ||
-            name.Contains("kuti")) return 3;
-        return -1;
-    }
+        => HumanoidSkeleton.FaceLandmarks.Category(boneName);
 
     private static int FaceLandmarkSpecificity(string boneName)
-    {
-        var name = boneName.ToLowerInvariant();
-        if (name.Contains("lash") || name.Contains("matuge")) return 4;
-        if (name.Contains("mabuta") || name.Contains("eyelid")) return 3;
-        if (name.Contains("nose") || name.Contains("hana")) return 3;
-        if (name.Contains("mouth") || name.Contains("kuchi") || name.Contains("kuti")) return 3;
-        if (name.Contains("lip")) return 2;
-        return 1;
-    }
+        => HumanoidSkeleton.FaceLandmarks.SpecificityOf(boneName);
 
     private void CaptureFaceTraversalLandmarks(ISkeletonPose skeleton)
     {
@@ -10983,7 +10709,7 @@ public unsafe partial class RagdollController : IDisposable
         RagdollBone? headBone = null;
         foreach (var bone in ragdollBones)
         {
-            if (!bone.Name.Equals("j_kao", StringComparison.Ordinal))
+            if (!bone.Name.Equals(Bones.Head, StringComparison.Ordinal))
                 continue;
             headBone = bone;
             break;
@@ -11162,7 +10888,7 @@ public unsafe partial class RagdollController : IDisposable
         RagdollBone? faceSupportBone = null;
         foreach (var bone in ragdollBones)
         {
-            if (!bone.Name.Equals("j_kao", StringComparison.Ordinal))
+            if (!bone.Name.Equals(Bones.Head, StringComparison.Ordinal))
                 continue;
             faceSupportBone = bone;
             break;
@@ -11193,7 +10919,7 @@ public unsafe partial class RagdollController : IDisposable
         {
             foreach (var bone in ragdollBones)
             {
-                if (!bone.Name.Equals("j_kao", StringComparison.Ordinal))
+                if (!bone.Name.Equals(Bones.Head, StringComparison.Ordinal))
                     continue;
                 var body = simulation.Bodies.GetBodyReference(bone.BodyHandle);
                 var profileOrigin = body.Pose.Position -
@@ -11250,9 +10976,9 @@ public unsafe partial class RagdollController : IDisposable
         foreach (var rb in ragdollBones)
         {
             if (rb.Mass < 0.45f ||
-                rb.Name.StartsWith("j_sk_", StringComparison.Ordinal) ||
-                rb.Name.StartsWith("j_mune", StringComparison.Ordinal) ||
-                rb.Name.StartsWith("j_buki", StringComparison.Ordinal))
+                BoneClasses.Cloth.Matches(rb.Name) ||
+                BoneClasses.SoftTissue.Matches(rb.Name) ||
+                BoneClasses.Weapon.Matches(rb.Name))
                 continue;
 
             var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
@@ -11800,7 +11526,7 @@ public unsafe partial class RagdollController : IDisposable
     private void ApplyShakeCore(float intensity)
     {
         if (simulation == null || !isActive) return;
-        var handle = FindBodyHandle("j_kosi");
+        var handle = FindBodyHandle(Bones.Pelvis);
         if (!handle.HasValue) return;
         var angle = (float)(random.NextDouble(RandomSite.ApplyShake) * MathF.PI * 2f);
         var impulse = new Vector3(MathF.Cos(angle) * intensity, 0f, MathF.Sin(angle) * intensity);

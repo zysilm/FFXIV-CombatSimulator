@@ -1627,7 +1627,7 @@ public unsafe partial class RagdollController
         finally { RecLeave(); }
     }
 
-    public bool CreateStandingSupport(Vector3 anchorWorldPos, Quaternion uprightRot, string anchorBoneName = "j_kosi")
+    public bool CreateStandingSupport(Vector3 anchorWorldPos, Quaternion uprightRot, string anchorBoneName = FfxivHumanoidProfile.PelvisBoneName)
     {
         var w = rec;
         if (w == null) return CreateStandingSupportCore(anchorWorldPos, uprightRot, anchorBoneName);
@@ -1637,7 +1637,7 @@ public unsafe partial class RagdollController
         finally { RecLeave(); }
     }
 
-    public bool UpdateStandingSupport(Vector3 anchorWorldPos, Quaternion uprightRot, string anchorBoneName = "j_kosi")
+    public bool UpdateStandingSupport(Vector3 anchorWorldPos, Quaternion uprightRot, string anchorBoneName = FfxivHumanoidProfile.PelvisBoneName)
     {
         var w = rec;
         if (w == null) return UpdateStandingSupportCore(anchorWorldPos, uprightRot, anchorBoneName);
