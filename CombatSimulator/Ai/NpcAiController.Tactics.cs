@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using CombatSimulator.Combat;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
 
@@ -97,7 +98,7 @@ public unsafe partial class NpcAiController
     private const float ChargeStopDistance = 8f;
     private const float ChargeSpeedScale = 1.8f;
 
-    private const float BaseTurnRate = 5.0f;
+    // Turn rate: MovePolicy.Enemy (5 rad/s, slower when big with enhanced tactics on).
 
     /// <summary>
     /// Once per frame: every enemy that has just entered the fight wakes idle allies within its aggro
@@ -344,7 +345,7 @@ public unsafe partial class NpcAiController
         if (npc.Behavior.AutoAttackStyle == NpcAttackStyle.Ranged)
             return false;
         foreach (var skill in npc.Behavior.Skills)
-            if (skill.Range > MeleeReachLimit)
+            if (skill.Range > CombatantMath.MeleeReachLimit)
                 return false;
         return true;
     }
@@ -476,9 +477,7 @@ public unsafe partial class NpcAiController
 
     /// <summary>Facing turn rate (rad/s): slower for big bodies with heavy turning enabled.</summary>
     private float NpcTurnRate(SimulatedNpc npc)
-        => config.EnhancedEnemyTactics
-            ? EnemyMovementMath.TurnRate(BaseTurnRate, npc.HitboxRadius)
-            : BaseTurnRate;
+        => CombatantMath.TurnRate(MovePolicy.Enemy, config.EnhancedEnemyTactics, npc.HitboxRadius);
 
     private EnemyTacticsState Tactics(SimulatedNpc npc)
     {

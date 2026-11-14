@@ -5,6 +5,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using CombatSimulator.Combat;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
@@ -15,52 +16,23 @@ namespace CombatSimulator.Companions;
 /// Who fights whom, for both sides, by chance: each fighter draws its target at random, weighted by
 /// threat and the situation, and keeps it a few seconds; it draws again only when something happens
 /// (its target falls, its time is up, someone new hits it, the lord's focus or the body's holder
-/// changes). The same weights for allies and enemies. Tuned and checked offline in Tests/TargetingSim
-/// (WeightedCalm, with the guards' weight on seizers raised to x30: 100 seeds, field battle as before,
-/// guarding the lord's body 45% won against 39% for the old fixed choice, 3.7 target switches a
-/// minute against 20.9).
+/// changes). The same weights for allies and enemies; the weights, the draw and the hold are
+/// <see cref="AggroModel"/>'s, the situation multipliers are applied here. Tuned and checked offline
+/// in Tests/TargetingSim (which links AggroModel; with the guards' weight on seizers raised to x30:
+/// 100 seeds, field battle as before, guarding the lord's body 45% won against 39% for the old fixed
+/// choice, 3.7 target switches a minute against 20.9).
 /// </summary>
 public unsafe partial class CombatCompanionManager
 {
-    // How long a drawn target is kept, and the shortest hold before being hit by someone new may
-    // trigger a new draw; "someone new" is anyone who had not hit it in this window.
-    private const float AggroDwellMin = 4f;
-    private const float AggroDwellMax = 8f;
-    private const float AggroHitHold = 2.5f;
-    private const float NewAttackerWindow = 5f;
-
-    // w = (floor + gain * share^2) / crowding / distance * finish * mutual * sticky * situation.
-    private const float ThreatFloor = 0.25f;
-    private const float ThreatGain = 1.5f;
-    // Crowding: others of my kind (melee or ranged) on it count fully, the other kind half.
-    private const float CrowdK = 4f;
-    private const float AggroDistanceScale = 10f;
-    private const float FinishGain = 0.5f;
-    private const float MutualGain = 1.5f;
-    private const float StickyGain = 6f;
-    private const float FocusGain = 2f;
-    private const float AttackingPlayerGain = 1.5f;
-    // Enemies going for the lord's body on whoever holds it.
-    private const float TaskGain = 100f;
-    // Guards of the body on the enemies going for it.
-    private const float GuardSeizerGain = 30f;
-    // Someone kneeling to raise or pray (x4 damage, not fighting back): an opening for the enemy, and
-    // a friend to cover for the allies (on the enemies hitting it).
-    private const float ExposedGain = 3f;
-    // An enemy a guard cannot reach without leaving the body.
-    private const float UnreachableGain = 0.05f;
-
-    private sealed class AggroState
-    {
-        public uint Target;
-        public float HeldSince;
-        public float DwellUntil;
-        public bool HitByNew;
-        public uint Focus;
-        public uint Holder;
-        public Random Rng = null!;
-        public readonly Dictionary<uint, float> LastHitBy = new();
-    }
+    // Situation multipliers (AggroModel): focus x2, attacking the player x1.5, the body's holder x100
+    // for those going for it, the seizers x30 for the guards, someone kneeling x3, out of a guard's
+    // reach x0.05.
+    private const float FocusGain = AggroModel.FocusGain;
+    private const float AttackingPlayerGain = AggroModel.AttackingPlayerGain;
+    private const float TaskGain = AggroModel.TaskGain;
+    private const float GuardSeizerGain = AggroModel.GuardSeizerGain;
+    private const float ExposedGain = AggroModel.ExposedGain;
+    private const float UnreachableGain = AggroModel.UnreachableGain;
 
     private readonly Dictionary<uint, AggroState> aggro = new();
     private readonly Dictionary<uint, (int Melee, int Ranged)> aggroCounts = new();
@@ -116,9 +88,7 @@ public unsafe partial class CombatCompanionManager
     {
         var state = AggroOf(victimId);
         var now = combatEngine.State.SimulationTime;
-        if (now - state.LastHitBy.GetValueOrDefault(sourceId, float.NegativeInfinity) > NewAttackerWindow && state.Target != sourceId)
-            state.HitByNew = true;
-        state.LastHitBy[sourceId] = now;
+        AggroModel.NoteHit(state, sourceId, now);
     }
 
     /// <summary>How many fighters, melee and ranged, are on each target now (both sides).</summary>
@@ -142,60 +112,22 @@ public unsafe partial class CombatCompanionManager
         }
     }
 
-    /// <summary>The weight shared by both sides; the situation multiplier is the caller's.</summary>
+    /// <summary>The weight shared by both sides (AggroModel.Weight); the situation multiplier is the caller's.</summary>
     private float AggroWeight(
         uint selfId, Vector3 selfPos, float selfReach, bool selfRanged, uint currentTarget,
         uint candidateId, Vector3 candidatePos, float candidateHpShare, uint candidateTarget)
     {
-        var share = 0f;
-        if (threatByEnemy.TryGetValue(selfId, out var table) && table.Count > 0)
-        {
-            var max = 0f;
-            foreach (var v in table.Values)
-                max = MathF.Max(max, v);
-            share = EnemyMovementMath.ThreatShare(table.GetValueOrDefault(candidateId), max);
-        }
-        var w = ThreatFloor + ThreatGain * share * share;
-
+        var share = AggroModel.ThreatShare(threatByEnemy.GetValueOrDefault(selfId), candidateId);
         var (melee, ranged) = aggroCounts.GetValueOrDefault(candidateId);
-        var same = (selfRanged ? ranged : melee) - (currentTarget == candidateId ? 1 : 0);
-        var other = selfRanged ? melee : ranged;
-        var crowd = MathF.Max(0f, same) + 0.5f * other;
-        w /= 1f + crowd * crowd / (CrowdK * CrowdK);
-
-        w /= 1f + MathF.Max(0f, FlatDistance(selfPos, candidatePos) - selfReach) / AggroDistanceScale;
-        w *= 1f + FinishGain * (1f - Math.Clamp(candidateHpShare, 0f, 1f));
-        if (candidateTarget == selfId)
-            w *= MutualGain;
-        if (candidateId == currentTarget)
-            w *= StickyGain;
-        return w;
+        return AggroModel.Weight(
+            new AggroModel.Self(selfId, selfPos, selfReach, selfRanged, currentTarget),
+            new AggroModel.Candidate(candidateId, candidatePos, candidateHpShare, candidateTarget),
+            share, melee, ranged);
     }
 
-    private uint DrawAggro(AggroState state)
-    {
-        var total = 0.0;
-        foreach (var (_, w) in aggroDraw)
-            total += w;
-        if (aggroDraw.Count == 0)
-            return 0;
-        var r = state.Rng.NextDouble() * total;
-        foreach (var (id, w) in aggroDraw)
-        {
-            r -= w;
-            if (r <= 0)
-                return id;
-        }
-        return aggroDraw[^1].Id;
-    }
+    private uint DrawAggro(AggroState state) => AggroModel.Draw(state, aggroDraw);
 
-    private void HoldAggro(AggroState state, uint target)
-    {
-        var now = combatEngine.State.SimulationTime;
-        state.Target = target;
-        state.HeldSince = now;
-        state.DwellUntil = now + AggroDwellMin + (float)state.Rng.NextDouble() * (AggroDwellMax - AggroDwellMin);
-    }
+    private void HoldAggro(AggroState state, uint target) => AggroModel.Hold(state, target, combatEngine.State.SimulationTime);
 
     /// <summary>Whether this friend is kneeling (raising someone, or praying over the lord): open to the enemy.</summary>
     private bool IsExposed(uint friendId)
@@ -215,11 +147,9 @@ public unsafe partial class CombatCompanionManager
         => friend.IsPlayer ? selectedFocusTargetId
             : GetCompanion(friend.EntityId)?.CurrentTargetId ?? 0;
 
-    private static float HpShare(SimulatedEntityState state)
-        => state.MaxHp > 0 ? (float)state.CurrentHp / state.MaxHp : 1f;
+    private static float HpShare(SimulatedEntityState state) => CombatantMath.HpShare(state);
 
-    private static float EnemyReach(SimulatedNpc enemy)
-        => enemy.Behavior.AutoAttackStyle == NpcAttackStyle.Ranged ? enemy.Behavior.AutoAttackRange : MathF.Max(3f, enemy.Behavior.AutoAttackRange);
+    private static float EnemyReach(SimulatedNpc enemy) => AggroModel.EnemyAggroReach(enemy.Behavior);
 
     /// <summary>
     /// An enemy's target among the candidates (the player's side, captives already left out unless
@@ -235,9 +165,7 @@ public unsafe partial class CombatCompanionManager
         var currentLive = candidates.Exists(c => c.EntityId == current);
         var holder = LordSeizerTarget(enemy)?.SimulatedEntityId ?? 0;
 
-        var due = !currentLive || now >= state.DwellUntil ||
-                  (state.HitByNew && now - state.HeldSince >= AggroHitHold) ||
-                  holder != state.Holder;
+        var due = AggroModel.IsDue(state, now, currentLive, holder != state.Holder);
         state.HitByNew = false;
         state.Holder = holder;
         if (!due)
@@ -275,9 +203,7 @@ public unsafe partial class CombatCompanionManager
         var current = companion.CurrentTargetId;
         var currentEnemy = current == 0 ? null : enemies.Find(e => e.SimulatedEntityId == current);
 
-        var due = currentEnemy == null || now >= state.DwellUntil ||
-                  (state.HitByNew && now - state.HeldSince >= AggroHitHold) ||
-                  selectedFocusTargetId != state.Focus;
+        var due = AggroModel.IsDue(state, now, currentEnemy != null, selectedFocusTargetId != state.Focus);
         state.HitByNew = false;
         state.Focus = selectedFocusTargetId;
         // Guarding the lord: a target that has gone out of the guard's reach is let go at once.

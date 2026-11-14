@@ -1,13 +1,18 @@
+using System.Numerics;
+using CombatSimulator.Combat;
 using CombatSimulator.Simulation;
 
 // Offline A/B of target selection for mass battles (20 allies + player vs 20 enemies).
-// Ports the scoring of CombatCompanionManager (enemy: ScoreEnemyTargetCandidate / SelectEnemyTargetInternal,
-// ally: ScoreCompanionTarget / SelectCompanionTarget, LordGuardScore / LordSeizerTarget) onto a 2D
-// point model with walk speed, reach, melee slots and auto-attacks, and compares it with probabilistic
-// candidates. Threat math is the production EnemyMovementMath (linked). See README.md.
+// Ports the old fixed scoring of CombatCompanionManager (enemy: ScoreEnemyTargetCandidate /
+// SelectEnemyTargetInternal, ally: ScoreCompanionTarget / SelectCompanionTarget, LordGuardScore /
+// LordSeizerTarget) onto a 2D point model with walk speed, reach, melee slots and auto-attacks, and
+// compares it with probabilistic candidates. The Production model is the plugin's own: the weights,
+// the draw, the hold, the due check and "hit by someone new" are the linked AggroModel, applied the way
+// CombatCompanionManager.Aggro.cs applies them. Threat math is the production EnemyMovementMath
+// (linked). See README.md.
 
 var seeds = args.Length > 0 && int.TryParse(args[0], out var s0) ? s0 : 40;
-var models = new[] { Model.Current, Model.CurrentNoOverride, Model.Softmax, Model.Weighted, Model.WeightedCalm };
+var models = new[] { Model.Current, Model.CurrentNoOverride, Model.Softmax, Model.Weighted, Model.Production };
 
 foreach (var scenario in new[] { Scenario.Open, Scenario.Protect })
 {
@@ -45,7 +50,7 @@ Console.WriteLine("win = allies' win rate; tWin over allied wins only. Values: m
 
 enum Side { Ally, Enemy }
 enum Role { Tank, Melee, Ranged, Player, Prayer }
-enum Model { Current, CurrentNoOverride, Softmax, Weighted, WeightedCalm }
+enum Model { Current, CurrentNoOverride, Softmax, Weighted, Production }
 enum Scenario { Open, Protect }
 
 sealed class Actor
@@ -61,6 +66,8 @@ sealed class Actor
     public float[] LastHitBy = Array.Empty<float>();
     public bool HitByNew;
     public Random Rng = null!;
+    /// <summary>Production model: the plugin's per-fighter state (its generator is <see cref="Rng"/>).</summary>
+    public AggroState Aggro = null!;
     public bool IsTank => Role == Role.Tank;
     public bool IsRanged => Role == Role.Ranged;
     public bool Fights => Role != Role.Prayer;
@@ -107,7 +114,7 @@ sealed class Sim
 
     // --- probabilistic candidates ---
     const float SoftmaxTemperature = 50f;
-    // Weighted defaults; WeightedCalm overrides some in the constructor.
+    // Weighted (the first, untuned candidate). The tuned values it led to are AggroModel's constants, used by Production.
     const float NewAttackerWindow = 5f;
     readonly float DwellMin = 3f, DwellMax = 6f, MinHoldForHitRedraw = 1.5f;
     const float ThreatFloor = 0.25f; readonly float ThreatGain = 1.5f;   // w_threat = floor + gain * share^2
@@ -115,7 +122,7 @@ sealed class Sim
     const float DistanceScale = 10f;                                     // w_dist = 1 / (1 + max(0, d - reach)/scale)
     const float FinishGain = 0.5f, MutualGain = 1.5f; readonly float StickyGain = 2f;
     const float FocusGain = 2f, AttackingPlayerGain = 1.5f; readonly float GuardSeizerGain = 3f, TaskGain = 12f;
-    bool Probabilistic => model is Model.Softmax or Model.Weighted or Model.WeightedCalm;
+    bool Probabilistic => model is Model.Softmax or Model.Weighted or Model.Production;
 
     readonly Model model;
     readonly Scenario scenario;
@@ -135,15 +142,12 @@ sealed class Sim
     {
         this.model = model;
         this.scenario = scenario;
-        if (model == Model.WeightedCalm)
-        {
-            DwellMin = 4f; DwellMax = 8f; MinHoldForHitRedraw = 2.5f;
-            StickyGain = 6f; ThreatGain = 1.5f; CrowdK = 4f; TaskGain = 100f; // task sweep: 25->46%, 50->59%, 100->73%, 200->80% seizers on the prayer
-            // Guards on seizers. Sweep over 100 seeds (guarding win rate): x3 29%, x10 42%, x30 45%, x100 50%;
-            // the fixed choice it replaces won 39%. x30 is what the plugin uses (CombatCompanionManager.Aggro.cs).
-            GuardSeizerGain = 30f;
-        }
-        // Tuning hook: TS_STICKY=4 TS_TASK=25 ... override the probabilistic parameters for every probabilistic model.
+        // The tuning that led to the production constants (the old WeightedCalm model, now AggroModel): dwell 4-8 s,
+        // hit hold 2.5 s, sticky x6, threat gain 1.5, crowd K 4, task x100 (sweep: 25->46%, 50->59%, 100->73%, 200->80%
+        // seizers on the prayer), guards on seizers x30 (sweep over 100 seeds, guarding win rate: x3 29%, x10 42%,
+        // x30 45%, x100 50%; the fixed choice it replaced won 39%).
+        // Tuning hook: TS_STICKY=4 TS_TASK=25 ... override the parameters of Softmax and Weighted (not Production,
+        // which is the plugin's code as it is).
         static float Env(string name, float fallback)
             => float.TryParse(Environment.GetEnvironmentVariable(name), System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : fallback;
         DwellMin = Env("TS_DWELLMIN", DwellMin); DwellMax = Env("TS_DWELLMAX", DwellMax); MinHoldForHitRedraw = Env("TS_HITHOLD", MinHoldForHitRedraw);
@@ -198,6 +202,7 @@ sealed class Sim
             // Per-actor stream so draws do not depend on iteration order. Not HashCode.Combine: it is
             // salted per process, which made runs irreproducible.
             x.Rng = new Random((int)Mix((uint)seed * 0x9E3779B9u ^ (uint)x.Id));
+            x.Aggro = new AggroState { Rng = x.Rng };
         }
     }
 
@@ -333,6 +338,12 @@ sealed class Sim
                 SetTarget(e, SelectEnemyCurrent(e, ePressure, holder));
                 if (e.Target >= 0) ePressure[e.Target * 2 + (e.IsRanged ? 1 : 0)]++;
             }
+            return;
+        }
+
+        if (model == Model.Production)
+        {
+            SelectProduction(holder, focus);
             return;
         }
 
@@ -561,6 +572,109 @@ sealed class Sim
         return w;
     }
 
+    // --- Production: CombatCompanionManager.Tick's two passes with the linked AggroModel ---
+    static uint Uid(int id) => id < 0 ? 0u : (uint)id + 1;
+    static Vector3 Pos(Actor x) => new(x.X, 0f, x.Z);
+
+    /// <summary>
+    /// CombatCompanionManager.Tick: allies first, each looking only when it has no live target or its
+    /// 0.25 s (+ id stagger) is up (AssignCompanionTarget), then every enemy every frame
+    /// (SelectEnemyTargetInternal -> DrawEnemyTarget).
+    /// </summary>
+    void SelectProduction(int holder, int focus)
+    {
+        foreach (var c in a)
+        {
+            if (!c.Alive || !c.IsCompanion || !c.Fights) continue;
+            if (!Live(c.Target) || t >= c.NextSelectAt)
+            {
+                DrawProduction(c, holder, focus);
+                c.NextSelectAt = t + 0.25f + (c.Id % 8) * 0.02f;
+            }
+        }
+        foreach (var e in a)
+            if (e.Alive && e.Side == Side.Enemy)
+                DrawProduction(e, holder, focus);
+    }
+
+    /// <summary>DrawEnemyTarget / DrawCompanionTarget (CombatCompanionManager.Aggro.cs).</summary>
+    void DrawProduction(Actor x, int holder, int focus)
+    {
+        var s = x.Aggro;
+        var cands = Candidates(x).ToList();
+        if (cands.Count == 0)
+        {
+            // No candidate: the enemy gets no target; the ally's target is cleared (SelectCompanionTarget -> null).
+            SetTarget(x, -1);
+            return;
+        }
+        var currentLive = Live(x.Target) && cands.Exists(c => c.Id == x.Target);
+        bool due;
+        // LordSeizerTarget: only those going for the body have a holder.
+        var holderId = x.Side == Side.Enemy && x.Seizer ? Uid(holder) : 0u;
+        var focusId = Live(focus) ? Uid(focus) : 0u;
+        if (x.Side == Side.Enemy)
+        {
+            due = AggroModel.IsDue(s, t, currentLive, holderId != s.Holder);
+            s.HitByNew = false;
+            s.Holder = holderId;
+        }
+        else
+        {
+            due = AggroModel.IsDue(s, t, currentLive, focusId != s.Focus);
+            s.HitByNew = false;
+            s.Focus = focusId;
+        }
+        if (!due)
+            return;
+
+        var counts = ProductionCounts();
+        var self = new AggroModel.Self(Uid(x.Id), Pos(x), x.Reach, x.IsRanged, currentLive ? Uid(x.Target) : 0u);
+        var max = 0f;
+        for (var k = 0; k < n; k++) max = MathF.Max(max, threat[x.Id * n + k]);
+        var weights = new List<(uint Id, float Weight)>(cands.Count);
+        foreach (var c in cands)
+        {
+            var share = EnemyMovementMath.ThreatShare(threat[x.Id * n + c.Id], max);
+            var cand = new AggroModel.Candidate(Uid(c.Id), Pos(c), c.Hp / c.MaxHp, Uid(c.Target));
+            var w = AggroModel.Weight(self, cand, share, counts[c.Id * 2], counts[c.Id * 2 + 1]);
+            if (x.Side == Side.Enemy)
+            {
+                if (Uid(c.Id) == holderId) w *= AggroModel.TaskGain;
+                if (IsExposed(c.Id)) w *= AggroModel.ExposedGain;
+            }
+            else
+            {
+                if (focusId != 0 && Uid(c.Id) == focusId) w *= AggroModel.FocusGain;
+                if (c.Target == player && a[player].Alive) w *= AggroModel.AttackingPlayerGain;
+                if (IsExposed(c.Target)) w *= AggroModel.ExposedGain;
+                if (scenario == Scenario.Protect)
+                {
+                    if (c.Seizer) w *= AggroModel.GuardSeizerGain;
+                    w *= 1f + Math.Clamp(1f - DistToBody(c) / NearBodyTargetReach, 0f, 1f);
+                    // (Out of a guard's reach: left out of the candidates here, x0.05 in the plugin.)
+                }
+            }
+            weights.Add((Uid(c.Id), w));
+        }
+        var drawn = AggroModel.Draw(s, weights);
+        AggroModel.Hold(s, drawn, t);
+        SetTarget(x, (int)drawn - 1);
+    }
+
+    /// <summary>IsExposed: the one praying over the body (always at its post here); nobody raises in this model.</summary>
+    bool IsExposed(int id) => id >= 0 && id == prayer && Live(prayer);
+
+    /// <summary>CountAggro: [target*2 + ranged] over living enemies and companions with a target (the player is not counted).</summary>
+    int[] ProductionCounts()
+    {
+        var counts = new int[n * 2];
+        foreach (var x in a)
+            if (x.Alive && x.Fights && x.Role != Role.Player && x.Target >= 0)
+                counts[x.Target * 2 + (x.IsRanged ? 1 : 0)]++;
+        return counts;
+    }
+
     static int Roulette(Random rng, float[] w)
     {
         var total = 0.0;
@@ -633,8 +747,13 @@ sealed class Sim
             v.Hp -= dmg;
             v.EverDamaged = true;
             threat[v.Id * n + x.Id] += EnemyMovementMath.HitThreat((int)dmg, x.IsTank);
-            if (t - v.LastHitBy[x.Id] > NewAttackerWindow && v.Target != x.Id) v.HitByNew = true;
-            v.LastHitBy[x.Id] = t;
+            if (model == Model.Production)
+                AggroModel.NoteHit(v.Aggro, Uid(x.Id), t);
+            else
+            {
+                if (t - v.LastHitBy[x.Id] > NewAttackerWindow && v.Target != x.Id) v.HitByNew = true;
+                v.LastHitBy[x.Id] = t;
+            }
             if (x.Side == Side.Enemy)
             {
                 enemyDmg += dmg;

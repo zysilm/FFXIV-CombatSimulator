@@ -10,6 +10,7 @@ using System.Numerics;
 using System.Text;
 using System.Threading.Tasks;
 using CombatSimulator.Animation;
+using CombatSimulator.Combat;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
@@ -457,8 +458,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         return DrawEnemyTarget(enemy, candidates);
     }
 
-    private static bool IsRangedStyle(NpcAttackStyle style)
-        => style is NpcAttackStyle.Ranged or NpcAttackStyle.Magic;
+    private static bool IsRangedStyle(NpcAttackStyle style) => AggroModel.IsRangedStyle(style);
 
     public CombatCompanion? GetCompanion(uint entityId)
         => companions.FirstOrDefault(c => c.SimulatedEntityId == entityId);
@@ -964,7 +964,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
                 continue;
             // A skill costs MP as it does an enemy: a share of the companion's own pool. Out of MP,
             // it auto-attacks until it has earned enough back.
-            var mpCost = CombatBudgetModel.EnemySkillMpCost(combatEngine.GetActionData(skill.ActionId)?.MpCost ?? 0, companion.State.MaxMp);
+            var mpCost = CombatantMath.SkillMpCost(MpPriceOf(skill.ActionId), companion.State.MaxMp);
             if (companion.State.CurrentMp < mpCost)
                 continue;
 
@@ -985,7 +985,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         if (companion.AutoAttackTimer <= 0)
         {
             // A caster's auto-attack is a melee swing, as an enemy's: held until it is in melee.
-            if (companion.Behavior.AutoAttackStyle == NpcAttackStyle.Magic && dist > CrowdMagicAutoReach)
+            if (companion.Behavior.AutoAttackStyle == NpcAttackStyle.Magic && dist > CombatantMath.MagicAutoReach(ReachPolicy.Ally, default))
                 return;
             companion.AutoAttackTimer = companion.Behavior.AutoAttackDelay / ActionPace();
             var result = combatEngine.ProcessCompanionAction(
@@ -1005,7 +1005,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
     }
 
     // Companions keep pace with Action Mode's faster combat (same multiplier as enemies).
-    private float ActionPace() => config.ActionMode ? Math.Max(0.1f, config.ActionEnemyAttackSpeed) : 1f;
+    private float ActionPace() => CombatantMath.ActionPace(config.ActionMode, config.ActionEnemyAttackSpeed);
 
     private static void TickCompanionActionTimers(CombatCompanion companion, float deltaTime)
     {
@@ -1133,12 +1133,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         RotateToward(companion, player.Position, deltaTime);
     }
 
-    private static float FlatDistance(Vector3 a, Vector3 b)
-    {
-        var delta = a - b;
-        delta.Y = 0;
-        return delta.Length();
-    }
+    private static float FlatDistance(Vector3 a, Vector3 b) => CombatantMath.FlatDistance(a, b);
 
     private SimulatedNpc? SelectCompanionTarget(CombatCompanion companion, IReadOnlyList<SimulatedNpc> enemies)
     {
@@ -1387,19 +1382,9 @@ public unsafe partial class CombatCompanionManager : IDisposable
     private void RotateToward(CombatCompanion companion, Vector3 targetPos, float deltaTime)
     {
         var obj = (GameObject*)companion.BattleChara;
-        var pos = (Vector3)obj->Position;
-        var dir = targetPos - pos;
-        if (dir.LengthSquared() < 0.001f)
+        if (!CombatantMath.TurnToward((Vector3)obj->Position, obj->Rotation, targetPos,
+                CombatantMath.TurnRate(MovePolicy.Ally, false, 0f), deltaTime, out var nextRot))
             return;
-
-        var targetRot = MathF.Atan2(dir.X, dir.Z);
-        var currentRot = obj->Rotation;
-        var diff = targetRot - currentRot;
-        while (diff > MathF.PI) diff -= 2 * MathF.PI;
-        while (diff < -MathF.PI) diff += 2 * MathF.PI;
-
-        var rotStep = 6.0f * deltaTime;
-        var nextRot = MathF.Abs(diff) < rotStep ? targetRot : currentRot + MathF.Sign(diff) * rotStep;
         movementBlockHook.SetApproachRotation(obj, nextRot);
     }
 
