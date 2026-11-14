@@ -54,11 +54,11 @@ public unsafe partial class CombatCompanionManager
     private ushort prayerLoop;
     private bool lordFallHandled;
 
-    private bool WarringStates => config.WarFallenRule == (int)WarFallenRule.WarringStates;
-
-    /// <summary>Whether the lord has fallen and the retainers are retreating with the body.</summary>
-    public bool GuardingLord
-        => WarringStates && config.WarRetreat && combatEngine.IsActive && !combatEngine.State.PlayerState.IsAlive;
+    /// <summary>
+    /// The war-rule switches as named queries (docs/PLUGIN_ARCHITECTURE.md §5.3); the lord's body is
+    /// guarded while <see cref="Battle.BattleRules.LordBodyIsGuarded"/>.
+    /// </summary>
+    private Battle.BattleRules Rules => combatEngine.Rules;
 
     /// <summary>Whether a retainer is left who can stand before the lord's body (alive, not captive).</summary>
     public bool HasRetainer
@@ -92,7 +92,7 @@ public unsafe partial class CombatCompanionManager
 
     private void TickLord()
     {
-        var lordDown = WarringStates && combatEngine.IsActive && !combatEngine.State.PlayerState.IsAlive;
+        var lordDown = Rules.LordIsDown;
         if (!lordDown)
         {
             lordFallHandled = false;
@@ -103,7 +103,7 @@ public unsafe partial class CombatCompanionManager
         if (!lordFallHandled)
         {
             lordFallHandled = true;
-            if (!config.WarRetreat)
+            if (!Rules.RetainersRetreatWithTheBody)
             {
                 // No retreat: every retainer left is taken, to be executed.
                 foreach (var companion in companions)
@@ -114,7 +114,7 @@ public unsafe partial class CombatCompanionManager
             combatEngine.AddLogEntry("The lord has fallen! The retainers fall back to guard the body.", CombatLogType.Death);
         }
 
-        if (!config.WarRetreat)
+        if (!Rules.RetainersRetreatWithTheBody)
         {
             ReleasePrayer();
             return;
@@ -243,7 +243,7 @@ public unsafe partial class CombatCompanionManager
     /// </summary>
     private CombatCompanion? LordSeizerTarget(Npcs.SimulatedNpc enemy)
     {
-        if (!GuardingLord || !LordSeizers.Contains(enemy.SimulatedEntityId) || !TryGetLordBody(out var body, out _))
+        if (!Rules.LordBodyIsGuarded || !LordSeizers.Contains(enemy.SimulatedEntityId) || !TryGetLordBody(out var body, out _))
             return null;
         // Only those at the body stand in a seizer's way; a retainer far off is left to the ordinary
         // choice (or a ranged seizer would stop to shoot it while the body lay open).
@@ -353,7 +353,7 @@ public unsafe partial class CombatCompanionManager
             return "Praying";
         if (IsRescuing(state.EntityId))
             return "Raising";
-        if (GuardingLord)
+        if (Rules.LordBodyIsGuarded)
             return "Guarding";
         return "Fighting";
     }

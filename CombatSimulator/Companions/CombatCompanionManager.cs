@@ -10,6 +10,7 @@ using System.Numerics;
 using System.Text;
 using System.Threading.Tasks;
 using CombatSimulator.Animation;
+using CombatSimulator.Combat;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
@@ -38,10 +39,8 @@ public unsafe partial class CombatCompanionManager : IDisposable
     private readonly List<PendingSpawn> pendingSpawns = new();
     private readonly ConcurrentQueue<CompanionSpawnSource> spawnQueue = new();
     private readonly HashSet<int> allocatedIndices = new();
-    private readonly Dictionary<uint, uint> enemyTargetByEnemyId = new();
-    // Threat table of every fighter, both sides: victim id -> (attacker id -> decaying threat). Who
-    // fights whom is drawn from it (CombatCompanionManager.Aggro.cs).
-    private readonly Dictionary<uint, Dictionary<uint, float>> threatByEnemy = new();
+    // Who fights whom: threat tables, draw states and the enemies' current targets (both sides).
+    private readonly TargetingService targeting;
     private uint nextEntityId = 0xF1000001;
 
 
@@ -133,6 +132,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         this.clientState = clientState;
         this.config = config;
         this.combatEngine = combatEngine;
+        targeting = new TargetingService(() => this.combatEngine.State.SimulationTime);
         this.animationController = animationController;
         this.movementBlockHook = movementBlockHook;
         this.targetManager = targetManager;
@@ -304,9 +304,9 @@ public unsafe partial class CombatCompanionManager : IDisposable
             return;
 
         TickSensing(deltaTime);
-        DecayThreat(deltaTime);
+        targeting.DecayThreat(deltaTime);
 
-        aggroEnemies = enemies;
+        targeting.TrackEnemies(enemies);
         TickCombatAnchor(enemies);
         UpdateFocusTarget(enemies);
 
@@ -371,30 +371,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
     public void RegisterPlayerDamage(uint targetId, int damage)
     {
         RegisterPlayerDamage(damage);
-        AddThreat(targetId, combatEngine.State.PlayerState.EntityId, damage, combatEngine.State.PlayerState.IsTank);
-    }
-
-    private void AddThreat(uint enemyId, uint sourceId, int damage, bool isTank)
-    {
-        if (enemyId == 0 || sourceId == 0 || damage <= 0)
-            return;
-        NoteHit(enemyId, sourceId);
-
-        if (!threatByEnemy.TryGetValue(enemyId, out var table))
-            threatByEnemy[enemyId] = table = new Dictionary<uint, float>();
-        table[sourceId] = table.GetValueOrDefault(sourceId) + EnemyMovementMath.HitThreat(damage, isTank);
-    }
-
-    private void DecayThreat(float deltaTime)
-    {
-        if (threatByEnemy.Count == 0)
-            return;
-
-        foreach (var table in threatByEnemy.Values)
-        {
-            foreach (var key in table.Keys.ToList())
-                table[key] = EnemyMovementMath.DecayThreat(table[key], deltaTime);
-        }
+        targeting.AddThreat(targetId, combatEngine.State.PlayerState.EntityId, damage, combatEngine.State.PlayerState.IsTank);
     }
 
     /// <summary>
@@ -406,7 +383,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
     public SimulatedEntityState? SelectEnemyTarget(SimulatedNpc enemy)
     {
         if (config.EnableCombatCompanions &&
-            enemyTargetByEnemyId.TryGetValue(enemy.SimulatedEntityId, out var currentId) &&
+            targeting.TryGetEnemyTarget(enemy.SimulatedEntityId, out var currentId) &&
             ResolveTargetState(currentId) is { IsAlive: true } current)
             return current;
 
@@ -457,8 +434,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         return DrawEnemyTarget(enemy, candidates);
     }
 
-    private static bool IsRangedStyle(NpcAttackStyle style)
-        => style is NpcAttackStyle.Ranged or NpcAttackStyle.Magic;
+    private static bool IsRangedStyle(NpcAttackStyle style) => AggroModel.IsRangedStyle(style);
 
     public CombatCompanion? GetCompanion(uint entityId)
         => companions.FirstOrDefault(c => c.SimulatedEntityId == entityId);
@@ -467,12 +443,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         => GetCompanion(entityId)?.Address;
 
     public void ForceEnemyTarget(uint enemyId, uint targetId)
-    {
-        if (targetId == 0)
-            enemyTargetByEnemyId.Remove(enemyId);
-        else
-            enemyTargetByEnemyId[enemyId] = targetId;
-    }
+        => targeting.ForceEnemyTarget(enemyId, targetId);
 
     /// <summary>
     /// Combat reset while keeping companions: revive + heal each one and clear its
@@ -480,9 +451,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
     /// </summary>
     public void ResetForCombatReset()
     {
-        enemyTargetByEnemyId.Clear();
-        threatByEnemy.Clear();
-        ClearAggro();
+        targeting.Reset();
         playerRecentDamage = 0;
         playerRecentDps = 0;
         selectedFocusTargetId = 0;
@@ -544,9 +513,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         prayerId = 0;
         prayerAtPost = false;
         lordFallHandled = false;
-        enemyTargetByEnemyId.Clear();
-        threatByEnemy.Clear();
-        ClearAggro();
+        targeting.Reset();
         playerRecentDamage = 0;
         playerRecentDps = 0;
         selectedFocusTargetId = 0;
@@ -911,7 +878,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
 
         // Only guarding the lord's body holds an ally to one place; otherwise it fights wherever the
         // fight goes.
-        if (GuardingLord && !IsWithinCommandRange(companion))
+        if (Rules.LordBodyIsGuarded && !IsWithinCommandRange(companion))
         {
             NoteActivity(ActivityReturning);
             ClearCompanionActionState(companion);
@@ -964,7 +931,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
                 continue;
             // A skill costs MP as it does an enemy: a share of the companion's own pool. Out of MP,
             // it auto-attacks until it has earned enough back.
-            var mpCost = CombatBudgetModel.EnemySkillMpCost(combatEngine.GetActionData(skill.ActionId)?.MpCost ?? 0, companion.State.MaxMp);
+            var mpCost = CombatantMath.SkillMpCost(MpPriceOf(skill.ActionId), companion.State.MaxMp);
             if (companion.State.CurrentMp < mpCost)
                 continue;
 
@@ -974,7 +941,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
             {
                 companion.State.CurrentMp = Math.Max(0, companion.State.CurrentMp - mpCost);
                 RegisterDamage(companion.SimulatedEntityId, result.Damage);
-                AddThreat(target.SimulatedEntityId, companion.SimulatedEntityId, result.Damage, companion.State.IsTank);
+                targeting.AddThreat(target.SimulatedEntityId, companion.SimulatedEntityId, result.Damage, companion.State.IsTank);
                 skill.CooldownRemaining = skill.Cooldown / ActionPace();
                 companion.State.AnimationLock = 0.6f;
             }
@@ -985,7 +952,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         if (companion.AutoAttackTimer <= 0)
         {
             // A caster's auto-attack is a melee swing, as an enemy's: held until it is in melee.
-            if (companion.Behavior.AutoAttackStyle == NpcAttackStyle.Magic && dist > CrowdMagicAutoReach)
+            if (companion.Behavior.AutoAttackStyle == NpcAttackStyle.Magic && dist > CombatantMath.MagicAutoReach(ReachPolicy.Ally, default))
                 return;
             companion.AutoAttackTimer = companion.Behavior.AutoAttackDelay / ActionPace();
             var result = combatEngine.ProcessCompanionAction(
@@ -998,14 +965,14 @@ public unsafe partial class CombatCompanionManager : IDisposable
                 companion.State.CurrentMp = Math.Min(companion.State.MaxMp,
                     companion.State.CurrentMp + CombatBudgetModel.EnemyAutoAttackMpRestore);
                 RegisterDamage(companion.SimulatedEntityId, result.Damage);
-                AddThreat(target.SimulatedEntityId, companion.SimulatedEntityId, result.Damage, companion.State.IsTank);
+                targeting.AddThreat(target.SimulatedEntityId, companion.SimulatedEntityId, result.Damage, companion.State.IsTank);
                 companion.State.AnimationLock = 0.6f;
             }
         }
     }
 
     // Companions keep pace with Action Mode's faster combat (same multiplier as enemies).
-    private float ActionPace() => config.ActionMode ? Math.Max(0.1f, config.ActionEnemyAttackSpeed) : 1f;
+    private float ActionPace() => CombatantMath.ActionPace(config.ActionMode, config.ActionEnemyAttackSpeed);
 
     private static void TickCompanionActionTimers(CombatCompanion companion, float deltaTime)
     {
@@ -1034,7 +1001,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         if (!companion.IsSpawned || !companion.State.IsAlive || companion.BattleChara == null)
             return;
 
-        if (GuardingLord && !IsWithinCommandRange(companion))
+        if (Rules.LordBodyIsGuarded && !IsWithinCommandRange(companion))
         {
             ClearCompanionTargetState(companion);
             return;
@@ -1068,7 +1035,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         var current = (Vector3)obj->Position;
         var delta = current - CommandAnchor(player.Position);
         delta.Y = 0;
-        if (!GuardingLord)
+        if (!Rules.LordBodyIsGuarded)
         {
             companion.ReturningToLord = false;
             return delta.Length() <= CommandLimit(companion.SimulatedEntityId);
@@ -1081,7 +1048,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
     /// began (or the player).
     /// </summary>
     private Vector3 CommandAnchor(Vector3 playerPosition)
-        => GuardingLord ? LordBodyAt(playerPosition) : !combatAnchorActive ? playerPosition : combatAnchorPosition;
+        => Rules.LordBodyIsGuarded ? LordBodyAt(playerPosition) : !combatAnchorActive ? playerPosition : combatAnchorPosition;
 
     /// <summary>
     /// How far from the command anchor this ally may go: the party range (the guard range around the
@@ -1091,7 +1058,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
     {
         var jitter = StableUnit(actorId ^ 0xC001u);
         var factor = 1.0f - Math.Clamp(config.PartyCommandRangeRandomness, 0, 0.8f) * jitter;
-        return MathF.Max(1.0f, (GuardingLord ? LordGuardRange : config.PartyCommandRange) * factor);
+        return MathF.Max(1.0f, (Rules.LordBodyIsGuarded ? LordGuardRange : config.PartyCommandRange) * factor);
     }
 
     private static float StableUnit(uint x)
@@ -1119,8 +1086,8 @@ public unsafe partial class CombatCompanionManager : IDisposable
         var obj = (GameObject*)companion.BattleChara;
         var current = (Vector3)obj->Position;
         var anchor = CommandAnchor(player.Position);
-        var anchorRotation = combatAnchorActive && !GuardingLord ? combatAnchorRotation : player.Rotation;
-        var goal = GuardingLord
+        var anchorRotation = combatAnchorActive && !Rules.LordBodyIsGuarded ? combatAnchorRotation : player.Rotation;
+        var goal = Rules.LordBodyIsGuarded
             ? GuardGoal(companion, anchor, current)
             : CalculateFollowPosition(anchor, anchorRotation, companionIndex, companionCount);
         if (FlatDistance(current, goal) > FollowStopDistance)
@@ -1133,12 +1100,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         RotateToward(companion, player.Position, deltaTime);
     }
 
-    private static float FlatDistance(Vector3 a, Vector3 b)
-    {
-        var delta = a - b;
-        delta.Y = 0;
-        return delta.Length();
-    }
+    private static float FlatDistance(Vector3 a, Vector3 b) => CombatantMath.FlatDistance(a, b);
 
     private SimulatedNpc? SelectCompanionTarget(CombatCompanion companion, IReadOnlyList<SimulatedNpc> enemies)
     {
@@ -1173,7 +1135,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         SimulatedNpc enemy)
     {
         var player = objectTable.LocalPlayer;
-        if (!GuardingLord || player == null || companion.BattleChara == null || enemy.BattleChara == null)
+        if (!Rules.LordBodyIsGuarded || player == null || companion.BattleChara == null || enemy.BattleChara == null)
             return (true, 0f);
 
         var enemyPos = (Vector3)((GameObject*)enemy.BattleChara)->Position;
@@ -1387,19 +1349,9 @@ public unsafe partial class CombatCompanionManager : IDisposable
     private void RotateToward(CombatCompanion companion, Vector3 targetPos, float deltaTime)
     {
         var obj = (GameObject*)companion.BattleChara;
-        var pos = (Vector3)obj->Position;
-        var dir = targetPos - pos;
-        if (dir.LengthSquared() < 0.001f)
+        if (!CombatantMath.TurnToward((Vector3)obj->Position, obj->Rotation, targetPos,
+                CombatantMath.TurnRate(MovePolicy.Ally, false, 0f), deltaTime, out var nextRot))
             return;
-
-        var targetRot = MathF.Atan2(dir.X, dir.Z);
-        var currentRot = obj->Rotation;
-        var diff = targetRot - currentRot;
-        while (diff > MathF.PI) diff -= 2 * MathF.PI;
-        while (diff < -MathF.PI) diff += 2 * MathF.PI;
-
-        var rotStep = 6.0f * deltaTime;
-        var nextRot = MathF.Abs(diff) < rotStep ? targetRot : currentRot + MathF.Sign(diff) * rotStep;
         movementBlockHook.SetApproachRotation(obj, nextRot);
     }
 

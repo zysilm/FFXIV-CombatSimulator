@@ -8,6 +8,7 @@ using System.Linq;
 using System.Numerics;
 using System.Threading.Tasks;
 using CombatSimulator.Animation;
+using CombatSimulator.Combat;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
@@ -34,8 +35,8 @@ public unsafe partial class NpcAiController : IDisposable
     // Enemies the crowd has set running, with the look to clear when they stop.
     private readonly Dictionary<nint, ActorVisualState> movingNpcs = new();
     private readonly HashSet<nint> passiveEnemyAddresses = new();
-    // Caster/magic enemies auto-attack at melee reach (their spells are ranged, the basic swing is not).
-    private const float MagicAutoAttackMeleeRange = 3.5f;
+    // Caster/magic enemies auto-attack at melee reach (their spells are ranged, the basic swing is not):
+    // ReachPolicy.Enemy.MagicAutoReach (3.5, scaled as melee).
     // Enemy MP economy: enemies have half the player's max MP (set at spawn) but recover at double
     // rate, and only from natural regen + auto-attacks — never from guarding (they don't guard). This
     // makes them lead with skills while they have MP, then fall back to auto-attacks to recover.
@@ -467,42 +468,27 @@ public unsafe partial class NpcAiController : IDisposable
     // --- Movement on the navigation mesh (phase B of docs/AI_MOVEMENT_REWRITE.md) --------------------
 
     // Close in to a comfortable gap for melee; ranged stops just inside its reach. Moving resumes only
-    // once the target is out of reach, so a small step back does not set it walking.
-    private const float MeleeStandGap = 1.0f;
-    private const float RangedStandMargin = 1.0f;
-    private const float StopTolerance = 0.25f;
-    private const float MeleeReachLimit = 5f;
+    // once the target is out of reach, so a small step back does not set it walking (CombatantMath,
+    // the same for allies).
 
     /// <summary>
     /// The space between the two bodies, horizontally: centre distance less both hitbox radii. Ranges
     /// in the game are measured this way, so a skill's authored range is used as it is.
     /// </summary>
     private float CrowdGap(SimulatedNpc npc, SimulatedEntityState target, Vector3 npcPos, Vector3 targetPos)
-        => MathF.Max(0f, FlatDistance(npcPos, targetPos) - npc.HitboxRadius - EntityHitboxRadius(target));
+        => CombatantMath.BodyGap(npcPos, targetPos, npc.HitboxRadius, EntityHitboxRadius(target));
 
     /// <summary>
     /// How far this enemy can attack from right now: its auto-attack (a caster's is a melee swing), or
     /// the longest skill it could use this moment (off cooldown, unlocked by HP, affordable).
     /// </summary>
     private float ReachNow(SimulatedNpc npc)
-    {
-        var reach = npc.Behavior.AutoAttackStyle switch
-        {
-            NpcAttackStyle.Ranged => ScaleNpcNonMeleeRange(npc.Behavior.AutoAttackRange),
-            NpcAttackStyle.Magic => ScaleNpcMeleeRange(MagicAutoAttackMeleeRange),
-            _ => ScaleNpcMeleeRange(npc.Behavior.AutoAttackRange),
-        };
-        var hpShare = npc.State.MaxHp > 0 ? (float)npc.State.CurrentHp / npc.State.MaxHp : 1f;
-        foreach (var skill in npc.Behavior.Skills)
-        {
-            if (skill.CooldownRemaining > 0 || hpShare > skill.HpThreshold)
-                continue;
-            if (npc.State.CurrentMp < SkillMpCost(npc, skill.ActionId))
-                continue;
-            reach = MathF.Max(reach, SkillReach(npc, skill));
-        }
-        return reach;
-    }
+        => CombatantMath.ReachNow(npc.Behavior, npc.State, ReachPolicy.Enemy, ReachScale.From(config), mpPriceOf ??= MpPriceOf);
+
+    private Func<uint, int>? mpPriceOf;
+
+    /// <summary>A skill's price against the player's pool (0 when the action is unknown).</summary>
+    private int MpPriceOf(uint actionId) => combatEngine.GetActionData(actionId)?.MpCost ?? 0;
 
     /// <summary>
     /// Decide where this enemy goes and hand it to the crowd. Going for the lord's body: there. A sentry
@@ -514,7 +500,7 @@ public unsafe partial class NpcAiController : IDisposable
     {
         var crowd = Crowd!;
         var npcPos = GetNpcPosition(npc);
-        var speed = npc.Behavior.MoveSpeed > 0 ? npc.Behavior.MoveSpeed * 1.5f : 8.0f;
+        var speed = CombatantMath.MoveSpeed(npc.Behavior.MoveSpeed, MovePolicy.Enemy);
         Vector3? goal = null;
         npc.WalkPace = false;
 
@@ -544,14 +530,9 @@ public unsafe partial class NpcAiController : IDisposable
             var targetPos = combatEngine.GetSimulatedEntityPosition(target);
             var reach = ReachNow(npc);
             var gap = CrowdGap(npc, target, npcPos, targetPos);
-            var stand = reach <= MeleeReachLimit
-                ? MathF.Min(MeleeStandGap, reach * 0.5f)
-                : MathF.Max(MeleeStandGap, reach - RangedStandMargin);
+            var stand = CombatantMath.StandGap(reach);
 
-            if (npc.InReach && gap > reach)
-                npc.InReach = false;
-            else if (!npc.InReach && gap <= stand + StopTolerance)
-                npc.InReach = true;
+            npc.InReach = CombatantMath.NextInReach(npc.InReach, gap, reach, stand);
 
             var bodies = npc.HitboxRadius + EntityHitboxRadius(target);
             if (TacticsGoal(npc, npcPos, targetPos, stand, bodies, deltaTime, out var tacticsSpeed) is { } tactic)
@@ -561,9 +542,7 @@ public unsafe partial class NpcAiController : IDisposable
             }
             else if (!npc.InReach)
             {
-                var away = new Vector3(npcPos.X - targetPos.X, 0f, npcPos.Z - targetPos.Z);
-                away = away.LengthSquared() > 1e-6f ? Vector3.Normalize(away) : Vector3.UnitZ;
-                goal = targetPos + away * (stand + bodies);
+                goal = CombatantMath.StandPoint(npcPos, targetPos, stand + bodies);
                 speed *= ChargeScale(npc, gap);
             }
         }
@@ -720,7 +699,7 @@ public unsafe partial class NpcAiController : IDisposable
 
     // Action Mode initiates attacks faster (auto delay + skill CDs divided by this)
     // so enemies pressure the player at action-game pace instead of the ~3s tab-target cadence.
-    private float ActionPace() => config.ActionMode ? MathF.Max(0.1f, config.ActionEnemyAttackSpeed) : 1f;
+    private float ActionPace() => CombatantMath.ActionPace(config.ActionMode, config.ActionEnemyAttackSpeed);
 
     private void TickCombat(
         SimulatedNpc npc, float deltaTime,
@@ -884,7 +863,7 @@ public unsafe partial class NpcAiController : IDisposable
             // range). Their spells stay ranged via the skill loop above; the basic swing only lands
             // up close. Hold the swing (don't reset the timer) until the target is in melee.
             if (npc.Behavior.AutoAttackStyle == NpcAttackStyle.Magic &&
-                distToTarget > ScaleNpcMeleeRange(MagicAutoAttackMeleeRange))
+                distToTarget > CombatantMath.MagicAutoReach(ReachPolicy.Enemy, ReachScale.From(config)))
                 return;
 
             npc.AutoAttackTimer = npc.Behavior.AutoAttackDelay / ActionPace();
@@ -909,9 +888,7 @@ public unsafe partial class NpcAiController : IDisposable
     /// earn MP back.
     /// </summary>
     private int SkillMpCost(SimulatedNpc npc, uint actionId)
-    {
-        return CombatBudgetModel.EnemySkillMpCost(combatEngine.GetActionData(actionId)?.MpCost ?? 0, npc.State.MaxMp);
-    }
+        => CombatantMath.SkillMpCost(MpPriceOf(actionId), npc.State.MaxMp);
 
     /// <summary>
     /// Cast time actually used. Generated kits keep <see cref="NpcSkill.CastTime"/> at 0 (a cast
@@ -1077,46 +1054,17 @@ public unsafe partial class NpcAiController : IDisposable
         return npc.SpawnPosition;
     }
 
-    private static float FlatDistance(Vector3 a, Vector3 b)
-    {
-        var delta = a - b;
-        delta.Y = 0;
-        return delta.Length();
-    }
+    private static float FlatDistance(Vector3 a, Vector3 b) => CombatantMath.FlatDistance(a, b);
 
     /// <summary>
-    /// The NPC Scale effect is written directly to DrawObject, so the game object's authored combat
-    /// radius does not follow it. Keep every AI-authored melee distance proportional to the visual
-    /// model, then apply the explicit gameplay range multiplier to both hit eligibility and movement
-    /// planning so a longer-range enemy actually stops chasing at that longer range.
+    /// A skill's authored range (measured between the bodies), times the range scale. The NPC Scale
+    /// effect is written directly to DrawObject, so the game object's authored combat radius does not
+    /// follow it: every AI-authored melee distance is kept proportional to the visual model, and the
+    /// explicit gameplay range multiplier applies to both hit eligibility and movement planning so a
+    /// longer-range enemy actually stops chasing at that longer range (ReachScale.From).
     /// </summary>
-    private float NpcMeleeRangeScale()
-    {
-        var visualScale = config.EnableNpcScale
-            ? Math.Clamp(config.NpcScale, 0.01f, 3.0f)
-            : 1.0f;
-        return visualScale * NpcAttackRangeScale();
-    }
-
-    private float NpcAttackRangeScale()
-        => Math.Clamp(config.NpcAttackRangeScale, 0.1f, 100f);
-
-    private float ScaleNpcNonMeleeRange(float range)
-        => MathF.Max(0.001f, MathF.Max(0f, range) * NpcAttackRangeScale());
-
-    private float ScaleNpcMeleeRange(float range)
-        => MathF.Max(0.001f, MathF.Max(0f, range) * NpcMeleeRangeScale());
-
-    /// <summary>A skill's authored range (measured between the bodies), times the range scale.</summary>
     private float SkillReach(SimulatedNpc npc, NpcSkill skill)
-    {
-        var style = skill.AttackStyle == NpcAttackStyle.Auto
-            ? npc.Behavior.AutoAttackStyle
-            : skill.AttackStyle;
-        return style == NpcAttackStyle.Melee
-            ? ScaleNpcMeleeRange(skill.Range)
-            : ScaleNpcNonMeleeRange(skill.Range);
-    }
+        => CombatantMath.SkillReach(skill, npc.Behavior.AutoAttackStyle, ReachPolicy.Enemy, ReachScale.From(config));
 
     private float EntityHitboxRadius(SimulatedEntityState entity)
     {
@@ -1171,24 +1119,8 @@ public unsafe partial class NpcAiController : IDisposable
         if (npc.BattleChara == null) return;
 
         var gameObj = (GameObject*)npc.BattleChara;
-        var npcPos = (Vector3)gameObj->Position;
-        var dir = targetPos - npcPos;
-
-        if (dir.LengthSquared() < 0.001f) return;
-
-        var targetRot = MathF.Atan2(dir.X, dir.Z);
-        var currentRot = gameObj->Rotation;
-        var diff = targetRot - currentRot;
-
-        while (diff > MathF.PI) diff -= 2 * MathF.PI;
-        while (diff < -MathF.PI) diff += 2 * MathF.PI;
-
-        var rotSpeed = NpcTurnRate(npc) * deltaTime;
-        float newRot;
-        if (MathF.Abs(diff) < rotSpeed)
-            newRot = targetRot;
-        else
-            newRot = currentRot + MathF.Sign(diff) * rotSpeed;
+        if (!CombatantMath.TurnToward((Vector3)gameObj->Position, gameObj->Rotation, targetPos, NpcTurnRate(npc), deltaTime, out var newRot))
+            return;
 
         movementBlockHook.SetApproachRotation(gameObj, newRot);
     }

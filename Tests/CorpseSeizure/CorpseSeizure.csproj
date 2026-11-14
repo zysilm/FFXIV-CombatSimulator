@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><RootNamespace>CorpseSeizureTests</RootNamespace></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../CombatSimulator/Battle/CorpseSeizure.cs" Link="Production/CorpseSeizure.cs" />
+    <Compile Include="../../CombatSimulator/Battle/BattleRules.cs" Link="Production/BattleRules.cs" />
+    <Compile Include="../../CombatSimulator/Battle/IBattleRuleSettings.cs" Link="Production/IBattleRuleSettings.cs" />
+    <Compile Include="../../CombatSimulator/Simulation/WarFallenRule.cs" Link="Production/WarFallenRule.cs" />
+  </ItemGroup>
+</Project>

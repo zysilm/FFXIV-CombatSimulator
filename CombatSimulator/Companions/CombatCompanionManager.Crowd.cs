@@ -5,6 +5,7 @@
 using System;
 using System.Numerics;
 using CombatSimulator.Animation;
+using CombatSimulator.Combat;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
@@ -24,13 +25,9 @@ public unsafe partial class CombatCompanionManager
 
     private bool CrowdReady => Crowd is { Ready: true };
 
-    // The same standing rules as enemies (NpcAiController): melee closes to a 1 m gap, ranged stops
-    // 1 m inside its reach; moving resumes only once the target is out of reach.
-    private const float CrowdMeleeStandGap = 1.0f;
-    private const float CrowdRangedStandMargin = 1.0f;
-    private const float CrowdStopTolerance = 0.25f;
-    private const float CrowdMeleeReachLimit = 5f;
-    private const float CrowdMagicAutoReach = 3.5f;
+    // The same standing rules as enemies (CombatantMath): melee closes to a 1 m gap, ranged stops
+    // 1 m inside its reach; moving resumes only once the target is out of reach. Reach is
+    // ReachPolicy.Ally: authored ranges, a melee auto-attack at least 3, a caster's swing 3.5.
     // A corpse lower than this under an ally's feet is stepped onto; a higher one is walked through.
     private const float CorpseStepLimit = 0.65f;
 
@@ -70,34 +67,23 @@ public unsafe partial class CombatCompanionManager
     {
         var self = (GameObject*)companion.BattleChara;
         var other = (GameObject*)target.BattleChara;
-        return MathF.Max(0f, FlatDistance((Vector3)self->Position, (Vector3)other->Position) - HitboxOf(self) - target.HitboxRadius);
+        return CombatantMath.BodyGap((Vector3)self->Position, (Vector3)other->Position, HitboxOf(self), target.HitboxRadius);
     }
 
-    private static float SkillReach(CombatCompanion companion, NpcSkill skill) => skill.Range;
+    private static float SkillReach(CombatCompanion companion, NpcSkill skill)
+        => CombatantMath.SkillReach(skill, companion.Behavior.AutoAttackStyle, ReachPolicy.Ally, default);
 
     /// <summary>
     /// How far this ally can attack from right now: its auto-attack (a caster's is a melee swing), or the
     /// longest skill it could use this moment (off cooldown, affordable).
     /// </summary>
     private float CrowdReachNow(CombatCompanion companion)
-    {
-        var reach = companion.Behavior.AutoAttackStyle switch
-        {
-            NpcAttackStyle.Ranged => companion.Behavior.AutoAttackRange,
-            NpcAttackStyle.Magic => CrowdMagicAutoReach,
-            _ => MathF.Max(companion.Behavior.AutoAttackRange, 3f),
-        };
-        foreach (var skill in companion.Behavior.Skills)
-        {
-            if (skill.CooldownRemaining > 0)
-                continue;
-            var mpCost = CombatBudgetModel.EnemySkillMpCost(combatEngine.GetActionData(skill.ActionId)?.MpCost ?? 0, companion.State.MaxMp);
-            if (companion.State.CurrentMp < mpCost)
-                continue;
-            reach = MathF.Max(reach, SkillReach(companion, skill));
-        }
-        return reach;
-    }
+        => CombatantMath.ReachNow(companion.Behavior, companion.State, ReachPolicy.Ally, default, mpPriceOf ??= MpPriceOf);
+
+    private System.Func<uint, int>? mpPriceOf;
+
+    /// <summary>A skill's price against the player's pool (0 when the action is unknown).</summary>
+    private int MpPriceOf(uint actionId) => combatEngine.GetActionData(actionId)?.MpCost ?? 0;
 
     /// <summary>
     /// Decide whether to close in on the target: true (and the ally walks) while it is out of reach,
@@ -107,22 +93,15 @@ public unsafe partial class CombatCompanionManager
     {
         var reach = CrowdReachNow(companion);
         var gap = CrowdGap(companion, target);
-        var stand = reach <= CrowdMeleeReachLimit
-            ? MathF.Min(CrowdMeleeStandGap, reach * 0.5f)
-            : MathF.Max(CrowdMeleeStandGap, reach - CrowdRangedStandMargin);
+        var stand = CombatantMath.StandGap(reach);
 
-        if (companion.InReach && gap > reach)
-            companion.InReach = false;
-        else if (!companion.InReach && gap <= stand + CrowdStopTolerance)
-            companion.InReach = true;
+        companion.InReach = CombatantMath.NextInReach(companion.InReach, gap, reach, stand);
         if (companion.InReach)
             return false;
 
         var self = (Vector3)((GameObject*)companion.BattleChara)->Position;
         var targetPos = (Vector3)((GameObject*)target.BattleChara)->Position;
-        var away = new Vector3(self.X - targetPos.X, 0f, self.Z - targetPos.Z);
-        away = away.LengthSquared() > 1e-6f ? Vector3.Normalize(away) : Vector3.UnitZ;
-        var goal = targetPos + away * (stand + HitboxOf((GameObject*)companion.BattleChara) + target.HitboxRadius);
+        var goal = CombatantMath.StandPoint(self, targetPos, stand + HitboxOf((GameObject*)companion.BattleChara) + target.HitboxRadius);
         MoveToward(companion, goal, deltaTime);
         return true;
     }
@@ -138,7 +117,7 @@ public unsafe partial class CombatCompanionManager
             return false;
 
         var obj = (GameObject*)companion.BattleChara;
-        var speed = companion.Behavior.MoveSpeed > 0 ? companion.Behavior.MoveSpeed : 6f;
+        var speed = CombatantMath.MoveSpeed(companion.Behavior.MoveSpeed, MovePolicy.Ally);
         if (!crowd.Drive(companion.Address, (Vector3)obj->Position, HitboxOf(obj), speed, goal))
             return false;
         if (!crowd.TryGetMotion(companion.Address, out var position, out var velocity))
