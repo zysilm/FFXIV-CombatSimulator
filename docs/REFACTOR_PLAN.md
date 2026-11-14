@@ -1,6 +1,6 @@
 # 重构方案（分支 `refactor/architecture`）
 
-状态：用户已确认（2026-11-14），按 §5 进行。已完成：A1（`fa89b5a`）、B0（`3e72047`）、A0（`c1e40fa`）、A2a（`0b8d23f`，55/55 份标准答案逐位回放）、B8a/B1（`88773d6`）、B2/B2b（`e93e51e`）、B3（`30b604f`）。依据是两份只读调查（布娃娃抽库、插件侧架构），要点记在 [PROJECT_LOG.md](PROJECT_LOG.md) §6。本文件是这次重构的唯一依据；阶段有变化就改这里。
+状态：用户已确认（2026-11-14），按 §5 进行。已完成：A1（`fa89b5a`）、B0（`3e72047`）、A0（`c1e40fa`）、A2a（`0b8d23f`，55/55 份标准答案逐位回放）、B8a/B1（`88773d6`）、B2/B2b（`e93e51e`）、B3（`30b604f`）、A2b（`c8526f7`，网格经 `IMeshSource`，格式版本 3）、B4a（`c5bdf0f`）、B4b（`7b327dc`，敌我共用出手步骤，逐帧金样逐字节相同）。A2b 审查留到 A4 的事：`IMeshSource` 签名里的 Bepu `Triangle` 和控制器嵌套类型（违反 §2.1）、`MeshProductKind` 的格式说明归库、`FrozenMeshGeometryCache.AddLocal` 公开面、`FfxivMeshSource.verboseLog` 线程静态隐式传参改显式、网格源用 host 的 scheduler、删 `RenderedGeometrySourcesMatch`/`RenderedPartialSourcesMatch` 死代码。依据是两份只读调查（布娃娃抽库、插件侧架构），要点记在 [PROJECT_LOG.md](PROJECT_LOG.md) §6。本文件是这次重构的唯一依据；阶段有变化就改这里。
 
 ## 1. 目标与约束（用户裁决，2026-11-14）
 
@@ -67,7 +67,7 @@
 
 **格式**（代码在 `AdvancedRagdoll/Recording/`，纯代码、不依赖游戏；每种记录的字段顺序写在 `RagdollRecordingFormat.cs` 的 `RecordType` 注释里）：文件头 8 字节，之后是一条条带类型和长度的记录；记录内容是带类型标记的值，浮点数按原始 IEEE 位写入，不做任何舍入。记录按事情发生的先后顺序排列。文件被截断时，读到最后一条完整记录为止。
 
-当前格式版本是 **2**（文件头第一个值）。版本 1 是修复前的草稿格式，没有录下“跨激活保留的状态”（见下表“激活时”），不能用来回放；离线工具读到版本 1 的文件会明说这一点。
+当前格式版本是 **3**（文件头第一个值；3 版加了 `MeshProduct` 记录和 Activate 末尾的 `followWasActive`，2 版文件仍可回放）。版本 1 是修复前的草稿格式，没有录下“跨激活保留的状态”（见下表“激活时”），不能用来回放；离线工具读到版本 1 的文件会明说这一点。
 
 一条记录写到一半时如果录制代码抛了异常，这条记录不会写进文件，原位置写一条备注 `partial record discarded: <记录类型>`，所以读的一方不会把半条记录当成完整的；关闭文件的日志行会写丢弃了几条。
 
