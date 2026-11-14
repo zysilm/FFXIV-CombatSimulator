@@ -278,64 +278,103 @@ public sealed class TargetingService               // 有状态：威胁表、�
 
 ### 5.1 接口
 
+B5 实际建成的（`Battle/Rules/IBattleRule.cs`）。分三组：B5 已接线、B6 才接线（已声明未调用）、设计里有但没声明。
+
 ```csharp
 public interface IBattleRule
 {
     string Id { get; }
-    void OnBattleStarted(BattleContext ctx);                    // 开始
-    void OnReset(BattleContext ctx);                            // 重置或停止；也在本部件被停用时调用
-    void TickBeforeAllies(BattleContext ctx, float dt);         // 位置：队友出手之前（今天的 TickRescues / TickLord）
-    void TickAfterEngine(BattleContext ctx, float dt);          // 位置：引擎之后、敌人 AI 之前（今天的 TickWar）
-    LethalBlow OnLethalBlow(BattleContext ctx, ICombatantView victim, SimulatedNpc by, bool primary);  // Default / Capture
-    void OnFighterDown(BattleContext ctx, ICombatantView who);  // 有人倒下
-    void OnLordDown(BattleContext ctx);                         // 主公（玩家）倒下，一场只调一次
-    bool TakesOverAlly(BattleContext ctx, CombatCompanion ally, float dt);   // 这一帧由规则驱动这名队友，不出手
-    EnemyGoal? EnemyGoalFor(BattleContext ctx, SimulatedNpc enemy);          // 敌人去哪、是否边走边打守卫
-    float TargetWeight(BattleContext ctx, in TargetQuery q);                 // 选目标权重乘数
-    void FilterCandidates(BattleContext ctx, SimulatedNpc enemy, List<ICombatantView> candidates);
-    bool ForcesRedraw(BattleContext ctx, Combatant fighter);
-    AllyLeash? LeashFor(BattleContext ctx, CombatCompanion ally);            // 锚点、半径、回程比例、空闲站位
-    bool SuppressesKillerPossession(BattleContext ctx);         // 玩家死亡时不让 Enemy Control 接管凶手
-    OutcomeText? DescribeOutcome(BattleContext ctx, bool playerWon);         // banner 标题和原因
-    string? StatusWord(BattleContext ctx, SimulatedEntityState who);         // 血条前缀
+
+    // ---- 事件（B5 已接线） ----
+    void OnReset(BattleContext ctx);              // 重置（保留队友）；所有部件，不论是否在组合里
+    void OnDeactivated(BattleContext ctx);        // 部件离开组合（开关变了）：丢掉自己持有的状态；在 TickBeforeAllies 那一遍里、本该 tick 的位置调一次
+    void OnAlliesDismissed(BattleContext ctx);    // 队友全部消失：忘掉它们，不再碰它们；所有部件
+    void TickBeforeAllies(BattleContext ctx, float dt);   // 队友出手之前（原 TickRescues / TickLord）；组合内部件，按顺序
+    void OnLordDown(BattleContext ctx);           // 主公倒下，起来之前只一次；组合内部件（由 WarringStatesLordRule 在 tick 里发现并广播）
+
+    // ---- 查询（B5 已接线；只问“活”部件，见下） ----
+    bool TakesOverAlly(BattleContext ctx, CombatCompanion ally, float dt);   // 这一帧由部件驱动这名队友
+    bool Exposes(BattleContext ctx, uint friendId);       // 这名友方跪着做事、暴露给敌人（×3 在队友控制器里乘）
+    bool Tends(BattleContext ctx, uint allyId);           // 这名队友在忙部件的任务（救人、祈祷）：不另派、不进守卫圈
+    uint HolderFor(BattleContext ctx, SimulatedNpc enemy);                   // 敌人为任务必须先砍的人（0：无）；变了就重抽
+    float EnemyTargetWeight(BattleContext ctx, in EnemyTargetQuery q, float w);   // 敌人一侧：在共用权重 w 上依次乘
+    void BeginAllyDraw(BattleContext ctx, CombatCompanion ally);             // 队友一次抽选开始（权重之前）
+    float AllyTargetWeight(BattleContext ctx, in AllyTargetQuery q, float w);     // 队友一侧：在 w 上依次乘
+    bool ForcesRedraw(BattleContext ctx, CombatCompanion ally, SimulatedNpc current);
+    IAllyLeash? LeashFor(BattleContext ctx, CombatCompanion ally);           // null：跟着战斗走
+    string? StatusWord(BattleContext ctx, SimulatedEntityState who);         // 血条前缀；null 交给下一个部件
+
+    // ---- B6 才接线（已声明，今天没人调用） ----
+    void TickAfterEngine(BattleContext ctx, float dt);    // 今天仍是 Plugin.TickWar
+    LethalBlow OnLethalBlow(BattleContext ctx, SimulatedEntityState victim, SimulatedNpc by, bool primary);  // 今天仍在 CombatEngine
+    bool SuppressesKillerPossession(BattleContext ctx);   // 今天仍在 Plugin.cs
+    OutcomeText? DescribeOutcome(BattleContext ctx, bool playerWon);         // 今天仍在 Plugin.War.cs
 }
-public abstract class BattleRule : IBattleRule { /* 全部空实现：void 什么都不做，其余返回 null / false / 1 / Default */ }
+
+public interface IAllyLeash   // LordGuardRule 自己实现
+{
+    Vector3 Anchor(BattleContext ctx, Vector3 playerPosition);
+    float Radius { get; }
+    bool Inside(CombatCompanion ally, float distance, float limit);          // 越界走回到 70% 才算回来
+    Vector3 IdleGoal(BattleContext ctx, CombatCompanion ally, Vector3 anchor, Vector3 current, float limit);
+}
 
 public sealed class BattleContext
 {
-    public IBattleRuleSettings Settings { get; }
-    public CombatRoster Roster { get; }             // 玩家视图、队友、敌人
-    public TargetingService Targeting { get; }
-    public ICorpseQuery Corpses { get; }            // 尸体位置、布娃娃是否就绪（§6.5）
-    public ICorpseGrab Grab { get; }                // 抓起尸体
-    public IBattleMechanics Mechanics { get; }      // 引擎里的机制：TakeCaptive / ReleaseCaptive / 复活 / ForceEnemyVictory / 战斗日志
-    public IAllyDriver Allies { get; }              // 让队友走到某点、停下、播放并保持表情、设置受伤倍率
-    public float Now { get; }  public bool IsActive { get; }
+    public BattleRules Rules { get; }            // 开关的具名查询，现读
+    public ICombatLoopEngine Engine { get; }      // 引擎：状态、时钟、日志、机制（俘虏、释放、复活、特效）
+    public ICombatWorld World { get; }            // 游戏对象：位置、表情
+    public IRuleAllies Allies { get; }            // 队友与驱动它们的方法（CombatCompanionManager 实现）
+    public BattleRuleSet RuleSet { get; }         // 一个部件问其他部件（例如 Tends）
+    public IReadOnlyList<SimulatedNpc> Enemies { get; set; }   // 本帧的敌人
 }
 ```
 
-`BattleRuleSet` 持有一组有序部件：`Tick*`、`On*` 按顺序全调；返回可空值的查询取第一个非空；`TargetWeight` 取乘积；`bool` 取“任一为真”。机制（俘虏状态、表情保持、处刑起手 1.5 s、复活、强制胜负、全歼敌人时释放俘虏）留在引擎和队友控制器，规则只决定何时用。
+与设计稿的差异：
+
+- **多出来的钩子**：`OnDeactivated` 和 `OnReset` 分开（停用时只丢状态，重置时还清休息计时等）；`OnAlliesDismissed`（队友被消掉时只忘不碰）；`Exposes`、`Tends`、`HolderFor`、`BeginAllyDraw`。
+- **`TargetWeight` 按两侧拆开**：`EnemyTargetWeight` / `AllyTargetWeight`，都是“传入 w、返回乘过的 w”，而不是返回一个乘数再由集合相乘。这是为了浮点逐位相同：旧代码是 `w *= a; w *= b;` 依次乘在同一个 `w` 上，改成先算乘积再乘会改变舍入。
+- **`LeashFor` 返回 `IAllyLeash`**（接口，由部件自己实现），不是数据记录 `AllyLeash`：回程判断要写队友的 `ReturningToLord`，空闲站位要现算守卫圈。
+- **B6 才接线**：致命一击（`OnLethalBlow`）、强制胜负与凶手接管（`SuppressesKillerPossession`）、结果文案（`DescribeOutcome`）、`TickAfterEngine`。这些决定今天还在 `CombatEngine`、`Plugin.cs`、`Plugin.War.cs` 原处，所以 `HostageRule` 目前只是在组合里占位。
+- **没声明的**：`OnBattleStarted`、`OnFighterDown`、`EnemyGoalFor`、`FilterCandidates`。B5 没有用到它们的行为（夺尸者往哪走仍在 `CorpseSeizure`/`Plugin.TickWar`；“还有别人可打时不选俘虏”对所有俘虏都成立，不论哪条规则俘的，留在队友控制器）。B6 或之后真要用时再加。
+- **状态词 `Corpse captured`、`Executed`、`Captive`、`Killed in battle` 在 `BaseRule`**：它们描述的是引擎机制留下的结果（死了、被处决、被俘），不管是哪条规则造成的，所以放在每场都有的基础部件里，并且排在第一个；其他部件只给活着的队友加词（`Raising`、`Praying`、`Guarding`），都没有就是 `Fighting`。
+- **跪地者 ×3 留在队友控制器**（`CombatCompanionManager.Aggro.cs`，`AggroModel.ExposedGain`）：两侧选目标都要乘，而且乘的位置夹在规则权重的前后（敌人一侧在 `EnemyTargetWeight` 之后，队友一侧在 `AllyTargetWeight` 之前），为了浮点顺序不变，部件只通过 `Exposes` 报“谁跪着”。
+
+`BattleRuleSet` 持有全部部件（`BattleRuleFactory.CreateAll`，顺序固定：base、rescue、lord、hostage、guard、seizure），组合由开关每帧现读（`BattleRuleFactory.Composes`）：
+
+- **事件**：`TickBeforeAllies` 只给组合内的部件，按顺序；离开组合的部件在同一遍里、自己的位置收到一次 `OnDeactivated`（所以排在它前面的部件这一帧还能看到它的状态，和旧代码一样）。`OnLordDown` 只给组合内的。`OnReset`、`OnAlliesDismissed` 给所有部件。
+- **查询只问“活”部件**：在组合里的，或者已离开组合但还没收到 `OnDeactivated` 的（上一遍 tick 过、下一遍还没到）。后者对应开关变化的那一帧：敌人选目标在 `TickBeforeAllies` 之前，刚离开的部件仍要按手里的状态回答，旧代码也是到那时才丢状态。过滤不改变结果：部件的任务状态（进行中的救援、祈祷者）只在自己的 tick 里产生，在 `OnDeactivated`（以及重置、解散）里清掉，不活的部件手里什么都没有；不读自身状态的回答（守尸、夺尸）都以 `BattleRules.LordBodyIsGuarded` 为前提，而它成立就意味着两者都在组合里。
+- **`BeginAllyDraw` 例外，仍广播给所有部件**：守尸部件在每次抽选开始时查尸体位置（会调一次 `TrySnapToFloor`），旧代码不论规则都这么做，调用次数要保持。
+- **合并方式**：yes/no 查询取“任一”（遇到第一个 yes 就停）；值查询取第一个非空；权重按部件顺序依次乘过去。
+- **救人者与祈祷者永远不是同一人**，所以 `TakesOverAlly` 先问救援后问守尸（旧代码相反）、状态词 `Raising` 在 `Praying` 之前（旧代码相反）都不影响结果；理由写在 `BattleRuleFactory.CreateAll` 的注释里。
+
+机制（俘虏状态、表情保持、处刑起手 1.5 s、复活、强制胜负、全歼敌人时释放俘虏）留在引擎和队友控制器，规则只决定何时用。
 
 ### 5.2 现有行为 → 部件与钩子
 
-| 行为 | 现在在哪 | 部件（`Battle/Rules/` 下一个文件） | 钩子 |
+“B5 前在哪”是搬家前的位置。钩子一栏：不加注的是 B5 已接线的；“B6”是已声明、要到 B6 才接线的（行为今天仍在原处）；“未声明”是设计稿里有、B5 没有声明的。
+
+| 行为 | B5 前在哪 | 部件（`Battle/Rules/` 下一个文件） | 钩子 |
 | --- | --- | --- | --- |
 | Stay down：倒下就不再起来 | 没有代码（缺省） | `BaseRule` | — |
-| 全灭 / 全歼的标题和原因；`Fighting`、`Killed in battle` | `Plugin.War.cs:99-106`、`.Lord.cs:345-358` | `BaseRule` | `DescribeOutcome`、`StatusWord` |
-| 春秋：分诊（主公 → 坦克 → 其他，近的先；同时最多 ⌈能战队友 ÷ 4⌉ 人；不进敌多我少的 8 m 圈，主公除外） | `.Rescue.cs:86-155` | `SpringAutumnRescueRule` | `TickBeforeAllies` |
-| 春秋：跑去、跪 8 s、受伤 ×4、被挤开半速回落、重伤放弃并休息 6 s、50% HP 0 MP 复活；`Rescue:` 日志；`Raising` | `.Rescue.cs:244-321`、`:361-403` | 同上 | `TakesOverAlly`、`StatusWord` |
-| 跪地救人者被集火 ×3、队友掩护 ×3 | `.Aggro.cs:201-211`、`:257`、`:306` | `SpringAutumnRescueRule` 与 `LordGuardRule` 各报自己的跪地者 | `TargetWeight` |
-| 战国：主公倒下、不撤退 → 剩余队友全部被俘 | `.Lord.cs:93-113` | `WarringStatesLordRule` | `OnLordDown` |
-| 战国：主公阵亡仍取胜 → `REMAINS SECURED`；被处决的原因文案 | `Plugin.War.cs:96-103` | 同上 | `DescribeOutcome` |
-| 祈祷：最近的队友到尸体正前方 1.3 m 祈祷，受伤 ×4，被推开 1 m 就回去，1.5 s 走不近就原地跪；倒下由下一个接替；`Praying` | `.Lord.cs:123-207` | `LordGuardRule` | `TickBeforeAllies`、`TakesOverAlly`、`StatusWord` |
-| 守尸：锚点改为尸体、半径 10 m、越界走回到 70% 才算回来、空闲时站 3 m 的圈；`Guarding` | `.Lord.cs:278-314`、`CombatCompanionManager.cs:1061-1134` | 同上 | `LeashFor`、`StatusWord` |
-| 守卫选目标：抢尸者 ×30、离尸体 12 m 内最多再 ×2、够不着的 ×0.05、够不着当前目标立即重抽 | `.Aggro.cs:284`、`:308-315` | 同上 | `TargetWeight`、`ForcesRedraw` |
-| 夺尸：存活敌人里离尸体最近的一半去抢，每 3 s 复核，叫醒 40 m 内的哨兵 | `Plugin.War.cs:151-212` | `CorpseSeizureRule` | `TickAfterEngine`、`EnemyGoalFor` |
-| 夺尸按人数：3.5 m 内守卫 ≥ 抢尸者就抢不走；1.5 m 内累积 2 s，否则半速回落；布娃娃未就绪最多 95%；`War:` 日志 | `Plugin.War.cs:216-269` | 同上 | `TickAfterEngine` |
-| 抢尸者对持尸者 ×100，持尸者换人立即重抽 | `.Lord.cs:244-268`、`.Aggro.cs:236-256` | 同上 | `TargetWeight`、`ForcesRedraw` |
-| 抢到：剩余队友被俘、强制战败、抓取每 0.4 s 重试最多 8 s；`DISGRACED`；`Corpse captured`；玩家死亡时不接管凶手 | `Plugin.War.cs:286-331`、`:93`；`.Lord.cs:345`；`Plugin.cs:565` | 同上 | `TickAfterEngine`、`DescribeOutcome`、`StatusWord`、`SuppressesKillerPossession` |
-| 人质：致命一击改为留 1 HP 并俘虏 | `CombatEngine.cs:1021-1029` | `HostageRule` | `OnLethalBlow` |
-| 人质：还有别人可打时不选俘虏；被处决 → `ROUTED`；`Captive`、`Executed` | `CombatCompanionManager.cs:454`、`Plugin.War.cs:95`、`.Lord.cs:346-349` | 同上 | `FilterCandidates`、`DescribeOutcome`、`StatusWord` |
+| 全灭 / 全歼的标题和原因 | `Plugin.War.cs:99-106` | `BaseRule` | `DescribeOutcome`（B6） |
+| 血条词 `Fighting`（玩家）、`Killed in battle`、`Executed`、`Captive`、`Corpse captured` | `.Lord.cs:345-358` | `BaseRule`（排第一；描述的是机制留下的结果，不分哪条规则造成） | `StatusWord` |
+| 春秋：分诊（主公 → 坦克 → 其他，近的先；同时最多 ⌈能战队友 ÷ 4⌉ 人；不进敌多我少的 8 m 圈，主公除外） | `.Rescue.cs:86-155` | `SpringAutumnRescueRule` | `TickBeforeAllies`；派人时用 `RuleSet.Tends` 排除忙着的（含祈祷者） |
+| 春秋：跑去、跪 8 s、受伤 ×4、被挤开半速回落、重伤放弃并休息 6 s、50% HP 0 MP 复活；`Rescue:` 日志；`Raising` | `.Rescue.cs:244-321`、`:361-403` | 同上 | `TakesOverAlly`、`Tends`、`StatusWord`；切走规则时 `OnDeactivated` 取消全部救援 |
+| 跪地救人者被集火 ×3、队友掩护 ×3 | `.Aggro.cs:201-211`、`:257`、`:306` | `SpringAutumnRescueRule` 与 `LordGuardRule` 各报自己的跪地者；×3 仍在队友控制器里乘 | `Exposes` |
+| 战国：发现主公倒下（起来前只一次） | `.Lord.cs:93-113` | `WarringStatesLordRule` | `TickBeforeAllies` 里发现，向组合内部件广播 `OnLordDown` |
+| 战国：主公倒下、不撤退 → 剩余队友全部被俘 | `.Lord.cs:93-113` | 同上 | `OnLordDown` |
+| 战国：主公阵亡仍取胜 → `REMAINS SECURED`；被处决的原因文案 | `Plugin.War.cs:96-103` | 同上 | `DescribeOutcome`（B6） |
+| 祈祷：最近的队友到尸体正前方 1.3 m 祈祷，受伤 ×4，被推开 1 m 就回去，1.5 s 走不近就原地跪；倒下由下一个接替；`Praying` | `.Lord.cs:123-207` | `LordGuardRule` | `TickBeforeAllies`、`TakesOverAlly`、`Exposes`、`Tends`、`StatusWord`；`OnLordDown` 记日志；`OnDeactivated` 放开祈祷者 |
+| 守尸：锚点改为尸体、半径 10 m、越界走回到 70% 才算回来、空闲时站 3 m 的圈（祈祷者和救人者不在圈里）；`Guarding` | `.Lord.cs:278-314`、`CombatCompanionManager.cs:1061-1134` | 同上（部件自己实现 `IAllyLeash`） | `LeashFor`、`StatusWord` |
+| 守卫选目标：抢尸者 ×30、离尸体 12 m 内最多再 ×2、够不着的 ×0.05、够不着当前目标立即重抽 | `.Aggro.cs:284`、`:308-315` | 同上 | `BeginAllyDraw`（每次抽选查一次尸体位置）、`AllyTargetWeight`、`ForcesRedraw` |
+| 夺尸：存活敌人里离尸体最近的一半去抢，每 3 s 复核，叫醒 40 m 内的哨兵 | `Plugin.War.cs:151-212` | `CorpseSeizureRule`（目前只管抢尸者选目标；夺尸本身仍是 `CorpseSeizure`，由 `Plugin.TickWar` 驱动） | `TickAfterEngine`（B6）；`EnemyGoalFor`（未声明） |
+| 夺尸按人数：3.5 m 内守卫 ≥ 抢尸者就抢不走；1.5 m 内累积 2 s，否则半速回落；布娃娃未就绪最多 95%；`War:` 日志 | `Plugin.War.cs:216-269` | 同上 | `TickAfterEngine`（B6） |
+| 抢尸者对持尸者 ×100，持尸者换人立即重抽 | `.Lord.cs:244-268`、`.Aggro.cs:236-256` | 同上 | `HolderFor`（换人由选目标的“到期”判断触发重抽）、`EnemyTargetWeight` |
+| 抢到：剩余队友被俘、强制战败、抓取每 0.4 s 重试最多 8 s；`DISGRACED`；玩家死亡时不接管凶手 | `Plugin.War.cs:286-331`、`:93`；`Plugin.cs:565` | 同上 | `TickAfterEngine`、`DescribeOutcome`、`SuppressesKillerPossession`（均 B6）；`Corpse captured` 见 `BaseRule` |
+| 人质：致命一击改为留 1 HP 并俘虏 | `CombatEngine.cs:1021-1029` | `HostageRule`（目前只在组合里占位） | `OnLethalBlow`（B6） |
+| 人质：被处决 → `ROUTED` | `Plugin.War.cs:95` | 同上 | `DescribeOutcome`（B6）；`Captive`、`Executed` 见 `BaseRule` |
+| 还有别人可打时不选俘虏 | `CombatCompanionManager.cs:454` | 不进部件：对所有俘虏都成立，不论哪条规则俘的，留在队友控制器 | `FilterCandidates`（未声明） |
 
 ### 5.3 运行时判断规则开关的地方
 
@@ -377,7 +416,7 @@ public static class BattleRuleFactory
 | Warring States | 开 | 开 | 以上全部 |
 
 - 界面上的 Retreat 勾选和 profile 的 `CorpseSeizure` 是同一个开关 `WarRetreat`（`Gui/MainWindow.cs:785`、`:902`），它同时管祈祷、守尸、夺尸。
-- 今天这三个设置是每帧现读的，战斗中改了立刻生效（例如关掉春秋会取消进行中的救援，`.Rescue.cs:88-92`）。所以 `BattleRuleSet` 每帧比较这三个值，变了就重算部件表，对被停用的部件调 `OnReset`。部件对象常驻，不重建。
+- 今天这三个设置是每帧现读的，战斗中改了立刻生效（例如关掉春秋会取消进行中的救援，`.Rescue.cs:88-92`）。所以 `BattleRuleSet` 每帧现读这三个值（`BattleRuleFactory.Composes`），离开组合的部件在下一遍 `TickBeforeAllies` 里收到一次 `OnDeactivated`（见 §5.1）。部件对象常驻，不重建。
 - profile：`CombatRecipe.FallenRule / Hostages / CorpseSeizure`（`Recipes/CombatRecipe.cs:31-35`）开局时写进配置（`Gui/MainWindow.cs:780-787`），走的是同一条路，不用改。
 
 ### 5.5 加一个新模式的例子（假想：“斗将”——主公一倒立刻判负，不守尸、不俘虏）

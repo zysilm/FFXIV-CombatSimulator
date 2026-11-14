@@ -24,7 +24,13 @@ sealed record LoopFighter(string Name, bool Ally, NpcBehavior Kit, Vector3 At, i
 
 sealed record LoopCast(Vector3 PlayerAt, bool PlayerAlive, List<LoopFighter> Fighters);
 
-sealed record LoopScenario(string Name, string Description, Settings Settings, RuleSettings Rules, Func<LoopCast> Build);
+/// <param name="AllyLevel">The allies' level factor (their HP is the player's 60000 times this).</param>
+/// <param name="RecordRuleLog">
+/// Also record the battle rules' own summary line (<c>Rescue:</c>, timed by the simulation clock) as <c>G</c>
+/// lines. Off for the scenarios recorded before stage B5, whose files do not have them.
+/// </param>
+sealed record LoopScenario(string Name, string Description, Settings Settings, IBattleRuleSettings Rules, Func<LoopCast> Build,
+    float AllyLevel = LoopScenarios.AllyLevelFactor, bool RecordRuleLog = false);
 
 /// <summary>The battle-rule switches (IBattleRuleSettings), fixed per scenario.</summary>
 sealed record RuleSettings(WarFallenRule FallenRule, bool Retreat) : IBattleRuleSettings
@@ -33,6 +39,33 @@ sealed record RuleSettings(WarFallenRule FallenRule, bool Retreat) : IBattleRule
     public uint CaptiveEmoteId => 19;
     public bool ShowResultBanner => true;
     public bool EnableRagdoll => true;
+}
+
+/// <summary>
+/// The battle-rule switches changed during the battle, as the window changes them between two frames: from
+/// each entry's time on, its switches hold (<see cref="At"/> is called at the start of every frame).
+/// </summary>
+sealed class ScheduledRules((float From, WarFallenRule FallenRule, bool Retreat)[] schedule) : IBattleRuleSettings
+{
+    public WarFallenRule FallenRule { get; private set; }
+    public bool Retreat { get; private set; }
+    public bool Hostages => false;
+    public uint CaptiveEmoteId => 19;
+    public bool ShowResultBanner => true;
+    public bool EnableRagdoll => true;
+
+    /// <summary>The switches at this simulation time; true when they changed.</summary>
+    public bool At(float time)
+    {
+        var (_, rule, retreat) = schedule[0];
+        foreach (var entry in schedule)
+            if (time >= entry.From)
+                (_, rule, retreat) = entry;
+        var changed = rule != FallenRule || retreat != Retreat;
+        FallenRule = rule;
+        Retreat = retreat;
+        return changed;
+    }
 }
 
 static class LoopScenarios
@@ -83,6 +116,45 @@ static class LoopScenarios
                     list.Add(new($"E{i + 1}", false, i % 4 == 3 ? Kits.Ranged() : Kits.Melee(), new Vector3((i - 3.5f) * 3f, 0f, 22f + (i % 3)), 25000, 5000, 5000, Seizer: i % 2 == 0));
                 return new LoopCast(Vector3.Zero, false, list);
             }),
+        // Stage B5: the rules the scenarios above do not reach, recorded from the code before the rules became parts.
+        new("rescue", "the real loops: Spring and Autumn, the player fallen; 8 allies (2 tanks, 2 ranged, level 0.5) vs 7 enemies: triage, raising the lord and allies, rescuers falling",
+            Base, new RuleSettings(WarFallenRule.SpringAndAutumn, false), () =>
+            {
+                var list = new List<LoopFighter>();
+                for (var i = 0; i < 8; i++)
+                    list.Add(new($"A{i + 1}", true, i % 4 == 3 ? Kits.Ranged() : Kits.Melee(), new Vector3((i - 3.5f) * 2.2f, 0f, (i % 3) * 0.8f), 0, 10000, 10000, Tank: i < 2));
+                for (var i = 0; i < 7; i++)
+                    list.Add(new($"E{i + 1}", false, i % 4 == 3 ? Kits.Ranged() : Kits.Melee(), new Vector3((i - 3.5f) * 2.5f, 0f, 16f + (i % 2) * 1.1f), 40000, 5000, 5000,
+                        Radius: i % 4 == 1 ? 1.4f : 0.5f));
+                return new LoopCast(new Vector3(1f, 0f, -3f), false, list);
+            }, AllyLevel: 0.5f, RecordRuleLog: true),
+        new("lord-captured", "the real loops: Warring States without retreat, the lord fallen: every retainer taken captive at once, the enemies on the captives",
+            Base, new RuleSettings(WarFallenRule.WarringStates, false), () =>
+            {
+                var list = new List<LoopFighter>();
+                for (var i = 0; i < 5; i++)
+                    list.Add(new($"A{i + 1}", true, Kits.Melee(), new Vector3((i - 2f) * 2.5f, 0f, 1f), 0, 10000, 10000, Tank: i == 0));
+                for (var i = 0; i < 6; i++)
+                    list.Add(new($"E{i + 1}", false, i % 3 == 2 ? Kits.Ranged() : Kits.Melee(), new Vector3((i - 2.5f) * 2.5f, 0f, 14f), 25000, 5000, 5000));
+                return new LoopCast(Vector3.Zero, false, list);
+            }, RecordRuleLog: true),
+        new("rule-switch", "the real loops: the rule changed mid-battle, the lord fallen: Spring and Autumn, at 6 s Warring States with retreat, at 13 s retreat off, at 17 s Spring and Autumn, at 23 s Warring States with retreat",
+            Base, new ScheduledRules(new[]
+            {
+                (0f, WarFallenRule.SpringAndAutumn, false), (6f, WarFallenRule.WarringStates, true), (13f, WarFallenRule.WarringStates, false),
+                (17f, WarFallenRule.SpringAndAutumn, false), (23f, WarFallenRule.WarringStates, true),
+            }), () =>
+            {
+                var list = new List<LoopFighter> { new("A1", true, Kits.Melee(false), new Vector3(0f, 0f, 1.6f), 0, 10000, 10000) };
+                for (var i = 1; i < 7; i++)
+                {
+                    var angle = i * MathF.PI / 3f;
+                    list.Add(new($"A{i + 1}", true, i % 3 == 0 ? Kits.Ranged() : Kits.Melee(), new Vector3(MathF.Sin(angle) * 3.5f, 0f, MathF.Cos(angle) * 3.5f), 0, 10000, 10000, Tank: i == 1));
+                }
+                for (var i = 0; i < 6; i++)
+                    list.Add(new($"E{i + 1}", false, i % 4 == 3 ? Kits.Ranged() : Kits.Melee(), new Vector3((i - 3.5f) * 3f, 0f, 18f + (i % 3)), 30000, 5000, 5000, Seizer: i % 2 == 0));
+                return new LoopCast(Vector3.Zero, false, list);
+            }, AllyLevel: 1f, RecordRuleLog: true),
     };
 }
 
@@ -343,10 +415,43 @@ sealed class FakeEngine : ICombatLoopEngine
     public void RegisterCompanionEntity(CombatCompanion companion) => State.Entities[companion.SimulatedEntityId] = companion.State;
     public void UnregisterNpcEntity(uint entityId) => State.Entities.Remove(entityId);
     public void TriggerEnemyVictoryIfPartyDefeated() => log.Line($"L {log.Frame} victory check");
-    public void TakeCaptive(SimulatedEntityState friend) => log.Line($"L {log.Frame} take captive {friend.Name}");
-    public void ReleaseCaptive(SimulatedEntityState friend, float hpShare) => log.Line($"L {log.Frame} release captive {friend.Name}");
-    public void RevivePlayerInPlace(float hpShare, bool refillMp) => log.Line($"L {log.Frame} revive player");
-    public void PlaySupportVfx(SimulatedEntityState source, SimulatedEntityState target, uint actionId) { }
+    // The state changes as CombatEngine makes them (stage B5: the rescue and lord scenarios reach them); no
+    // emotes, executions or movement block.
+    public void TakeCaptive(SimulatedEntityState friend)
+    {
+        log.Line($"L {log.Frame} take captive {friend.Name}");
+        if (friend.IsCaptive || !friend.IsAlive)
+            return;
+        friend.IsCaptive = true;
+        friend.CurrentHp = Math.Min(friend.CurrentHp, 1);
+        friend.IsCasting = false;
+        friend.CastTimeElapsed = 0;
+        friend.CastActionId = 0;
+    }
+
+    public void ReleaseCaptive(SimulatedEntityState friend, float hpShare)
+    {
+        log.Line($"L {log.Frame} release captive {friend.Name}");
+        if (!friend.IsCaptive)
+            return;
+        friend.IsCaptive = false;
+        friend.CurrentHp = Math.Clamp((int)MathF.Ceiling(friend.MaxHp * hpShare), 1, Math.Max(1, friend.MaxHp));
+    }
+
+    public void RevivePlayerInPlace(float hpShare, bool refillMp)
+    {
+        log.Line($"L {log.Frame} revive player");
+        var ps = State.PlayerState;
+        ps.IsCaptive = false;
+        ps.Executed = false;
+        ps.IncomingDamageScale = 1f;
+        ps.CurrentHp = Math.Clamp((int)MathF.Ceiling(ps.MaxHp * hpShare), 1, Math.Max(1, ps.MaxHp));
+        ps.CurrentMp = refillMp ? ps.MaxMp : 0;
+        ps.AnimationLock = 0;
+    }
+
+    public void PlaySupportVfx(SimulatedEntityState source, SimulatedEntityState target, uint actionId)
+        => log.Line($"L {log.Frame} support vfx {actionId} {source.Name} -> {target.Name}");
 
     /// <summary>CombatEngine.Tick, as far as the loops see it: the simulation clock.</summary>
     public void Tick(float deltaTime) => State.SimulationTime += deltaTime;
@@ -438,10 +543,21 @@ sealed class FakeAttacks : IAttackSink
 /// <summary>IPluginLog that drops everything (the loops' summary lines are wall-clock timed, not part of a run).</summary>
 public class NullLogProxy : DispatchProxy
 {
+    /// <summary>
+    /// Where the battle rules' summary lines go (those starting <c>Rescue:</c>, timed by the simulation clock),
+    /// or null: dropped with the rest.
+    /// </summary>
+    public Action<string>? RuleLines;
+
     protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-        => targetMethod != null && targetMethod.ReturnType.IsValueType && targetMethod.ReturnType != typeof(void)
+    {
+        if (RuleLines != null && targetMethod?.Name == "Info" && args is { Length: > 0 } && args[0] is string text &&
+            text.StartsWith("Rescue:", StringComparison.Ordinal))
+            RuleLines(text);
+        return targetMethod != null && targetMethod.ReturnType.IsValueType && targetMethod.ReturnType != typeof(void)
             ? Activator.CreateInstance(targetMethod.ReturnType)
             : null;
+    }
 }
 
 // ------------------------------------------------------------------ the run
@@ -481,6 +597,9 @@ sealed unsafe class LoopReplay
         var settings = scenario.Settings;
         var cast = scenario.Build();
         var pluginLog = DispatchProxy.Create<IPluginLog, NullLogProxy>();
+        if (scenario.RecordRuleLog)
+            ((NullLogProxy)(object)pluginLog).RuleLines = text => log.Line($"G {log.Frame} {text}");
+        (scenario.Rules as ScheduledRules)?.At(0f);
 
         world = new FlatWorld(log);
         engine = new FakeEngine(world, log, scenario.Rules);
@@ -541,7 +660,7 @@ sealed unsafe class LoopReplay
             var npc = new SimulatedNpc
             {
                 Name = f.Name, BattleChara = (BattleChara*)address, Behavior = Kits.Clone(f.Kit), SpawnPosition = f.At, IsSpawned = true, IsClientControlled = true,
-                State = new SimulatedEntityState { Name = f.Name, MaxMp = f.MaxMp, CurrentMp = f.Mp, IsTank = f.Tank, LevelFactor = LoopScenarios.AllyLevelFactor },
+                State = new SimulatedEntityState { Name = f.Name, MaxMp = f.MaxMp, CurrentMp = f.Mp, IsTank = f.Tank, LevelFactor = scenario.AllyLevel },
             };
             if (!companions.AdoptNpc(npc, new NpcSpawnRequest { DisplayName = f.Name }))
                 throw new InvalidOperationException($"{f.Name} was not adopted");
@@ -566,6 +685,9 @@ sealed unsafe class LoopReplay
             var dt = steps.Dt(frame);
             log.Frame = frame;
             Array.Clear(log.Calls);
+            // The window changes a switch between two frames.
+            if ((scenario.Rules as ScheduledRules)?.At(engine.State.SimulationTime) == true)
+                log.Line($"L {log.Frame} rules {scenario.Rules.FallenRule} retreat {scenario.Rules.Retreat}");
             if (engine.State.SimulationTime >= nextSnapshot)
             {
                 Snapshot();

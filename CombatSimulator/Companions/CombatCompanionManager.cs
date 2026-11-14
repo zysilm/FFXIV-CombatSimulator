@@ -10,6 +10,7 @@ using System.Numerics;
 using System.Text;
 using System.Threading.Tasks;
 using CombatSimulator.Animation;
+using CombatSimulator.Battle.Rules;
 using CombatSimulator.Combat;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
@@ -139,6 +140,9 @@ public unsafe partial class CombatCompanionManager : IDisposable
         this.attackSink = attackSink;
         this.log = log;
         stepSink = new AllyStepSink(this);
+        ruleParts = new BattleRuleSet(
+            new BattleContext(combatEngine.Rules, combatEngine, world, new RuleAllies(this)),
+            BattleRuleFactory.CreateAll());
     }
 
     /// <summary>
@@ -344,8 +348,9 @@ public unsafe partial class CombatCompanionManager : IDisposable
             SelectEnemyTargetInternal(enemy);
         }
 
-        TickRescues(deltaTime, enemies);
-        TickLord();
+        // The battle's rules (Spring and Autumn rescues; the lord's fall, the one praying over the body).
+        ruleParts.Context.Enemies = enemies;
+        ruleParts.TickBeforeAllies(deltaTime);
         for (var i = 0; i < liveCompanions.Count; i++)
             TickCompanion(liveCompanions[i], deltaTime, enemies, i, liveCompanions.Count);
 
@@ -459,8 +464,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         selectedFocusTargetId = 0;
         lastFocusTargetId = 0;
 
-        ClearRescues();
-        ResetLord();
+        ruleParts.Reset();
         foreach (var companion in companions)
         {
             companion.State.CurrentHp = companion.State.MaxHp;
@@ -509,10 +513,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
             Despawn(companion);
 
         allocatedIndices.Clear();
-        rescues.Clear();
-        prayerId = 0;
-        prayerAtPost = false;
-        lordFallHandled = false;
+        ruleParts.AlliesDismissed();
         targeting.Reset();
         playerRecentDamage = 0;
         playerRecentDps = 0;
@@ -870,15 +871,15 @@ public unsafe partial class CombatCompanionManager : IDisposable
         // MP comes back as it does for enemies: steadily, and with each auto-attack.
         companion.State.RegenerateMp(CombatBudgetModel.EnemyMpRegenPerSecond, deltaTime);
 
-        if (TickCaptive(companion) || TickPrayer(companion, deltaTime) || TickRescuer(companion, deltaTime))
+        if (TickCaptive(companion) || ruleParts.TakesOverAlly(companion, deltaTime))
         {
             NoteActivity(ActivityOther);
             return;
         }
 
-        // Only guarding the lord's body holds an ally to one place; otherwise it fights wherever the
-        // fight goes.
-        if (Rules.LordBodyIsGuarded && !IsWithinCommandRange(companion))
+        // Only a rule's leash (guarding the lord's body) holds an ally to one place; otherwise it fights
+        // wherever the fight goes.
+        if (LeashOf(companion) != null && !IsWithinCommandRange(companion))
         {
             NoteActivity(ActivityReturning);
             ClearCompanionActionState(companion);
@@ -1003,7 +1004,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         if (!companion.IsSpawned || !companion.State.IsAlive || companion.BattleChara == null)
             return;
 
-        if (Rules.LordBodyIsGuarded && !IsWithinCommandRange(companion))
+        if (LeashOf(companion) != null && !IsWithinCommandRange(companion))
         {
             ClearCompanionTargetState(companion);
             return;
@@ -1033,33 +1034,37 @@ public unsafe partial class CombatCompanionManager : IDisposable
         if (player == null || companion.BattleChara == null)
             return false;
 
+        var leash = LeashOf(companion);
         var current = world.PositionOf(companion);
-        var delta = current - CommandAnchor(player.Position);
+        var delta = current - CommandAnchor(player.Position, leash);
         delta.Y = 0;
-        if (!Rules.LordBodyIsGuarded)
+        if (leash == null)
         {
             companion.ReturningToLord = false;
-            return delta.Length() <= CommandLimit(companion.SimulatedEntityId);
+            return delta.Length() <= CommandLimit(companion.SimulatedEntityId, leash);
         }
-        return GuardInsideLeash(companion, delta.Length(), CommandLimit(companion.SimulatedEntityId));
+        return leash.Inside(companion, delta.Length(), CommandLimit(companion.SimulatedEntityId, leash));
     }
 
-    /// <summary>
-    /// What the allies keep close to: the lord's body while they guard it, otherwise where the fight
-    /// began (or the player).
-    /// </summary>
-    private Vector3 CommandAnchor(Vector3 playerPosition)
-        => Rules.LordBodyIsGuarded ? LordBodyAt(playerPosition) : !combatAnchorActive ? playerPosition : combatAnchorPosition;
+    /// <summary>What holds this ally to one place under the battle's rules (the lord's body), or null.</summary>
+    private IAllyLeash? LeashOf(CombatCompanion companion) => ruleParts.LeashFor(companion);
 
     /// <summary>
-    /// How far from the command anchor this ally may go: the party range (the guard range around the
-    /// lord's body), a little less for some.
+    /// What the allies keep close to: a rule's leash anchor (the lord's body while they guard it),
+    /// otherwise where the fight began (or the player).
     /// </summary>
-    private float CommandLimit(uint actorId)
+    private Vector3 CommandAnchor(Vector3 playerPosition, IAllyLeash? leash)
+        => leash != null ? leash.Anchor(ruleParts.Context, playerPosition) : !combatAnchorActive ? playerPosition : combatAnchorPosition;
+
+    /// <summary>
+    /// How far from the command anchor this ally may go: the party range (a rule's leash radius, the
+    /// guard range around the lord's body), a little less for some.
+    /// </summary>
+    private float CommandLimit(uint actorId, IAllyLeash? leash)
     {
         var jitter = StableUnit(actorId ^ 0xC001u);
         var factor = 1.0f - Math.Clamp(config.PartyCommandRangeRandomness, 0, 0.8f) * jitter;
-        return MathF.Max(1.0f, (Rules.LordBodyIsGuarded ? LordGuardRange : config.PartyCommandRange) * factor);
+        return MathF.Max(1.0f, (leash != null ? leash.Radius : config.PartyCommandRange) * factor);
     }
 
     private static float StableUnit(uint x)
@@ -1084,11 +1089,12 @@ public unsafe partial class CombatCompanionManager : IDisposable
 
         // Its place in the formation behind the anchor (the player, or where the fight began); guarding
         // the lord, its place in the ring round the body.
+        var leash = LeashOf(companion);
         var current = world.PositionOf(companion);
-        var anchor = CommandAnchor(player.Position);
-        var anchorRotation = combatAnchorActive && !Rules.LordBodyIsGuarded ? combatAnchorRotation : player.Rotation;
-        var goal = Rules.LordBodyIsGuarded
-            ? GuardGoal(companion, anchor, current)
+        var anchor = CommandAnchor(player.Position, leash);
+        var anchorRotation = combatAnchorActive && leash == null ? combatAnchorRotation : player.Rotation;
+        var goal = leash != null
+            ? leash.IdleGoal(ruleParts.Context, companion, anchor, current, CommandLimit(companion.SimulatedEntityId, leash))
             : CalculateFollowPosition(anchor, anchorRotation, companionIndex, companionCount);
         if (FlatDistance(current, goal) > FollowStopDistance)
         {
@@ -1135,13 +1141,14 @@ public unsafe partial class CombatCompanionManager : IDisposable
         SimulatedNpc enemy)
     {
         var player = world.LocalPlayer;
-        if (!Rules.LordBodyIsGuarded || player == null || companion.BattleChara == null || enemy.BattleChara == null)
+        var leash = LeashOf(companion);
+        if (leash == null || player == null || companion.BattleChara == null || enemy.BattleChara == null)
             return (true, 0f);
 
         var enemyPos = world.PositionOf(enemy);
-        var anchor = CommandAnchor(player.Position);
+        var anchor = CommandAnchor(player.Position, leash);
         var standOff = CrowdReachNow(companion) + HitboxOf(companion) + world.HitboxRadiusOf(enemy);
-        var overflow = FlatDistance(enemyPos, anchor) - standOff - CommandLimit(companion.SimulatedEntityId);
+        var overflow = FlatDistance(enemyPos, anchor) - standOff - CommandLimit(companion.SimulatedEntityId, leash);
         return (overflow <= ReachabilityRecoveryDistance, MathF.Max(0f, overflow));
     }
 

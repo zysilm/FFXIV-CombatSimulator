@@ -5,6 +5,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using CombatSimulator.Battle.Rules;
 using CombatSimulator.Combat;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
@@ -24,15 +25,12 @@ namespace CombatSimulator.Companions;
 /// </summary>
 public unsafe partial class CombatCompanionManager
 {
-    // Situation multipliers (AggroModel): focus x2, attacking the player x1.5, the body's holder x100
-    // for those going for it, the seizers x30 for the guards, someone kneeling x3, out of a guard's
-    // reach x0.05.
+    // Situation multipliers (AggroModel): focus x2, attacking the player x1.5, someone kneeling x3; the
+    // battle rules add theirs (Battle/Rules: the body's holder x100 for those going for it, the seizers
+    // x30 for the guards, out of a guard's reach x0.05).
     private const float FocusGain = AggroModel.FocusGain;
     private const float AttackingPlayerGain = AggroModel.AttackingPlayerGain;
-    private const float TaskGain = AggroModel.TaskGain;
-    private const float GuardSeizerGain = AggroModel.GuardSeizerGain;
     private const float ExposedGain = AggroModel.ExposedGain;
-    private const float UnreachableGain = AggroModel.UnreachableGain;
 
     /// <summary>
     /// Where each fighter's own generator (the one its targets are drawn with) gets its seed, the first
@@ -69,12 +67,7 @@ public unsafe partial class CombatCompanionManager
     {
         if (friendId == 0)
             return false;
-        if (friendId == prayerId && prayerAtPost)
-            return true;
-        foreach (var rescue in rescues.Values)
-            if (rescue.Channelling && rescue.RescuerId == friendId)
-                return true;
-        return false;
+        return ruleParts.Exposes(friendId);
     }
 
     /// <summary>The target of a friend of the player's side (the player's is the one they have selected).</summary>
@@ -98,7 +91,8 @@ public unsafe partial class CombatCompanionManager
         var now = combatEngine.State.SimulationTime;
         var current = targeting.EnemyTargetOf(enemy.SimulatedEntityId);
         var currentLive = candidates.Exists(c => c.EntityId == current);
-        var holder = LordSeizerTarget(enemy)?.SimulatedEntityId ?? 0;
+        // The one this enemy's task makes it cut down (the lord's body: the retainer in the way), 0: none.
+        var holder = ruleParts.HolderFor(enemy);
 
         var due = AggroModel.IsDue(state, now, currentLive, holder != state.Holder);
         state.HitByNew = false;
@@ -115,8 +109,7 @@ public unsafe partial class CombatCompanionManager
         {
             var w = AggroWeight(enemy.SimulatedEntityId, selfPos, reach, selfRanged, currentLive ? current : 0,
                 id, combatEngine.GetSimulatedEntityPosition(candidate), HpShare(candidate), FriendTarget(candidate));
-            if (id == holder)
-                w *= TaskGain;
+            w = ruleParts.EnemyTargetWeight(new EnemyTargetQuery(enemy, holder, id), w);
             if (IsExposed(id))
                 w *= ExposedGain;
             targeting.AddCandidate(id, w);
@@ -139,8 +132,8 @@ public unsafe partial class CombatCompanionManager
         var due = AggroModel.IsDue(state, now, currentEnemy != null, selectedFocusTargetId != state.Focus);
         state.HitByNew = false;
         state.Focus = selectedFocusTargetId;
-        // Guarding the lord: a target that has gone out of the guard's reach is let go at once.
-        if (!due && Rules.LordBodyIsGuarded && !ComputeCompanionReachability(companion, currentEnemy!).Reachable)
+        // A rule may make it let go at once (guarding the lord: a target gone out of the guard's reach).
+        if (!due && ruleParts.ForcesRedraw(companion, currentEnemy!))
             due = true;
         if (!due)
             return currentEnemy;
@@ -151,7 +144,7 @@ public unsafe partial class CombatCompanionManager
         var selfRanged = IsRangedStyle(companion.Behavior.AutoAttackStyle);
         var reach = CrowdReachNow(companion);
         var playerId = combatEngine.State.PlayerState.EntityId;
-        var hasBody = TryGetLordBody(out var body, out _) && Rules.LordBodyIsGuarded;
+        ruleParts.BeginAllyDraw(companion);
         foreach (var enemy in enemies)
         {
             var enemyPos = world.PositionOf(enemy);
@@ -164,14 +157,8 @@ public unsafe partial class CombatCompanionManager
                 w *= AttackingPlayerGain;
             if (IsExposed(enemyTarget))
                 w *= ExposedGain;
-            if (hasBody)
-            {
-                if (LordSeizers.Contains(enemy.SimulatedEntityId))
-                    w *= GuardSeizerGain;
-                w *= 1f + Math.Clamp(1f - FlatDistance(enemyPos, body) / NearBodyTargetReach, 0f, 1f);
-                if (!ComputeCompanionReachability(companion, enemy).Reachable)
-                    w *= UnreachableGain;
-            }
+            // The rules' own (guarding the lord's body: the seizers, nearness to the body, out of reach).
+            w = ruleParts.AllyTargetWeight(new AllyTargetQuery(companion, enemy, enemyPos), w);
             targeting.AddCandidate(enemy.SimulatedEntityId, w);
         }
         var drawn = DrawAggro(state);

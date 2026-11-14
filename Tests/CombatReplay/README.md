@@ -2,7 +2,8 @@
 
 Run `dotnet run -c Release` from this folder: compares the output with the golden files in `golden/` and exits 1
 at the first different line. `dotnet run -c Release -- --write` rewrites them (only on purpose, after a behaviour
-change the user approved). "Identical" means byte for byte on the same machine and runtime
+change the user approved); `-- --write-missing` writes only the files that do not exist yet (a new scenario, recorded
+from the code before the change it is to check). "Identical" means byte for byte on the same machine and runtime
 (docs/PLUGIN_ARCHITECTURE.md §8.1); `golden/` is marked `-text` so git does not change its line endings.
 
 Two levels. The function level and the three `<scenario>.txt` files were built at refactor stage B1 and cover
@@ -78,7 +79,9 @@ What is faked (everything else is the production code):
 - The engine (`ICombatLoopEngine`, `FakeEngine`): the real `SimulationState` and `BattleRules`; the enemies' target is
   `CombatCompanionManager.SelectEnemyTarget` (as `Plugin.cs` wires `ResolveNpcTarget`); positions as
   `CombatEngine.GetEntityPosition` reads them; action data only for the kits' MP prices; the clock advances by dt.
-  No death queue, no `EngageIdleTarget` when an ally hits, no victory, captives or revives (those calls are logged).
+  No death queue, no `EngageIdleTarget` when an ally hits, no victory or executions. Taking and releasing a captive
+  and reviving the player change the state as `CombatEngine` does (HP, captive flag; no emotes or movement block);
+  every such call, and the raise's effect, is logged.
 - Attacks (`IAttackSink`, `FakeAttacks`): an enemy's attack is a telegraph that lands 0.8 s (+ its cast time) later,
   single target, `DamageCalculator.CalculateNpcAutoAttack` with its potency, threat through the real
   `RegisterHit`; the enemy counts as busy (`isTelegraphBusy`) until then; it lapses if either side died. An ally's
@@ -86,12 +89,29 @@ What is faked (everything else is the production code):
   Fighting Mode cast path asks for one, and these runs are in action combat).
 - The war: while the lord's body is guarded, the scripted seizers go for it, held while a retainer is within 3.5 m;
   no seizure progress, capture or result banner (`Battle/CorpseSeizure` is not run).
-- `IPluginLog` drops everything (the loops' summary lines are timed by the wall clock and decide nothing).
+- `IPluginLog` drops everything (the loops' summary lines are timed by the wall clock and decide nothing), except, in
+  the scenarios added at stage B5, the battle rules' `Rescue:` line (timed by the simulation clock), recorded as
+  `G <frame> <text>`.
 - Compile only, never run: the managers' spawning and appearance code, and with it `Core/Services.cs`,
   `Core/ClientActorSlotAllocator.cs`, `Npcs/NpcWeaponClassifier.cs`, `Resources/Sheets/HairMakeTypeSheet.cs` and the
   game's assemblies (Dalamud, FFXIVClientStructs, Lumina, from the dev hooks folder). `LoopStubs.cs` only declares two
   namespaces the controllers import; the plain types they use from the engine (`SimulatedActionResult`,
   `CombatLogType`) are linked from their own files in `Simulation/`.
 
+Added at stage B5 (rule parts, `CombatSimulator/Battle/Rules`), recorded with `--write-missing` from the code before
+the rules became parts:
+
+- `loop-rescue` — Spring and Autumn, the player fallen: triage, raising the lord and allies, rescuers falling, the
+  `Rescue:` summary.
+- `loop-lord-captured` — Warring States without retreat, the lord fallen: every retainer taken captive at once (the
+  captive's held emote), the enemies on the captives.
+- `loop-rule-switch` — the rule switched between frames, as the window does (`ScheduledRules`, an `L ... rules` line
+  at each change): Spring and Autumn, at 6 s Warring States with retreat, at 13 s retreat off, at 17 s Spring and
+  Autumn, at 23 s Warring States with retreat; the parts leaving and joining the composition mid-battle.
+
+The loop files record decisions (targets, states, attacks, a hash of every fighter's state), not the target weights:
+a weight changed by a small factor may not change any draw in these runs.
+
 Not reached by these scenarios: the engine cast and snapshotted-area path (Fighting Mode), sentries and patrols,
-the charge, rescues (Spring and Autumn), captives and executions.
+the charge, freeing a captive (Spring and Autumn with hostages), executions, the corpse seizure's progress and capture
+(Tests/CorpseSeizure).
