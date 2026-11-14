@@ -268,10 +268,10 @@ public unsafe partial class NpcAiController
         var minR = MathF.Max(npc.HitboxRadius + 0.6f, centres * 0.75f);
 
         if (!tactics.Strafing && justAttacked && !IsMeleeFighter(npc) && tactics.RepositionCooldown <= 0f &&
-            Random.Shared.NextSingle() < RepositionChance)
+            RandomSource.NextSingle() < RepositionChance)
         {
             tactics.RepositionCooldown = RepositionCooldownSeconds;
-            var arc = RepositionArcMinDeg + Random.Shared.NextSingle() * (RepositionArcMaxDeg - RepositionArcMinDeg);
+            var arc = RepositionArcMinDeg + RandomSource.NextSingle() * (RepositionArcMaxDeg - RepositionArcMinDeg);
             TryStartHoldMove(npc, tactics, npcPos, targetPos, arc, minR, maxR, 1f);
         }
 
@@ -281,9 +281,9 @@ public unsafe partial class NpcAiController
             if (tactics.StrafeTimer > 0f)
                 return null;
             tactics.StrafeTimer = NextStrafeInterval();
-            if (Random.Shared.NextSingle() >= StrafeChance)
+            if (RandomSource.NextSingle() >= StrafeChance)
                 return null;
-            var arc = StrafeArcMinDeg + Random.Shared.NextSingle() * (StrafeArcMaxDeg - StrafeArcMinDeg);
+            var arc = StrafeArcMinDeg + RandomSource.NextSingle() * (StrafeArcMaxDeg - StrafeArcMinDeg);
             if (!TryStartHoldMove(npc, tactics, npcPos, targetPos, arc, minR, maxR, StrafeSpeedScale))
                 return null;
         }
@@ -302,7 +302,7 @@ public unsafe partial class NpcAiController
         SimulatedNpc npc, EnemyTacticsState tactics, Vector3 npcPos, Vector3 targetPos,
         float arcDeg, float minR, float maxR, float speedScale)
     {
-        var first = Random.Shared.Next(2) == 0 ? -1f : 1f;
+        var first = RandomSource.Next(2) == 0 ? -1f : 1f;
         foreach (var sign in new[] { first, -first })
         {
             var (gx, gz) = EnemyMovementMath.CircleGoal(targetPos.X, targetPos.Z, npcPos.X, npcPos.Z, arcDeg * sign, minR, maxR);
@@ -335,7 +335,7 @@ public unsafe partial class NpcAiController
     private void ApplyEngageJitter(SimulatedNpc npc)
     {
         if (config.EnhancedEnemyTactics)
-            npc.EngageDelayTimer = MathF.Max(npc.EngageDelayTimer, Random.Shared.NextSingle() * EngageDelayJitterMax);
+            npc.EngageDelayTimer = MathF.Max(npc.EngageDelayTimer, RandomSource.NextSingle() * EngageDelayJitterMax);
     }
 
     /// <summary>A melee fighter: nothing in its kit reaches beyond melee.</summary>
@@ -490,8 +490,8 @@ public unsafe partial class NpcAiController
         return state;
     }
 
-    private static float NextStrafeInterval()
-        => StrafeIntervalMin + Random.Shared.NextSingle() * (StrafeIntervalMax - StrafeIntervalMin);
+    private float NextStrafeInterval()
+        => StrafeIntervalMin + RandomSource.NextSingle() * (StrafeIntervalMax - StrafeIntervalMin);
 
     private bool IsNpcBusyAttacking(SimulatedNpc npc)
         => npc.State.IsCasting || npc.State.AnimationLock > 0f || isTelegraphBusy(npc.SimulatedEntityId);
