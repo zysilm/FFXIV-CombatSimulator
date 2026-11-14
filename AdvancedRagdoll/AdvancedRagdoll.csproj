@@ -6,6 +6,7 @@
        directly. See docs/REFACTOR_PLAN.md (track A) and docs/RAGDOLL_LIBRARY_ARCHITECTURE.md. Namespaces:
        AdvancedRagdoll.* (stage A4). -->
   <PropertyGroup>
+    <PackageLicenseExpression>MPL-2.0</PackageLicenseExpression>
     <!-- BepuPhysics 2.5.0-beta.22 only targets net8.0, so that is the floor. -->
     <TargetFramework>net8.0</TargetFramework>
     <AssemblyName>AdvancedRagdoll</AssemblyName>
