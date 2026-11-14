@@ -819,6 +819,7 @@ public partial class MainWindow : IDisposable
 
         var mapEnemyText = mapEnemySettings != null ? $", up to {mapEnemySettings.MaxCount} map enemy/enemies" : "";
         chatGui.Print($"[CombatSim] Started battle profile '{recipe.Name}' ({queuedCompanions} companion(s), {queuedEnemies} enemy/enemies queued{mapEnemyText}).");
+        log.Info($"Battle profile started: '{recipe.Name}', rule {(WarFallenRule)config.WarFallenRule}, hostages {config.WarCaptives}, corpse seizure {config.WarRetreat}; {queuedCompanions} allies, {queuedEnemies} enemies queued.");
     }
 
     /// <summary>Queue one group of a profile; returns how many were queued.</summary>

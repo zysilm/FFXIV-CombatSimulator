@@ -331,6 +331,7 @@ public partial class CombatEngine : IDisposable
         ClearQueuedActions();
 
         AddLogEntry("Combat state reset.", CombatLogType.Info);
+        log.Info("Combat state reset.");
 
         OnSimulationReset?.Invoke();
     }
