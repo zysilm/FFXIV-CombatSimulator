@@ -314,6 +314,7 @@
 
 ### 日志（新的在上）
 
+- 2026-11-14 · A7 提交：库的公开面收窄到门面 + 宿主接口 + profile；日志前缀改为 `Ragdoll:`/`WeaponDrop:`（插件侧 FfxivMeshSource 仍用 `RagdollController:`）；`Tests/LibrarySample` 只引用库。完整版 0 错误；97/97。下一步：拆仓库到 zysilm/AdvancedRagdoll，从新仓库打包发布（包元数据的仓库/提交号必须来自新仓库）。
 - 2026-11-14 · B9 合入（`301c3a9`）：独立审查可合并；私有模块不用旧状态枚举，兼容文件已删。合并后完整版 0 错误；CombatReplay 19/19、PluginOrder ALL EQUAL、其余测试过；97/97。B 轨全部完成。剩：A 轨公开发布前清理与 §2.3 公开 API、可选 A6、拆仓库与 NuGet（Trusted Publishing）、游戏内验证。
 - 2026-11-14 · B7/B8 合入（`ff93f73`）：独立审查可合并（检查器盲区已人工补查）；协调者用含私有模块的构建发现缺 `GetActiveCorpseRagdolls`，补了转发。合并后完整版 0 错误；全部测试过；97/97。插件侧剩 B9。
 - 2026-11-14 · B6 合入（`308dc5c`）：两条伤害结算合成 `HitSettlement`（`HitSide` 十个开关）；四个规则钩子接线；loop 金样加抽目标权重；金样 19 份。独立审查可合并，并用 HEAD 生产代码重录 19/19 相同。合并后：完整版 0 错误；全部测试过；97/97。审查低级意见：`CombatEngine.RuleParts` 构造后赋值，以后可改构造参数。
