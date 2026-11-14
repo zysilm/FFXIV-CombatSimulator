@@ -68,7 +68,7 @@
 - 伤害数字由插件自己画（客户端角色不显示游戏的 flytext）；别人的数字不弱化，只强化玩家自己的：打出去橙金粗描边不飘动，挨打红色带负号、在胸口高度（2026-11-13，用户裁决，`a371a6e`、`66d23b7`）。
 - 名字和数字默认只在玩家自己的血条上；其他人是小血条，只在“有关”时显示（队友 10 m 内，用户确认合适）；敌人按视线显示，看不到敌人时脚下罗盘指向最近的敌人；匿名模式优先级最高，隐藏全部名字和数字（2026-11-13，用户裁决，`e0553d5`、`00f9d20`、`8a8d4ea`）。
 - 血条前缀是固定状态词，由状态自动决定；自定义 Sim Label / Dead Label 输入框已删（2026-11-13，用户裁决，`7e27feb`）。
-- 结果 banner 一直显示到重置，下面一行写原因，称呼用 you / your；标题：DISGRACED（尸体被抢）、ROUTED（被俘者被处决）、ANNIHILATED（全灭）、REMAINS SECURED（战国主公阵亡但尸体守住）、VICTORY；新模式在 `Plugin.War.cs` 的 `DescribeOutcome` 加分支；Settings → GUI Settings → Show Battle Result Banner 可关（2026-11-13，用户裁决，`8a8d4ea`、`66d23b7`）。
+- 结果 banner 一直显示到重置，下面一行写原因，称呼用 you / your；标题：DISGRACED（尸体被抢）、ROUTED（被俘者被处决）、ANNIHILATED（全灭）、REMAINS SECURED（战国主公阵亡但尸体守住）、VICTORY；新模式由规则部件实现 `DescribeOutcome`（问全部部件，后答覆盖先答；B6 起）；Settings → GUI Settings → Show Battle Result Banner 可关（2026-11-13，用户裁决，`8a8d4ea`、`66d23b7`）。
 - 状态词：Killed in battle / Executed / Corpse captured，不用 Fallen（2026-11-13，用户裁决，`8a8d4ea`）。
 
 ### 默认值 / 配置
@@ -313,6 +313,7 @@
 
 ### 日志（新的在上）
 
+- 2026-11-14 · B6 合入（`308dc5c`）：两条伤害结算合成 `HitSettlement`（`HitSide` 十个开关）；四个规则钩子接线；loop 金样加抽目标权重；金样 19 份。独立审查可合并，并用 HEAD 生产代码重录 19/19 相同。合并后：完整版 0 错误；全部测试过；97/97。审查低级意见：`CombatEngine.RuleParts` 构造后赋值，以后可改构造参数。
 - 2026-11-14 · A5（掉落武器）提交：模拟进库 `AdvancedRagdoll.WeaponDrop`，插件留薄壳；独立审查可合并；97/97。
 - 2026-11-14 · A4 提交：核心 36 个文件约 1.8 万行进库（命名空间 `AdvancedRagdoll.*`），插件留薄壳；私有模块无需改动即编译通过；97/97；独立审查可合并（低级意见记在 REFACTOR_PLAN 状态行）。私有子模块指针（父仓库记 `1a28a00`，实际需 `591b9c4`）按规定不随父仓库提交。
 - 2026-11-14 · A3b 提交（`b257b43`）：两个 partial 方法换成 `IRagdollStepExtension`/`IRagdollContactExtension` + `RagdollExtensionContext`；协调者按用户授权（“你自己决定”）改了私有模块的那个文件（私有仓库 `591b9c4`，只改接法）。完整版 0 错误；97/97；`--extensions` 6/6。

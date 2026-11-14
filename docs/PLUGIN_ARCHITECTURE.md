@@ -278,6 +278,8 @@ public sealed class TargetingService               // 有状态：威胁表、�
 
 ### 5.1 接口
 
+> **B6 之后（`a30642b`）**：下面标“B6 才接线”的四个钩子都已接线——`OnLethalBlow` 在 `Simulation/HitSettlement.cs` 里、只问组合内部件，`by` 参数改为 `Combatant`；`SuppressesKillerPossession` 只问组合内部件；`DescribeOutcome` 和 `TickAfterEngine` 问全部部件（`DescribeOutcome` 后答覆盖先答；战国措辞的 ROUTED 归 `WarringStatesLordRule`）。两条伤害结算合成 `HitSettlement`，差异见其中的 `HitSide`。本节其余文字是 B5 时的记录。
+
 B5 实际建成的（`Battle/Rules/IBattleRule.cs`）。分三组：B5 已接线、B6 才接线（已声明未调用）、设计里有但没声明。
 
 ```csharp
