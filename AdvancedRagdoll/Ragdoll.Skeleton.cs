@@ -20,24 +20,27 @@ public unsafe partial class Ragdoll
     /// Bone definitions for the mesh-aware humanoid rig: the built-in profile, filtered to enabled
     /// bones with physics parents computed. Collider dimensions come from the body mesh fit.
     /// </summary>
-    private static RagdollBoneDef[] GetBoneDefs() => BuildBoneDefsFromConfigs(AllBoneDefaults);
+    private RagdollBoneDef[] GetBoneDefs() => BuildBoneDefsFromConfigs(skeletonProfile, boneDefaults, boneDefaults);
 
     // Structural bones every humanoid skeleton has (the profile's signature bones). If all resolve,
     // the hand-tuned human profile fits and the existing passes run unchanged. If any is missing
     // (bats, birds, dragons, quadrupeds, voidsent) the skeleton is treated as non-humanoid and gets
     // a generated ragdoll instead (SkeletonProfile.Auto).
-    private static ImmutableArray<string> HumanoidSignatureBones => HumanoidSkeleton.SignatureBones;
+    private ImmutableArray<string> HumanoidSignatureBones => skeletonProfile.SignatureBones;
 
     private bool IsHumanoidSkeleton(Dictionary<string, int> humanNameToIndex)
     {
+        // An automatic profile has no humanoid table: every skeleton gets a generated rig.
+        if (skeletonProfile.IsAuto) return false;
         foreach (var bone in HumanoidSignatureBones)
             if (!humanNameToIndex.ContainsKey(bone))
                 return false;
         return true;
     }
 
-    private bool IsNpcHumanoidSkeleton(ISkeletonPose skel)
+    private bool IsNpcHumanoidSkeleton(IHostSkeleton skel)
     {
+        if (skeletonProfile.IsAuto) return false;
         foreach (var bone in HumanoidSignatureBones)
             if (ResolveBoneIndex(skel, bone) < 0)
                 return false;
@@ -53,7 +56,7 @@ public unsafe partial class Ragdoll
     /// ball joints. The returned defs feed the same Pass 1/2/3 body/constraint build
     /// and StepAndApply write-back as the human path.
     /// </summary>
-    private (RagdollBoneDef[] Defs, Dictionary<string, int> NameToIndex) BuildGenericSkeletonDefs(ISkeletonPose skel)
+    private (RagdollBoneDef[] Defs, Dictionary<string, int> NameToIndex) BuildGenericSkeletonDefs(IHostSkeleton skel)
     {
         var genericRig = SkeletonProfile.Auto().GenericRig!;
         var pose = skel.ModelPose;
@@ -90,7 +93,7 @@ public unsafe partial class Ragdoll
         for (int i = 0; i < n; i++)
             if (longestChildLen[i] > maxSegment) maxSegment = longestChildLen[i];
         float minSegment = Math.Clamp(maxSegment * genericRig.MinSegmentFactor, genericRig.MinSegmentFloor, genericRig.MinSegmentCap);
-        log.Info($"RagdollController: generic min-segment threshold {minSegment:F3}m (skeleton largest segment {maxSegment:F3}m)");
+        log.Info($"Ragdoll: generic min-segment threshold {minSegment:F3}m (skeleton largest segment {maxSegment:F3}m)");
 
         // A bone gets a body if it owns a real forward segment. Coincident/twig bones
         // (fingers, tips) are skipped and follow via StepAndApply propagation.
@@ -203,7 +206,7 @@ public unsafe partial class Ragdoll
     /// straight to the torso bone that carries them.
     /// </summary>
     private RagdollBoneDef[] AppendModSoftTissueDefs(
-        ISkeletonPose skel,
+        IHostSkeleton skel,
         RagdollBoneDef[] defs,
         Dictionary<string, int> nameToIndex,
         Dictionary<string, RagdollBoneDef> defByName)
@@ -254,7 +257,7 @@ public unsafe partial class Ragdoll
                     continue;
             }
 
-            if (!excludeDigits || !IsDigitBone(candidateName))
+            if (!excludeDigits || !IsDigitBone(skeletonProfile, candidateName))
                 fitCandidates.Add(i);
         }
 
@@ -277,7 +280,7 @@ public unsafe partial class Ragdoll
                     if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) { matched = true; break; }
                 if (!matched) continue;
             }
-            if (excludeDigits && IsDigitBone(name))
+            if (excludeDigits && IsDigitBone(skeletonProfile, name))
             {
                 continue;
             }
@@ -353,13 +356,14 @@ public unsafe partial class Ragdoll
     /// Standard and "All bones except digits" coverage to keep the (larger, cheaper-per-bone) capsules
     /// away from digits, where a wobbling fingertip or toe reads as wrong rather than fleshy.
     /// </summary>
-    private static bool IsDigitBone(string name) => HumanoidSkeleton.Digits.IsDigitBone(name);
+    private static bool IsDigitBone(SkeletonProfile skeletonProfile, string name) => skeletonProfile.Digits.IsDigitBone(name);
     // Catalog hint for generic authored joints. Core anatomical joints override it by bone:
     // knees are signed one-coordinate hinges; elbows are two-coordinate swivel hinges; distal
     // joints use dedicated frames. Every rigid joint adds only finite angular friction.
-    public enum JointType { Ball, Hinge }
+    internal enum JointType { Ball, Hinge }
     // A bone's anatomical role is the profile's SkeletonBoneRole (stage A4 merged the identical AnatomicalRole into it).
-    public enum RagdollColliderShape { Capsule, Box, ProfileHull, Mesh }
+    /// <summary>The collision volume of a ragdoll body (seen by extensions, <see cref="Bepu.RagdollExtensionBone"/>).</summary>
+    internal enum RagdollColliderShape { Capsule, Box, ProfileHull, Mesh }
 
     private void SetDismemberedBonesCore(IEnumerable<string> bones)
     {
@@ -371,7 +375,7 @@ public unsafe partial class Ragdoll
     }
 
     private RagdollBoneDef[] BuildActivePhysicsDefsForDismemberment(
-        ISkeletonPose skel,
+        IHostSkeleton skel,
         RagdollBoneDef[] defs,
         Dictionary<string, int> activeNameToIndex)
     {
@@ -442,19 +446,19 @@ public unsafe partial class Ragdoll
             return defs;
         if (kept.Count < 2)
         {
-            log.Warning($"RagdollController: active dismember physics would leave {kept.Count} bodies; keeping full rig.");
+            log.Warning($"Ragdoll: active dismember physics would leave {kept.Count} bodies; keeping full rig.");
             return defs;
         }
 
         foreach (var name in removedNames)
             activeNameToIndex.Remove(name);
 
-        log.Info($"RagdollController: active dismember physics removed {removedNames.Count}/{defs.Length} bodies.");
+        log.Info($"Ragdoll: active dismember physics removed {removedNames.Count}/{defs.Length} bodies.");
         return kept.ToArray();
     }
 
     // Ragdoll bone definition
-    public struct RagdollBoneDef
+    internal struct RagdollBoneDef
     {
         public string Name;
         public string? ParentName;
@@ -488,7 +492,7 @@ public unsafe partial class Ragdoll
     // Runtime bone with physics body
     private struct RagdollBone
     {
-        public int BoneIndex;       // index in FFXIV skeleton
+        public int BoneIndex;       // index in the host skeleton
         public int ParentBoneIndex; // parent bone index (-1 if root)
         public BodyHandle BodyHandle;
         public string Name;
@@ -521,7 +525,7 @@ public unsafe partial class Ragdoll
     }
 
     /// <summary>A ragdoll bone's collision volume in world space. The capsule axis is local Y.</summary>
-    public readonly record struct BoneCapsule(
+    internal readonly record struct BoneCapsule(
         Vector3 Center,
         Quaternion Orientation,
         float Radius,
@@ -572,12 +576,12 @@ public unsafe partial class Ragdoll
     // literal Mass and are excluded from anthropometric scaling.
 
     // Strip a trailing side suffix for the side-free table lookups.
-    private static string SideStrippedBoneName(string name) => HumanoidSkeleton.StripSide(name);
+    private static string SideStrippedBoneName(SkeletonProfile skeletonProfile, string name) => skeletonProfile.StripSide(name);
 
     // Resolve a bone's effective mass. With anthropometric mass on, bones present in
     // the profile's mass budget use (fraction x bodyMass); all others fall back to the
     // hand-picked def.Mass.
-    private static float ResolveBoneMass(
+    private static float ResolveBoneMass(SkeletonProfile skeletonProfile, 
         RagdollBoneDef def,
         IReadOnlyDictionary<string, float>? massByBone = null)
     {
@@ -592,21 +596,21 @@ public unsafe partial class Ragdoll
     // boneDef twist values (and the fold-stop).
     private static float D2R(float degrees) => DegreesToRadians(degrees);
 
-    private static bool TryGetAnatomicalRom(string boneName, out JointRom rom)
-        => HumanoidSkeleton.TryGetRangeOfMotion(boneName, out rom);
+    private static bool TryGetAnatomicalRom(SkeletonProfile skeletonProfile, string boneName, out JointRom rom)
+        => skeletonProfile.TryGetRangeOfMotion(boneName, out rom);
 
-    private static Dictionary<string, float> BuildMassBudget(
+    private static Dictionary<string, float> BuildMassBudget(SkeletonProfile skeletonProfile, 
         RagdollBoneDef[] defs,
         IReadOnlyDictionary<string, int> presentBones,
         float bodyMass)
     {
-        var budget = HumanoidSkeleton.MassBudget;
+        var budget = skeletonProfile.MassBudget;
         var result = new Dictionary<string, float>(StringComparer.Ordinal);
         foreach (var def in defs)
         {
             if (!presentBones.ContainsKey(def.Name))
                 continue;
-            if (budget.Fractions.TryGetValue(SideStrippedBoneName(def.Name), out var frac))
+            if (budget.Fractions.TryGetValue(SideStrippedBoneName(skeletonProfile, def.Name), out var frac))
                 result[def.Name] = frac * bodyMass;
         }
 
@@ -616,7 +620,7 @@ public unsafe partial class Ragdoll
         // without introducing mass when a profile adds or removes a finger.
         foreach (var left in new[] { true, false })
         {
-            var handName = Bones.Hand.For(left);
+            var handName = skeletonProfile.Landmarks.Hand.For(left);
             if (!presentBones.ContainsKey(handName))
                 continue;
 
@@ -646,8 +650,8 @@ public unsafe partial class Ragdoll
         // quietly adding two more literal masses to the rig.
         foreach (var left in new[] { true, false })
         {
-            var footName = Bones.Foot.For(left);
-            var toeName = Bones.Toes.For(left);
+            var footName = skeletonProfile.Landmarks.Foot.For(left);
+            var toeName = skeletonProfile.Landmarks.Toes.For(left);
             if (!presentBones.ContainsKey(footName) || !presentBones.ContainsKey(toeName) ||
                 !defs.Any(d => d.Name == toeName))
                 continue;
@@ -660,73 +664,73 @@ public unsafe partial class Ragdoll
         return result;
     }
 
-    public static void FillProfileDefaults(RagdollBoneConfig bone)
+    internal static void FillProfileDefaults(SkeletonProfile skeletonProfile, RagdollBoneConfig bone)
     {
         if (bone.AnatomicalRole == (int)SkeletonBoneRole.Auto)
-            bone.AnatomicalRole = (int)InferAnatomicalRole(bone.Name, bone.Description, bone.SoftBody);
+            bone.AnatomicalRole = (int)InferAnatomicalRole(skeletonProfile, bone.Name, bone.Description, bone.SoftBody);
 
-        bone.SwingMinLimit ??= DefaultSwingMinLimit((SkeletonBoneRole)bone.AnatomicalRole, bone.Name);
-        bone.HingeRestAngle ??= DefaultHingeRestAngle((SkeletonBoneRole)bone.AnatomicalRole, bone.Name);
+        bone.SwingMinLimit ??= DefaultSwingMinLimit(skeletonProfile, (SkeletonBoneRole)bone.AnatomicalRole, bone.Name);
+        bone.HingeRestAngle ??= DefaultHingeRestAngle(skeletonProfile, (SkeletonBoneRole)bone.AnatomicalRole, bone.Name);
         // 0 counts as "unset" for the rest spring, not "disabled": the built-in profiles store 0
         // for every bone, so treating it as null lets knee/elbow inherit the firm default (the
         // master toggle, not a per-bone 0, is what turns the feature off). Non-hinge bones keep 0
         // because their default is 0.
         if ((bone.HingeRestSpringFreq ?? 0f) <= 0f)
-            bone.HingeRestSpringFreq = DefaultHingeRestSpringFreq((SkeletonBoneRole)bone.AnatomicalRole, bone.Name);
+            bone.HingeRestSpringFreq = DefaultHingeRestSpringFreq(skeletonProfile, (SkeletonBoneRole)bone.AnatomicalRole, bone.Name);
         if ((bone.HingeRestMaxForce ?? 0f) <= 0f)
-            bone.HingeRestMaxForce = DefaultHingeRestMaxForce((SkeletonBoneRole)bone.AnatomicalRole, bone.Name);
+            bone.HingeRestMaxForce = DefaultHingeRestMaxForce(skeletonProfile, (SkeletonBoneRole)bone.AnatomicalRole, bone.Name);
 
         var hasBoxMetadata = bone.BoxHalfExtentX > 0 || bone.BoxHalfExtentY > 0 || bone.BoxHalfExtentZ > 0;
         if (bone.ColliderShape == 0 && !hasBoxMetadata &&
-            (IsHandBone(bone.Name) || IsFootBone(bone.Name) || IsShinBone(bone.Name) || IsCalfBone(bone.Name) ||
-             IsForearmBone(bone.Name) || IsUpperArmBone(bone.Name)))
+            (IsHandBone(skeletonProfile, bone.Name) || IsFootBone(skeletonProfile, bone.Name) || IsShinBone(skeletonProfile, bone.Name) || IsCalfBone(skeletonProfile, bone.Name) ||
+             IsForearmBone(skeletonProfile, bone.Name) || IsUpperArmBone(skeletonProfile, bone.Name)))
             bone.ColliderShape = (int)RagdollColliderShape.Box;
 
         if (bone.BoxHalfExtentX <= 0 || bone.BoxHalfExtentY <= 0 || bone.BoxHalfExtentZ <= 0)
         {
-            var extents = DefaultBoxHalfExtents(bone);
+            var extents = DefaultBoxHalfExtents(skeletonProfile, bone);
             if (bone.BoxHalfExtentX <= 0) bone.BoxHalfExtentX = extents.X;
             if (bone.BoxHalfExtentY <= 0) bone.BoxHalfExtentY = extents.Y;
             if (bone.BoxHalfExtentZ <= 0) bone.BoxHalfExtentZ = extents.Z;
         }
     }
 
-    private static SkeletonBoneRole InferAnatomicalRole(string name, string? description, bool softBody)
+    private static SkeletonBoneRole InferAnatomicalRole(SkeletonProfile skeletonProfile, string name, string? description, bool softBody)
     {
         if (softBody) return SkeletonBoneRole.SoftBody;
         // The skeleton profile names the role of its bones (SkeletonProfile.RoleRules).
-        if (HumanoidSkeleton.TryGetRole(name, out var profileRole)) return profileRole;
+        if (skeletonProfile.TryGetRole(name, out var profileRole)) return profileRole;
         if (!string.IsNullOrEmpty(description) && description.Contains("knee", StringComparison.OrdinalIgnoreCase)) return SkeletonBoneRole.Knee;
         if (!string.IsNullOrEmpty(description) && description.Contains("elbow", StringComparison.OrdinalIgnoreCase)) return SkeletonBoneRole.Elbow;
         return SkeletonBoneRole.Generic;
     }
 
-    private static bool IsHandBone(string name) => BoneClasses.Hand.Matches(name);
-    private static bool IsFootBone(string name) => BoneClasses.Foot.Matches(name);
-    private static bool IsToeBone(string name) => BoneClasses.Toe.Matches(name);
+    private static bool IsHandBone(SkeletonProfile skeletonProfile, string name) => skeletonProfile.Classes.Hand.Matches(name);
+    private static bool IsFootBone(SkeletonProfile skeletonProfile, string name) => skeletonProfile.Classes.Foot.Matches(name);
+    private static bool IsToeBone(SkeletonProfile skeletonProfile, string name) => skeletonProfile.Classes.Toe.Matches(name);
     // The upper knee-region hinge, a short stub below the knee.
-    private static bool IsShinBone(string name) => BoneClasses.Shin.Matches(name);
+    private static bool IsShinBone(SkeletonProfile skeletonProfile, string name) => skeletonProfile.Classes.Shin.Matches(name);
     // The lower knee-region hinge (see LogLegBoneStructureDiagnostics): carries most of the
     // knee-to-ankle span and, in a real death pose, bends more than the shin stub does. A real
     // dynamic body and joint, not a mesh-sampling helper.
-    private static bool IsCalfBone(string name) => BoneClasses.Calf.Matches(name);
-    private static bool IsForearmBone(string name) => BoneClasses.Forearm.Matches(name);
-    private static bool IsUpperArmBone(string name) => BoneClasses.UpperArm.Matches(name);
-    private static bool IsClavicleBone(string name) => BoneClasses.Clavicle.Matches(name);
+    private static bool IsCalfBone(SkeletonProfile skeletonProfile, string name) => skeletonProfile.Classes.Calf.Matches(name);
+    private static bool IsForearmBone(SkeletonProfile skeletonProfile, string name) => skeletonProfile.Classes.Forearm.Matches(name);
+    private static bool IsUpperArmBone(SkeletonProfile skeletonProfile, string name) => skeletonProfile.Classes.UpperArm.Matches(name);
+    private static bool IsClavicleBone(SkeletonProfile skeletonProfile, string name) => skeletonProfile.Classes.Clavicle.Matches(name);
 
-    private static Vector3 DefaultBoxHalfExtents(RagdollBoneConfig bone)
+    private static Vector3 DefaultBoxHalfExtents(SkeletonProfile skeletonProfile, RagdollBoneConfig bone)
     {
-        if (IsUpperArmBone(bone.Name))
+        if (IsUpperArmBone(skeletonProfile, bone.Name))
             return new Vector3(MathF.Max(0.032f, bone.CapsuleRadius * 1.15f), MathF.Max(0.075f, bone.CapsuleHalfLength), MathF.Max(0.024f, bone.CapsuleRadius * 0.85f));
-        if (IsShinBone(bone.Name))
+        if (IsShinBone(skeletonProfile, bone.Name))
             return new Vector3(MathF.Max(0.038f, bone.CapsuleRadius * 1.1f), MathF.Max(0.03f, bone.CapsuleHalfLength), MathF.Max(0.028f, bone.CapsuleRadius * 0.85f));
-        if (IsCalfBone(bone.Name))
+        if (IsCalfBone(skeletonProfile, bone.Name))
             return new Vector3(MathF.Max(0.042f, bone.CapsuleRadius * 1.15f), MathF.Max(0.15f, bone.CapsuleHalfLength), MathF.Max(0.030f, bone.CapsuleRadius * 0.85f));
-        if (IsForearmBone(bone.Name))
+        if (IsForearmBone(skeletonProfile, bone.Name))
             return new Vector3(MathF.Max(0.030f, bone.CapsuleRadius * 1.10f), MathF.Max(0.060f, bone.CapsuleHalfLength), MathF.Max(0.022f, bone.CapsuleRadius * 0.85f));
-        if (IsFootBone(bone.Name))
+        if (IsFootBone(skeletonProfile, bone.Name))
             return new Vector3(0.035f, MathF.Max(0.045f, bone.CapsuleHalfLength), 0.018f);
-        if (IsHandBone(bone.Name))
+        if (IsHandBone(skeletonProfile, bone.Name))
             return new Vector3(0.025f, MathF.Max(0.035f, bone.CapsuleHalfLength), 0.014f);
 
         var r = MathF.Max(0.01f, bone.CapsuleRadius);
@@ -734,17 +738,17 @@ public unsafe partial class Ragdoll
         return new Vector3(r, h, r);
     }
 
-    private static float DefaultSwingMinLimit(SkeletonBoneRole role, string name)
+    private static float DefaultSwingMinLimit(SkeletonProfile skeletonProfile, SkeletonBoneRole role, string name)
     {
-        if (role == SkeletonBoneRole.Knee || IsShinBone(name))
+        if (role == SkeletonBoneRole.Knee || IsShinBone(skeletonProfile, name))
             return 0.75f;
-        if (role == SkeletonBoneRole.Elbow || IsForearmBone(name))
+        if (role == SkeletonBoneRole.Elbow || IsForearmBone(skeletonProfile, name))
             return 0.45f;
 
         return 0f;
     }
 
-    private static float DefaultHingeRestAngle(SkeletonBoneRole role, string name)
+    private static float DefaultHingeRestAngle(SkeletonProfile skeletonProfile, SkeletonBoneRole role, string name)
     {
         return 0f;
     }
@@ -755,52 +759,51 @@ public unsafe partial class Ragdoll
     // knee blew the solver up to NaN in testing. 10 Hz / 200 N is far stronger than the old
     // 3.5 / 50 (enough to straighten a supine knee) with headroom before instability. Only active
     // while RagdollAnatomicalHingeRestBias is on.
-    private static float DefaultHingeRestSpringFreq(SkeletonBoneRole role, string name)
+    private static float DefaultHingeRestSpringFreq(SkeletonProfile skeletonProfile, SkeletonBoneRole role, string name)
     {
-        if (role == SkeletonBoneRole.Knee || IsShinBone(name))
+        if (role == SkeletonBoneRole.Knee || IsShinBone(skeletonProfile, name))
             return 10.0f;
-        if (role == SkeletonBoneRole.Elbow || IsForearmBone(name))
+        if (role == SkeletonBoneRole.Elbow || IsForearmBone(skeletonProfile, name))
             return 10.0f;
         return 0f;
     }
 
-    private static float DefaultHingeRestMaxForce(SkeletonBoneRole role, string name)
+    private static float DefaultHingeRestMaxForce(SkeletonProfile skeletonProfile, SkeletonBoneRole role, string name)
     {
-        if (role == SkeletonBoneRole.Knee || IsShinBone(name))
+        if (role == SkeletonBoneRole.Knee || IsShinBone(skeletonProfile, name))
             return 200.0f;
-        if (role == SkeletonBoneRole.Elbow || IsForearmBone(name))
+        if (role == SkeletonBoneRole.Elbow || IsForearmBone(skeletonProfile, name))
             return 200.0f;
         return 0f;
     }
 
-    private static bool HasPassiveHingeRest(SkeletonBoneRole role, string name)
+    private static bool HasPassiveHingeRest(SkeletonProfile skeletonProfile, SkeletonBoneRole role, string name)
     {
         return role == SkeletonBoneRole.Knee || role == SkeletonBoneRole.Elbow ||
-               IsShinBone(name) ||
-               IsForearmBone(name);
-    }
-
-    private static RagdollBoneDef[] BuildDefaultBoneDefs()
-    {
-        return BuildBoneDefsFromConfigs(AllBoneDefaults);
+               IsShinBone(skeletonProfile, name) ||
+               IsForearmBone(skeletonProfile, name);
     }
 
     /// <summary>
     /// Convert config list to RagdollBoneDef[], filtering to enabled bones and
     /// computing physics parents (nearest enabled ancestor in skeleton tree).
     /// </summary>
-    public static RagdollBoneDef[] BuildBoneDefsFromConfigs(
+    /// <param name="profile">The profile the bone classes and defaults come from.</param>
+    /// <param name="profileDefaults">The profile's own bone configurations (the fallback skeleton parents).</param>
+    internal static RagdollBoneDef[] BuildBoneDefsFromConfigs(
+        SkeletonProfile skeletonProfile,
+        RagdollBoneConfig[] profileDefaults,
         RagdollBoneConfig[] configs,
         IReadOnlySet<string>? forceEnabled = null)
     {
-        // Build lookup of known skeleton parents from AllBoneDefaults (fallback)
+        // Build lookup of known skeleton parents from the profile's own configurations (fallback)
         var defaultParents = new Dictionary<string, string?>();
-        foreach (var d in AllBoneDefaults)
+        foreach (var d in profileDefaults)
             defaultParents[d.Name] = d.SkeletonParent;
 
         var enabledNames = new HashSet<string>();
         foreach (var c in configs)
-            if (!IsToeBone(c.Name) &&
+            if (!IsToeBone(skeletonProfile, c.Name) &&
                 (c.Enabled || forceEnabled?.Contains(c.Name) == true))
                 enabledNames.Add(c.Name);
 
@@ -811,11 +814,11 @@ public unsafe partial class Ragdoll
         var result = new List<RagdollBoneDef>();
         foreach (var c in configs)
         {
-            // j_asi_e is never a ragdoll body — not from a saved per-bone profile's Enabled
+            // The toe-tip bone is never a ragdoll body — not from a saved per-bone profile's Enabled
             // flag, not from mesh-aware mode. Neither GUI path may bring it back.
-            if (IsToeBone(c.Name)) continue;
+            if (IsToeBone(skeletonProfile, c.Name)) continue;
             if (!c.Enabled && forceEnabled?.Contains(c.Name) != true) continue;
-            FillProfileDefaults(c);
+            FillProfileDefaults(skeletonProfile, c);
 
             // Walk up skeleton tree to find nearest enabled parent.
             // Use SkeletonParent from config, fall back to AllBoneDefaults if null.
@@ -851,7 +854,7 @@ public unsafe partial class Ragdoll
                 HingeRestAngle = c.HingeRestAngle ?? 0f,
                 HingeRestSpringFreq = c.HingeRestSpringFreq ?? 0f,
                 HingeRestMaxForce = c.HingeRestMaxForce ?? 0f,
-                Joint = IsShinBone(c.Name) || IsCalfBone(c.Name) || IsForearmBone(c.Name) || IsToeBone(c.Name)
+                Joint = IsShinBone(skeletonProfile, c.Name) || IsCalfBone(skeletonProfile, c.Name) || IsForearmBone(skeletonProfile, c.Name) || IsToeBone(skeletonProfile, c.Name)
                     ? JointType.Hinge
                     : (JointType)c.JointType,
                 TwistMinAngle = c.TwistMinAngle,

@@ -14,16 +14,16 @@ public unsafe partial class Ragdoll
 {
     private bool activeRagdollMeshVolumes;
     internal int MeshGeometryGeneration => externalBodyGeneration;
-    public string MeshGeometryStatus { get; private set; } = "No rendered mesh captured";
+    internal string MeshGeometryStatus { get; private set; } = "No rendered mesh captured";
 
-    public bool IsMeshBody(string boneName)
+    internal bool IsMeshBody(string boneName)
     {
         foreach (var rb in ragdollBones)
             if (rb.Name == boneName) return rb.MeshGeometry != null;
         return false;
     }
 
-    public bool TryGetBoneGeometryBounds(string boneName, out Vector3 min, out Vector3 max)
+    internal bool TryGetBoneGeometryBounds(string boneName, out Vector3 min, out Vector3 max)
     {
         min = max = default;
         if (simulation == null || !physicsStarted || !isActive) return false;
@@ -40,7 +40,7 @@ public unsafe partial class Ragdoll
     }
 
     /// <summary>Actual triangle surface under a world-space point, without capsule expansion.</summary>
-    public bool TryGetBoneVerticalSupport(string boneName, Vector3 point, out Vector3 surface)
+    internal bool TryGetBoneVerticalSupport(string boneName, Vector3 point, out Vector3 surface)
     {
         surface = default;
         if (characterSurfaceRuntime == null || !isActive || !physicsStarted) return false;
@@ -50,7 +50,7 @@ public unsafe partial class Ragdoll
         return true;
     }
 
-    private Dictionary<int, BodyMeshGeometry> BuildBodyMeshVolumes(ISkeletonPose skel,
+    private Dictionary<int, BodyMeshGeometry> BuildBodyMeshVolumes(IHostSkeleton skel,
         IReadOnlyDictionary<string, RagdollBoneDef> definitions,
         IReadOnlyDictionary<string, int> activeIndices,
         IReadOnlyDictionary<string, Vector3> bonePositions,
@@ -66,7 +66,7 @@ public unsafe partial class Ragdoll
         return result;
     }
 
-    private Dictionary<int, BodyMeshGeometry> CaptureBodyMeshVolumes(nint address, ISkeletonPose skel,
+    private Dictionary<int, BodyMeshGeometry> CaptureBodyMeshVolumes(nint address, IHostSkeleton skel,
         IReadOnlyDictionary<string, RagdollBoneDef> definitions,
         IReadOnlyDictionary<string, int> activeIndices)
     {
@@ -107,8 +107,8 @@ public unsafe partial class Ragdoll
                     if (omittedRoots.Contains(bone)) return -1;
                     if (byIndex.TryGetValue(bone, out var def) &&
                         (!def.SoftBody || settings.RagdollSoftTissueCollision) &&
-                        !BoneClasses.Cloth.Matches(def.Name) &&
-                        !BoneClasses.Weapon.Matches(def.Name)) return bone;
+                        !skeletonProfile.Classes.Cloth.Matches(def.Name) &&
+                        !skeletonProfile.Classes.Weapon.Matches(def.Name)) return bone;
                     bone = skel.Parent(bone);
                 }
                 return -1;

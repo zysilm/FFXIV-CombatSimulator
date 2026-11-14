@@ -21,18 +21,18 @@ namespace RagdollReplay;
 // exactly. It says nothing about the game's real models.
 
 /// <summary>Turns the mesh paths on, whatever the recording says.</summary>
-internal sealed class SyntheticSettings : IRagdollSettingsSource
+internal sealed class SyntheticSettings : IHostSettingsSource
 {
-    private readonly IRagdollSettingsSource inner;
+    private readonly IHostSettingsSource inner;
     /// <summary>Mesh volumes run the simulation on two worker threads (see the README: not repeatable); false
     /// checks the single-threaded mesh paths (other characters' mesh colliders) on their own.</summary>
     public static bool MeshVolumes = true;
     /// <summary>Hair physics on, resting on the body surface (the local player's recordings only have hair).</summary>
     public static bool Hair;
 
-    public SyntheticSettings(IRagdollSettingsSource inner) => this.inner = inner;
+    public SyntheticSettings(IHostSettingsSource inner) => this.inner = inner;
 
-    public bool Refresh(RagdollSettings settings)
+    public bool Refresh(HostSettings settings)
     {
         inner.Refresh(settings);
         settings.RagdollMeshVolumes = MeshVolumes;
@@ -74,7 +74,7 @@ internal sealed class SyntheticMeshSource : IMeshSource
         return cache.Count == 0 ? null : cache;
     }
 
-    public RenderedGeometrySnapshot CaptureRenderedGeometry(nint actor, ISkeletonPose skeleton) => new();
+    public RenderedGeometrySnapshot CaptureRenderedGeometry(nint actor, IHostSkeleton skeleton) => new();
     public void ConfigureLod(FrozenMeshGeometryCache cache, bool enabled, float tolerance) { }
     public bool PollLod(FrozenMeshGeometryCache cache, out Exception? error) { error = null; return false; }
 
@@ -99,13 +99,13 @@ internal sealed class SyntheticMeshSource : IMeshSource
     public bool TryGetCollisionGeometry(FrozenMeshGeometryCache cache, string bone, out BodyMeshGeometry local)
         => cache.TryGetSurfaceGeometry(bone, out local);
 
-    public Task<RagdollController.StructuralFitResult>? StartStructuralFit(nint actor, ISkeletonPose skeleton)
+    public Task<RagdollController.StructuralFitResult>? StartStructuralFit(nint actor, IHostSkeleton skeleton)
         => inner.StartStructuralFit(actor, skeleton);
 
-    public Dictionary<int, RagdollController.SoftTissueMeshFit> SoftTissueFits(nint actor, ISkeletonPose skeleton,
+    public Dictionary<int, RagdollController.SoftTissueMeshFit> SoftTissueFits(nint actor, IHostSkeleton skeleton,
         HashSet<int> candidates, bool verboseLog) => inner.SoftTissueFits(actor, skeleton, candidates, verboseLog);
 
-    public bool TryCollectActorTriangles(nint actor, ISkeletonPose skeleton, string label, bool verboseLog,
+    public bool TryCollectActorTriangles(nint actor, IHostSkeleton skeleton, string label, bool verboseLog,
         List<Triangle> triangles, out int loadedModels, out int processedMeshes)
     {
         var box = Box(new Vector3(.25f, .85f, .25f));

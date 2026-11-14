@@ -51,7 +51,7 @@ public unsafe partial class Ragdoll
     /// death spot), this is where the physics actually put the body — cameras that
     /// track a kicked-around corpse must use it.
     /// </summary>
-    public Vector3? GetBodyWorldPosition(string boneName)
+    internal Vector3? GetBodyWorldPosition(string boneName)
     {
         if (simulation == null || !isActive) return null;
         var handle = FindBodyHandle(boneName);
@@ -194,7 +194,7 @@ public unsafe partial class Ragdoll
     /// <summary>
     /// A humanoid's weapon is a separate draw object, so it isn't in the bone collision capsules.
     /// Treat the blade as a line segment (its world transform lives on the weapon's own skeleton root
-    /// — DrawObject.Position alone doesn't move the mesh) and, during the attack window, impart its
+    /// — the render position alone doesn't move the mesh) and, during the attack window, impart its
     /// swing velocity to ragdoll bodies near the blade. No-op for unarmed/creature models.
     /// </summary>
     private void UpdateWeaponStrike(float dt)
@@ -243,7 +243,7 @@ public unsafe partial class Ragdoll
     }
 
     /// <summary>Distance from <paramref name="from"/> to the nearest ragdoll body, or null if none.</summary>
-    public float? NearestBodyDistance(Vector3 from)
+    internal float? NearestBodyDistance(Vector3 from)
     {
         if (simulation == null || !isActive) return null;
         float? best = null;
@@ -270,7 +270,7 @@ public unsafe partial class Ragdoll
     private void ApplyShakeCore(float intensity)
     {
         if (simulation == null || !isActive) return;
-        var handle = FindBodyHandle(Bones.Pelvis);
+        var handle = FindBodyHandle(skeletonProfile.Landmarks.Pelvis);
         if (!handle.HasValue) return;
         var angle = (float)(random.NextDouble(RandomSite.ApplyShake) * MathF.PI * 2f);
         var impulse = new Vector3(MathF.Cos(angle) * intensity, 0f, MathF.Sin(angle) * intensity);

@@ -11,7 +11,7 @@ namespace AdvancedRagdoll.Attachment;
 /// are pulled down over the hips; a lower garment stays on at both shins and its waist and thighs are
 /// pulled down past the knees. This class holds the pose-independent maths.
 /// </summary>
-public static class GarmentTether
+internal static class GarmentTether
 {
     /// <summary>Speed (m/s) the free segments are pulled toward the feet with, at the reference distance.</summary>
     public const float PullSpeed = 1.6f;

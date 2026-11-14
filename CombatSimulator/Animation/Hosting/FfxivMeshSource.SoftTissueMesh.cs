@@ -47,7 +47,8 @@ internal sealed unsafe partial class FfxivMeshSource
     /// </summary>
     private Dictionary<int, RagdollController.SoftTissueMeshFit> BuildSoftTissueMeshFits(
         SkeletonAccess skel,
-        HashSet<int> targetBoneIndices)
+        HashSet<int> targetBoneIndices,
+        bool verboseLog)
     {
         var result = new Dictionary<int, RagdollController.SoftTissueMeshFit>();
         if (targetBoneIndices.Count == 0 || skel.CharBase == null)
@@ -93,7 +94,7 @@ internal sealed unsafe partial class FfxivMeshSource
             foreach (var meshIndex in meshIndices)
             {
                 if (CollectSoftTissueMeshSamples(
-                        mdl, lodIndex, meshIndex, skel, skinDeltas, targetBoneIndices, samples))
+                        mdl, lodIndex, meshIndex, skel, skinDeltas, targetBoneIndices, samples, verboseLog))
                     sampledMeshes++;
             }
         }
@@ -101,7 +102,7 @@ internal sealed unsafe partial class FfxivMeshSource
         foreach (var target in targetBoneIndices)
         {
             if (!samples.TryGetValue(target, out var boneSamples) ||
-                !TryFitSoftTissueCapsule(skel, target, boneSamples, out var fit))
+                !TryFitSoftTissueCapsule(skel, target, boneSamples, verboseLog, out var fit))
                 continue;
 
             result[target] = fit;
@@ -138,7 +139,8 @@ internal sealed unsafe partial class FfxivMeshSource
         SkeletonAccess skel,
         Matrix4x4[] skinDeltas,
         HashSet<int> targets,
-        Dictionary<int, List<SoftTissueMeshSample>> samples)
+        Dictionary<int, List<SoftTissueMeshSample>> samples,
+        bool verboseLog)
     {
         if (meshIndex < 0 || meshIndex >= mdl.Meshes.Length ||
             meshIndex >= mdl.VertexDeclarations.Length ||
@@ -150,7 +152,7 @@ internal sealed unsafe partial class FfxivMeshSource
         if (mesh.VertexCount == 0)
             return false;
 
-        var localToHavok = BuildMdlMeshBoneMap(mdl, mesh, skel);
+        var localToHavok = BuildMdlMeshBoneMap(mdl, mesh, skel, verboseLog);
         if (localToHavok.Length == 0)
             return false;
 
@@ -206,6 +208,7 @@ internal sealed unsafe partial class FfxivMeshSource
         SkeletonAccess skel,
         int boneIndex,
         List<SoftTissueMeshSample> samples,
+        bool verboseLog,
         out RagdollController.SoftTissueMeshFit fit)
     {
         fit = default;

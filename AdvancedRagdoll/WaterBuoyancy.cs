@@ -14,7 +14,7 @@ namespace AdvancedRagdoll;
 /// a small travelling-wave field, so a floating body rides the swell because the lift under each part
 /// rises and falls with the water there.
 /// </summary>
-public static class WaterBuoyancy
+internal static class WaterBuoyancy
 {
     /// <summary>Linear drag rate of a fully submerged body, 1/s.</summary>
     public const float LinearDrag = 2.5f;

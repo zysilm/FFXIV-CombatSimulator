@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 namespace AdvancedRagdoll.MeshVolume;
 
 /// <summary>Managed bone-local geometry retained across simulation lifetimes. No native ownership.</summary>
-public sealed class FrozenMeshGeometryCache : IDisposable
+internal sealed class FrozenMeshGeometryCache : IDisposable
 {
     private sealed record Part(string Name, BodyMeshGeometry Geometry)
     {
@@ -32,7 +32,7 @@ public sealed class FrozenMeshGeometryCache : IDisposable
     }
 
     /// <summary>Adds a region whose surface is already bone-local (a recorded surface handed back by a replay).</summary>
-    public void AddLocal(string name, BodyMeshGeometry local)
+    internal void AddLocal(string name, BodyMeshGeometry local)
     {
         var part = new Part(name, local);
         byName.Add(name, part);

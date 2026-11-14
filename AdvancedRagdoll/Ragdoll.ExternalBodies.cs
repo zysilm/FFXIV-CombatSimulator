@@ -13,7 +13,7 @@ namespace AdvancedRagdoll;
 
 public unsafe partial class Ragdoll
 {
-    public readonly struct ExternalShapePart
+    internal readonly struct ExternalShapePart
     {
         public readonly Vector3 HalfExtents;
         public readonly Vector3 LocalPosition;
@@ -27,7 +27,7 @@ public unsafe partial class Ragdoll
         }
     }
 
-    public sealed class ExternalBodyHandle
+    internal sealed class ExternalBodyHandle
     {
         internal BodyHandle Body;
         internal TypedIndex[] Shapes = Array.Empty<TypedIndex>();
@@ -35,7 +35,7 @@ public unsafe partial class Ragdoll
         internal bool Removed;
     }
 
-    public readonly struct ExternalRigBodySpec
+    internal readonly struct ExternalRigBodySpec
     {
         public readonly string Name;
         public readonly IReadOnlyList<ExternalShapePart> Parts;
@@ -64,7 +64,7 @@ public unsafe partial class Ragdoll
         }
     }
 
-    public enum ExternalRigJointKind
+    internal enum ExternalRigJointKind
     {
         // BallSocket + optional SwingLimit + AngularMotor + optional pose-guide servo (chain garments/limbs).
         BallSocketSwing = 0,
@@ -73,7 +73,7 @@ public unsafe partial class Ragdoll
         DistanceLimit = 1,
     }
 
-    public readonly struct ExternalRigJointSpec
+    internal readonly struct ExternalRigJointSpec
     {
         public readonly ExternalRigJointKind Kind;
         public readonly int ParentIndex;
@@ -139,7 +139,7 @@ public unsafe partial class Ragdoll
             => new(parentIndex, childIndex, Vector3.Zero, Vector3.Zero, minDistance, maxDistance, frequency, damping);
     }
 
-    public sealed class ExternalRigHandle
+    internal sealed class ExternalRigHandle
     {
         internal readonly List<ExternalBodyHandle> Bodies = new();
         internal readonly List<ConstraintHandle> Constraints = new();
@@ -172,7 +172,7 @@ public unsafe partial class Ragdoll
 
     /// <summary>Fraction of a garment joint's full swing ROM used at spawn, before it relaxes to full over
     /// ~1s. Shared with the DismembermentController local-sim rig so both hosts spawn equally stiff.</summary>
-    public const float GarmentRigInitialSwingFactor = 0.28f;
+    internal const float GarmentRigInitialSwingFactor = 0.28f;
 
     private bool TryCreateExternalDynamicBodyCore(IReadOnlyList<ExternalShapePart> parts, float mass,
         Vector3 position, Quaternion orientation, Vector3 linearVelocity, Vector3 angularVelocity,
@@ -212,7 +212,7 @@ public unsafe partial class Ragdoll
         }
         catch (Exception ex)
         {
-            log.Warning(ex, "RagdollController: failed to create external body");
+            log.Warning(ex, "Ragdoll: failed to create external body");
             return false;
         }
     }
@@ -282,7 +282,7 @@ public unsafe partial class Ragdoll
         }
         catch (Exception ex)
         {
-            log.Warning(ex, "RagdollController: failed to create external rig");
+            log.Warning(ex, "Ragdoll: failed to create external rig");
             RemoveExternalRig(rig);
             return false;
         }
@@ -422,7 +422,7 @@ public unsafe partial class Ragdoll
             if (newShapes != null)
                 foreach (var shape in newShapes)
                     try { simulation?.Shapes.RemoveAndDispose(shape, bufferPool); } catch { }
-            log.Warning(ex, "RagdollController: failed to replace external body shape");
+            log.Warning(ex, "Ragdoll: failed to replace external body shape");
             return false;
         }
     }
@@ -467,7 +467,7 @@ public unsafe partial class Ragdoll
         return shapeIndex;
     }
 
-    public bool TryGetExternalBodyPose(ExternalBodyHandle? handle, out Vector3 position, out Quaternion orientation,
+    internal bool TryGetExternalBodyPose(ExternalBodyHandle? handle, out Vector3 position, out Quaternion orientation,
         out Vector3 linearVelocity, out Vector3 angularVelocity)
     {
         position = Vector3.Zero;
@@ -493,7 +493,7 @@ public unsafe partial class Ragdoll
         }
     }
 
-    public bool TryGetExternalRigBodyPose(ExternalRigHandle? handle, int bodyIndex,
+    internal bool TryGetExternalRigBodyPose(ExternalRigHandle? handle, int bodyIndex,
         out Vector3 position, out Quaternion orientation, out Vector3 linearVelocity, out Vector3 angularVelocity)
     {
         position = Vector3.Zero;
@@ -755,13 +755,13 @@ public unsafe partial class Ragdoll
                 try { simulation.Solver.Remove(h); }
                 catch (Exception ex)
                 {
-                    log.Warning(ex, $"RagdollController: failed to remove constraint {h.Value} on body {body.Value}");
+                    log.Warning(ex, $"Ragdoll: failed to remove constraint {h.Value} on body {body.Value}");
                 }
             }
         }
         catch (Exception ex)
         {
-            log.Warning(ex, $"RagdollController: failed to enumerate constraints on body {body.Value}");
+            log.Warning(ex, $"Ragdoll: failed to enumerate constraints on body {body.Value}");
         }
     }
 
@@ -774,7 +774,7 @@ public unsafe partial class Ragdoll
         {
             RemoveConstraintsOnBody(handle.Body);
             try { simulation.Bodies.Remove(handle.Body); }
-            catch (Exception ex) { log.Warning(ex, $"RagdollController: failed to remove body {handle.Body.Value}"); }
+            catch (Exception ex) { log.Warning(ex, $"Ragdoll: failed to remove body {handle.Body.Value}"); }
             foreach (var shape in handle.Shapes)
                 try { simulation.Shapes.RemoveAndDispose(shape, bufferPool); } catch { }
         }
@@ -799,7 +799,7 @@ public unsafe partial class Ragdoll
                 try { simulation.Solver.Remove(constraint); }
                 catch (Exception ex)
                 {
-                    log.Warning(ex, $"RagdollController: failed to remove rig constraint {constraint.Value}");
+                    log.Warning(ex, $"Ragdoll: failed to remove rig constraint {constraint.Value}");
                 }
             }
         }

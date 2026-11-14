@@ -21,32 +21,34 @@ using BepuSimulation = BepuPhysics.Simulation;
 namespace AdvancedRagdoll;
 
 /// <summary>
-/// The ragdoll of one character (docs/RAGDOLL_LIBRARY_ARCHITECTURE.md). Everything it asks of the game goes through
-/// the host services of <see cref="RagdollHost"/>. A host drives it (<see cref="OnRenderFrame"/>,
-/// <see cref="OnFrameworkTick"/>, the public methods) and may derive from it: the FFXIV plugin's RagdollController
-/// does, to subscribe those entry points to the game's hooks.
+/// The ragdoll of one character (docs/RAGDOLL_LIBRARY_ARCHITECTURE.md). A game makes it on the public host API
+/// (<see cref="RagdollHost"/>) and drives it with <see cref="Activate(in RagdollActivation)"/>, <see cref="Step"/>,
+/// <see cref="WritePose"/> and <see cref="Deactivate"/> (Ragdoll.Facade.cs). Inside, everything it asks of the game
+/// goes through the internal host services (<see cref="RagdollHostServices"/>); trusted hosts (the FFXIV plugin's
+/// RagdollController, which derives from it, and the offline replay) use those directly and drive it with
+/// <see cref="OnRenderFrame"/> and <see cref="OnFrameworkTick"/>.
 /// </summary>
 public unsafe partial class Ragdoll : IDisposable
 {
     // Everything the controller asks of the game goes through these host services (Hosting/, stages A2a and A2b
     // of docs/REFACTOR_PLAN.md).
-    private readonly RagdollHost host;
-    private readonly ISkeletonSource skeletons;
+    private readonly RagdollHostServices host;
+    private readonly IHostSkeletonSource skeletons;
     // The character models: every mesh the controller uses comes from here, as a finished product.
     private readonly IMeshSource meshes;
-    private readonly IWorldQuery world;
-    private readonly IRagdollActor actors;
+    private readonly IHostWorldQuery world;
+    private readonly IHostActors actors;
     // Who else may collide with the corpse. The extra collision actors are evaluated lazily when
     // collision is built (at Activate), not at construction — the player's persistent controller is
     // created before any companions spawn, so a snapshot would always be empty.
-    private readonly IColliderActorProvider colliders;
+    private readonly IHostColliders colliders;
     private readonly IRagdollClock clock;
     private readonly IRagdollRandom random;
     private readonly IRagdollScheduler scheduler;
-    private readonly IRagdollSettingsSource settingsSource;
+    private readonly IHostSettingsSource settingsSource;
     // The settings for this frame: refreshed once at the start of every render frame. The physics
     // worker threads read this copy too (never the user's Configuration).
-    private readonly RagdollSettings settings = new();
+    private readonly HostSettings settings = new();
     private readonly IRagdollLog log;
     // Physics simulation
     private BufferPool? bufferPool;
@@ -125,7 +127,7 @@ public unsafe partial class Ragdoll : IDisposable
 
     // The character's facing at activation (deaths start standing, so the root yaw is trustworthy).
     // Anatomical anchor for hinge axes that must not depend on the pose the body died in.
-    private Vector3 anatomicalForward = HumanoidSkeleton.Forward;
+    private Vector3 anatomicalForward;
 
     // Skeleton world transform (captured at activation from Skeleton.Transform)
     // ModelPose is in skeleton-local space; these convert to/from world space.
@@ -212,36 +214,46 @@ public unsafe partial class Ragdoll : IDisposable
     // classes) always come from the humanoid profile, as the literal names did before, whatever rig
     // is active; only the per-class tuning switches to SkeletonProfile.Auto() for a generated rig.
     //
-    // The humanoid profile is process-wide, as the bone tables were: the host registers it once, before the first
-    // ragdoll is made or the bone tables below are read (UseHumanoidProfile; the plugin does it when its assembly
-    // loads). Registering it builds the two public bone tables, in the order their static initializers had.
+    // Each ragdoll has its own profile (a constructor argument) and its own bone tables built from it. A host may also
+    // register a default humanoid profile once per process (UseHumanoidProfile; the FFXIV plugin does it when its
+    // assembly loads, and its own code reads the default bone tables below). A ragdoll on the default profile uses
+    // the default tables (the same arrays), as every ragdoll did when the profile was process-wide.
     private static SkeletonProfile? humanoidProfile;
     private static RagdollBoneConfig[]? allBoneDefaults;
     private static RagdollBoneDef[]? defaultBoneDefs;
 
-    /// <summary>Registers the skeleton profile humanoid rigs are built from. Once per process (the same profile again
-    /// is accepted), before any <see cref="Ragdoll"/> exists and before <see cref="AllBoneDefaults"/> is read.</summary>
-    public static void UseHumanoidProfile(SkeletonProfile profile)
+    // This ragdoll's profile and the bone configurations built from it.
+    private readonly SkeletonProfile skeletonProfile;
+    private readonly RagdollBoneConfig[] boneDefaults;
+
+    /// <summary>Registers the host's default humanoid profile and builds its bone tables (<see cref="AllBoneDefaults"/>,
+    /// <see cref="DefaultBoneDefs"/>). Once per process (the same profile again is accepted), before the tables are
+    /// read. The tables are built first and assigned only when both were built.</summary>
+    internal static void UseHumanoidProfile(SkeletonProfile skeletonProfile)
     {
-        ArgumentNullException.ThrowIfNull(profile);
+        ArgumentNullException.ThrowIfNull(skeletonProfile);
         if (humanoidProfile != null)
         {
-            if (ReferenceEquals(humanoidProfile, profile)) return;
+            if (ReferenceEquals(humanoidProfile, skeletonProfile)) return;
             throw new InvalidOperationException("A different humanoid skeleton profile is already registered.");
         }
-        humanoidProfile = profile;
-        allBoneDefaults = ToBoneConfigs(profile.BoneDefinitions);
-        defaultBoneDefs = BuildDefaultBoneDefs();
+        var configs = ToBoneConfigs(skeletonProfile.BoneDefinitions);
+        var defs = BuildBoneDefsFromConfigs(skeletonProfile, configs, configs);
+        allBoneDefaults = configs;
+        defaultBoneDefs = defs;
+        humanoidProfile = skeletonProfile;
     }
 
     private static InvalidOperationException NoHumanoidProfile() =>
         new("No humanoid skeleton profile is registered (Ragdoll.UseHumanoidProfile).");
 
+    /// <summary>The host's default humanoid profile (<see cref="UseHumanoidProfile"/>).</summary>
     internal static SkeletonProfile HumanoidSkeleton => humanoidProfile ?? throw NoHumanoidProfile();
-    private static SkeletonLandmarks Bones => HumanoidSkeleton.Landmarks;
-    private static SkeletonBoneClasses BoneClasses => HumanoidSkeleton.Classes;
-    /// <summary>The profile whose class tuning applies: the generated rig's, or the humanoid profile's.</summary>
-    private SkeletonProfile ActiveClassProfile => activeRagdollIsGeneric ? SkeletonProfile.Auto() : HumanoidSkeleton;
+    /// <summary>This ragdoll's profile: humanoid rigs are built from it, and its named bones (landmarks, bone classes)
+    /// are the ones the ragdoll asks for, whatever rig is active.</summary>
+    internal SkeletonProfile Profile => skeletonProfile;
+    /// <summary>The profile whose class tuning applies: the generated rig's, or this ragdoll's profile.</summary>
+    private SkeletonProfile ActiveClassProfile => activeRagdollIsGeneric ? SkeletonProfile.Auto() : skeletonProfile;
 
     // Generic (non-humanoid) ragdoll generation tuning lives in SkeletonProfile.Auto().GenericRig
     // (see BuildGenericSkeletonDefs), its velocity clamp and solver floor in its ClassConstants.
@@ -300,13 +312,13 @@ public unsafe partial class Ragdoll : IDisposable
 
     // Weapon drop physics is WeaponDrop.WeaponDropSimulation (a separate simulation; the plugin's WeaponDropController).
 
-    // Ancestor bone index — n_hara must follow j_kosi to prevent mesh tearing
+    // Ancestor bone index — the belly-follow bone must follow the pelvis to prevent mesh tearing
     private int nHaraIndex = -1;
-    // Head bone index (j_kao) — used for hair physics and partial skeleton propagation
+    // Head bone index (the profile's head) — used for hair physics and partial skeleton propagation
     private int kaoBodyBoneIndex = -1;
 
     // Face traversal landmarks are sampled once while InitializePhysics owns a coherent
-    // render-frame skeleton snapshot, then expressed in j_kao-local coordinates. Runtime
+    // render-frame skeleton snapshot, then expressed in head-local coordinates. Runtime
     // traversal never reads PartialSkeleton.ModelPose: that memory is rewritten later in the
     // render hook and is not a stable data source from Framework.Update.
     private readonly List<FaceTraversalLandmark> faceTraversalLandmarks = new();
@@ -350,14 +362,16 @@ public unsafe partial class Ragdoll : IDisposable
     private readonly HashSet<int> struckThisWindow = new();
 
 
+    /// <summary>True from <see cref="Activate(in RagdollActivation)"/> until <see cref="Deactivate"/> (or until the ragdoll
+    /// deactivates itself because its character is gone).</summary>
     public bool IsActive => isActive;
     /// <summary>True once physics has taken the body over from the death animation.</summary>
     public bool PhysicsStarted => physicsStarted;
     /// <summary>True when physics starts at a moment found from the animation or the motion, not after a known delay.</summary>
-    public bool StartsOnItsOwn => trigger is { Automatic: true };
-    public bool IsSimulationReady => isActive && simulation != null;
-    public nint TargetCharacterAddress => targetCharacterAddress;
-    public uint TargetEntityId => targetEntityId;
+    internal bool StartsOnItsOwn => trigger is { Automatic: true };
+    internal bool IsSimulationReady => isActive && simulation != null;
+    internal nint TargetCharacterAddress => targetCharacterAddress;
+    internal uint TargetEntityId => targetEntityId;
 
     /// <summary>
     /// Complete core bone catalog with skeleton parents, default enabled state, and physics
@@ -366,9 +380,9 @@ public unsafe partial class Ragdoll : IDisposable
     /// plus each finger's proximal joint are enabled by default; additional skeleton-specific bones
     /// are discovered by the Advanced UI and default disabled. One array (and one set of records) per process.
     /// </summary>
-    public static RagdollBoneConfig[] AllBoneDefaults => allBoneDefaults ?? throw NoHumanoidProfile();
+    internal static RagdollBoneConfig[] AllBoneDefaults => allBoneDefaults ?? throw NoHumanoidProfile();
     /// <summary>Default enabled bones with physics parents resolved through the skeleton tree.</summary>
-    public static RagdollBoneDef[] DefaultBoneDefs => defaultBoneDefs ?? throw NoHumanoidProfile();
+    internal static RagdollBoneDef[] DefaultBoneDefs => defaultBoneDefs ?? throw NoHumanoidProfile();
 
     private readonly Dictionary<nint, NpcTraversalAnchor> npcTraversalAnchors = new();
 
@@ -381,8 +395,13 @@ public unsafe partial class Ragdoll : IDisposable
     /// <see cref="OnRenderFrame"/> once per rendered frame, <see cref="OnFrameworkTick"/> once per game tick, and the
     /// public methods. Nothing is subscribed here.
     /// </summary>
-    protected internal Ragdoll(RagdollHost host, ICollapseProfileSource collapseProfiles)
+    internal Ragdoll(RagdollHostServices host, ICollapseProfileSource collapseProfiles, SkeletonProfile profile)
     {
+        ArgumentNullException.ThrowIfNull(profile);
+        skeletonProfile = profile;
+        // The default profile keeps the process-wide table (the same array every ragdoll used to share).
+        boneDefaults = ReferenceEquals(profile, humanoidProfile) ? allBoneDefaults! : ToBoneConfigs(profile.BoneDefinitions);
+        anatomicalForward = profile.Forward;
         this.host = host;
         skeletons = host.Skeletons;
         // The recorder observes these four from outside (Hosting/RecordingDecorators.cs).
@@ -517,7 +536,7 @@ partial struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
 {
     public float Friction;
     // The settings the contact callbacks read (worker threads): a copy refreshed between steps.
-    public Hosting.RagdollSettings? Config;
+    public Hosting.HostSettings? Config;
 
     // Connected body pairs that should NOT collide (parent-child joints).
     // All other body-body pairs DO collide (arms vs torso, etc.).

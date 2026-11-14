@@ -9,7 +9,7 @@ namespace AdvancedRagdoll;
 /// Pure geometry and material rules for turning the game's collision scene into triangles. Kept apart
 /// from <see cref="WorldCollisionMesh"/>, which reads game memory, so it can be tested offline.
 /// </summary>
-public static class CollisionMeshGeometry
+internal static class CollisionMeshGeometry
 {
     /// <summary>Material bit of ordinary solid ground: what the plugin's ground raycasts ask for.</summary>
     public const ulong GroundMaterial = 0x4000;

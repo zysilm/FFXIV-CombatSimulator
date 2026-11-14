@@ -57,7 +57,7 @@ internal sealed unsafe class FfxivWeaponDrawSource : IWeaponDrawSource
         return true;
     }
 
-    public ISkeletonPose? TryGetSkeleton(nint weapon)
+    public IHostSkeleton? TryGetSkeleton(nint weapon)
     {
         var access = boneService.TryGetSkeletonFromCharBase((CharacterBase*)weapon);
         return access == null ? null : new FfxivSkeletonPose(weapon, access.Value);

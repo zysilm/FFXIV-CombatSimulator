@@ -28,7 +28,7 @@ public unsafe partial class Ragdoll
         inWater = false;
         activeRagdollMeshVolumes = settings.RagdollMeshVolumes;
         activeMeshCacheRevision = settings.RagdollMeshCacheRevision;
-        var skel = skeletons.TryGetSkeleton(targetCharacterAddress, SkeletonReadSite.Init);
+        var skel = skeletons.TryGetSkeleton(targetCharacterAddress, PosePurpose.Init);
         if (skel == null) return false;
         initialBoneCount = skel.BoneCount;
         if (rec != null) RecInitBegin(skel);
@@ -44,7 +44,7 @@ public unsafe partial class Ragdoll
         skelWorldRotInv = Quaternion.Inverse(skelWorldRot);
         skelWorldScale = GetCharacterScale(targetCharacterAddress, skel);
 
-        log.Info($"RagdollController: Skeleton transform pos=({skelWorldPos.X:F3},{skelWorldPos.Y:F3},{skelWorldPos.Z:F3}) " +
+        log.Info($"Ragdoll: Skeleton transform pos=({skelWorldPos.X:F3},{skelWorldPos.Y:F3},{skelWorldPos.Z:F3}) " +
                  $"rot=({skelWorldRot.X:F3},{skelWorldRot.Y:F3},{skelWorldRot.Z:F3},{skelWorldRot.W:F3}) " +
                  $"scale=({skelWorldScale.X:F3},{skelWorldScale.Y:F3},{skelWorldScale.Z:F3})");
 
@@ -67,7 +67,7 @@ public unsafe partial class Ragdoll
             var idx = ResolveBoneIndex(skel, def.Name);
             if (idx < 0)
             {
-                log.Warning($"RagdollController: Bone '{def.Name}' not found, skipping");
+                log.Warning($"Ragdoll: Bone '{def.Name}' not found, skipping");
                 continue;
             }
             nameToIndex[def.Name] = idx;
@@ -83,7 +83,7 @@ public unsafe partial class Ragdoll
         if (genericSkeleton)
         {
             var (genDefs, genNameToIndex) = BuildGenericSkeletonDefs(skel);
-            log.Info($"RagdollController: non-humanoid skeleton — generated {genDefs.Length} generic ragdoll bones (human matches were {nameToIndex.Count})");
+            log.Info($"Ragdoll: non-humanoid skeleton — generated {genDefs.Length} generic ragdoll bones (human matches were {nameToIndex.Count})");
             BoneDefs = genDefs;
             nameToIndex = genNameToIndex;
             defByName.Clear();
@@ -123,7 +123,7 @@ public unsafe partial class Ragdoll
         {
             groundY = hitInfo.Point.Y;
         }
-        log.Info($"RagdollController: Raycast ground Y={groundY:F3}");
+        log.Info($"Ragdoll: Raycast ground Y={groundY:F3}");
 
         // Create BEPU simulation
         // When self-collision is enabled, ConnectedPairs filters only directly jointed bodies;
@@ -258,7 +258,7 @@ public unsafe partial class Ragdoll
             {
                 if (!npc.HasCharacter || npc.Address == targetCharacterAddress)
                     continue;
-                var pos = actors.GetPosition(npc.Address, ActorReadSite.TerrainPatchCandidate);
+                var pos = actors.GetPosition(npc.Address, ActorSite.TerrainPatchCandidate);
                 if (rec != null) RecActorPosition(ActorSite.TerrainPatchCandidate, npc.Address, pos);
                 var dx = pos.X - skelWorldPos.X;
                 var dz = pos.Z - skelWorldPos.Z;
@@ -274,7 +274,7 @@ public unsafe partial class Ragdoll
                 enemyPatches++;
             }
         }
-        log.Info($"RagdollController: terrain patches built (player + {enemyPatches} enemies) + safety box at Y={groundY - SafetyGroundDrop:F3}");
+        log.Info($"Ragdoll: terrain patches built (player + {enemyPatches} enemies) + safety box at Y={groundY - SafetyGroundDrop:F3}");
 
         // --- Pass 1: Collect bone world positions and rotations ---
         var pose = skel.ModelPose;
@@ -316,7 +316,7 @@ public unsafe partial class Ragdoll
 
         // Build first-child lookup from full skeleton hierarchy (not just BoneDefs).
         // Used for leaf bones to find the actual child bone direction (e.g., forearm
-        // needs elbow→wrist direction from j_te_l, not shoulder→elbow from parent).
+        // needs elbow→wrist direction from the hand bone, not shoulder→elbow from parent).
         var skelFirstChild = new Dictionary<int, int>();
         for (int i = 0; i < skel.BoneCount && i < skel.ParentCount; i++)
         {
@@ -359,7 +359,7 @@ public unsafe partial class Ragdoll
         // Anatomical hinges keep their profile length instead; ORZ-style death poses can
         // collapse the observed knee/elbow segment and bake a fake short limb into physics.
         var massByBone = !genericSkeleton
-            ? BuildMassBudget(BoneDefs, nameToIndex, RagdollTuning.BodyMass)
+            ? BuildMassBudget(skeletonProfile, BoneDefs, nameToIndex, RagdollTuning.BodyMass)
             : null;
         float resolvedTotalMass = 0f; // Tier D: sum of all enabled bodies' effective mass.
         float requiredRigLift = 0f;
@@ -449,7 +449,7 @@ public unsafe partial class Ragdoll
                 }
                 else
                 {
-                    // Degenerate (co-located bones like j_kosi↔j_sebo_a): keep at bone position
+                    // Degenerate (co-located bones like the pelvis and the lower spine): keep at bone position
                     capsuleCenter = boneWorldPos;
                     segmentHalfLength = 0f;
                     capsuleWorldRot = boneWorldRot;
@@ -459,7 +459,7 @@ public unsafe partial class Ragdoll
                      skelChildIdx < skel.BoneCount)
             {
                 // Leaf bone in BoneDefs but has a child in the full skeleton (e.g.,
-                // forearm j_ude_b → hand j_te, foot j_asi_c → toe).
+                // forearm → hand, calf → toe).
                 // Use bone→skelChild direction for capsule orientation so the capsule
                 // extends along the actual limb, not along the parent segment.
                 ref var childMt = ref pose[skelChildIdx];
@@ -566,7 +566,7 @@ public unsafe partial class Ragdoll
                 shapeHalfLength = effectiveHalfLength;
             }
 
-            var effectiveMass = ResolveBoneMass(def, massByBone);
+            var effectiveMass = ResolveBoneMass(skeletonProfile, def, massByBone);
             resolvedTotalMass += effectiveMass;
             TypedIndex shapeIndex = default;
             BodyInertia bodyInertia = default;
@@ -729,7 +729,7 @@ public unsafe partial class Ragdoll
             // the nearest ancestor that actually exists in this skeleton. On a complete
             // human skeleton the direct parent always resolves, so this matches on the
             // first step and behaves identically to a direct lookup. On monster skeletons
-            // that lack intermediate bones (e.g. no neck j_kubi between chest and head),
+            // that lack intermediate bones (e.g. no neck bone between chest and head),
             // this keeps the leaf bone attached to its nearest present ancestor instead of
             // orphaning it into an unconstrained free body that drifts away from the corpse.
             int parentBoneIdx = -1;
@@ -876,7 +876,7 @@ public unsafe partial class Ragdoll
 
         // Capture the character-facing frame used by anatomical hinge axes.
         var anatYaw = targetCharacterAddress != nint.Zero
-            ? actors.GetFacing(targetCharacterAddress, ActorReadSite.Facing)
+            ? actors.GetFacing(targetCharacterAddress, ActorSite.Facing)
             : 0f;
         var anatForwardWorld = new Vector3(MathF.Sin(anatYaw), 0f, MathF.Cos(anatYaw));
         // Tier C (swing) — anatomical reference axes for the directional ball limits, taken
@@ -949,13 +949,13 @@ public unsafe partial class Ragdoll
                 parentSegDir = Vector3.UnitY;
 
             // --- Positional + angular constraint ---
-            // SoftBody bones are never hinges even when their config says so (j_mune shipped
+            // SoftBody bones are never hinges even when their config says so (breast bones shipped
             // with JointType=1): the hinge path would ignore their soft spring settings and
             // strap knee-style swing/twist limits onto them. They take the ball path below,
             // where the SoftBody BallSocket + AngularServo split actually applies.
-            if ((boneDef.Joint == JointType.Hinge || IsToeBone(rb.Name)) && !boneDef.SoftBody)
+            if ((boneDef.Joint == JointType.Hinge || IsToeBone(skeletonProfile, rb.Name)) && !boneDef.SoftBody)
             {
-                var toeHinge = IsToeBone(rb.Name);
+                var toeHinge = IsToeBone(skeletonProfile, rb.Name);
                 Vector3 hingeAxisWorld;
                 Vector3 flexionDirectionWorld;
                 if (bindPoseHingeFrames.TryGetValue(rb.Name, out var kneeBindFrame))
@@ -1002,7 +1002,7 @@ public unsafe partial class Ragdoll
                 // ball-only; applying them here would soften knee hyperextension.
                 var passiveLimitSpring = new SpringSettings(RagdollTuning.LimitSpringFrequency, 1.5f);
 
-                if (boneDef.AnatomicalRole == SkeletonBoneRole.Elbow || IsForearmBone(rb.Name))
+                if (boneDef.AnatomicalRole == SkeletonBoneRole.Elbow || IsForearmBone(skeletonProfile, rb.Name))
                 {
                     // The elbow is a two-coordinate joint in this one-bone forearm rig: flexion
                     // around the upper-arm hinge plus pronation/supination around the forearm.
@@ -1105,7 +1105,7 @@ public unsafe partial class Ragdoll
                 JointRom hingeRom = default;
                 bool hasHingeRom = settings.RagdollAnatomicalRom &&
                     (boneDef.AnatomicalRole == SkeletonBoneRole.Knee || boneDef.AnatomicalRole == SkeletonBoneRole.Elbow) &&
-                    TryGetAnatomicalRom(rb.Name, out hingeRom);
+                    TryGetAnatomicalRom(skeletonProfile, rb.Name, out hingeRom);
 
                 AddAnatomicalHingeFoldStop(rb.BodyHandle, parentHandle, childBodyRef, parentBodyRef,
                     boneDef, hingeAxisWorld, parentSegDir, segDirWorld, passiveLimitSpring,
@@ -1133,7 +1133,7 @@ public unsafe partial class Ragdoll
                         ? new SpringSettings(boneDef.SoftSpringFreq, boneDef.SoftSpringDamp)
                         : boneDef.AnatomicalRole == SkeletonBoneRole.Foot
                             ? footJointSpring
-                            : (IsClavicleBone(rb.Name) || IsUpperArmBone(rb.Name))
+                            : (IsClavicleBone(skeletonProfile, rb.Name) || IsUpperArmBone(skeletonProfile, rb.Name))
                                 ? shoulderJointSpring
                             : jointSpring,
                 };
@@ -1145,7 +1145,7 @@ public unsafe partial class Ragdoll
                 // the generic ball cone below (see the else branch) — under a hard landing
                 // impulse the extra rigid coupling fought the solver and showed up as ankle
                 // stretch/distortion. Wrists keep it; there was no report of a wrist problem.
-                var isDistalFrame = IsHandBone(rb.Name);
+                var isDistalFrame = IsHandBone(skeletonProfile, rb.Name);
                 if (isDistalFrame)
                 {
                     var longAxisWorld = NormalizeOrFallback(segDirWorld, Vector3.UnitY);
@@ -1222,8 +1222,8 @@ public unsafe partial class Ragdoll
                         (boneDef.AnatomicalRole == SkeletonBoneRole.Hip ||
                          boneDef.AnatomicalRole == SkeletonBoneRole.Spine ||
                          (boneDef.AnatomicalRole == SkeletonBoneRole.Shoulder &&
-                          IsUpperArmBone(rb.Name))) &&
-                        TryGetAnatomicalRom(rb.Name, out swingRom);
+                          IsUpperArmBone(skeletonProfile, rb.Name))) &&
+                        TryGetAnatomicalRom(skeletonProfile, rb.Name, out swingRom);
                     var hipKneecapCaps = hasSwingRom && boneDef.AnatomicalRole == SkeletonBoneRole.Hip;
 
                     if (boneDef.SwingLimit > 0)
@@ -1236,8 +1236,8 @@ public unsafe partial class Ragdoll
                         // is narrow (~14°) by design, and on the soft spring the head can overshoot
                         // it under a fast torso motion and visibly lag/float before snapping back —
                         // a hard wall stops it right at the limit instead.
-                        var coneSpring = IsClavicleBone(rb.Name) || IsUpperArmBone(rb.Name) ||
-                                          rb.Name == Bones.Neck || rb.Name == Bones.Head
+                        var coneSpring = IsClavicleBone(skeletonProfile, rb.Name) || IsUpperArmBone(skeletonProfile, rb.Name) ||
+                                          rb.Name == skeletonProfile.Landmarks.Neck || rb.Name == skeletonProfile.Landmarks.Head
                             ? limitSpring
                             : ballSwingSpring;
 
@@ -1305,7 +1305,7 @@ public unsafe partial class Ragdoll
                         // decreases, unaffected by this wall). One-sided by construction.
                         if (boneDef.AnatomicalRole == SkeletonBoneRole.Foot)
                         {
-                            var dorsiflexionMax = TryGetAnatomicalRom(rb.Name, out var footRom)
+                            var dorsiflexionMax = TryGetAnatomicalRom(skeletonProfile, rb.Name, out var footRom)
                                 ? footRom.FlexionMax
                                 : DegreesToRadians(20f);
                             var shinDownLocalParent = Vector3.Normalize(Vector3.Transform(
@@ -1334,7 +1334,7 @@ public unsafe partial class Ragdoll
                     // clinical asymmetry); otherwise use the hand-set boneDef twist values.
                     var ballTwistMin = boneDef.TwistMinAngle;
                     var ballTwistMax = boneDef.TwistMaxAngle;
-                    if (settings.RagdollAnatomicalRom && TryGetAnatomicalRom(rb.Name, out var ballRom))
+                    if (settings.RagdollAnatomicalRom && TryGetAnatomicalRom(skeletonProfile, rb.Name, out var ballRom))
                     {
                         ballTwistMin = ballRom.AxialMin;
                         ballTwistMax = ballRom.AxialMax;
@@ -1420,7 +1420,7 @@ public unsafe partial class Ragdoll
         if (ragdollBones.Count == 0)
         {
             if (rec != null) RecInitEnd(false, solverIterations, solverSubsteps, genericSkeleton);
-            log.Warning("RagdollController: no ragdoll bodies were created; aborting activation.");
+            log.Warning("Ragdoll: no ragdoll bodies were created; aborting activation.");
             return false;
         }
 
@@ -1436,13 +1436,13 @@ public unsafe partial class Ragdoll
         savedOverallSpeed = actors.GetAnimationSpeed(targetCharacterAddress);
         actors.SetAnimationSpeed(targetCharacterAddress, 0f);
         animationFrozen = true;
-        log.Info($"RagdollController: Animation frozen (saved speed={savedOverallSpeed:F2})");
+        log.Info($"Ragdoll: Animation frozen (saved speed={savedOverallSpeed:F2})");
 
-        // Resolve ancestor bone — n_hara must follow j_kosi to prevent mesh tearing
-        nHaraIndex = ResolveBoneIndex(skel, Bones.BellyFollow);
-        kaoBodyBoneIndex = ResolveBoneIndex(skel, Bones.Head);
+        // Resolve the belly-follow bone: it must follow the pelvis to prevent mesh tearing
+        nHaraIndex = ResolveBoneIndex(skel, skeletonProfile.Landmarks.BellyFollow);
+        kaoBodyBoneIndex = ResolveBoneIndex(skel, skeletonProfile.Landmarks.Head);
         CaptureFaceTraversalLandmarks(skel);
-        log.Info($"RagdollController: n_hara index={nHaraIndex}, j_kao index={kaoBodyBoneIndex}");
+        log.Info($"Ragdoll: belly-follow bone index={nHaraIndex}, head bone index={kaoBodyBoneIndex}");
 
         // Create NPC collision volumes — dynamically discover bones from each NPC's skeleton.
         // Works for any model (humanoid, monster, dragon) — no hardcoded bone names.
@@ -1455,7 +1455,7 @@ public unsafe partial class Ragdoll
 
             var selectedNpcs = new List<ColliderCandidate>();
             colliders.GetSelectedNpcs(selectedNpcs);
-            log.Info($"RagdollController: NPC bone collision — {selectedNpcs.Count} NPCs, autoSize={settings.RagdollNpcCollisionAutoSize}, scale={scale:F2}");
+            log.Info($"Ragdoll: NPC bone collision — {selectedNpcs.Count} NPCs, autoSize={settings.RagdollNpcCollisionAutoSize}, scale={scale:F2}");
 
             // Dedupe across both sources so a character (e.g. a companion that also
             // appears elsewhere) only gets one set of collision statics.
@@ -1481,7 +1481,7 @@ public unsafe partial class Ragdoll
             {
                 if (!npc.HasCharacter)
                 {
-                    log.Warning($"RagdollController: NPC '{npc.Name}' has null BattleChara, skipping");
+                    log.Warning($"Ragdoll: NPC '{npc.Name}' has null BattleChara, skipping");
                     continue;
                 }
 
@@ -1509,7 +1509,7 @@ public unsafe partial class Ragdoll
         var collisionVolumeSummary = activeNpcStatics == totalNpcStatics
             ? $"{totalNpcStatics} collision volumes"
             : $"{activeNpcStatics} active / {totalNpcStatics} allocated collision volumes";
-        log.Info($"RagdollController: Physics initialized — {ragdollBones.Count} bodies, {npcCollisionStates.Count} NPCs ({collisionVolumeSummary}), ground={groundY:F3}");
+        log.Info($"Ragdoll: Physics initialized — {ragdollBones.Count} bodies, {npcCollisionStates.Count} NPCs ({collisionVolumeSummary}), ground={groundY:F3}");
 
         // Initialize hair physics — the BEPU rig is the only implementation (the legacy
         // pendulum simulator is retired). If the rig cannot build (no head ragdoll body /
@@ -1564,8 +1564,8 @@ public unsafe partial class Ragdoll
         // visible geometry; applying this again would double-correct it. Applying
         // the same local-Y tensor change to pelvis, spine, head, palms, fingers, cloth and soft
         // tissue would give unrelated shapes a made-up preferred axis.
-        var name = SideStrippedBoneName(def.Name);
-        var isLongLimb = BoneClasses.LongLimbRoots.Matches(name);
+        var name = SideStrippedBoneName(skeletonProfile, def.Name);
+        var isLongLimb = skeletonProfile.Classes.LongLimbRoots.Matches(name);
         if (!isLongLimb)
             return inertia;
 

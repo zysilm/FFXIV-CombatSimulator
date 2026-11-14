@@ -151,7 +151,7 @@ public unsafe partial class Ragdoll
     /// </summary>
     private void BuildCharacterCollision(nint address, string label, float scale, float capsuleRadius)
     {
-        var ns = skeletons.TryGetSkeleton(address, SkeletonReadSite.ColliderBuild);
+        var ns = skeletons.TryGetSkeleton(address, PosePurpose.ColliderBuild);
         if (rec != null) RecSkeleton(RecordType.SkeletonPose, PosePurpose.ColliderBuild, address, ns, false);
         if (ns == null)
         {
@@ -213,7 +213,7 @@ public unsafe partial class Ragdoll
             var centerFactor = autoSize ? 0.5f : baseHalfLen / modelSegLen;
             var segDir = segment / segLen;
             var boneName = ns.BoneName(i) ?? $"bone_{i}";
-            var role = InferAnatomicalRole(boneName, null, false).ToString();
+            var role = InferAnatomicalRole(skeletonProfile, boneName, null, false).ToString();
             candidates.Add((modelSegLen, i, parentIdx, boneName, role, baseHalfLen,
                 baseRadius, centerFactor, parentWorldPos + (segLen * centerFactor) * segDir, RotationFromYToDirection(segment)));
         }
@@ -348,7 +348,7 @@ public unsafe partial class Ragdoll
                 ? Math.Min(NpcLightweightCollisionSegments, boneStatics.Count)
                 : boneStatics.Count;
             var detail = activeSegments == boneStatics.Count ? string.Empty : $", {activeSegments} active";
-            log.Info($"RagdollController: {label} bone collision — {boneStatics.Count} segments{detail} from {boneCount} bones");
+            log.Info($"Ragdoll: {label} bone collision — {boneStatics.Count} segments{detail} from {boneCount} bones");
         }
         else
         {
@@ -358,11 +358,11 @@ public unsafe partial class Ragdoll
 
     // Which of another character's bones it attacks with, and which its light collision body follows:
     // scored by name fragments, profile data (SkeletonProfile.LightCollisionAttackScores / FollowScores).
-    private static int LightweightCollisionRoleScore(string boneName)
-        => HumanoidSkeleton.LightCollisionAttackScores.Score(boneName);
+    private int LightweightCollisionRoleScore(string boneName)
+        => skeletonProfile.LightCollisionAttackScores.Score(boneName);
 
-    private static int LightweightFollowRoleScore(string boneName)
-        => HumanoidSkeleton.LightCollisionFollowScores.Score(boneName);
+    private int LightweightFollowRoleScore(string boneName)
+        => skeletonProfile.LightCollisionFollowScores.Score(boneName);
 
     private static bool IsNpcBoneProxyActive(in NpcCollisionState state, int boneIndex, bool attackMode)
     {
@@ -380,7 +380,7 @@ public unsafe partial class Ragdoll
         return boneIndex < Math.Max(1, followCount - 1) || boneIndex == state.LightweightAttackProxyIndex;
     }
 
-    private Dictionary<int, float> BuildHumanoidCollisionRadiusMap(ISkeletonPose skel)
+    private Dictionary<int, float> BuildHumanoidCollisionRadiusMap(IHostSkeleton skel)
     {
         var result = new Dictionary<int, float>();
         foreach (var signatureBone in HumanoidSignatureBones)
@@ -412,7 +412,7 @@ public unsafe partial class Ragdoll
         public float[] NearestBoneDistances;
     }
 
-    private NpcAutoCollisionContext BuildNpcAutoCollisionContext(ISkeletonPose skel)
+    private NpcAutoCollisionContext BuildNpcAutoCollisionContext(IHostSkeleton skel)
     {
         var boneCount = Math.Min(skel.BoneCount, skel.ParentCount);
         var positions = new Vector3[boneCount];
@@ -474,7 +474,7 @@ public unsafe partial class Ragdoll
         return Math.Clamp(MathF.Min(radius, segmentLength * 0.7f), NpcAutoMinRadius, NpcAutoMaxRadius);
     }
 
-    private bool BuildMeshCollision(nint address, ISkeletonPose ns, Vector3 npcSkelPos, Quaternion npcSkelRot, string label)
+    private bool BuildMeshCollision(nint address, IHostSkeleton ns, Vector3 npcSkelPos, Quaternion npcSkelRot, string label)
     {
         if (simulation == null || bufferPool == null)
             return false;
@@ -486,13 +486,13 @@ public unsafe partial class Ragdoll
             if (!meshes.TryCollectActorTriangles(address, ns, label, settings.RagdollVerboseLog, triangles,
                     out var loadedModels, out var processedMeshes))
             {
-                log.Warning($"RagdollController: {label} mesh collision skipped; skin transforms unavailable");
+                log.Warning($"Ragdoll: {label} mesh collision skipped; skin transforms unavailable");
                 return false;
             }
 
             if (triangles.Count < 4)
             {
-                log.Warning($"RagdollController: {label} mesh collision produced {triangles.Count} triangles from {loadedModels} models; using bone capsules");
+                log.Warning($"Ragdoll: {label} mesh collision produced {triangles.Count} triangles from {loadedModels} models; using bone capsules");
                 return false;
             }
 
@@ -520,16 +520,16 @@ public unsafe partial class Ragdoll
                 });
 
                 var meshScale = GetCharacterScale(address, ns);
-                log.Info($"RagdollController: {label} mesh collision - {triangles.Count} triangles from {loadedModels} models/{processedMeshes} meshes, rootScale=({meshScale.X:F3},{meshScale.Y:F3},{meshScale.Z:F3})");
+                log.Info($"Ragdoll: {label} mesh collision - {triangles.Count} triangles from {loadedModels} models/{processedMeshes} meshes, rootScale=({meshScale.X:F3},{meshScale.Y:F3},{meshScale.Z:F3})");
                 return true;
             }
 
-            log.Warning($"RagdollController: {label} mesh collision failed to create BEPU mesh shape; using bone capsules");
+            log.Warning($"Ragdoll: {label} mesh collision failed to create BEPU mesh shape; using bone capsules");
             return false;
         }
         catch (Exception ex)
         {
-            log.Warning(ex, $"RagdollController: {label} mesh collision build failed; using bone capsules");
+            log.Warning(ex, $"Ragdoll: {label} mesh collision build failed; using bone capsules");
             return false;
         }
     }
@@ -568,12 +568,12 @@ public unsafe partial class Ragdoll
 
     private void CreateFallbackCharacterCollision(string label, nint address)
     {
-        var visualScale = TryGetDrawObjectScale(address, out var drawScale) ? drawScale : Vector3.One;
+        var visualScale = TryGetVisualScale(address, out var drawScale) ? drawScale : Vector3.One;
         var collisionScale = CollisionScale(visualScale);
         var baseRadius = settings.RagdollNpcCollisionAutoSize ? 0.35f : 0.3f * settings.RagdollNpcCollisionScale;
         var baseLength = settings.RagdollNpcCollisionAutoSize ? 1.2f : MathF.Max(0.2f, 1.6f - baseRadius * 2f);
         var shapeIndex = simulation!.Shapes.Add(new Capsule(baseRadius * collisionScale, baseLength * collisionScale));
-        var goPosition = actors.GetPosition(address, ActorReadSite.ColliderFallbackBuild);
+        var goPosition = actors.GetPosition(address, ActorSite.ColliderFallbackBuild);
         var npcPos = new Vector3(goPosition.X, goPosition.Y + 0.8f * visualScale.Y, goPosition.Z);
         if (rec != null) RecActorTransform(ActorSite.ColliderFallbackBuild, address, goPosition, Quaternion.Identity, true, visualScale);
         var handle = simulation!.Bodies.Add(BodyDescription.CreateKinematic(
@@ -598,7 +598,7 @@ public unsafe partial class Ragdoll
             PreviousOrientation = Quaternion.Identity,
             HasPreviousPose = true,
         });
-        log.Info($"RagdollController: {label} using fallback single capsule");
+        log.Info($"Ragdoll: {label} using fallback single capsule");
     }
 
     /// <summary>Move all of a character's collision proxies to a far-away park position

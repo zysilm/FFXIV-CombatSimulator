@@ -26,13 +26,13 @@ public enum RagdollTriggerMode
 /// <summary>The animation that currently dominates a character's pose.</summary>
 /// <param name="Id">Identifies the animation; changes when another one takes over.</param>
 /// <param name="Time">Seconds played, within <paramref name="Duration"/>.</param>
-public readonly record struct RagdollAnimationSample(nint Id, float Time, float Duration);
+internal readonly record struct RagdollAnimationSample(nint Id, float Time, float Duration);
 
 /// <summary>
 /// Decides the moment ragdoll physics starts. Fed once a frame with what the death animation is doing
 /// and how high the body's middle is; says when to start. Pure: no game access.
 /// </summary>
-public sealed class RagdollTrigger
+internal sealed class RagdollTrigger
 {
     public static readonly string[] Labels =
     {

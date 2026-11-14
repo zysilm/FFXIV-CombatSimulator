@@ -9,7 +9,7 @@ using AdvancedRagdoll.MeshVolume;
 
 namespace AdvancedRagdoll.SurfaceProfiles;
 
-public readonly record struct CharacterSurfaceBoneSeed(
+internal readonly record struct CharacterSurfaceBoneSeed(
     string Name,
     string Role,
     float HalfLength,
@@ -18,12 +18,12 @@ public readonly record struct CharacterSurfaceBoneSeed(
     bool IsBox = false,
     BodyMeshGeometry? Mesh = null);
 
-public readonly record struct CharacterSurfaceDebugBone(
+internal readonly record struct CharacterSurfaceDebugBone(
     string Name,
     ReadOnlyMemory<Vector3> Vertices,
     ReadOnlyMemory<int> Indices);
 
-public sealed class CharacterSurfaceRuntime
+internal sealed class CharacterSurfaceRuntime
 {
     private readonly Dictionary<string, CharacterSurfaceRuntimeBone> byName
         = new(StringComparer.Ordinal);
@@ -144,7 +144,7 @@ public sealed class CharacterSurfaceRuntime
     }
 }
 
-public sealed class CharacterSurfaceRuntimeBone
+internal sealed class CharacterSurfaceRuntimeBone
 {
     private const int RadialSegments = 8;
     private readonly CharacterSurfaceProfile profile;

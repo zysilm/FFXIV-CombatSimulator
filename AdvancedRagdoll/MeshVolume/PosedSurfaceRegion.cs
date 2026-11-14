@@ -10,7 +10,7 @@ namespace AdvancedRagdoll.MeshVolume;
 /// the surface is pushed back out instead of further in. Mods can import reflected
 /// winding; the region's dominant orientation is measured once and applied to every face.
 /// </summary>
-public sealed class PosedSurfaceRegion
+internal sealed class PosedSurfaceRegion
 {
     public string Name { get; }
     public BodyMeshGeometry Geometry { get; }

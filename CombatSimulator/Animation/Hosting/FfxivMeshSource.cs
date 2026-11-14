@@ -24,15 +24,11 @@ namespace CombatSimulator.Animation.Hosting;
 internal sealed unsafe partial class FfxivMeshSource : IMeshSource
 {
     private readonly BoneTransformService boneService;
-    private readonly IRagdollActor actors;
+    private readonly IHostActors actors;
     private readonly IRagdollLog log;
     private readonly IRagdollScheduler scheduler;
 
-    // The controller's RagdollVerboseLog for the call being served (calls come from the render hook and from
-    // framework-tick handlers; each sets it on entry).
-    [ThreadStatic] private static bool verboseLog;
-
-    public FfxivMeshSource(BoneTransformService boneService, IRagdollActor actors, IRagdollLog log, IRagdollScheduler scheduler)
+    public FfxivMeshSource(BoneTransformService boneService, IHostActors actors, IRagdollLog log, IRagdollScheduler scheduler)
     {
         this.boneService = boneService;
         this.actors = actors;
@@ -45,7 +41,7 @@ internal sealed unsafe partial class FfxivMeshSource : IMeshSource
     public FrozenMeshGeometryCache? ProvideBodySurface(nint actor, BodySurfaceUse use, Func<FrozenMeshGeometryCache?> capture)
         => capture();
 
-    public RenderedGeometrySnapshot CaptureRenderedGeometry(nint actor, ISkeletonPose skeleton)
+    public RenderedGeometrySnapshot CaptureRenderedGeometry(nint actor, IHostSkeleton skeleton)
         => BuildRenderedGeometrySnapshot(actor, FfxivSkeletonPose.Of(skeleton));
 
     public void ConfigureLod(FrozenMeshGeometryCache cache, bool enabled, float tolerance) => cache.ConfigureLod(enabled, tolerance);
@@ -58,14 +54,13 @@ internal sealed unsafe partial class FfxivMeshSource : IMeshSource
     public bool TryGetCollisionGeometry(FrozenMeshGeometryCache cache, string bone, out BodyMeshGeometry local)
         => cache.TryGetCollisionGeometry(bone, out local);
 
-    public Task<RagdollController.StructuralFitResult>? StartStructuralFit(nint actor, ISkeletonPose skeleton)
+    public Task<RagdollController.StructuralFitResult>? StartStructuralFit(nint actor, IHostSkeleton skeleton)
         => StartStructuralMeshFit(actor, FfxivSkeletonPose.Of(skeleton));
 
-    public Dictionary<int, RagdollController.SoftTissueMeshFit> SoftTissueFits(nint actor, ISkeletonPose skeleton,
+    public Dictionary<int, RagdollController.SoftTissueMeshFit> SoftTissueFits(nint actor, IHostSkeleton skeleton,
         HashSet<int> candidates, bool verboseLog)
     {
-        FfxivMeshSource.verboseLog = verboseLog;
-        return BuildSoftTissueMeshFits(FfxivSkeletonPose.Of(skeleton), candidates);
+        return BuildSoftTissueMeshFits(FfxivSkeletonPose.Of(skeleton), candidates, verboseLog);
     }
 
     // ------------------------------------------------------------------ hair

@@ -44,7 +44,7 @@ public unsafe partial class Ragdoll
     }
 
     /// <summary>The fitted volumes for the target, or none: every body then keeps its built-in volume.</summary>
-    private Dictionary<string, StructuralMeshFitter.Fit> ResolveStructuralMeshFits(ISkeletonPose skel)
+    private Dictionary<string, StructuralMeshFitter.Fit> ResolveStructuralMeshFits(IHostSkeleton skel)
     {
         try
         {
@@ -77,7 +77,7 @@ public unsafe partial class Ragdoll
     }
 
     /// <summary>Starts the hull fit: the mesh source reads the target's models now and fits them on a worker.</summary>
-    private Task<StructuralFitResult>? StartStructuralMeshFit(ISkeletonPose skel)
+    private Task<StructuralFitResult>? StartStructuralMeshFit(IHostSkeleton skel)
         => meshes.StartStructuralFit(targetCharacterAddress, skel);
 
     private bool TryCreateStructuralHull(Vector3[] hullPoints, float scale, out ConvexHull hull, out Vector3 center,
@@ -101,7 +101,7 @@ public unsafe partial class Ragdoll
     }
 
     internal static bool TryBuildReferenceModelTransforms(
-        ISkeletonPose skel,
+        IHostSkeleton skel,
         out Matrix4x4[] referenceModel)
     {
         referenceModel = Array.Empty<Matrix4x4>();

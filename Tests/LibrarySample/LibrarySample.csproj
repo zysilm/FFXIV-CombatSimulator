@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Stage A7: the AdvancedRagdoll library used the way another .NET game would use it
+       (docs/RAGDOLL_LIBRARY_ARCHITECTURE.md §3.1). It references the library project only: no plugin, no game,
+       no InternalsVisibleTo, so it compiles against the public API alone. See README.md. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\AdvancedRagdoll\AdvancedRagdoll.csproj" />
+  </ItemGroup>
+</Project>

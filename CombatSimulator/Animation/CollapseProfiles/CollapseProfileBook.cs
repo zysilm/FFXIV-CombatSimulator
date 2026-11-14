@@ -13,7 +13,7 @@ using AdvancedRagdoll.Hosting;
 
 namespace CombatSimulator.Animation.CollapseProfiles;
 
-public sealed class CollapseProfileBook : ICollapseProfileSource
+internal sealed class CollapseProfileBook : ICollapseProfileSource
 {
     private readonly IRagdollLog log;
     private List<CollapseProfile>? profiles;

@@ -180,7 +180,7 @@ public unsafe partial class Ragdoll
         return hingeAxis;
     }
 
-    // FFXIV's skeleton bone roll (the rotation around a bone's own segment axis) is an
+    // The source skeleton's bone roll (the rotation around a bone's own segment axis) is an
     // animation/skinning convention, not a physics one: nothing guarantees "local X = flex
     // axis", and the convention differs per bone and per race. Deriving the knee/ankle hinge
     // axis from the LIVE (death-instant) pose is numerically degenerate for a near-straight
@@ -188,7 +188,7 @@ public unsafe partial class Ragdoll
     // bugs in this codebase. bepuphysics2's own RagdollDemo sidesteps the whole problem: it
     // never imports bone orientation from an external skeleton, it builds its own capsule
     // frames purely from segment geometry (GetCapsuleForLineSegment), so "local X = hinge axis"
-    // is true by construction. We can't discard the source skeleton (FFXIV drives skinning),
+    // is true by construction. We can't discard the source skeleton (the host drives skinning with it),
     // but we can take the same axis once from the REFERENCE (bind) pose — which is not
     // perfectly straight, unlike a death pose — and cache it as a bone-local vector reapplied
     // through the bone's live rotation every frame. Bind pose is fixed per skeleton
@@ -208,9 +208,9 @@ public unsafe partial class Ragdoll
 
     // The hinges whose frame comes from the reference pose (thigh -> shin -> calf for the upper knee,
     // shin -> calf -> ankle for the lower): profile data.
-    private static ImmutableArray<HingeFrameTarget> BindPoseHingeTargets => HumanoidSkeleton.HingeFrameTargets;
+    private ImmutableArray<HingeFrameTarget> BindPoseHingeTargets => skeletonProfile.HingeFrameTargets;
 
-    private static Dictionary<string, BindPoseHingeFrame> BuildBindPoseHingeFrames(ISkeletonPose skel)
+    private Dictionary<string, BindPoseHingeFrame> BuildBindPoseHingeFrames(IHostSkeleton skel)
     {
         var result = new Dictionary<string, BindPoseHingeFrame>(StringComparer.Ordinal);
         if (!TryBuildReferenceModelTransforms(skel, out var referenceModel))
@@ -260,16 +260,16 @@ public unsafe partial class Ragdoll
     }
 
     /// <summary>
-    /// One-time diagnostic (always logs, once per activation): tests whether j_asi_b ("shin") is
-    /// really a full knee-to-ankle bone in FFXIV's own bind pose, or a short proximal segment with
-    /// most of the visual shin length carried by j_asi_c; whether j_asi_c rotates independently of
-    /// j_asi_b in the live (death) pose; and — the deciding question — whether that independent
+    /// One-time diagnostic (always logs, once per activation): tests whether the profile's shin bone is
+    /// really a full knee-to-ankle bone in the skeleton's own bind pose, or a short proximal segment with
+    /// most of the visual shin length carried by the calf bone; whether the calf rotates independently of
+    /// the shin in the live (death) pose; and — the deciding question — whether that independent
     /// rotation is just axial roll (harmless to a single straight capsule) or a genuine kink (c's
     /// live position departs from the straight line between b and d, i.e. the leg visibly bends
     /// AT c, someplace our single b-to-d capsule can never represent).
     /// </summary>
     private void LogLegBoneStructureDiagnostics(
-        ISkeletonPose skel,
+        IHostSkeleton skel,
         Dictionary<string, Vector3> boneWorldPositions,
         Dictionary<string, Quaternion> boneWorldRotations)
     {
@@ -281,16 +281,16 @@ public unsafe partial class Ragdoll
         foreach (var left in new[] { true, false })
         {
             var side = left ? "l" : "r"; // log text only
-            var aIdx = ResolveBoneIndex(skel, Bones.Thigh.For(left));
-            var bIdx = ResolveBoneIndex(skel, Bones.Shin.For(left));
-            var cIdx = ResolveBoneIndex(skel, Bones.Calf.For(left));
-            var dIdx = ResolveBoneIndex(skel, Bones.Foot.For(left));
+            var aIdx = ResolveBoneIndex(skel, skeletonProfile.Landmarks.Thigh.For(left));
+            var bIdx = ResolveBoneIndex(skel, skeletonProfile.Landmarks.Shin.For(left));
+            var cIdx = ResolveBoneIndex(skel, skeletonProfile.Landmarks.Calf.For(left));
+            var dIdx = ResolveBoneIndex(skel, skeletonProfile.Landmarks.Foot.For(left));
             if (aIdx < 0 || bIdx < 0 || cIdx < 0 || dIdx < 0 ||
                 aIdx >= referenceModel.Length || bIdx >= referenceModel.Length ||
                 cIdx >= referenceModel.Length || dIdx >= referenceModel.Length ||
                 cIdx >= skel.BoneCount)
             {
-                log.Info($"[Ragdoll LegDiag] side={side}: one or more of j_asi_a/b/c/d did not resolve.");
+                log.Info($"[Ragdoll LegDiag] side={side}: one or more of the thigh, shin, calf and foot bones did not resolve.");
                 continue;
             }
 
@@ -317,10 +317,10 @@ public unsafe partial class Ragdoll
             }
             var bindRelative = Quaternion.Normalize(Quaternion.Inverse(bBindRot) * cBindRot);
 
-            if (!boneWorldPositions.TryGetValue(Bones.Thigh.For(left), out var aLivePos) ||
-                !boneWorldPositions.TryGetValue(Bones.Shin.For(left), out var bLivePos) ||
-                !boneWorldPositions.TryGetValue(Bones.Foot.For(left), out var dLivePos) ||
-                !boneWorldRotations.TryGetValue(Bones.Shin.For(left), out var bLiveWorldRot))
+            if (!boneWorldPositions.TryGetValue(skeletonProfile.Landmarks.Thigh.For(left), out var aLivePos) ||
+                !boneWorldPositions.TryGetValue(skeletonProfile.Landmarks.Shin.For(left), out var bLivePos) ||
+                !boneWorldPositions.TryGetValue(skeletonProfile.Landmarks.Foot.For(left), out var dLivePos) ||
+                !boneWorldRotations.TryGetValue(skeletonProfile.Landmarks.Shin.For(left), out var bLiveWorldRot))
             {
                 log.Info($"[Ragdoll LegDiag] side={side}: a/b/d not in live pose maps (unexpected).");
                 continue;
@@ -617,7 +617,7 @@ public unsafe partial class Ragdoll
         Vector3 parentSegDir,
         Vector3 segDirWorld)
     {
-        if (!HasPassiveHingeRest(boneDef.AnatomicalRole, boneDef.Name) ||
+        if (!HasPassiveHingeRest(skeletonProfile, boneDef.AnatomicalRole, boneDef.Name) ||
             boneDef.HingeRestSpringFreq <= 0 ||
             boneDef.HingeRestMaxForce <= 0 ||
             simulation == null)
@@ -833,7 +833,7 @@ public unsafe partial class Ragdoll
     }
 
     // === Tier C (swing) debug: joint-vs-limit stress for the overlay =====================
-    public readonly record struct JointLimitStress(string BoneName, Vector3 WorldPosition, float Stress);
+    internal readonly record struct JointLimitStress(string BoneName, Vector3 WorldPosition, float Stress);
 
     private struct SwingStressMonitor
     {
@@ -850,7 +850,7 @@ public unsafe partial class Ragdoll
     /// is pinned on its range edge). Covers ball cones and the Tier-C directional limits.
     /// Overlay diagnostic for "spread-eagle" poses: pinned joints light up.
     /// </summary>
-    public void CollectJointLimitStress(List<JointLimitStress> output)
+    internal void CollectJointLimitStress(List<JointLimitStress> output)
     {
         output.Clear();
         if (simulation == null || !isActive || swingStressMonitors.Count == 0)
@@ -913,7 +913,7 @@ public unsafe partial class Ragdoll
     {
         var lever = MathF.Max(0.04f, bone.CapsuleHalfLength);
         var gravityTorque = MathF.Max(0.01f, bone.Mass) * RagdollTuning.Gravity * lever;
-        var fraction = bone.Name == Bones.Neck || bone.Name == Bones.Head
+        var fraction = bone.Name == skeletonProfile.Landmarks.Neck || bone.Name == skeletonProfile.Landmarks.Head
             ? HeadNeckJointFrictionFraction
             : JointFrictionFraction;
         return MathF.Max(0.05f, gravityTorque * fraction);

@@ -35,7 +35,7 @@ public unsafe partial class Ragdoll
         if (!world.TryCollectGroundTriangles(min, max, exactGroundScratch, budget) ||
             exactGroundScratch.Count < 3)
         {
-            log.Info("RagdollController: exact ground unavailable for this patch; using the sampled grid");
+            log.Info("Ragdoll: exact ground unavailable for this patch; using the sampled grid");
             return false;
         }
 
@@ -61,7 +61,7 @@ public unsafe partial class Ragdoll
 
         var mesh = new BepuPhysics.Collidables.Mesh(triangles.Slice(written), Vector3.One, bufferPool);
         simulation.Statics.Add(new StaticDescription(Vector3.Zero, Quaternion.Identity, simulation.Shapes.Add(mesh)));
-        log.Info($"RagdollController: exact ground patch with {written / 2} triangles, radius {terrainPatchRadius:F1} m");
+        log.Info($"Ragdoll: exact ground patch with {written / 2} triangles, radius {terrainPatchRadius:F1} m");
         return true;
     }
 
@@ -204,6 +204,6 @@ public unsafe partial class Ragdoll
 
         AddTerrainPatch(sample.X, sample.Z, realGroundY);
         if (settings.RagdollVerboseLog)
-            log.Info($"RagdollController: added dynamic terrain patch at ({sample.X:F2}, {sample.Z:F2}); total={terrainPatchCenters.Count}");
+            log.Info($"Ragdoll: added dynamic terrain patch at ({sample.X:F2}, {sample.Z:F2}); total={terrainPatchCenters.Count}");
     }
 }

@@ -19,7 +19,7 @@ namespace AdvancedRagdoll.Recording;
 /// A watch remembers the last value it saw. <see cref="Clone"/> gives a watch for another observer
 /// that shares the bound getters and remembers nothing yet.
 /// </summary>
-public abstract class RagdollRecordingWatch
+internal abstract class RagdollRecordingWatch
 {
     private const int MaxDepth = 4;
 

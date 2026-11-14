@@ -595,7 +595,7 @@ internal static class StructuralMeshFitter
 
         var radius = (radiusX + radiusZ) * 0.5f;
 
-        // j_asi_b is a short (~6 cm) proximal stub, wider than it is long: an envelope scaled by
+        // The shin bone is a short (~6 cm) proximal stub, wider than it is long: an envelope scaled by
         // the segment length would reject every measurement, so it is a pure stature ratio.
         if (target.Kind == SegmentKind.UpperKnee)
         {

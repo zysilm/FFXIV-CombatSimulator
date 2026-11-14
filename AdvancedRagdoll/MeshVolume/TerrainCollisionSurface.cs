@@ -9,7 +9,7 @@ namespace AdvancedRagdoll.MeshVolume;
 
 /// <summary>Closed ground below the original sampled top surface. Convex/mesh
 /// dispatch queries the complete body BVH without body/body contact sampling.</summary>
-public static class TerrainCollisionSurface
+internal static class TerrainCollisionSurface
 {
     public static void Add(BepuPhysics.Simulation simulation, BufferPool pool, ReadOnlySpan<Triangle> triangles)
     {

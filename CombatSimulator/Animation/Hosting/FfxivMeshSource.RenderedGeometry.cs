@@ -14,59 +14,6 @@ namespace CombatSimulator.Animation.Hosting;
 
 internal sealed unsafe partial class FfxivMeshSource
 {
-    private readonly record struct RenderedModelStamp(int Slot, nint Model, nint Resource, nint ModelData, uint Attributes, uint Shapes);
-    private readonly List<RenderedModelStamp> renderedGeometryStamps = new();
-    private nint renderedGeometryCharBase, renderedGeometrySkeleton, renderedGeometryPose, renderedGeometryHavok;
-    private Vector3 renderedGeometryScale;
-    private int renderedGeometrySlotCount;
-    private ushort renderedGeometryRace;
-    private byte[] renderedGeometryCustomize = Array.Empty<byte>();
-    private bool renderedGeometryPenumbra;
-    private readonly Dictionary<string, string> renderedGeometryResolvedPaths = new(StringComparer.Ordinal);
-    private long renderedGeometryNextResolveCheck;
-
-    private void ClearRenderedGeometryCapture()
-    {
-        renderedGeometryStamps.Clear();
-        renderedGeometryCharBase = renderedGeometrySkeleton = renderedGeometryPose = renderedGeometryHavok = 0;
-        renderedGeometryScale = default; renderedGeometrySlotCount = -1;
-        renderedGeometryRace = 0; renderedGeometryCustomize = Array.Empty<byte>();
-        renderedGeometryResolvedPaths.Clear(); renderedGeometryNextResolveCheck = 0;
-        renderedPartialStamps.Clear(); renderedPartialCount = 0;
-    }
-
-    private bool RenderedGeometrySourcesMatch(nint actor, SkeletonAccess skel)
-    {
-        var cb = skel.CharBase;
-        if (cb == null || renderedGeometryCharBase != (nint)cb || renderedGeometrySkeleton != (nint)cb->Skeleton ||
-            renderedGeometryPose != (nint)skel.Pose || renderedGeometryHavok != (nint)skel.HavokSkeleton ||
-            renderedGeometrySlotCount != cb->SlotCount || renderedGeometryScale != GetCharacterScale(actor, skel)) return false;
-        if (!RenderedPartialSourcesMatch(skel)) return false;
-        if (renderedGeometryCustomize.Length != 0)
-        {
-            var human = (Human*)cb;
-            if (human->RaceSexId != renderedGeometryRace || !new ReadOnlySpan<byte>(&human->Customize, 26).SequenceEqual(renderedGeometryCustomize)) return false;
-        }
-        long now = Environment.TickCount64;
-        if (now >= renderedGeometryNextResolveCheck)
-        {
-            renderedGeometryNextResolveCheck = now + 500;
-            if (IsRenderedPenumbraLoaded() != renderedGeometryPenumbra) return false;
-            foreach (var resolved in renderedGeometryResolvedPaths)
-                if (!TryResolveRenderedActorPath(actor, resolved.Key, out var current) || current != resolved.Value) return false;
-        }
-        foreach (var stamp in renderedGeometryStamps)
-        {
-            var model = cb->Models == null ? null : cb->Models[stamp.Slot];
-            if ((nint)model != stamp.Model) return false;
-            if (model == null) continue;
-            var resource = model->ModelResourceHandle;
-            if ((nint)resource != stamp.Resource || (resource == null ? 0 : (nint)resource->ModelData) != stamp.ModelData ||
-                model->EnabledAttributeIndexMask != stamp.Attributes || model->EnabledShapeKeyIndexMask != stamp.Shapes) return false;
-        }
-        return true;
-    }
-
     /// <summary>Framework/render-thread only. Snapshot currently loaded visible models and pose;
     /// returned arrays own all data. It captures CPU geometry, not shader/GPU displacement.</summary>
     private RenderedGeometrySnapshot BuildRenderedGeometrySnapshot(nint actor, SkeletonAccess skel)
@@ -76,7 +23,6 @@ internal sealed unsafe partial class FfxivMeshSource
         var vertices = new List<RenderedGeometryVertex>();
         var triangles = new List<int>();
         var cb = skel.CharBase;
-        ClearRenderedGeometryCapture();
         if (cb == null || cb->Skeleton == null || cb->Models == null || !TryBuildSkinDeltas(skel, out var skin))
         {
             result.Diagnostics = new[] { "Current model pose or render skeleton unavailable." };
@@ -89,13 +35,8 @@ internal sealed unsafe partial class FfxivMeshSource
                     Matrix4x4.CreateTranslation(transform.Position.X, transform.Position.Y, transform.Position.Z);
         BuildRenderedSkinPalette(skel, diagnostics, ref skin, out var names, out var parents, out var owners, out var boneByName);
         bool human = cb->GetModelType() == CharacterBase.ModelType.Human;
-        renderedGeometryCharBase = (nint)cb; renderedGeometrySkeleton = (nint)cb->Skeleton;
-        renderedGeometryPose = (nint)skel.Pose; renderedGeometryHavok = (nint)skel.HavokSkeleton;
-        renderedGeometryScale = scale; renderedGeometrySlotCount = cb->SlotCount;
         ushort targetRace = human ? ((Human*)cb)->RaceSexId : (ushort)0;
-        renderedGeometryRace = targetRace;
-        renderedGeometryCustomize = human ? new ReadOnlySpan<byte>(&((Human*)cb)->Customize, 26).ToArray() : Array.Empty<byte>();
-        renderedGeometryPenumbra = IsRenderedPenumbraLoaded();
+        var penumbraLoaded = IsRenderedPenumbraLoaded();
         RenderedRaceDeformation? pbd = null;
         string pbdRoute = "unavailable";
         bool triedPbd = false;
@@ -108,9 +49,6 @@ internal sealed unsafe partial class FfxivMeshSource
             // equipment covering it, including mod replacements of these rendered slots.
             if (human && slot is not (0 or 1 or 2 or 3 or 4 or 11)) continue;
             var model = cb->Models[slot];
-            var handle = model == null ? null : model->ModelResourceHandle;
-            renderedGeometryStamps.Add(new(slot, (nint)model, (nint)handle, handle == null ? 0 : (nint)handle->ModelData,
-                model == null ? 0 : model->EnabledAttributeIndexMask, model == null ? 0 : model->EnabledShapeKeyIndexMask));
             if (model == null || model->ModelResourceHandle == null) continue;
             var resource = (ResourceHandle*)model->ModelResourceHandle;
             string path = Encoding.UTF8.GetString(resource->FileName.AsSpan());
@@ -126,7 +64,7 @@ internal sealed unsafe partial class FfxivMeshSource
                 // replacement filename contains no race identifier.
                 string logicalPath = cb->ResolveMdlPath(logicalBuffer, CharacterBase.PathBufferSize, (uint)slot).ToString();
                 ushort sourceRace = ReadRenderedModelRace(logicalPath);
-                if (renderedGeometryPenumbra && actor != 0)
+                if (penumbraLoaded && actor != 0)
                 {
                     try
                     {
@@ -229,7 +167,6 @@ internal sealed unsafe partial class FfxivMeshSource
         const string path = "chara/xls/boneDeformer/human.pbd";
         route = "actor collection unresolved";
         if (!TryResolveRenderedActorPath(actor, path, out var resolved)) return null;
-        renderedGeometryResolvedPaths[path] = resolved;
         route = $"actor collection '{resolved}'";
         if (resolved.StartsWith('|')) { int end = resolved.IndexOf('|', 1); if (end < 0) return null; resolved = resolved[(end + 1)..]; }
         if (!Path.IsPathRooted(resolved)) return TryGetRawFileData(resolved);

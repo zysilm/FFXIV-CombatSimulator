@@ -33,7 +33,7 @@ public unsafe partial class Ragdoll
     private readonly HairContactCapsule[] hairContacts = new HairContactCapsule[64];
     private bool hairRigActive;
     private int hairKaoRagdollBodyIndex = -1, hairGroundCursor;
-    public bool RunAnimatedHair { get; set; }
+    internal bool RunAnimatedHair { get; set; }
     private bool animatedHair;
     private nint animatedHairDraw;
     private ulong animatedHairObject;
@@ -44,7 +44,7 @@ public unsafe partial class Ragdoll
     private readonly object animatedHairGate = new();
     private int animatedGroundCursor;
     private const int MaxHairRigBones = 256;
-    public bool HairRigActive => hairRigActive;
+    internal bool HairRigActive => hairRigActive;
     private bool HairNeedsStep
     {
         get { foreach (var c in hairRigChains) if (c.Solver.Awake) return true; return false; }
@@ -69,7 +69,7 @@ public unsafe partial class Ragdoll
         return FlexibleHairSolver.Finite(position) && FlexibleHairSolver.Finite(rotation);
     }
 
-    private void BuildHairRig(ISkeletonPose skel)
+    private void BuildHairRig(IHostSkeleton skel)
     {
         var meshBinding = meshes.HairMesh;
         if (rec != null) RecHairMesh(meshBinding);
@@ -79,7 +79,7 @@ public unsafe partial class Ragdoll
         {
             if (simulation == null) return;
             for (int i = 0; i < ragdollBones.Count; i++)
-                if (ragdollBones[i].Name == Bones.Head) { hairKaoRagdollBodyIndex = i; break; }
+                if (ragdollBones[i].Name == skeletonProfile.Landmarks.Head) { hairKaoRagdollBodyIndex = i; break; }
         }
         if (!TryGetHairHead(out var head, out var headRot, out var linear, out var angular)) return;
         if (!skel.HasRoot) return;
@@ -241,7 +241,7 @@ public unsafe partial class Ragdoll
         }
     }
 
-    private void ReadbackHairRig(ISkeletonPose skel)
+    private void ReadbackHairRig(IHostSkeleton skel)
     {
         if (!hairRigActive) return;
         if (!skel.HasRoot) return;
@@ -330,7 +330,7 @@ public unsafe partial class Ragdoll
         if (!FlexibleHairSolver.Finite(skelWorldPos) || !FlexibleHairSolver.Finite(skelWorldRot)) return;
         skelWorldRot = Quaternion.Normalize(skelWorldRot); skelWorldRotInv = Quaternion.Inverse(skelWorldRot);
         skelWorldScale = GetCharacterScale(playerAddress, skel);
-        int headBone = ResolveBoneIndex(skel, Bones.Head);
+        int headBone = ResolveBoneIndex(skel, skeletonProfile.Landmarks.Head);
         var bodyPose = skel.ModelPose;
         if (headBone < 0 || headBone >= bodyPose.Length) return;
         ref var head = ref bodyPose[headBone];
@@ -388,10 +388,10 @@ public unsafe partial class Ragdoll
         }
     }
 
-    private int CaptureAnimatedHairContacts(ISkeletonPose skel)
+    private int CaptureAnimatedHairContacts(IHostSkeleton skel)
     {
         int count = 0;
-        foreach (var def in AllBoneDefaults)
+        foreach (var def in boneDefaults)
         {
             // Regions with a cached rendered surface use it instead of an approximate capsule.
             if (!IsHairContactBone(def.Name) || hairSurfaceNames.Contains(def.Name)) continue;
@@ -402,7 +402,7 @@ public unsafe partial class Ragdoll
             var rotation = ModelRotToWorld(new(mt.Rotation.X, mt.Rotation.Y, mt.Rotation.Z, mt.Rotation.W));
             float scale = MathF.Max(skelWorldScale.X, MathF.Max(skelWorldScale.Y, skelWorldScale.Z));
             var edge = Vector3.Transform(Vector3.UnitY * def.CapsuleHalfLength * scale, rotation);
-            animatedContactsNow[count++] = new(origin, origin + edge * 2, def.CapsuleRadius * scale, def.Name == Bones.Head);
+            animatedContactsNow[count++] = new(origin, origin + edge * 2, def.CapsuleRadius * scale, def.Name == skeletonProfile.Landmarks.Head);
         }
         return count;
     }
@@ -438,7 +438,7 @@ public unsafe partial class Ragdoll
         finally { Monitor.Exit(animatedHairGate); }
     }
 
-    private static Matrix4x4[] BuildHairReferenceModels(ISkeletonPose skel, int part)
+    private static Matrix4x4[] BuildHairReferenceModels(IHostSkeleton skel, int part)
     {
         var reference = skel.PartReferencePose(part);
         int count = Math.Min(2048, Math.Min(skel.PartReferenceCount(part), skel.PartParentCount(part)));
@@ -452,7 +452,7 @@ public unsafe partial class Ragdoll
         return models;
     }
 
-    private static void AddHairSkinMatrices(ISkeletonPose skel, int part, Matrix4x4[] references,
+    private static void AddHairSkinMatrices(IHostSkeleton skel, int part, Matrix4x4[] references,
         Matrix4x4 attachment, Dictionary<string, Matrix4x4> skin)
     {
         var pose = skel.PartModelPose(part);
@@ -465,7 +465,7 @@ public unsafe partial class Ragdoll
         }
     }
 
-    private static bool TryHairPoseAttachment(ISkeletonPose skel, int partialIndex,
+    private static bool TryHairPoseAttachment(IHostSkeleton skel, int partialIndex,
         out Matrix4x4 attachment, out Matrix4x4 inverse, out Quaternion rotation)
     {
         attachment = inverse = Matrix4x4.Identity; rotation = Quaternion.Identity;
@@ -483,11 +483,11 @@ public unsafe partial class Ragdoll
         try { meshes.PollHairMesh(); }
         finally { Monitor.Exit(animatedHairGate); }
     }
-    private static bool IsHairBoneName(string? name) => HumanoidSkeleton.HairBones.IsHairBone(name);
-    private static bool IsHairPartial(ISkeletonPose skel, int part)
+    private bool IsHairBoneName(string? name) => skeletonProfile.HairBones.IsHairBone(name);
+    private bool IsHairPartial(IHostSkeleton skel, int part)
     {
         var bones = skel.PartBoneNameCount(part);
-        if (bones < 2 || skel.PartBoneName(part, 0) != Bones.Head) return false;
+        if (bones < 2 || skel.PartBoneName(part, 0) != skeletonProfile.Landmarks.Head) return false;
         for (int i = 1; i < bones; i++) if (IsHairBoneName(skel.PartBoneName(part, i))) return true;
         return false;
     }

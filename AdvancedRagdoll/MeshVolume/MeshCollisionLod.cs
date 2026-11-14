@@ -6,9 +6,9 @@ using System.Numerics;
 
 namespace AdvancedRagdoll.MeshVolume;
 
-public readonly record struct MeshLodValidationSample(int A, int B, int C, Vector3 Barycentric, int CollisionTriangle);
+internal readonly record struct MeshLodValidationSample(int A, int B, int C, Vector3 Barycentric, int CollisionTriangle);
 
-public sealed class MeshCollisionLodResult
+internal sealed class MeshCollisionLodResult
 {
     public required BodyMeshGeometry Geometry { get; init; }
     public required int[] SourceVertexIndices { get; init; }
@@ -35,7 +35,7 @@ public sealed class MeshCollisionLodResult
 /// source vertices, source face centroids and edge midpoints, within the initial-pose target.
 /// These finite samples do not prove a Hausdorff bound or a bound after later deformation.
 /// </summary>
-public static class MeshCollisionLod
+internal static class MeshCollisionLod
 {
     private struct Face { public int A, B, C; public bool Active; }
     private struct Edge { public int First, Second, Count; }

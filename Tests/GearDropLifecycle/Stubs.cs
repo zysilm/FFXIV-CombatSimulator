@@ -30,15 +30,15 @@ namespace CombatSimulator.Animation
 {
     public sealed class DismembermentController
     {
-        public readonly List<GearDropOperation> Operations = new();
+        internal readonly List<GearDropOperation> Operations = new();
         public int Calls, FailCall = -1;
         public bool SourceUnchanged = true;
-        public GearDropOperation? SpawnGearDrop(nint address, string bone, int slot, string? state, bool hideSkin, string? hiddenOppositeRootBone)
+        internal GearDropOperation? SpawnGearDrop(nint address, string bone, int slot, string? state, bool hideSkin, string? hiddenOppositeRootBone)
         {
             if (++Calls == FailCall) return null;
             var operation = new GearDropOperation(); Operations.Add(operation); return operation;
         }
-        public bool IsGearDropSourceUnchanged(GearDropOperation operation) => SourceUnchanged;
+        internal bool IsGearDropSourceUnchanged(GearDropOperation operation) => SourceUnchanged;
     }
 }
 namespace Dalamud.Plugin.Services

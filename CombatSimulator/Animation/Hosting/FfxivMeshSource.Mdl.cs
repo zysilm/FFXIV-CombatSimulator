@@ -26,10 +26,9 @@ internal sealed unsafe partial class FfxivMeshSource
     private const int MeshCollisionMaxTriangles = 8000;
     private const int MeshCollisionPreferredLod = 0; // LOD0: matches the on-screen silhouette exactly (Low LOD shrank/coarsened the collision hull).
 
-    public bool TryCollectActorTriangles(nint address, ISkeletonPose skeleton, string label, bool verboseLog,
+    public bool TryCollectActorTriangles(nint address, IHostSkeleton skeleton, string label, bool verboseLog,
         List<Triangle> triangles, out int loadedModels, out int processedMeshes)
     {
-        FfxivMeshSource.verboseLog = verboseLog;
         loadedModels = 0;
         processedMeshes = 0;
         var ns = FfxivSkeletonPose.Of(skeleton);
@@ -61,7 +60,7 @@ internal sealed unsafe partial class FfxivMeshSource
                 loadedModels++;
                 var beforeMeshes = processedMeshes;
                 var beforeTriangles = triangles.Count;
-                processedMeshes += AppendSkinnedMdlTriangles(modelPath, MeshCollisionMdlData.FromMdlFile(mdl), ns, skinDeltas, triangles);
+                processedMeshes += AppendSkinnedMdlTriangles(modelPath, MeshCollisionMdlData.FromMdlFile(mdl), ns, skinDeltas, triangles, verboseLog);
                 if (verboseLog)
                 {
                     log.Info($"RagdollController: {label} mesh slot {slot} '{modelPath}' geometry-only mdl: meshes={processedMeshes - beforeMeshes}, triangles={triangles.Count - beforeTriangles}");
@@ -77,7 +76,7 @@ internal sealed unsafe partial class FfxivMeshSource
                     loadedModels++;
                     var beforeMeshes = processedMeshes;
                     var beforeTriangles = triangles.Count;
-                    processedMeshes += AppendSkinnedMdlTriangles(modelPath, rawMdl, ns, skinDeltas, triangles);
+                    processedMeshes += AppendSkinnedMdlTriangles(modelPath, rawMdl, ns, skinDeltas, triangles, verboseLog);
                     log.Warning($"RagdollController: {label} mesh collision mdl parser failed for slot {slot} '{modelPath}' ({ex.GetType().Name}: {ex.Message}), raw geometry fallback used: meshes={processedMeshes - beforeMeshes}, triangles={triangles.Count - beforeTriangles}");
                 }
                 else
@@ -224,7 +223,8 @@ internal sealed unsafe partial class FfxivMeshSource
         MeshCollisionMdlData mdl,
         SkeletonAccess ns,
         Matrix4x4[] skinDeltas,
-        List<Triangle> triangles)
+        List<Triangle> triangles,
+        bool verboseLog)
     {
         if (!TrySelectMdlLod(mdl, out var lodIndex, out var lod))
         {
@@ -257,17 +257,17 @@ internal sealed unsafe partial class FfxivMeshSource
         var processedMeshIndices = new HashSet<int>();
         var processedMeshes = 0;
         processedMeshes += AppendSkinnedMdlMeshRange(modelPath, mdl, lodIndex, lod.MeshIndex, lod.MeshCount,
-            ns, skinDeltas, triangles, processedMeshIndices);
+            ns, skinDeltas, triangles, processedMeshIndices, verboseLog);
 
         if (mdl.ExtraLodEnabled && lodIndex < mdl.ExtraLods.Length)
         {
             var extra = mdl.ExtraLods[lodIndex];
             processedMeshes += AppendSkinnedMdlMeshRange(modelPath, mdl, lodIndex, extra.GlassMeshIndex, extra.GlassMeshCount,
-                ns, skinDeltas, triangles, processedMeshIndices);
+                ns, skinDeltas, triangles, processedMeshIndices, verboseLog);
             processedMeshes += AppendSkinnedMdlMeshRange(modelPath, mdl, lodIndex, extra.MaterialChangeMeshIndex, extra.MaterialChangeMeshCount,
-                ns, skinDeltas, triangles, processedMeshIndices);
+                ns, skinDeltas, triangles, processedMeshIndices, verboseLog);
             processedMeshes += AppendSkinnedMdlMeshRange(modelPath, mdl, lodIndex, extra.CrestChangeMeshIndex, extra.CrestChangeMeshCount,
-                ns, skinDeltas, triangles, processedMeshIndices);
+                ns, skinDeltas, triangles, processedMeshIndices, verboseLog);
         }
 
         return processedMeshes;
@@ -282,7 +282,8 @@ internal sealed unsafe partial class FfxivMeshSource
         SkeletonAccess ns,
         Matrix4x4[] skinDeltas,
         List<Triangle> triangles,
-        HashSet<int> processedMeshIndices)
+        HashSet<int> processedMeshIndices,
+        bool verboseLog)
     {
         if (meshCount == 0)
             return 0;
@@ -293,7 +294,7 @@ internal sealed unsafe partial class FfxivMeshSource
         {
             if (!processedMeshIndices.Add(meshIndex))
                 continue;
-            if (AppendSkinnedMdlMeshTriangles(modelPath, mdl, lodIndex, meshIndex, ns, skinDeltas, triangles))
+            if (AppendSkinnedMdlMeshTriangles(modelPath, mdl, lodIndex, meshIndex, ns, skinDeltas, triangles, verboseLog))
                 processedMeshes++;
         }
 
@@ -307,7 +308,8 @@ internal sealed unsafe partial class FfxivMeshSource
         int meshIndex,
         SkeletonAccess ns,
         Matrix4x4[] skinDeltas,
-        List<Triangle> triangles)
+        List<Triangle> triangles,
+        bool verboseLog)
     {
         if (meshIndex < 0 || meshIndex >= mdl.Meshes.Length || meshIndex >= mdl.VertexDeclarations.Length)
             return false;
@@ -316,8 +318,8 @@ internal sealed unsafe partial class FfxivMeshSource
         if (mesh.VertexCount == 0 || mesh.IndexCount < 3)
             return false;
 
-        var localToHavok = BuildMdlMeshBoneMap(mdl, mesh, ns);
-        return AppendSkinnedMdlMeshTriangles(modelPath, mdl, lodIndex, meshIndex, localToHavok, skinDeltas, triangles);
+        var localToHavok = BuildMdlMeshBoneMap(mdl, mesh, ns, verboseLog);
+        return AppendSkinnedMdlMeshTriangles(modelPath, mdl, lodIndex, meshIndex, localToHavok, skinDeltas, triangles, verboseLog);
     }
 
     private bool AppendSkinnedMdlMeshTriangles(
@@ -327,7 +329,8 @@ internal sealed unsafe partial class FfxivMeshSource
         int meshIndex,
         int[] localToHavok,
         Matrix4x4[] skinDeltas,
-        List<Triangle> triangles)
+        List<Triangle> triangles,
+        bool verboseLog)
     {
         if (meshIndex < 0 || meshIndex >= mdl.Meshes.Length || meshIndex >= mdl.VertexDeclarations.Length)
             return false;
@@ -382,7 +385,7 @@ internal sealed unsafe partial class FfxivMeshSource
         return true;
     }
 
-    private int[] BuildMdlMeshBoneMap(MeshCollisionMdlData mdl, MdlStructs.MeshStruct mesh, SkeletonAccess ns)
+    private int[] BuildMdlMeshBoneMap(MeshCollisionMdlData mdl, MdlStructs.MeshStruct mesh, SkeletonAccess ns, bool verboseLog)
     {
         if (mesh.BoneTableIndex == 255 || mesh.BoneTableIndex >= mdl.BoneTables.Length)
             return Array.Empty<int>();

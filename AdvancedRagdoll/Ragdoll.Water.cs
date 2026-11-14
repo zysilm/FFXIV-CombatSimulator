@@ -58,7 +58,7 @@ public unsafe partial class Ragdoll
             any = true;
             var linear = body.Velocity.Linear;
             var angular = body.Velocity.Angular;
-            WaterBuoyancy.Apply(ref linear, ref angular, submerged, WaterBuoyancy.RelativeDensity(HumanoidSkeleton, rb.Name, liquidDensity),
+            WaterBuoyancy.Apply(ref linear, ref angular, submerged, WaterBuoyancy.RelativeDensity(skeletonProfile, rb.Name, liquidDensity),
                 surfaceSpeed, RagdollTuning.Gravity, dt);
             body.Velocity.Linear = linear;
             body.Velocity.Angular = angular;

@@ -22,12 +22,12 @@ namespace AdvancedRagdoll.Hosting;
 // of the simulation itself, not host answers.
 
 /// <summary>Records world queries: Raycast, GroundTriangles, WaterSurface.</summary>
-internal sealed class RecordingWorldQuery : IWorldQuery
+internal sealed class RecordingWorldQuery : IHostWorldQuery
 {
-    private readonly IWorldQuery inner;
+    private readonly IHostWorldQuery inner;
     private readonly Func<RagdollRecordingWriter?> writer;
 
-    public RecordingWorldQuery(IWorldQuery inner, Func<RagdollRecordingWriter?> writer)
+    public RecordingWorldQuery(IHostWorldQuery inner, Func<RagdollRecordingWriter?> writer)
     {
         this.inner = inner;
         this.writer = writer;
@@ -182,33 +182,6 @@ internal sealed class RecordingClock : IRagdollClock
     }
 }
 
-/// <summary>Kinds of <see cref="RecordType.MeshProduct"/> records (their first value).</summary>
-internal static class MeshProductKind
-{
-    /// <summary>use:i32 (<see cref="BodySurfaceUse"/>), actor:u64, then a cache (<see cref="RecordingMeshSource.WriteCache"/>, no LOD flag).</summary>
-    public const string BodySurface = "bodySurface";
-    /// <summary>use:i32 (<see cref="CachedLodUse"/>), bone:str, ok:bool; when ok: sourceVertexIndices:I32Array,
-    /// indices:I32Array, sourceFaceCount:i32, requestedTolerance:f32, maxVertexDisplacement:f32, maxSampledError:f32,
-    /// acceptedCollapses:i32, candidateChecks:i32. The vertices are the given surface's, picked by sourceVertexIndices.</summary>
-    public const string Lod = "lod";
-    /// <summary>bone:str, ok:bool, vertices:Vector3Array, indices:I32Array (bone-local).</summary>
-    public const string CollisionGeometry = "collisionGeometry";
-    /// <summary>actor:u64, count:i32, then per fit: bone:i32 (skeleton index), radius:f32, halfLength:f32,
-    /// centerModelOffset:Vector3, axisModel:Vector3, samples:i32.</summary>
-    public const string SoftTissueFits = "softTissueFits";
-    /// <summary>actor:u64, label:str, ok:bool, loadedModels:i32, processedMeshes:i32, triangles:Vector3Array (3 per triangle).
-    /// The label (the character's name, as the collider provider lists it) only goes into log lines; it is kept to
-    /// show whose mesh it is, and a replay does not compare it.</summary>
-    public const string ActorTriangles = "actorTriangles";
-    /// <summary>rebuild:bool.</summary>
-    public const string HairMeshRebuild = "hairMeshRebuild";
-    /// <summary>Written by the controller after the Activate record: the body surfaces it carries over from earlier
-    /// activations. frozenActor:u64, frozenEntity:u32, observedEnabled:bool, observedRevision:i32, lodEnabled:bool,
-    /// lodTolerance:f32, nextAttempt:i64, frozen cache (no LOD flag), weaponContactCount:i32, then per entry in
-    /// eviction order: actor:u64, entity:u32, model:u64, cache (no LOD flag).</summary>
-    public const string Carried = "carried";
-}
-
 /// <summary>
 /// Records what the mesh source hands the controller, as finished products (<see cref="RecordType.MeshProduct"/>,
 /// format version 3): body surfaces, the reduced and collision surfaces taken from them, soft-tissue fits, other
@@ -252,7 +225,7 @@ internal sealed class RecordingMeshSource : IMeshSource
         return cache;
     }
 
-    public RenderedGeometrySnapshot CaptureRenderedGeometry(nint actor, ISkeletonPose skeleton)
+    public RenderedGeometrySnapshot CaptureRenderedGeometry(nint actor, IHostSkeleton skeleton)
         => inner.CaptureRenderedGeometry(actor, skeleton);
 
     public void ConfigureLod(FrozenMeshGeometryCache cache, bool enabled, float tolerance) => inner.ConfigureLod(cache, enabled, tolerance);
@@ -302,10 +275,10 @@ internal sealed class RecordingMeshSource : IMeshSource
         return ok;
     }
 
-    public Task<Ragdoll.StructuralFitResult>? StartStructuralFit(nint actor, ISkeletonPose skeleton)
+    public Task<Ragdoll.StructuralFitResult>? StartStructuralFit(nint actor, IHostSkeleton skeleton)
         => inner.StartStructuralFit(actor, skeleton);
 
-    public Dictionary<int, Ragdoll.SoftTissueMeshFit> SoftTissueFits(nint actor, ISkeletonPose skeleton,
+    public Dictionary<int, Ragdoll.SoftTissueMeshFit> SoftTissueFits(nint actor, IHostSkeleton skeleton,
         HashSet<int> candidates, bool verboseLog)
     {
         var fits = inner.SoftTissueFits(actor, skeleton, candidates, verboseLog);
@@ -329,7 +302,7 @@ internal sealed class RecordingMeshSource : IMeshSource
         return fits;
     }
 
-    public bool TryCollectActorTriangles(nint actor, ISkeletonPose skeleton, string label, bool verboseLog,
+    public bool TryCollectActorTriangles(nint actor, IHostSkeleton skeleton, string label, bool verboseLog,
         List<Triangle> triangles, out int loadedModels, out int processedMeshes)
     {
         var ok = inner.TryCollectActorTriangles(actor, skeleton, label, verboseLog, triangles, out loadedModels, out processedMeshes);
@@ -365,7 +338,7 @@ internal sealed class RecordingMeshSource : IMeshSource
         return rebuild;
     }
 
-    public WeaponMeshGeometry? BuildWeaponMesh(nint weaponDrawObject, bool verboseLog) => inner.BuildWeaponMesh(weaponDrawObject, verboseLog);
+    public WeaponMeshGeometry? BuildWeaponMesh(nint weaponModel, bool verboseLog) => inner.BuildWeaponMesh(weaponModel, verboseLog);
 
     /// <summary>
     /// A cached body surface: id:i32 (-1 for none; per recording, the same object keeps its id), count:i32 (0 when the

@@ -49,7 +49,7 @@ public unsafe partial class Ragdoll
 
     /// <summary>Bind cached regions to this skeleton (animated) or to ragdoll bodies. Rebinds only
     /// when the cache itself is replaced (refresh, actor change).</summary>
-    private void RefreshHairSurfaceRegions(ISkeletonPose? skel, nint address)
+    private void RefreshHairSurfaceRegions(IHostSkeleton? skel, nint address)
     {
         var cache = settings.RagdollHairBodyMesh ? CachedSurfaceFor(address) : null;
         if (cache == hairSurfaceCache) return;
@@ -97,7 +97,7 @@ public unsafe partial class Ragdoll
     }
 
     /// <summary>Animated hair, once per render frame: snapshot body inputs; steps blend toward them.</summary>
-    private void CaptureAnimatedHairFrame(ISkeletonPose skel, bool reset)
+    private void CaptureAnimatedHairFrame(IHostSkeleton skel, bool reset)
     {
         Array.Copy(animatedContactsNow, animatedContactsPrevious, animatedContactsNowCount);
         animatedContactsPreviousCount = reset ? 0 : animatedContactsNowCount;
@@ -142,7 +142,7 @@ public unsafe partial class Ragdoll
                 if (!IsHairContactBone(rb.Name)) continue;
                 var body = simulation!.Bodies.GetBodyReference(rb.BodyHandle);
                 var edge = Vector3.Transform(Vector3.UnitY * rb.CapsuleHalfLength, body.Pose.Orientation);
-                hairContacts[count++] = new(body.Pose.Position - edge, body.Pose.Position + edge, rb.CapsuleRadius, rb.Name == Bones.Head);
+                hairContacts[count++] = new(body.Pose.Position - edge, body.Pose.Position + edge, rb.CapsuleRadius, rb.Name == skeletonProfile.Landmarks.Head);
             }
         foreach (var region in hairSurfaceRegions)
         {
@@ -165,7 +165,7 @@ public unsafe partial class Ragdoll
         return count;
     }
 
-    private static bool IsHairContactBone(string name) => BoneClasses.HairContact.Matches(name);
+    private bool IsHairContactBone(string name) => skeletonProfile.Classes.HairContact.Matches(name);
 
     /// <summary>Deepest/nearest rendered surface under each guide point and segment midpoint.</summary>
     private void UpdateHairBodySurface(HairRigChain chain, Vector3 head, Quaternion rotation)
@@ -195,7 +195,7 @@ public unsafe partial class Ragdoll
         }
         if (best == null) return default;
         // Preserve authored scalp overlap rather than ejecting mod hair roots.
-        if (best.Region.Name == Bones.Head)
+        if (best.Region.Name == skeletonProfile.Landmarks.Head)
         {
             var restDepth = Vector3.Dot(restPoint - bestPoint, bestNormal);
             if (restDepth < 0f) bestPoint += bestNormal * restDepth;

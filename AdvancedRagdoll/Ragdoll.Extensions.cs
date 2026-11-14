@@ -49,7 +49,7 @@ public unsafe partial class Ragdoll
 
         internal override string[] GetBoneDefinitionNames()
         {
-            var defs = GetBoneDefs();
+            var defs = owner.GetBoneDefs();
             var names = new string[defs.Length];
             for (var i = 0; i < defs.Length; i++) names[i] = defs[i].Name;
             return names;

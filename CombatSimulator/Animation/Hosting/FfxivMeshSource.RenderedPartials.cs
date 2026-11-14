@@ -7,27 +7,6 @@ namespace CombatSimulator.Animation.Hosting;
 
 internal sealed unsafe partial class FfxivMeshSource
 {
-    private readonly record struct RenderedPartialStamp(int Index, nint Pose, nint Havok, nint Resource, short Connected, short Parent, bool Readable);
-    private readonly List<RenderedPartialStamp> renderedPartialStamps = new();
-    private int renderedPartialCount;
-
-    private bool RenderedPartialSourcesMatch(SkeletonAccess skel)
-    {
-        var skeleton = skel.CharBase->Skeleton;
-        if (skeleton->PartialSkeletonCount != renderedPartialCount || skeleton->PartialSkeletons == null) return false;
-        foreach (var stamp in renderedPartialStamps)
-        {
-            var partial = &skeleton->PartialSkeletons[stamp.Index];
-            var pose = partial->GetHavokPose(0);
-            var readable = pose != null && pose->Skeleton != null && pose->ModelInSync != 0 &&
-                           pose->ModelPose.Data != null && pose->Skeleton->ReferencePose.Data != null;
-            if ((nint)pose != stamp.Pose || (pose == null ? 0 : (nint)pose->Skeleton) != stamp.Havok ||
-                (nint)partial->SkeletonResourceHandle != stamp.Resource || partial->ConnectedBoneIndex != stamp.Connected ||
-                partial->ConnectedParentBoneIndex != stamp.Parent || (!stamp.Readable && readable)) return false;
-        }
-        return true;
-    }
-
     private void BuildRenderedSkinPalette(SkeletonAccess skel, List<string> diagnostics, ref Matrix4x4[] skin,
         out string[] names, out int[] parents, out int[] owners, out Dictionary<string, int> byName)
     {
@@ -42,7 +21,6 @@ internal sealed unsafe partial class FfxivMeshSource
         }
         int primaryCount = skin.Length;
         var skeleton = skel.CharBase->Skeleton;
-        renderedPartialCount = skeleton->PartialSkeletonCount;
         if (TryBuildReferenceModelTransforms(skel, out var primaryReference) && skeleton->PartialSkeletons != null)
         {
             for (int ps = 1; ps < Math.Min(32, (int)skeleton->PartialSkeletonCount); ps++)
@@ -50,8 +28,6 @@ internal sealed unsafe partial class FfxivMeshSource
                 var partial = &skeleton->PartialSkeletons[ps]; var pose = partial->GetHavokPose(0);
                 bool readable = pose != null && pose->Skeleton != null && pose->ModelInSync != 0 &&
                                 pose->ModelPose.Data != null && pose->Skeleton->ReferencePose.Data != null;
-                renderedPartialStamps.Add(new(ps, (nint)pose, pose == null ? 0 : (nint)pose->Skeleton,
-                    (nint)partial->SkeletonResourceHandle, partial->ConnectedBoneIndex, partial->ConnectedParentBoneIndex, readable));
                 int connected = partial->ConnectedBoneIndex, anchor = partial->ConnectedParentBoneIndex;
                 if (!readable || anchor < 0 || anchor >= primaryReference.Length || anchor >= primaryCount)
                 { diagnostics.Add($"partial={ps}: unreadable pose or unsupported primary connection; weighted faces omitted."); continue; }

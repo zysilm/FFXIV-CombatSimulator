@@ -44,7 +44,7 @@ public unsafe partial class Ragdoll
     private Quaternion kneeRightKneeFlexTarget;
     private Quaternion kneeChestStartRot;
 
-    public bool KneePowerLossPatternActive => kneePowerLossActive;
+    internal bool KneePowerLossPatternActive => kneePowerLossActive;
 
     private void RequestKneePowerLossForwardOnReadyCore()
     {
@@ -55,7 +55,7 @@ public unsafe partial class Ragdoll
         }
 
         pendingKneePowerLossPattern = true;
-        log.Info("RagdollController: knee power-loss forward armed for next death");
+        log.Info("Ragdoll: knee power-loss forward armed for next death");
     }
 
     private bool TryBuildKneeFootSupportProxy(BodyHandle footHandle, bool left, out Vector3 target, out Vector3 localOffset)
@@ -73,7 +73,7 @@ public unsafe partial class Ragdoll
         var downOffset = Math.Clamp(settings.FootProxyDownOffset, 0f, 0.16f);
         var clearance = Math.Clamp(settings.FootProxyGroundClearance, 0.004f, 0.08f);
 
-        // FFXIV's foot/toe bones are not reliable sole vectors; j_asi_d often behaves like an
+        // The game skeleton's foot/toe bones are not reliable sole vectors; the foot bone often behaves like an
         // ankle/downward marker. Anchor a virtual sole point in the intended sagittal direction
         // instead, and apply the foot support servo at that local point on the foot body.
         target = body.Pose.Position + forward * forwardOffset - Vector3.UnitY * downOffset;
@@ -81,7 +81,7 @@ public unsafe partial class Ragdoll
         localOffset = Vector3.Transform(target - body.Pose.Position, Quaternion.Inverse(body.Pose.Orientation));
 
         log.Info(
-            $"RagdollController: knee foot proxy {(left ? "L" : "R")} " +
+            $"Ragdoll: knee foot proxy {(left ? "L" : "R")} " +
             $"target=({target.X:F2},{target.Y:F2},{target.Z:F2}) " +
             $"local=({localOffset.X:F2},{localOffset.Y:F2},{localOffset.Z:F2})");
         return true;
@@ -91,19 +91,19 @@ public unsafe partial class Ragdoll
     {
         if (simulation == null || !isActive) return false;
 
-        var leftFoot = FindBodyHandle(Bones.Foot.Left);
-        var rightFoot = FindBodyHandle(Bones.Foot.Right);
-        var pelvis = FindBodyHandle(Bones.Pelvis);
-        var chest = FindBodyHandle(Bones.Chest) ?? FindBodyHandle(Bones.MidSpine);
-        var leftKnee = FindBodyHandle(Bones.Shin.Left);
-        var rightKnee = FindBodyHandle(Bones.Shin.Right);
-        var leftThigh = FindBodyHandle(Bones.Thigh.Left);
-        var rightThigh = FindBodyHandle(Bones.Thigh.Right);
+        var leftFoot = FindBodyHandle(skeletonProfile.Landmarks.Foot.Left);
+        var rightFoot = FindBodyHandle(skeletonProfile.Landmarks.Foot.Right);
+        var pelvis = FindBodyHandle(skeletonProfile.Landmarks.Pelvis);
+        var chest = FindBodyHandle(skeletonProfile.Landmarks.Chest) ?? FindBodyHandle(skeletonProfile.Landmarks.MidSpine);
+        var leftKnee = FindBodyHandle(skeletonProfile.Landmarks.Shin.Left);
+        var rightKnee = FindBodyHandle(skeletonProfile.Landmarks.Shin.Right);
+        var leftThigh = FindBodyHandle(skeletonProfile.Landmarks.Thigh.Left);
+        var rightThigh = FindBodyHandle(skeletonProfile.Landmarks.Thigh.Right);
 
         if (!leftFoot.HasValue || !rightFoot.HasValue || !pelvis.HasValue || !chest.HasValue ||
             !leftKnee.HasValue || !rightKnee.HasValue || !leftThigh.HasValue || !rightThigh.HasValue)
         {
-            log.Warning("RagdollController: knee power-loss failed - missing leg/core body");
+            log.Warning("Ragdoll: knee power-loss failed - missing leg/core body");
             return false;
         }
 
@@ -148,9 +148,9 @@ public unsafe partial class Ragdoll
 
         kneeLeftKneeStartTarget = Quaternion.Normalize(Quaternion.Inverse(leftKneeBody.Pose.Orientation) * leftThighBody.Pose.Orientation);
         kneeRightKneeStartTarget = Quaternion.Normalize(Quaternion.Inverse(rightKneeBody.Pose.Orientation) * rightThighBody.Pose.Orientation);
-        TryBuildLegAnatomyFrame(Bones.Thigh.Left, Bones.Shin.Left, Bones.Foot.Left, Bones.Toes.Left,
+        TryBuildLegAnatomyFrame(skeletonProfile.Landmarks.Thigh.Left, skeletonProfile.Landmarks.Shin.Left, skeletonProfile.Landmarks.Foot.Left, skeletonProfile.Landmarks.Toes.Left,
             leftKneeBody.Pose.Orientation, out var leftHingeAxis, out var leftHingeForward);
-        TryBuildLegAnatomyFrame(Bones.Thigh.Right, Bones.Shin.Right, Bones.Foot.Right, Bones.Toes.Right,
+        TryBuildLegAnatomyFrame(skeletonProfile.Landmarks.Thigh.Right, skeletonProfile.Landmarks.Shin.Right, skeletonProfile.Landmarks.Foot.Right, skeletonProfile.Landmarks.Toes.Right,
             rightKneeBody.Pose.Orientation, out var rightHingeAxis, out var rightHingeForward);
 
         var kneeSettings = EffectiveKneePowerLossSettings();
@@ -160,10 +160,10 @@ public unsafe partial class Ragdoll
         kneeRightKneeFlexTarget = MakeRelativeFlexTarget(rightKneeBody.Pose.Orientation, rightThighBody.Pose.Orientation,
             rightHingeAxis, rightHingeForward, kneeFlexDegrees);
 
-        log.Info($"RagdollController: knee power-loss axes L axis=({leftHingeAxis.X:F2},{leftHingeAxis.Y:F2},{leftHingeAxis.Z:F2}) fwd=({leftHingeForward.X:F2},{leftHingeForward.Y:F2},{leftHingeForward.Z:F2}); " +
+        log.Info($"Ragdoll: knee power-loss axes L axis=({leftHingeAxis.X:F2},{leftHingeAxis.Y:F2},{leftHingeAxis.Z:F2}) fwd=({leftHingeForward.X:F2},{leftHingeForward.Y:F2},{leftHingeForward.Z:F2}); " +
                  $"R axis=({rightHingeAxis.X:F2},{rightHingeAxis.Y:F2},{rightHingeAxis.Z:F2}) fwd=({rightHingeForward.X:F2},{rightHingeForward.Y:F2},{rightHingeForward.Z:F2})");
-        LogLegAnatomyDiagnostics("L", Bones.Thigh.Left, Bones.Shin.Left, Bones.Foot.Left, Bones.Toes.Left, leftHingeAxis, leftHingeForward);
-        LogLegAnatomyDiagnostics("R", Bones.Thigh.Right, Bones.Shin.Right, Bones.Foot.Right, Bones.Toes.Right, rightHingeAxis, rightHingeForward);
+        LogLegAnatomyDiagnostics("L", skeletonProfile.Landmarks.Thigh.Left, skeletonProfile.Landmarks.Shin.Left, skeletonProfile.Landmarks.Foot.Left, skeletonProfile.Landmarks.Toes.Left, leftHingeAxis, leftHingeForward);
+        LogLegAnatomyDiagnostics("R", skeletonProfile.Landmarks.Thigh.Right, skeletonProfile.Landmarks.Shin.Right, skeletonProfile.Landmarks.Foot.Right, skeletonProfile.Landmarks.Toes.Right, rightHingeAxis, rightHingeForward);
 
         WakeRagdollBodiesForBiomechanicalSettle();
 
@@ -177,7 +177,7 @@ public unsafe partial class Ragdoll
         kneePowerLossActive = true;
         prevAllAsleep = false;
         BeginBiomechanicalSettle();
-        log.Info("RagdollController: knee power-loss forward begun");
+        log.Info("Ragdoll: knee power-loss forward begun");
         return true;
     }
 
@@ -206,7 +206,7 @@ public unsafe partial class Ragdoll
         {
             kneePowerLossActive = false;
             BeginBiomechanicalSettle();
-            log.Info("RagdollController: knee power-loss forward stopped");
+            log.Info("Ragdoll: knee power-loss forward stopped");
         }
     }
 
@@ -217,14 +217,14 @@ public unsafe partial class Ragdoll
         kneePowerLossElapsed += dt;
         kneePowerLossPhaseElapsed += dt;
 
-        var pelvis = FindBodyHandle(Bones.Pelvis);
-        var chest = FindBodyHandle(Bones.Chest) ?? FindBodyHandle(Bones.MidSpine);
+        var pelvis = FindBodyHandle(skeletonProfile.Landmarks.Pelvis);
+        var chest = FindBodyHandle(skeletonProfile.Landmarks.Chest) ?? FindBodyHandle(skeletonProfile.Landmarks.MidSpine);
         if (!pelvis.HasValue || !chest.HasValue) { StopKneePowerLossPattern(); return; }
 
         var pelvisBody = simulation.Bodies.GetBodyReference(pelvis.Value);
         var pelvisDrop = MathF.Max(0f, kneePelvisStart.Y - pelvisBody.Pose.Position.Y);
         var kneeSettings = EffectiveKneePowerLossSettings();
-        var kneeNearGround = BoneHeight(Bones.Shin.Left) < groundY + 0.18f || BoneHeight(Bones.Shin.Right) < groundY + 0.18f;
+        var kneeNearGround = BoneHeight(skeletonProfile.Landmarks.Shin.Left) < groundY + 0.18f || BoneHeight(skeletonProfile.Landmarks.Shin.Right) < groundY + 0.18f;
         var minKneeAngle = MeasureCurrentKneePowerLossMinAngle();
         var forwardOffset = MeasureCurrentKneePowerLossForwardOffset();
 
@@ -235,14 +235,14 @@ public unsafe partial class Ragdoll
              kneeNearGround ||
              kneePowerLossPhaseElapsed > Math.Clamp(kneeSettings.BuckleTimeout, 0.1f, 3f)))
         {
-            log.Info($"RagdollController: knee power-loss buckle complete - drop={pelvisDrop:F2} knee={minKneeAngle:F1} fwd={forwardOffset:F2} nearGround={kneeNearGround}");
+            log.Info($"Ragdoll: knee power-loss buckle complete - drop={pelvisDrop:F2} knee={minKneeAngle:F1} fwd={forwardOffset:F2} nearGround={kneeNearGround}");
             SwitchKneePowerLossPhase(KneePowerLossPhase.TorsoLoss);
         }
         else if (kneePowerLossPhase == KneePowerLossPhase.TorsoLoss &&
                  kneePowerLossPhaseElapsed >= Math.Clamp(kneeSettings.TorsoMinDuration, 0.05f, 2f) &&
                  (forwardOffset > 0.24f || kneePowerLossPhaseElapsed > Math.Clamp(kneeSettings.TorsoTimeout, 0.1f, 3f)))
         {
-            log.Info($"RagdollController: knee power-loss torso complete - drop={pelvisDrop:F2} knee={minKneeAngle:F1} fwd={forwardOffset:F2}");
+            log.Info($"Ragdoll: knee power-loss torso complete - drop={pelvisDrop:F2} knee={minKneeAngle:F1} fwd={forwardOffset:F2}");
             SwitchKneePowerLossPhase(KneePowerLossPhase.Release);
         }
 
@@ -319,8 +319,8 @@ public unsafe partial class Ragdoll
     private void ApplyKneeLateralStability(float gain, float maxSpeed)
     {
         if (simulation == null || gain <= 0f) return;
-        var leftKnee = FindBodyHandle(Bones.Shin.Left);
-        var rightKnee = FindBodyHandle(Bones.Shin.Right);
+        var leftKnee = FindBodyHandle(skeletonProfile.Landmarks.Shin.Left);
+        var rightKnee = FindBodyHandle(skeletonProfile.Landmarks.Shin.Right);
         if (!leftKnee.HasValue || !rightKnee.HasValue) return;
 
         var lateral = FlatNormalize(kneeRight, Vector3.UnitX);
@@ -350,7 +350,7 @@ public unsafe partial class Ragdoll
     {
         kneePowerLossPhase = phase;
         kneePowerLossPhaseElapsed = 0f;
-        log.Info($"RagdollController: knee power-loss phase -> {phase}");
+        log.Info($"Ragdoll: knee power-loss phase -> {phase}");
     }
 
     private float BoneHeight(string boneName)
@@ -363,8 +363,8 @@ public unsafe partial class Ragdoll
 
     private float MeasureCurrentKneePowerLossMinAngle()
     {
-        var left = MeasureLegBendAngle(Bones.Thigh.Left, Bones.Shin.Left, Bones.Foot.Left, out _);
-        var right = MeasureLegBendAngle(Bones.Thigh.Right, Bones.Shin.Right, Bones.Foot.Right, out _);
+        var left = MeasureLegBendAngle(skeletonProfile.Landmarks.Thigh.Left, skeletonProfile.Landmarks.Shin.Left, skeletonProfile.Landmarks.Foot.Left, out _);
+        var right = MeasureLegBendAngle(skeletonProfile.Landmarks.Thigh.Right, skeletonProfile.Landmarks.Shin.Right, skeletonProfile.Landmarks.Foot.Right, out _);
         if (left < 0f && right < 0f) return 0f;
         if (left < 0f) return right;
         if (right < 0f) return left;
@@ -374,7 +374,7 @@ public unsafe partial class Ragdoll
     private float MeasureCurrentKneePowerLossForwardOffset()
     {
         if (simulation == null) return 0f;
-        var pelvis = FindBodyHandle(Bones.Pelvis);
+        var pelvis = FindBodyHandle(skeletonProfile.Landmarks.Pelvis);
         if (!pelvis.HasValue) return 0f;
 
         var pelvisPos = simulation.Bodies.GetBodyReference(pelvis.Value).Pose.Position;
@@ -412,7 +412,7 @@ public unsafe partial class Ragdoll
         var frameForwardDot = Vector3.Dot(geomForward, currentHingeForward);
 
         log.Info(
-            $"RagdollController: leg anatomy {side} " +
+            $"Ragdoll: leg anatomy {side} " +
             $"hip=({hip.X:F2},{hip.Y:F2},{hip.Z:F2}) knee=({knee.X:F2},{knee.Y:F2},{knee.Z:F2}) ankle=({ankle.X:F2},{ankle.Y:F2},{ankle.Z:F2}) foot=({foot.X:F2},{foot.Y:F2},{foot.Z:F2}) " +
             $"thigh=({thigh.X:F2},{thigh.Y:F2},{thigh.Z:F2}) shin=({shin.X:F2},{shin.Y:F2},{shin.Z:F2}) footDir=({footDir.X:F2},{footDir.Y:F2},{footDir.Z:F2}) " +
             $"geomAxis=({geomAxis.X:F2},{geomAxis.Y:F2},{geomAxis.Z:F2}) geomFwd=({geomForward.X:F2},{geomForward.Y:F2},{geomForward.Z:F2}) footFwd=({footForward.X:F2},{footForward.Y:F2},{footForward.Z:F2}) " +
@@ -463,7 +463,7 @@ public unsafe partial class Ragdoll
         }
 
         // The flexion direction is the character sagittal direction projected into the knee
-        // hinge plane. Do NOT use j_asi_d as "foot forward": in FFXIV this bone origin is often
+        // hinge plane. Do NOT use the foot bone as "foot forward": in the game skeleton this bone origin is often
         // mostly below the ankle, so ankle->foot points downward and drives the knee into a fake
         // vertical/sideways fold.
         var sagittalForward = ProjectOntoPlane(kneeForward, hingeAxis);

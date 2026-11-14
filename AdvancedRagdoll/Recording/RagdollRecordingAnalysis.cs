@@ -12,7 +12,7 @@ using System.Text;
 namespace AdvancedRagdoll.Recording;
 
 /// <summary>What one recording contains, for a quick look.</summary>
-public sealed class RagdollRecordingSummary
+internal sealed class RagdollRecordingSummary
 {
     public string Path = string.Empty;
     public long FileBytes;
@@ -46,7 +46,7 @@ public sealed class RagdollRecordingSummary
         if (Header is { } h)
         {
             text.AppendLine($"format version: {h[0]}");
-            text.AppendLine($"plugin: {h[1]}  DEV_EXPERIMENTAL={h[2]}  PUBLIC_BUILD={h[3]}");
+            text.AppendLine($"host version: {h[1]}  optional module={h[2]}  public build={h[3]}");
             text.AppendLine($"BepuPhysics: {h[4]}");
             text.AppendLine($"runtime: {h[5]} on {h[6]} ({h[7]}), {h[8]} processors, vector width {h[9]}, SIMD {h[10]}, little-endian={h[11]}");
             text.AppendLine($"recorded (UTC): {new DateTime(h[12].AsLong, DateTimeKind.Utc):yyyy-MM-dd HH:mm:ss}  stopwatch frequency {h[13]}");
@@ -79,7 +79,7 @@ public sealed class RagdollRecordingSummary
 }
 
 /// <summary>The first place two recordings disagree.</summary>
-public sealed class RagdollRecordingDifference
+internal sealed class RagdollRecordingDifference
 {
     public bool Identical;
     public long OutputRecordsCompared;
@@ -88,7 +88,7 @@ public sealed class RagdollRecordingDifference
     public string? InputDifference;
 }
 
-public static class RagdollRecordingAnalysis
+internal static class RagdollRecordingAnalysis
 {
     public static RagdollRecordingSummary Summarize(string path)
     {

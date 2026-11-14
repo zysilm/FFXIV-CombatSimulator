@@ -144,7 +144,7 @@ internal static class RagdollRecordingSession
                 {
                     capLogged = true;
                     log?.Info($"RagdollRec: session limit reached ({filesOpened} files, {bytes} bytes); no more files are opened. " +
-                              "Run /combatsim ragdollrec stop, then start again for a new session.");
+                              "Stop the recording session, then start a new one.");
                 }
                 return null;
             }
@@ -192,7 +192,7 @@ internal static class RagdollRecordingSession
                 capLogged = true;
                 log?.Info($"RagdollRec: {SessionBytesReason} ({filesOpened} files, {budget.Used} bytes); " +
                           $"closing the {toClose.Count} open file(s), no more files are opened. " +
-                          "Run /combatsim ragdollrec stop, then start again for a new session.");
+                          "Stop the recording session, then start a new one.");
             }
         }
         foreach (var file in toClose)

@@ -2,7 +2,7 @@ namespace AdvancedRagdoll;
 
 /// <summary>A drop is prepared while the original is still visible. The strip controller commits
 /// only after every piece of a slot (including both gloves/boots) is ready.</summary>
-public sealed class GearDropOperation
+internal sealed class GearDropOperation
 {
     public enum Phase { Preparing, Ready, Committed, Cancelled }
     public Phase State { get; private set; }

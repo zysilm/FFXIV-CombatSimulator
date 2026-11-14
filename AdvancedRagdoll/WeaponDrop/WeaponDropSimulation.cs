@@ -32,12 +32,12 @@ namespace AdvancedRagdoll.WeaponDrop;
 /// </summary>
 public class WeaponDropSimulation : IDisposable
 {
-    private readonly ISkeletonSource skeletons;
-    private readonly IWorldQuery world;
-    private readonly IRagdollActor actors;
+    private readonly IHostSkeletonSource skeletons;
+    private readonly IHostWorldQuery world;
+    private readonly IHostActors actors;
     private readonly IWeaponDrawSource weapons;
-    private readonly IRagdollSettingsSource settingsSource;
-    private readonly RagdollSettings settings = new();
+    private readonly IHostSettingsSource settingsSource;
+    private readonly HostSettings settings = new();
     private readonly IRagdollLog log;
     private readonly IRagdollClock clock;
     private readonly SkeletonProfile profile;
@@ -53,7 +53,7 @@ public class WeaponDropSimulation : IDisposable
     private readonly HashSet<int> meshColliders = new();
 
     /// <summary>Exclusive visual/physics ownership for another local controller.</summary>
-    public IDisposable? AcquireExternalControl(nint address)
+    internal IDisposable? AcquireExternalControl(nint address)
     {
         if (address == 0 || !externalOwners.Add(address)) return null;
         RemoveFor(address);
@@ -115,7 +115,7 @@ public class WeaponDropSimulation : IDisposable
 
     /// <summary>A simulation on the given host. <paramref name="ragdoll"/> is the character ragdoll that captures the
     /// body surfaces (weapon contacts) and reads the weapon models (mesh hulls); nothing of it is simulated here.</summary>
-    public WeaponDropSimulation(WeaponDropHost host, Ragdoll ragdoll)
+    internal WeaponDropSimulation(WeaponDropHost host, Ragdoll ragdoll)
     {
         skeletons = host.Skeletons;
         world = host.World;
@@ -128,10 +128,10 @@ public class WeaponDropSimulation : IDisposable
         this.ragdoll = ragdoll;
     }
 
-    public bool HasEntry(nint characterAddress) => entries.ContainsKey(characterAddress);
+    internal bool HasEntry(nint characterAddress) => entries.ContainsKey(characterAddress);
 
     /// <summary>Release the given character's weapons on the next render frame.</summary>
-    public void SpawnFor(nint characterAddress)
+    internal void SpawnFor(nint characterAddress)
     {
         if (characterAddress == nint.Zero) return;
         if (externalOwners.Contains(characterAddress)) return;
@@ -142,23 +142,23 @@ public class WeaponDropSimulation : IDisposable
     }
 
     /// <summary>Remove weapon bodies for a character so the weapon mesh returns to default hand parenting.</summary>
-    public void RemoveFor(nint characterAddress)
+    internal void RemoveFor(nint characterAddress)
     {
         pending.Remove(characterAddress);
         if (!entries.TryGetValue(characterAddress, out var entry)) return;
         DisposeEntry(entry);
         entries.Remove(characterAddress);
-        log.Info($"WeaponDropController: removed weapons for 0x{characterAddress:X}");
+        log.Info($"WeaponDrop: removed weapons for 0x{characterAddress:X}");
     }
 
     /// <summary>Remove all weapon bodies. Called on simulation reset / zone change.</summary>
-    public void RemoveAll()
+    internal void RemoveAll()
     {
         pending.Clear();
         if (entries.Count == 0) return;
         foreach (var entry in entries.Values) DisposeEntry(entry);
         entries.Clear();
-        log.Info("WeaponDropController: removed all weapons");
+        log.Info("WeaponDrop: removed all weapons");
     }
 
     private void DisposeEntry(Entry entry)
@@ -189,7 +189,7 @@ public class WeaponDropSimulation : IDisposable
 
     /// <summary>One rendered frame: steps the simulation, releases the pending weapons, and moves every dropped
     /// weapon to its rigid body (call it after the host attached the weapons to the hands this frame).</summary>
-    protected internal void OnRenderFrame()
+    internal void OnRenderFrame()
     {
         try
         {
@@ -234,19 +234,19 @@ public class WeaponDropSimulation : IDisposable
             {
                 if (entry.Main.HasValue)
                 {
-                    var mainDraw = GetWeaponDrawObject(addr, DrawnWeaponSlot.MainHand);
+                    var mainDraw = GetWeaponModel(addr, DrawnWeaponSlot.MainHand);
                     if (mainDraw != 0) DriveWeapon(mainDraw, entry.Main.Value, entry.MainCenter);
                 }
                 if (entry.Off.HasValue)
                 {
-                    var offDraw = GetWeaponDrawObject(addr, DrawnWeaponSlot.OffHand);
+                    var offDraw = GetWeaponModel(addr, DrawnWeaponSlot.OffHand);
                     if (offDraw != 0) DriveWeapon(offDraw, entry.Off.Value, entry.OffCenter);
                 }
             }
         }
         catch (Exception ex)
         {
-            log.Error(ex, "WeaponDropController: error in render frame");
+            log.Error(ex, "WeaponDrop: error in render frame");
         }
     }
 
@@ -254,7 +254,7 @@ public class WeaponDropSimulation : IDisposable
     {
         if (entries.ContainsKey(characterAddress)) return;
         var skel = skeletons.TryGetSkeleton(characterAddress);
-        if (skel == null) { log.Warning($"WeaponDropController: skeleton unavailable for 0x{characterAddress:X}"); return; }
+        if (skel == null) { log.Warning($"WeaponDrop: skeleton unavailable for 0x{characterAddress:X}"); return; }
 
         EnsureSimulation();
         if (simulation == null) return;
@@ -264,10 +264,10 @@ public class WeaponDropSimulation : IDisposable
         var skelWorldPos = skelRoot.Position;
         var skelWorldRot = skelRoot.Rotation;
 
-        // Only drop a weapon that is actually drawn (a separate DrawObject). An
-        // unarmed slot has no DrawObject, so there is nothing to decouple/fall.
-        var mainDraw = GetWeaponDrawObject(characterAddress, DrawnWeaponSlot.MainHand);
-        var offDraw = GetWeaponDrawObject(characterAddress, DrawnWeaponSlot.OffHand);
+        // Only drop a weapon that is actually drawn (a separate draw object). An
+        // unarmed slot has no draw object, so there is nothing to decouple/fall.
+        var mainDraw = GetWeaponModel(characterAddress, DrawnWeaponSlot.MainHand);
+        var offDraw = GetWeaponModel(characterAddress, DrawnWeaponSlot.OffHand);
 
         var entry = new Entry { CharacterAddress = characterAddress };
         // Only the player's own weapon, or everyone's with fine detail on, lands on mesh surfaces.
@@ -279,7 +279,7 @@ public class WeaponDropSimulation : IDisposable
 
         if (!entry.Main.HasValue && !entry.Off.HasValue)
         {
-            log.Info($"WeaponDropController: no drawn weapon for 0x{characterAddress:X}");
+            log.Info($"WeaponDrop: no drawn weapon for 0x{characterAddress:X}");
             return;
         }
 
@@ -298,7 +298,7 @@ public class WeaponDropSimulation : IDisposable
             }
         entries[characterAddress] = entry;
         var n = (entry.Main.HasValue ? 1 : 0) + (entry.Off.HasValue ? 1 : 0);
-        log.Info($"WeaponDropController: spawned {n} weapon(s) for 0x{characterAddress:X} with {entry.BodyColliders.Count} body colliders");
+        log.Info($"WeaponDrop: spawned {n} weapon(s) for 0x{characterAddress:X} with {entry.BodyColliders.Count} body colliders");
     }
 
     private (StaticHandle StaticHandle, TypedIndex ShapeIndex) CreateTerrainPatch(float centerX, float centerZ, float defaultGroundY)
@@ -340,7 +340,7 @@ public class WeaponDropSimulation : IDisposable
 
         if (!anyHit)
         {
-            log.Warning($"WeaponDropController: terrain raycasts missed at ({centerX:F2},{centerZ:F2}); using flat fallback.");
+            log.Warning($"WeaponDrop: terrain raycasts missed at ({centerX:F2},{centerZ:F2}); using flat fallback.");
             var fallbackShape = simulation!.Shapes.Add(new Box(8f, 0.1f, 8f));
             var fallbackStatic = simulation.Statics.Add(new StaticDescription(
                 new Vector3(centerX, defaultGroundY - 0.05f, centerZ),
@@ -377,7 +377,7 @@ public class WeaponDropSimulation : IDisposable
         return (staticHandle, shapeIndex);
     }
 
-    private List<BodyKinematicCollider> CreateBodyColliders(ISkeletonPose skel, Vector3 skelWorldPos, Quaternion skelWorldRot)
+    private List<BodyKinematicCollider> CreateBodyColliders(IHostSkeleton skel, Vector3 skelWorldPos, Quaternion skelWorldRot)
     {
         var result = new List<BodyKinematicCollider>();
         if (simulation == null) return result;
@@ -450,7 +450,7 @@ public class WeaponDropSimulation : IDisposable
     /// LOD), so weapons rest on the visible body rather than on segment capsules. Null when the
     /// actor has no usable cached surface (disabled, non-humanoid, unreadable model).
     /// </summary>
-    private List<BodyKinematicCollider>? CreateMeshBodyColliders(nint characterAddress, ISkeletonPose skel,
+    private List<BodyKinematicCollider>? CreateMeshBodyColliders(nint characterAddress, IHostSkeleton skel,
         Vector3 skelWorldPos, Quaternion skelWorldRot)
     {
         if (simulation == null || bufferPool == null) return null;
@@ -464,7 +464,7 @@ public class WeaponDropSimulation : IDisposable
             if (boneIndex < 0 || boneIndex >= skel.BoneCount || !cache.TryGetCollisionGeometry(name, out var local)) continue;
             BepuPhysics.Collidables.Mesh mesh;
             try { mesh = TwoSidedMesh.Create(local, bufferPool); }
-            catch (Exception ex) { log.Warning(ex, $"WeaponDropController: body surface rejected for {name}"); continue; }
+            catch (Exception ex) { log.Warning(ex, $"WeaponDrop: body surface rejected for {name}"); continue; }
             var shape = simulation.Shapes.Add(mesh);
             BoneWorldPose(skel, boneIndex, skelWorldPos, skelWorldRot, scale, out var position, out var rotation);
             var handle = simulation.Bodies.Add(BodyDescription.CreateKinematic(
@@ -489,7 +489,7 @@ public class WeaponDropSimulation : IDisposable
         return result.Count > 0 ? result : null;
     }
 
-    private static void BoneWorldPose(ISkeletonPose skel, int boneIndex, Vector3 skelWorldPos, Quaternion skelWorldRot,
+    private static void BoneWorldPose(IHostSkeleton skel, int boneIndex, Vector3 skelWorldPos, Quaternion skelWorldRot,
         Vector3 scale, out Vector3 position, out Quaternion rotation)
     {
         ref var pose = ref skel.ModelPose[boneIndex];
@@ -691,13 +691,13 @@ public class WeaponDropSimulation : IDisposable
     }
 
     /// <summary>Resolve the drawn weapon for a slot, or 0 if unarmed/unloaded.</summary>
-    private nint GetWeaponDrawObject(nint characterAddress, DrawnWeaponSlot slot)
+    private nint GetWeaponModel(nint characterAddress, DrawnWeaponSlot slot)
     {
         if (characterAddress == nint.Zero) return 0;
         return weapons.GetWeapon(characterAddress, slot);
     }
 
-    /// <summary>Drive a weapon DrawObject's world transform from its rigid body.</summary>
+    /// <summary>Drive a weapon draw object's world transform from its rigid body.</summary>
     private void DriveWeapon(nint weaponDraw, BodyHandle bodyHandle, Vector3 center)
     {
         if (simulation == null) return;
@@ -710,7 +710,7 @@ public class WeaponDropSimulation : IDisposable
         // writes that skeleton's root world Transform from the owner hand bone.
         // Overwrite it here (after the attach ran this frame) so the rendered
         // weapon follows the rigid body — the same way ragdoll overwrites body
-        // bone ModelPose. DrawObject.Position alone does NOT move the mesh.
+        // bone ModelPose. the render position alone does NOT move the mesh.
         weapons.SetTransform(weaponDraw, pos, rot);
     }
 
@@ -727,7 +727,7 @@ public class WeaponDropSimulation : IDisposable
             new SolveDescription(RagdollTuning.WeaponDropSolverIterations, 1));
 
         // Weapon collision shapes are now built per weapon (per-drop boxes) in TryCreateWeaponBody.
-        log.Info($"WeaponDropController: simulation created (gravity={RagdollTuning.WeaponDropGravity:F2}, bounce={RagdollTuning.WeaponDropBounce:F2}, friction={RagdollTuning.WeaponDropFriction:F2}, iter={RagdollTuning.WeaponDropSolverIterations})");
+        log.Info($"WeaponDrop: simulation created (gravity={RagdollTuning.WeaponDropGravity:F2}, bounce={RagdollTuning.WeaponDropBounce:F2}, friction={RagdollTuning.WeaponDropFriction:F2}, iter={RagdollTuning.WeaponDropSolverIterations})");
     }
 
     private static Vector3 ModelToWorld(Vector3 modelPos, Vector3 skelWorldPos, Quaternion skelWorldRot)
@@ -749,7 +749,7 @@ public class WeaponDropSimulation : IDisposable
     /// <summary>The scale a character is drawn with: the draw object's, else the skeleton root's (what the plugin's
     /// FfxivMeshSource.GetCharacterScale read from the game before stage A5, and what the ragdoll's
     /// GetCharacterScale reads through its own host).</summary>
-    private Vector3 GetCharacterScale(nint address, ISkeletonPose ns)
+    private Vector3 GetCharacterScale(nint address, IHostSkeleton ns)
     {
         if (address != nint.Zero && actors.TryGetDrawScale(address, out var drawScale)
             && IsFinite(drawScale) && MathF.Abs(drawScale.X) >= 1e-6f && MathF.Abs(drawScale.Y) >= 1e-6f && MathF.Abs(drawScale.Z) >= 1e-6f)

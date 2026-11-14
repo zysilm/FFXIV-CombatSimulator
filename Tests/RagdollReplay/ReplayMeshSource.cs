@@ -79,7 +79,7 @@ internal sealed class ReplayMeshSource : IMeshSource
         return DecodeCache(r, ref at, false);
     }
 
-    public RenderedGeometrySnapshot CaptureRenderedGeometry(nint actor, ISkeletonPose skeleton)
+    public RenderedGeometrySnapshot CaptureRenderedGeometry(nint actor, IHostSkeleton skeleton)
     {
         source.Diverged("rendered geometry captured (a replay hands back body surfaces, it never captures them)");
         return new RenderedGeometrySnapshot();
@@ -134,7 +134,7 @@ internal sealed class ReplayMeshSource : IMeshSource
         return true;
     }
 
-    public Task<RagdollController.StructuralFitResult>? StartStructuralFit(nint actor, ISkeletonPose skeleton)
+    public Task<RagdollController.StructuralFitResult>? StartStructuralFit(nint actor, IHostSkeleton skeleton)
     {
         var r = source.Peek(RecordType.StructuralFits).Record;
         if (r == null) return null;
@@ -147,7 +147,7 @@ internal sealed class ReplayMeshSource : IMeshSource
         }
     }
 
-    public Dictionary<int, RagdollController.SoftTissueMeshFit> SoftTissueFits(nint actor, ISkeletonPose skeleton,
+    public Dictionary<int, RagdollController.SoftTissueMeshFit> SoftTissueFits(nint actor, IHostSkeleton skeleton,
         HashSet<int> candidates, bool verboseLog)
     {
         var fits = new Dictionary<int, RagdollController.SoftTissueMeshFit>();
@@ -181,7 +181,7 @@ internal sealed class ReplayMeshSource : IMeshSource
         return fits;
     }
 
-    public bool TryCollectActorTriangles(nint actor, ISkeletonPose skeleton, string label, bool verboseLog,
+    public bool TryCollectActorTriangles(nint actor, IHostSkeleton skeleton, string label, bool verboseLog,
         List<Triangle> triangles, out int loadedModels, out int processedMeshes)
     {
         loadedModels = processedMeshes = 0;

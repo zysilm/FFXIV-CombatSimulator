@@ -11,7 +11,7 @@ using Dalamud.Plugin.Services;
 
 namespace CombatSimulator.Animation.SurfaceProfiles;
 
-public sealed class CharacterSurfaceProfileBook
+internal sealed class CharacterSurfaceProfileBook
 {
     private const string ResourceName = "CombatSimulator.Resources.CharacterSurfaceProfiles.json";
     private readonly List<CharacterSurfaceProfile> profiles = new();

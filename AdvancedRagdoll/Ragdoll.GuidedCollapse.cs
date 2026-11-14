@@ -28,7 +28,7 @@ public unsafe partial class Ragdoll
             RequestEntryConditionedKneePowerLossOnReady();
     }
 
-    public bool DirectedCollapseSpikeActive => directedCollapseActive;
+    internal bool DirectedCollapseSpikeActive => directedCollapseActive;
 
     private void RequestDirectedKneelPitchOnReadyCore(float duration, float footForce, float pelvisForce,
         float drop, float forward, float pitchDegrees)
@@ -47,7 +47,7 @@ public unsafe partial class Ragdoll
         pendingDirectedPitchDegrees = pitchDegrees;
         pendingDirectedProfileId = string.Empty;
         pendingDirectedCollapseSpike = true;
-        log.Info("RagdollController: directed kneel-pitch armed for next death");
+        log.Info("Ragdoll: directed kneel-pitch armed for next death");
     }
 
     private void RequestProfileDirectedCollapseOnReadyCore(string profileId)
@@ -60,7 +60,7 @@ public unsafe partial class Ragdoll
 
         pendingDirectedProfileId = profileId;
         pendingDirectedCollapseSpike = true;
-        log.Info($"RagdollController: directed collapse profile armed for next death - profile={profileId}");
+        log.Info($"Ragdoll: directed collapse profile armed for next death - profile={profileId}");
     }
 
     private bool BeginProfileDirectedCollapseSpikeCore(string profileId)
@@ -68,7 +68,7 @@ public unsafe partial class Ragdoll
         var profile = collapseProfileBook.FindById(profileId);
         if (profile == null)
         {
-            log.Warning($"RagdollController: directed collapse profile not found - profile={profileId}");
+            log.Warning($"Ragdoll: directed collapse profile not found - profile={profileId}");
             return false;
         }
 
@@ -92,7 +92,7 @@ public unsafe partial class Ragdoll
         directedForward = ResolveForwardDirection();
         directedRight = FlatNormalize(Vector3.Transform(Vector3.UnitX, skelWorldRot), Vector3.UnitX);
 
-        var pelvis = FindBodyHandle(Bones.Pelvis);
+        var pelvis = FindBodyHandle(skeletonProfile.Landmarks.Pelvis);
         if (pelvis.HasValue)
         {
             var pelvisBody = simulation.Bodies.GetBodyReference(pelvis.Value);
@@ -100,14 +100,14 @@ public unsafe partial class Ragdoll
             directedPelvisStartRot = pelvisBody.Pose.Orientation;
         }
 
-        var chest = FindBodyHandle(Bones.Chest) ?? FindBodyHandle(Bones.MidSpine);
+        var chest = FindBodyHandle(skeletonProfile.Landmarks.Chest) ?? FindBodyHandle(skeletonProfile.Landmarks.MidSpine);
         if (chest.HasValue)
             directedChestStartRot = simulation.Bodies.GetBodyReference(chest.Value).Pose.Orientation;
 
-        var leftFoot = FindBodyHandle(Bones.Foot.Left);
+        var leftFoot = FindBodyHandle(skeletonProfile.Landmarks.Foot.Left);
         if (leftFoot.HasValue)
             directedLeftFootTarget = simulation.Bodies.GetBodyReference(leftFoot.Value).Pose.Position;
-        var rightFoot = FindBodyHandle(Bones.Foot.Right);
+        var rightFoot = FindBodyHandle(skeletonProfile.Landmarks.Foot.Right);
         if (rightFoot.HasValue)
             directedRightFootTarget = simulation.Bodies.GetBodyReference(rightFoot.Value).Pose.Position;
 
@@ -117,7 +117,7 @@ public unsafe partial class Ragdoll
         directedCollapseActive = true;
         prevAllAsleep = false;
         BeginBiomechanicalSettle();
-        log.Info($"RagdollController: directed collapse profile begun - profile={profile.Id} phases={profile.Phases.Count} duration={directedDuration:F2}");
+        log.Info($"Ragdoll: directed collapse profile begun - profile={profile.Id} phases={profile.Phases.Count} duration={directedDuration:F2}");
         return true;
     }
 
@@ -126,13 +126,13 @@ public unsafe partial class Ragdoll
     {
         if (simulation == null || !isActive) return false;
 
-        var leftFoot = FindBodyHandle(Bones.Foot.Left);
-        var rightFoot = FindBodyHandle(Bones.Foot.Right);
-        var pelvis = FindBodyHandle(Bones.Pelvis);
-        var chest = FindBodyHandle(Bones.Chest) ?? FindBodyHandle(Bones.MidSpine);
+        var leftFoot = FindBodyHandle(skeletonProfile.Landmarks.Foot.Left);
+        var rightFoot = FindBodyHandle(skeletonProfile.Landmarks.Foot.Right);
+        var pelvis = FindBodyHandle(skeletonProfile.Landmarks.Pelvis);
+        var chest = FindBodyHandle(skeletonProfile.Landmarks.Chest) ?? FindBodyHandle(skeletonProfile.Landmarks.MidSpine);
         if (!leftFoot.HasValue || !rightFoot.HasValue || !pelvis.HasValue || !chest.HasValue)
         {
-            log.Warning("RagdollController: directed kneel-pitch failed - missing foot/pelvis/chest body");
+            log.Warning("Ragdoll: directed kneel-pitch failed - missing foot/pelvis/chest body");
             return false;
         }
 
@@ -174,7 +174,7 @@ public unsafe partial class Ragdoll
         directedCollapseActive = true;
         prevAllAsleep = false;
         BeginBiomechanicalSettle();
-        log.Info($"RagdollController: directed kneel-pitch begun - duration={directedDuration:F2} footForce={directedFootForce:F0} pelvisForce={directedPelvisForce:F0} drop={directedDrop:F2} forward={directedForwardDistance:F2} pitch={pitchDegrees:F0}");
+        log.Info($"Ragdoll: directed kneel-pitch begun - duration={directedDuration:F2} footForce={directedFootForce:F0} pelvisForce={directedPelvisForce:F0} drop={directedDrop:F2} forward={directedForwardDistance:F2} pitch={pitchDegrees:F0}");
         return true;
     }
 
@@ -204,7 +204,7 @@ public unsafe partial class Ragdoll
             directedPhaseIndex = 0;
             directedPhaseElapsed = 0f;
             BeginBiomechanicalSettle();
-            log.Info("RagdollController: directed kneel-pitch stopped");
+            log.Info("Ragdoll: directed kneel-pitch stopped");
         }
     }
 
@@ -386,7 +386,7 @@ public unsafe partial class Ragdoll
             var handle = FindBodyHandle(bone);
             if (!handle.HasValue) continue;
 
-            if (bone.EndsWith(HumanoidSkeleton.SideSuffixes[0], StringComparison.Ordinal)) // the left side
+            if (bone.EndsWith(skeletonProfile.SideSuffixes[0], StringComparison.Ordinal)) // the left side
             {
                 if (!directedLeftFootConstraint.HasValue)
                 {
@@ -395,7 +395,7 @@ public unsafe partial class Ragdoll
                         DirectedLinearServo(directedLeftFootTarget, 0f, controller.Frequency > 0 ? controller.Frequency : 90f));
                 }
             }
-            else if (bone.EndsWith(HumanoidSkeleton.SideSuffixes[1], StringComparison.Ordinal)) // the right side
+            else if (bone.EndsWith(skeletonProfile.SideSuffixes[1], StringComparison.Ordinal)) // the right side
             {
                 if (!directedRightFootConstraint.HasValue)
                 {
@@ -410,7 +410,7 @@ public unsafe partial class Ragdoll
     private void EnsurePelvisLinearConstraint(CollapseControllerProfile controller)
     {
         if (simulation == null || directedPelvisLinearConstraint.HasValue) return;
-        var handle = FindBodyHandle(string.IsNullOrWhiteSpace(controller.Bone) ? Bones.Pelvis : controller.Bone);
+        var handle = FindBodyHandle(string.IsNullOrWhiteSpace(controller.Bone) ? skeletonProfile.Landmarks.Pelvis : controller.Bone);
         if (!handle.HasValue) return;
         directedPelvisStart = simulation.Bodies.GetBodyReference(handle.Value).Pose.Position;
         directedPelvisLinearConstraint = simulation.Solver.Add(handle.Value,
@@ -420,7 +420,7 @@ public unsafe partial class Ragdoll
     private void EnsurePelvisAngularConstraint(CollapseControllerProfile controller)
     {
         if (simulation == null || directedPelvisAngularConstraint.HasValue) return;
-        var handle = FindBodyHandle(Bones.Pelvis);
+        var handle = FindBodyHandle(skeletonProfile.Landmarks.Pelvis);
         if (!handle.HasValue) return;
         directedPelvisStartRot = simulation.Bodies.GetBodyReference(handle.Value).Pose.Orientation;
         directedPelvisAngularConstraint = simulation.Solver.Add(handle.Value,
@@ -430,8 +430,8 @@ public unsafe partial class Ragdoll
     private void EnsureChestAngularConstraint(CollapseControllerProfile controller)
     {
         if (simulation == null || directedChestAngularConstraint.HasValue) return;
-        var handle = FindBodyHandle(string.IsNullOrWhiteSpace(controller.Bone) ? Bones.Chest : controller.Bone)
-            ?? FindBodyHandle(Bones.MidSpine);
+        var handle = FindBodyHandle(string.IsNullOrWhiteSpace(controller.Bone) ? skeletonProfile.Landmarks.Chest : controller.Bone)
+            ?? FindBodyHandle(skeletonProfile.Landmarks.MidSpine);
         if (!handle.HasValue) return;
         directedChestStartRot = simulation.Bodies.GetBodyReference(handle.Value).Pose.Orientation;
         directedChestAngularConstraint = simulation.Solver.Add(handle.Value,
@@ -494,7 +494,7 @@ public unsafe partial class Ragdoll
 
     // The character's facing (the profile's forward axis), flattened onto the ground plane.
     private Vector3 ResolveForwardDirection()
-        => FlatNormalize(Vector3.Transform(HumanoidSkeleton.Forward, skelWorldRot), HumanoidSkeleton.Forward);
+        => FlatNormalize(Vector3.Transform(skeletonProfile.Forward, skelWorldRot), skeletonProfile.Forward);
 
     private static Vector3 FlatNormalize(Vector3 v, Vector3 fallback)
     {
@@ -509,9 +509,9 @@ public unsafe partial class Ragdoll
 
         var names = new[]
         {
-            Bones.Toes.For(left),
-            Bones.Foot.For(left),
-            Bones.Calf.For(left),
+            skeletonProfile.Landmarks.Toes.For(left),
+            skeletonProfile.Landmarks.Foot.For(left),
+            skeletonProfile.Landmarks.Calf.For(left),
         };
 
         var found = false;
@@ -579,7 +579,7 @@ public unsafe partial class Ragdoll
         }
 
         pendingEntryConditionedKneePowerLoss = true;
-        log.Info("RagdollController: entry-conditioned knee power-loss armed for next death");
+        log.Info("Ragdoll: entry-conditioned knee power-loss armed for next death");
     }
 
     private bool BeginCollapseEntryConditioning(Func<bool> continuation)
@@ -589,7 +589,7 @@ public unsafe partial class Ragdoll
         if (!TryMeasureEntryPose(out entryStanceWidth, out entryLeftKneeAngle, out entryRightKneeAngle,
                 out entryLeftKneeStart, out entryRightKneeStart))
         {
-            log.Warning("RagdollController: entry conditioning skipped - missing leg pose data");
+            log.Warning("Ragdoll: entry conditioning skipped - missing leg pose data");
             return false;
         }
 
@@ -601,7 +601,7 @@ public unsafe partial class Ragdoll
                          straightestKnee < Math.Clamp(knee.EntryReadyKneeAngle, 1f, 60f);
         if (!entryWasNeeded)
         {
-            log.Info($"RagdollController: entry conditioning skipped - stance={entryStanceWidth:F2} kneeAngles=({entryLeftKneeAngle:F1},{entryRightKneeAngle:F1})");
+            log.Info($"Ragdoll: entry conditioning skipped - stance={entryStanceWidth:F2} kneeAngles=({entryLeftKneeAngle:F1},{entryRightKneeAngle:F1})");
             return false;
         }
 
@@ -614,7 +614,7 @@ public unsafe partial class Ragdoll
         entryConditioningActive = true;
         WakeRagdollBodiesForBiomechanicalSettle();
         BeginBiomechanicalSettle();
-        log.Info($"RagdollController: entry conditioning begun - stance={entryStanceWidth:F2} kneeAngles=({entryLeftKneeAngle:F1},{entryRightKneeAngle:F1})");
+        log.Info($"Ragdoll: entry conditioning begun - stance={entryStanceWidth:F2} kneeAngles=({entryLeftKneeAngle:F1},{entryRightKneeAngle:F1})");
         return true;
     }
 
@@ -624,7 +624,7 @@ public unsafe partial class Ragdoll
         entryConditioningActive = false;
         entryConditioningContinuation = null;
         BeginBiomechanicalSettle();
-        log.Info("RagdollController: entry conditioning stopped");
+        log.Info("Ragdoll: entry conditioning stopped");
     }
 
     private void UpdateCollapseEntryConditioning(float dt)
@@ -644,9 +644,9 @@ public unsafe partial class Ragdoll
             + (Math.Clamp(knee.EntryPelvisDownEnd, 0f, 2f) - Math.Clamp(knee.EntryPelvisDownStart, 0f, 2f)) * t;
 
         ApplyEntryKneeSeparation(targetStance, 0.10f * stepScale);
-        ApplyCoreAxisVelocity(Bones.Pelvis, -Vector3.UnitY, pelvisDown, 0.075f * stepScale);
-        ApplyCoreAxisVelocity(Bones.Pelvis, entryForward, 0.20f + 0.18f * t, 0.055f * stepScale);
-        ApplyCoreAxisVelocity(Bones.MidSpine, entryForward, 0.10f + 0.10f * t, 0.040f * stepScale);
+        ApplyCoreAxisVelocity(skeletonProfile.Landmarks.Pelvis, -Vector3.UnitY, pelvisDown, 0.075f * stepScale);
+        ApplyCoreAxisVelocity(skeletonProfile.Landmarks.Pelvis, entryForward, 0.20f + 0.18f * t, 0.055f * stepScale);
+        ApplyCoreAxisVelocity(skeletonProfile.Landmarks.MidSpine, entryForward, 0.10f + 0.10f * t, 0.040f * stepScale);
 
         var ready = TryMeasureEntryPose(out var stance, out var leftAngle, out var rightAngle, out _, out _) &&
                     stance >= Math.Clamp(knee.EntryReadyStance, 0.05f, 1.2f) &&
@@ -657,7 +657,7 @@ public unsafe partial class Ragdoll
         var continuation = entryConditioningContinuation;
         entryConditioningActive = false;
         entryConditioningContinuation = null;
-        log.Info($"RagdollController: entry conditioning complete - stance={stance:F2} kneeAngles=({leftAngle:F1},{rightAngle:F1}) ready={ready}");
+        log.Info($"Ragdoll: entry conditioning complete - stance={stance:F2} kneeAngles=({leftAngle:F1},{rightAngle:F1}) ready={ready}");
         _ = continuation?.Invoke();
     }
 
@@ -675,8 +675,8 @@ public unsafe partial class Ragdoll
         var rightAxis = FlatNormalize(Vector3.Transform(Vector3.UnitX, skelWorldRot), Vector3.UnitX);
         stanceWidth = MathF.Abs(Vector3.Dot(rightSupport - leftSupport, rightAxis));
 
-        leftKneeAngle = MeasureLegBendAngle(Bones.Thigh.Left, Bones.Shin.Left, Bones.Foot.Left, out leftKnee);
-        rightKneeAngle = MeasureLegBendAngle(Bones.Thigh.Right, Bones.Shin.Right, Bones.Foot.Right, out rightKnee);
+        leftKneeAngle = MeasureLegBendAngle(skeletonProfile.Landmarks.Thigh.Left, skeletonProfile.Landmarks.Shin.Left, skeletonProfile.Landmarks.Foot.Left, out leftKnee);
+        rightKneeAngle = MeasureLegBendAngle(skeletonProfile.Landmarks.Thigh.Right, skeletonProfile.Landmarks.Shin.Right, skeletonProfile.Landmarks.Foot.Right, out rightKnee);
         return leftKneeAngle >= 0f && rightKneeAngle >= 0f;
     }
 
@@ -696,8 +696,8 @@ public unsafe partial class Ragdoll
     private void ApplyEntryKneeSeparation(float targetWidth, float maxDelta)
     {
         if (simulation == null) return;
-        var leftHandle = FindBodyHandle(Bones.Shin.Left);
-        var rightHandle = FindBodyHandle(Bones.Shin.Right);
+        var leftHandle = FindBodyHandle(skeletonProfile.Landmarks.Shin.Left);
+        var rightHandle = FindBodyHandle(skeletonProfile.Landmarks.Shin.Right);
         if (!leftHandle.HasValue || !rightHandle.HasValue) return;
 
         var lateral = FlatNormalize(entryRight, Vector3.UnitX);

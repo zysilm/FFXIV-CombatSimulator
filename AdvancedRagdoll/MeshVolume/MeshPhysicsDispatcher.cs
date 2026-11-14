@@ -10,7 +10,7 @@ namespace AdvancedRagdoll.MeshVolume;
 /// Shared, reference-counted BEPU workers. All leases serialize synchronous steps;
 /// host-owned body, shape and filter mutations must remain outside those steps.
 /// </summary>
-public static class MeshPhysicsDispatcher
+internal static class MeshPhysicsDispatcher
 {
     private static readonly object gate = new();
     private static ThreadDispatcher? dispatcher;

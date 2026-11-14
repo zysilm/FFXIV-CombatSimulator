@@ -8,7 +8,7 @@ using System.Numerics;
 
 namespace AdvancedRagdoll.SurfaceProfiles;
 
-public enum CharacterSurfaceUsage
+internal enum CharacterSurfaceUsage
 {
     Physics,
     Traversal,
@@ -16,7 +16,7 @@ public enum CharacterSurfaceUsage
     Ground,
 }
 
-public readonly record struct CharacterSurfaceIdentity(
+internal readonly record struct CharacterSurfaceIdentity(
     byte Race,
     byte Gender,
     byte Tribe,
@@ -30,13 +30,13 @@ public readonly record struct CharacterSurfaceIdentity(
     public float BustOrToneRatio => Math.Clamp(BustOrTone / 100f, 0f, 1f);
 }
 
-public sealed class CharacterSurfaceProfileSet
+internal sealed class CharacterSurfaceProfileSet
 {
     public int Version { get; set; } = 1;
     public List<CharacterSurfaceProfile> Profiles { get; set; } = new();
 }
 
-public sealed class CharacterSurfaceProfile
+internal sealed class CharacterSurfaceProfile
 {
     public string Id { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
@@ -99,7 +99,7 @@ public sealed class CharacterSurfaceProfile
     };
 }
 
-public sealed class CharacterSurfaceMargins
+internal sealed class CharacterSurfaceMargins
 {
     public float Physics { get; set; } = 0.98f;
     public float Traversal { get; set; } = 0.90f;
@@ -107,7 +107,7 @@ public sealed class CharacterSurfaceMargins
     public float Ground { get; set; } = 0.96f;
 }
 
-public sealed class CharacterSurfaceRoleScales
+internal sealed class CharacterSurfaceRoleScales
 {
     public float Width { get; set; } = 1f;
     public float Depth { get; set; } = 1f;
@@ -120,20 +120,20 @@ public sealed class CharacterSurfaceRoleScales
     public float TaperEnd { get; set; } = 1f;
 }
 
-public sealed class CharacterSurfaceBoneOverride
+internal sealed class CharacterSurfaceBoneOverride
 {
     public string Role { get; set; } = string.Empty;
     public List<CharacterSurfaceRing> Rings { get; set; } = new();
 }
 
-public readonly record struct CharacterSurfaceRing(
+internal readonly record struct CharacterSurfaceRing(
     float T,
     float OffsetX,
     float OffsetZ,
     float RadiusX,
     float RadiusZ);
 
-public readonly record struct CharacterSurfaceHit(
+internal readonly record struct CharacterSurfaceHit(
     string BoneName,
     Vector3 Point,
     Vector3 Normal,

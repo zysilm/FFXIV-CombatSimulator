@@ -12,7 +12,7 @@ namespace AdvancedRagdoll;
 /// <summary>One bone's ragdoll parameters as the bone-def builder reads them (<see cref="Ragdoll.AllBoneDefaults"/>,
 /// <see cref="Ragdoll.BuildBoneDefsFromConfigs"/>).</summary>
 [Serializable]
-public class RagdollBoneConfig
+internal class RagdollBoneConfig
 {
     public string Name { get; set; } = "";
     public string? SkeletonParent { get; set; }  // real skeleton parent (for computing physics parent chain)
@@ -45,7 +45,7 @@ public class RagdollBoneConfig
 
 /// <summary>The knee power-loss tuning of the guided collapse (fixed at these defaults).</summary>
 [Serializable]
-public class GuidedCollapseKneePowerLossSettings
+internal class GuidedCollapseKneePowerLossSettings
 {
     public bool EntryConditioningEnabled { get; set; } = true;
     public float EntryStanceThreshold { get; set; } = 0.28f;

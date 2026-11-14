@@ -5,7 +5,7 @@
 namespace AdvancedRagdoll.CollapseProfiles;
 
 /// <summary>The guided-collapse profiles a host offers (the plugin's are embedded data files it loads itself).</summary>
-public interface ICollapseProfileSource
+internal interface ICollapseProfileSource
 {
     /// <summary>The profile with this id (ignoring case), or null.</summary>
     CollapseProfile? FindById(string id);

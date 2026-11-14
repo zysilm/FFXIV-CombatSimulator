@@ -15,7 +15,7 @@ namespace AdvancedRagdoll.Recording;
 
 /// <summary>One decoded value of a record. Scalars live in <see cref="Bits"/> (floats as their raw
 /// bits); strings, byte blocks, vectors and arrays live in <see cref="Data"/> as stored.</summary>
-public readonly struct RecValue : IEquatable<RecValue>
+internal readonly struct RecValue : IEquatable<RecValue>
 {
     private static readonly byte[] NoData = Array.Empty<byte>();
 
@@ -91,7 +91,7 @@ public readonly struct RecValue : IEquatable<RecValue>
 }
 
 /// <summary>One decoded record.</summary>
-public sealed class RagdollRecord
+internal sealed class RagdollRecord
 {
     public RagdollRecord(RecordType type, long offset, int payloadBytes, RecValue[] values)
     {
@@ -130,7 +130,7 @@ public sealed class RagdollRecord
 }
 
 /// <summary>Reads a ragdoll recording record by record.</summary>
-public sealed class RagdollRecordingReader : IDisposable
+internal sealed class RagdollRecordingReader : IDisposable
 {
     private readonly Stream stream;
     private readonly byte[] header = new byte[6];

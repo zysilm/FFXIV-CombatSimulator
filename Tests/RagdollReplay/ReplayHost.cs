@@ -30,7 +30,7 @@ internal static class Rec
 }
 
 /// <summary>One character's skeleton as the recording last showed it, plus whatever the controller wrote into it since.</summary>
-internal sealed class ReplaySkeleton : ISkeletonPose
+internal sealed class ReplaySkeleton : IHostSkeleton
 {
     public sealed class Part
     {
@@ -109,7 +109,7 @@ internal sealed class ReplaySkeleton : ISkeletonPose
     public void ResyncPartModelPose(int part) { }
 }
 
-internal sealed class ReplaySkeletons : ISkeletonSource
+internal sealed class ReplaySkeletons : IHostSkeletonSource
 {
     private readonly ReplaySource source;
     private readonly Dictionary<nint, ReplaySkeleton> skeletons = new();
@@ -193,9 +193,9 @@ internal sealed class ReplaySkeletons : ISkeletonSource
         part.Reference = MemoryMarshal.Cast<byte, BoneQs>(t[8 + names].Data).ToArray();
     }
 
-    public ISkeletonPose? TryGetSkeleton(nint actor, SkeletonReadSite site = SkeletonReadSite.Other)
+    public IHostSkeleton? TryGetSkeleton(nint actor, PosePurpose site = PosePurpose.Other)
     {
-        if (site == SkeletonReadSite.ColliderMeshRoot)
+        if (site == PosePurpose.ColliderMeshRoot)
         {
             // Only the root is used, recorded as the collider's transform. When the game had no skeleton the
             // controller read the position instead and turned it by nothing: the record holds exactly that.
@@ -203,7 +203,7 @@ internal sealed class ReplaySkeletons : ISkeletonSource
             if (t == null) { source.Diverged($"mesh collider root of 0x{actor:X} read, none recorded"); return null; }
             return new ReplaySkeleton(actor, source) { Available = true, RootValue = new RootTransform(t[2].AsVector3, t[3].AsQuaternion, Vector3.One) };
         }
-        if (site != SkeletonReadSite.Other)
+        if (site != PosePurpose.Other)
         {
             var (record, index) = source.Peek(RecordType.SkeletonPose,
                 r => (nint)r[0].AsULong == actor && r[1].AsInt == (int)site);
@@ -247,7 +247,7 @@ internal sealed class ReplaySkeletons : ISkeletonSource
     }
 }
 
-internal sealed class ReplayWorld : IWorldQuery
+internal sealed class ReplayWorld : IHostWorldQuery
 {
     private readonly ReplaySource source;
     public ReplayWorld(ReplaySource source) => this.source = source;
@@ -310,7 +310,7 @@ internal sealed class ReplayWorld : IWorldQuery
     }
 }
 
-internal sealed class ReplayActors : IRagdollActor
+internal sealed class ReplayActors : IHostActors
 {
     private readonly ReplaySource source;
     private readonly ReplaySkeletons skeletons;
@@ -331,15 +331,15 @@ internal sealed class ReplayActors : IRagdollActor
     public nint LocalPlayer => source.Header[21].AsBool ? target : 0;
     public bool IsAlive(nint actor, uint entityId) => true;
 
-    public Vector3 GetPosition(nint actor, ActorReadSite site)
+    public Vector3 GetPosition(nint actor, ActorSite site)
     {
         switch (site)
         {
-            case ActorReadSite.Activation:
+            case ActorSite.Activation:
                 return source.Activate[4].AsVector3;
-            case ActorReadSite.Identity:
+            case ActorSite.Identity:
                 return identity?[6].AsVector3 ?? default;
-            case ActorReadSite.ColliderMesh or ActorReadSite.ColliderFallback or ActorReadSite.ColliderFallbackBuild:
+            case ActorSite.ColliderMesh or ActorSite.ColliderFallback or ActorSite.ColliderFallbackBuild:
             {
                 var r = source.Take(RecordType.ActorTransform, x => x[0].AsInt == (int)site && (nint)x[1].AsULong == actor);
                 if (r == null) { source.Diverged($"{site} transform of 0x{actor:X} read, none recorded"); return default; }
@@ -355,7 +355,7 @@ internal sealed class ReplayActors : IRagdollActor
         }
     }
 
-    public float GetFacing(nint actor, ActorReadSite site) => identity?[5].AsFloat ?? 0f;
+    public float GetFacing(nint actor, ActorSite site) => identity?[5].AsFloat ?? 0f;
     /// <summary>Entity ids the recording names (the carried body surfaces); every other actor reads as the target.</summary>
     public readonly Dictionary<nint, uint> KnownEntities = new();
     public uint GetEntityId(nint actor) => KnownEntities.TryGetValue(actor, out var entity) ? entity : source.Activate[5].AsUInt;
@@ -379,7 +379,7 @@ internal sealed class ReplayActors : IRagdollActor
         modelCharaId = firstIdentity[2].AsInt;
     }
 
-    public void ReadModelType(nint actor, ISkeletonPose? skeleton, out int modelType, out int raceSexId)
+    public void ReadModelType(nint actor, IHostSkeleton? skeleton, out int modelType, out int raceSexId)
     {
         // Asked once per Identity record, by the recorder.
         identity = source.Take(RecordType.Identity) ?? identity;
@@ -393,7 +393,7 @@ internal sealed class ReplayActors : IRagdollActor
     public bool SetApproachPosition(nint actor, Vector3 position) => source.Activate[9].AsBool;
 }
 
-internal sealed class ReplayColliders : IColliderActorProvider
+internal sealed class ReplayColliders : IHostColliders
 {
     private readonly ReplaySource source;
     public ReplayColliders(ReplaySource source) => this.source = source;
@@ -439,7 +439,7 @@ internal sealed class ReplayColliders : IColliderActorProvider
     }
 }
 
-internal sealed class ReplaySettings : IRagdollSettingsSource
+internal sealed class ReplaySettings : IHostSettingsSource
 {
     private readonly ReplaySource source;
     private readonly Dictionary<string, RecValue> values = new(StringComparer.Ordinal);
@@ -454,7 +454,7 @@ internal sealed class ReplaySettings : IRagdollSettingsSource
         appliedUpTo = source.Records.IndexOf(snapshot);
     }
 
-    public bool Refresh(RagdollSettings settings)
+    public bool Refresh(HostSettings settings)
     {
         // Changes the game noticed at the start of this render frame (written just before its RenderFrame record).
         var upTo = source.FrameIndex < 0 ? appliedUpTo : source.FrameIndex;
@@ -465,7 +465,7 @@ internal sealed class ReplaySettings : IRagdollSettingsSource
             values[change[0].AsString!] = change[1];
         }
         appliedUpTo = Math.Max(appliedUpTo, upTo);
-        foreach (var property in typeof(RagdollSettings).GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        foreach (var property in typeof(HostSettings).GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
             if (!values.TryGetValue(property.Name, out var value))
                 throw new ReplayUnsupportedException($"setting {property.Name} is not in the recording");

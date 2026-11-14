@@ -48,7 +48,7 @@ public unsafe partial class Ragdoll
 
     /// <summary>The bodies that actually arrive when a body falls. Everything else is along for the
     /// ride — and the feet, in an ordinary collapse, never left the floor.</summary>
-    private static ImmutableArray<string> TorsoBones => HumanoidSkeleton.ImpactTorsoBones;
+    private ImmutableArray<string> TorsoBones => skeletonProfile.ImpactTorsoBones;
 
     /// <summary>
     /// The joints released on impact so the limbs can follow through.
@@ -65,11 +65,11 @@ public unsafe partial class Ragdoll
     /// let the momentum the limbs already have express itself. The swing limits stay on, so a limb
     /// follows through within its anatomy instead of hyperextending.
     /// </summary>
-    private static ImmutableArray<string> FollowThroughBones => HumanoidSkeleton.ImpactFollowThroughBones;
+    private ImmutableArray<string> FollowThroughBones => skeletonProfile.ImpactFollowThroughBones;
 
     /// <summary>Fired when the corpse lands, with the speed it came down at (m/s). The camera hangs off
     /// this — an impact you only see in the body is half an impact.</summary>
-    public event Action<float>? HardLanding;
+    internal event Action<float>? HardLanding;
 
     /// <summary>Where this landing sits between "a knockdown" and "a slam", smoothed.</summary>
     private static float ImpactSeverity(float speed)
@@ -161,7 +161,7 @@ public unsafe partial class Ragdoll
         // The rig is emphatically not at rest any more.
         BeginBiomechanicalSettle();
 
-        log.Info($"RagdollController: landing at {speed:F1} m/s (severity {severity:F2}) — " +
+        log.Info($"Ragdoll: landing at {speed:F1} m/s (severity {severity:F2}) — " +
                  $"{impactFreezeRemaining * 1000f:F0}ms freeze, {heave:F2} m/s heave, follow-through released");
         if (rec != null) RecEvent("HardLanding", speed);
         HardLanding?.Invoke(speed);

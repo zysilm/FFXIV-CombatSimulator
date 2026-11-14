@@ -4,7 +4,7 @@ using System.Numerics;
 namespace AdvancedRagdoll.Attachment;
 
 /// <summary>A single translation shared by the whole garment; no deformation or contact projection.</summary>
-public sealed class WholeGarmentSlide
+internal sealed class WholeGarmentSlide
 {
     private float travel, speed;
     public Vector3 Offset { get; private set; }

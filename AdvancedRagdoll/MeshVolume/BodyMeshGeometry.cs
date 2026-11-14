@@ -6,7 +6,7 @@ using System.Numerics;
 namespace AdvancedRagdoll.MeshVolume;
 
 /// <summary>Rigid local triangle surface. Scale is baked before this representation is built.</summary>
-public sealed class BodyMeshGeometry
+internal sealed class BodyMeshGeometry
 {
     public Vector3[] Vertices { get; }
     public int[] Indices { get; }
@@ -135,13 +135,13 @@ public sealed class BodyMeshGeometry
     }
 }
 
-public readonly record struct MeshBodyWeight(int Body, float Weight);
-public readonly record struct MeshWeightedVertex(Vector3 Position, MeshBodyWeight[] Weights);
-public readonly record struct MeshSourceBinding(int A, int B, int C, Vector3 Barycentric);
+internal readonly record struct MeshBodyWeight(int Body, float Weight);
+internal readonly record struct MeshWeightedVertex(Vector3 Position, MeshBodyWeight[] Weights);
+internal readonly record struct MeshSourceBinding(int A, int B, int C, Vector3 Barycentric);
 
 /// <summary>Partitions triangles along interpolated weight boundaries, preserving the source surface.
 /// No convexification, interior caps, duplicate triangles, or percentile envelopes are introduced.</summary>
-public static class BodyMeshPartitioner
+internal static class BodyMeshPartitioner
 {
     private sealed class Part
     {

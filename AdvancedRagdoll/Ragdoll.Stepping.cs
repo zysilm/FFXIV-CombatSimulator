@@ -23,7 +23,7 @@ public unsafe partial class Ragdoll
         {
             // Nothing may escape this handler: the render hook calls every controller through one multicast
             // delegate, and an exception would skip the controllers after this one.
-            log.Error(ex, "RagdollController: the settings could not be read; this frame is skipped");
+            log.Error(ex, "Ragdoll: the settings could not be read; this frame is skipped");
             return;
         }
         try { UpdateFrozenMeshCache(); }
@@ -104,7 +104,7 @@ public unsafe partial class Ragdoll
         }
         catch (Exception ex)
         {
-            log.Error(ex, "RagdollController: Error in render frame");
+            log.Error(ex, "Ragdoll: Error in render frame");
             Deactivate();
         }
     }
@@ -307,13 +307,13 @@ public unsafe partial class Ragdoll
         if (targetCharacterAddress == nint.Zero ||
             actors.GetEntityId(targetCharacterAddress) != targetEntityId)
         {
-            log.Info("RagdollController: target despawned or slot reused; deactivating.");
+            log.Info("Ragdoll: target despawned or slot reused; deactivating.");
             animationFrozen = false; // do not write OverallSpeed onto whatever now occupies the slot
             Deactivate();
             return;
         }
 
-        var skel = skeletons.TryGetSkeleton(targetCharacterAddress, SkeletonReadSite.FrameIn);
+        var skel = skeletons.TryGetSkeleton(targetCharacterAddress, PosePurpose.FrameIn);
         if (skel == null) return;
         if (rec != null) RecFrameBegin(dt, skel);
 
@@ -331,7 +331,7 @@ public unsafe partial class Ragdoll
         // before using old bone indices; never read a new model to replace the cache.
         if (skel.BoneCount != initialBoneCount)
         {
-            log.Info($"RagdollController: skeleton bone count changed ({initialBoneCount}->{skel.BoneCount}); deactivating.");
+            log.Info($"Ragdoll: skeleton bone count changed ({initialBoneCount}->{skel.BoneCount}); deactivating.");
             Deactivate();
             return;
         }
@@ -340,7 +340,7 @@ public unsafe partial class Ragdoll
         actors.SetAnimationSpeed(targetCharacterAddress, 0f);
 
         // The local player is always object-table index 0. Used below to choose a render-only
-        // follow (DrawObject.Position, never the packet-synced GameObject.Position) and to
+        // follow (the render position, never the packet-synced GameObject.Position) and to
         // suppress the self-induced biomechanical settle while follow drags the corpse.
         var isLocalPlayerTarget =
             actors.GetObjectIndex(targetCharacterAddress) == 0;
@@ -359,7 +359,7 @@ public unsafe partial class Ragdoll
             var skelDist = (newSkelPos - skelWorldPos).Length();
             if (skelDist > 0.1f)
             {
-                // A follow-driven move (we pushed the DrawObject to track the flung corpse)
+                // A follow-driven move (we pushed the draw object to track the flung corpse)
                 // must not restart the biomechanical settle — otherwise a corpse sliding under
                 // follow wakes its bodies every frame and never rests. Only settle on EXTERNAL
                 // repositions (dismount / death transition). followWasActive means we wrote a
@@ -470,7 +470,7 @@ public unsafe partial class Ragdoll
 
                 // Distance gate: a character that cannot reach the corpse cannot contact it, so
                 // skip the expensive skeleton read + per-bone reposition.
-                var npcRootPos = actors.GetPosition(npcState.NpcAddress, ActorReadSite.ColliderRoot);
+                var npcRootPos = actors.GetPosition(npcState.NpcAddress, ActorSite.ColliderRoot);
                 if (rec != null) RecActorPosition(ActorSite.ColliderRoot, npcState.NpcAddress, npcRootPos);
                 if (!NpcMayTouchCorpse(npcState, npcRootPos))
                 {
@@ -495,7 +495,7 @@ public unsafe partial class Ragdoll
 
                 if (npcState.IsMesh)
                 {
-                    var npcSkelMesh = skeletons.TryGetSkeleton(npcState.NpcAddress, SkeletonReadSite.ColliderMeshRoot);
+                    var npcSkelMesh = skeletons.TryGetSkeleton(npcState.NpcAddress, PosePurpose.ColliderMeshRoot);
                     Vector3 meshWorldPos;
                     Quaternion meshWorldRot;
                     if (npcSkelMesh != null && npcSkelMesh.HasRoot)
@@ -506,7 +506,7 @@ public unsafe partial class Ragdoll
                     }
                     else
                     {
-                        meshWorldPos = actors.GetPosition(npcState.NpcAddress, ActorReadSite.ColliderMesh);
+                        meshWorldPos = actors.GetPosition(npcState.NpcAddress, ActorSite.ColliderMesh);
                         meshWorldRot = Quaternion.Identity;
                     }
 
@@ -519,8 +519,8 @@ public unsafe partial class Ragdoll
                 if (npcState.IsFallback)
                 {
                     // Simple single-capsule position update
-                    var fallbackRoot = actors.GetPosition(npcState.NpcAddress, ActorReadSite.ColliderFallback);
-                    var visualScale = TryGetDrawObjectScale(npcState.NpcAddress, out var drawScale)
+                    var fallbackRoot = actors.GetPosition(npcState.NpcAddress, ActorSite.ColliderFallback);
+                    var visualScale = TryGetVisualScale(npcState.NpcAddress, out var drawScale)
                         ? drawScale
                         : Vector3.One;
                     if (rec != null) RecActorTransform(ActorSite.ColliderFallback, npcState.NpcAddress, fallbackRoot, Quaternion.Identity, true, visualScale);
@@ -535,7 +535,7 @@ public unsafe partial class Ragdoll
                 }
 
                 // Bone-based update: read NPC skeleton and reposition each bone static
-                var ns = skeletons.TryGetSkeleton(npcState.NpcAddress, SkeletonReadSite.ColliderFrame);
+                var ns = skeletons.TryGetSkeleton(npcState.NpcAddress, PosePurpose.ColliderFrame);
                 if (rec != null) RecSkeleton(RecordType.SkeletonPose, PosePurpose.ColliderFrame, npcState.NpcAddress, ns, false);
                 if (ns == null) continue; // skeleton temporarily unavailable, keep last positions
 
@@ -772,7 +772,7 @@ public unsafe partial class Ragdoll
 
         var pose = skel.ModelPose;
 
-        // Save original positions/rotations for delta tracking (needed for j_kao propagation).
+        // Save original positions/rotations for delta tracking (needed for head propagation).
         // Reuse a cached result across frames — StepAndApply runs every render frame, so a
         // fresh allocation here is steady GC pressure per active ragdoll.
         var result = cachedResult ??= new BoneModificationResult(skel.BoneCount);
@@ -811,7 +811,7 @@ public unsafe partial class Ragdoll
                             bodyRef.Pose.Orientation.X + bodyRef.Pose.Orientation.Y +
                             bodyRef.Pose.Orientation.Z + bodyRef.Pose.Orientation.W))
             {
-                log.Warning($"RagdollController: NaN detected in body '{rb.Name}', deactivating");
+                log.Warning($"Ragdoll: NaN detected in body '{rb.Name}', deactivating");
                 Deactivate();
                 return;
             }
@@ -937,10 +937,10 @@ public unsafe partial class Ragdoll
             WriteBoneTransform(skel, i, newPos, newRot, result);
         }
 
-        // Propagate j_kao changes to face/hair partial skeletons
+        // Propagate head changes to face/hair partial skeletons
         if (kaoBodyBoneIndex >= 0 && result.HasAccumulated[kaoBodyBoneIndex])
         {
-            PropagateToPartialSkeletons(skel, kaoBodyBoneIndex, Bones.Head, result);
+            PropagateToPartialSkeletons(skel, kaoBodyBoneIndex, skeletonProfile.Landmarks.Head, result);
         }
 
         // Soft-tissue squash & stretch: annotate per-bone scale after every positional write
@@ -961,13 +961,13 @@ public unsafe partial class Ragdoll
         if (rec != null) RecSkeleton(RecordType.PoseOut, PosePurpose.FrameOut, targetCharacterAddress, skel, true);
 
         // (Dev) Keep the character visible when the ragdoll is flung far from the frozen death
-        // position. Culling tests the DrawObject's bounding sphere, whose centre tracks the
-        // DrawObject's own position — NOT the skinned bone positions — so a corpse that flies
+        // position. Culling tests the draw object's bounding sphere, whose centre tracks the
+        // draw object's own position — NOT the skinned bone positions — so a corpse that flies
         // out of the original frustum gets culled even though its bones are drawn far away.
         //
-        // Local player: move ONLY the DrawObject (client-side render transform). We must never
+        // Local player: move ONLY the draw object (client-side render transform). We must never
         // touch GameObject.Position here — that logical position feeds the server position-sync
-        // packets, and teleporting it is a bannable action. DrawObject.Position is pure render
+        // packets, and teleporting it is a bannable action. The render position is pure render
         // state (the knob SimpleHeels/Brio drive) and never leaves the client. The game
         // re-derives skeleton->Transform.Position from it, so next frame our world→model bone
         // conversion re-centres on the new root and the corpse renders in the exact same world

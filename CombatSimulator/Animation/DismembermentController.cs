@@ -43,7 +43,7 @@ public unsafe partial class DismembermentController : IDisposable
     private readonly Configuration config;
     // What the local simulation's contact callbacks read on the physics worker threads: a copy of the
     // settings taken before each step, never the Configuration itself.
-    private readonly RagdollSettings contactSettings = new();
+    private readonly HostSettings contactSettings = new();
     private Hosting.ConfigRagdollSettings? contactSettingsSource;
     private readonly IPluginLog log;
 
@@ -592,7 +592,7 @@ public unsafe partial class DismembermentController : IDisposable
     /// <paramref name="keepModelSlot"/>, freezes it, and tumbles it from <paramref name="attachBone"/>.
     /// For paired Hands/Feet models, <paramref name="hiddenOppositeRootBone"/> hides the other side so two calls
     /// can create independent left/right clones. The caller unequips the real slot afterward.</summary>
-    public GearDropOperation? SpawnGearDrop(nint sourceAddress, string attachBone, int keepModelSlot, string? glamourBase64,
+    internal GearDropOperation? SpawnGearDrop(nint sourceAddress, string attachBone, int keepModelSlot, string? glamourBase64,
         bool hideSkin = false, string? hiddenOppositeRootBone = null)
     {
         if (sourceAddress == nint.Zero || string.IsNullOrEmpty(attachBone) || keepModelSlot < 0) return null;
@@ -1885,7 +1885,7 @@ public unsafe partial class DismembermentController : IDisposable
     /// a fist leaves the clothes standing on the ground. Carrying them fixes that — but only the ones
     /// still ON the body. See <see cref="IsGarmentWorn"/> for how that is decided.
     /// </summary>
-    public bool ShouldCarryExternalRig(RagdollController.ExternalRigHandle rig)
+    internal bool ShouldCarryExternalRig(RagdollController.ExternalRigHandle rig)
     {
         if (!config.KoStripGarmentFollowsBody) return false;
 
@@ -5644,7 +5644,7 @@ public unsafe partial class DismembermentController : IDisposable
         return cb->Models[c.GearKeepModelSlot];
     }
 
-    public bool IsGearDropSourceUnchanged(GearDropOperation operation)
+    internal bool IsGearDropSourceUnchanged(GearDropOperation operation)
     {
         var clone = clones.Find(c => ReferenceEquals(c.GearOperation, operation));
         var player = objectTable.LocalPlayer;

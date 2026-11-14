@@ -5,7 +5,7 @@ using AdvancedRagdoll.SkeletonProfiles;
 namespace AdvancedRagdoll.Attachment;
 
 /// <summary>Continuously retain the waistband as the thighs separate. No collision projection.</summary>
-public sealed class WaistRetentionMotion
+internal sealed class WaistRetentionMotion
 {
     public float Strength { get; private set; }
 

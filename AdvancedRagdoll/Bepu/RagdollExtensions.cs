@@ -15,11 +15,12 @@ namespace AdvancedRagdoll.Bepu;
 
 // Extension points of the ragdoll (stage A3b, docs/RAGDOLL_LIBRARY_ARCHITECTURE.md §7). They replaced two partial
 // methods of RagdollController, which cannot cross an assembly boundary. No game types here (in the library since A4). Register with Ragdoll.AddExtension.
+// Internal for 0.1: only the plugin and its private module (InternalsVisibleTo) use them; they are not a public API yet.
 
 /// <summary>Called on the simulation thread once per fixed step, after the water forces and before the world's
 /// Timestep. Setting <paramref name="handled"/> means the extension stepped the world itself (or chose not to): the
 /// controller then skips its own Timestep, and later extensions are not called for this step.</summary>
-public interface IRagdollStepExtension
+internal interface IRagdollStepExtension
 {
     void OnSubstep(RagdollExtensionContext ctx, float dt, ref bool handled);
 }
@@ -29,7 +30,7 @@ public interface IRagdollStepExtension
 /// configuration is skipped, and later extensions are not called for this manifold. Implementations must only read
 /// data that does not change during a step; <see cref="RagdollExtensionContext.Simulation"/> is the simulation the
 /// pair belongs to.</summary>
-public interface IRagdollContactExtension
+internal interface IRagdollContactExtension
 {
     void ConfigureContact<TManifold>(RagdollExtensionContext ctx, CollidablePair pair, ref TManifold manifold,
         ref PairMaterialProperties material, ref bool handled) where TManifold : unmanaged, IContactManifold<TManifold>;
@@ -37,7 +38,7 @@ public interface IRagdollContactExtension
 
 /// <summary>A ragdoll body as an extension sees it: the bone it stands for, its Bepu body and its collision
 /// volume.</summary>
-public readonly struct RagdollExtensionBone
+internal readonly struct RagdollExtensionBone
 {
     internal RagdollExtensionBone(string name, BodyHandle bodyHandle, Ragdoll.RagdollColliderShape colliderShape,
         Vector3 boxHalfExtents, float capsuleHalfLength, float capsuleRadius)
@@ -59,7 +60,7 @@ public readonly struct RagdollExtensionBone
 }
 
 /// <summary>The ragdoll bodies of a controller, read-only and without copying the list.</summary>
-public readonly struct RagdollExtensionBones : IReadOnlyList<RagdollExtensionBone>
+internal readonly struct RagdollExtensionBones : IReadOnlyList<RagdollExtensionBone>
 {
     private readonly RagdollExtensionContext context;
     internal RagdollExtensionBones(RagdollExtensionContext context) { this.context = context; }
@@ -80,7 +81,7 @@ public readonly struct RagdollExtensionBones : IReadOnlyList<RagdollExtensionBon
 /// the controller's own state or operation, unchanged; the members are internal until they settle (the library
 /// already has InternalsVisibleTo for that).
 /// </summary>
-public abstract class RagdollExtensionContext
+internal abstract class RagdollExtensionContext
 {
     private protected RagdollExtensionContext() { }
 

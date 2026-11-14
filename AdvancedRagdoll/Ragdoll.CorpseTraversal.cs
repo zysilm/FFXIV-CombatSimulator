@@ -79,7 +79,7 @@ public unsafe partial class Ragdoll
 
     /// <summary>A soft navigation reference sampled from one structural corpse collider. The ID is
     /// stable for the lifetime of the current physics simulation; no constraint owns this point.</summary>
-    public readonly struct CorpseTraversalSlot
+    internal readonly struct CorpseTraversalSlot
     {
         public readonly int Id;
         public readonly Vector3 Position;
@@ -89,7 +89,7 @@ public unsafe partial class Ragdoll
         public readonly bool IsFace;
         public readonly string Label;
         // Optional structural body that should provide vertical support for this landmark. Face
-        // landmarks use j_kao so a reacquisition cannot jump between head, neck and shoulder.
+        // landmarks use the head bone so a reacquisition cannot jump between head, neck and shoulder.
         public readonly int SupportBodyHandle;
 
         public CorpseTraversalSlot(
@@ -151,7 +151,7 @@ public unsafe partial class Ragdoll
         traversalMassMultiplier = multiplier;
         prevAllAsleep = false;
         BeginBiomechanicalSettle(0.25f);
-        log.Info($"RagdollController: traversal mass {multiplier:F1}x for 0x{targetCharacterAddress:X}.");
+        log.Info($"Ragdoll: traversal mass {multiplier:F1}x for 0x{targetCharacterAddress:X}.");
     }
 
     private static void ScaleInverseInertia(ref BodyInertia inertia, float scale)
@@ -332,7 +332,7 @@ public unsafe partial class Ragdoll
         // capsule/body pair is retained below instead of competing with every foot every frame.
         var lowerBandTop = minBottom + MathF.Max(0.0002f, bodyHeight * 0.18f);
 
-        var currentRoot = actors.GetPosition(npcAddress, ActorReadSite.TraversalRoot);
+        var currentRoot = actors.GetPosition(npcAddress, ActorSite.TraversalRoot);
         if (rec != null) RecActorPosition(ActorSite.TraversalRoot, npcAddress, currentRoot);
         var proxySampleRoot = npcState.HasTraversalSampleRoot
             ? npcState.TraversalSampleRoot
@@ -580,7 +580,7 @@ public unsafe partial class Ragdoll
     /// NPC's real lowest proxies at a future root position but never creates, replaces, or removes a
     /// retained support anchor. Swarm steering uses this to begin raising the root before its
     /// kinematic proxies deliver a side-on normal impulse to the corpse.</summary>
-    public bool TryPreviewNpcTraversalRootHeight(
+    internal bool TryPreviewNpcTraversalRootHeight(
         nint npcAddress,
         Vector3 previewRootPosition,
         float terrainY,
@@ -619,7 +619,7 @@ public unsafe partial class Ragdoll
             maxTop = MathF.Max(maxTop, capsule.Top);
         }
         var lowerBandTop = minBottom + MathF.Max(0.0002f, (maxTop - minBottom) * 0.18f);
-        var currentRoot = actors.GetPosition(npcAddress, ActorReadSite.TraversalPreviewRoot);
+        var currentRoot = actors.GetPosition(npcAddress, ActorSite.TraversalPreviewRoot);
         if (rec != null) RecActorPosition(ActorSite.TraversalPreviewRoot, npcAddress, currentRoot);
         var proxySampleRoot = npcState.HasTraversalSampleRoot
             ? npcState.TraversalSampleRoot
@@ -731,9 +731,9 @@ public unsafe partial class Ragdoll
             if (preferredCorpseBody.HasValue && rb.BodyHandle.Value != preferredCorpseBody.Value.Value)
                 continue;
             if (rb.Mass < 0.45f ||
-                BoneClasses.Cloth.Matches(rb.Name) ||
-                BoneClasses.SoftTissue.Matches(rb.Name) ||
-                BoneClasses.Weapon.Matches(rb.Name))
+                skeletonProfile.Classes.Cloth.Matches(rb.Name) ||
+                skeletonProfile.Classes.SoftTissue.Matches(rb.Name) ||
+                skeletonProfile.Classes.Weapon.Matches(rb.Name))
                 continue;
 
             var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
@@ -800,27 +800,27 @@ public unsafe partial class Ragdoll
         return found;
     }
 
-    private static bool IsTraversalSurfaceBone(RagdollBone rb)
+    private bool IsTraversalSurfaceBone(RagdollBone rb)
         => rb.Mass >= 0.45f &&
-           !BoneClasses.Cloth.Matches(rb.Name) &&
-           !BoneClasses.SoftTissue.Matches(rb.Name) &&
-           !BoneClasses.Weapon.Matches(rb.Name);
+           !skeletonProfile.Classes.Cloth.Matches(rb.Name) &&
+           !skeletonProfile.Classes.SoftTissue.Matches(rb.Name) &&
+           !skeletonProfile.Classes.Weapon.Matches(rb.Name);
 
     // Navigation landmarks (where walkers aim on a lying body) are profile data: semantic, readable
     // parts of a humanoid pose rather than a second copy of the collider list. See
     // SkeletonProfile.StompLandmarks; mod-specific soft bones there are never promoted to traversal
     // surfaces by IsTraversalSurfaceBone.
-    private static ImmutableArray<StompLandmark> CorpseTraversalLandmarks => HumanoidSkeleton.StompLandmarks;
+    private ImmutableArray<StompLandmark> CorpseTraversalLandmarks => skeletonProfile.StompLandmarks;
 
     // Face bones are classified (eye / nose / mouth) and ranked by the words they are named with:
     // profile data (SkeletonProfile.FaceLandmarks).
-    private static int FaceLandmarkCategory(string boneName)
-        => HumanoidSkeleton.FaceLandmarks.Category(boneName);
+    private int FaceLandmarkCategory(string boneName)
+        => skeletonProfile.FaceLandmarks.Category(boneName);
 
-    private static int FaceLandmarkSpecificity(string boneName)
-        => HumanoidSkeleton.FaceLandmarks.SpecificityOf(boneName);
+    private int FaceLandmarkSpecificity(string boneName)
+        => skeletonProfile.FaceLandmarks.SpecificityOf(boneName);
 
-    private void CaptureFaceTraversalLandmarks(ISkeletonPose skeleton)
+    private void CaptureFaceTraversalLandmarks(IHostSkeleton skeleton)
     {
         faceTraversalLandmarks.Clear();
         if (simulation == null || targetCharacterAddress == nint.Zero)
@@ -829,7 +829,7 @@ public unsafe partial class Ragdoll
         RagdollBone? headBone = null;
         foreach (var bone in ragdollBones)
         {
-            if (!bone.Name.Equals(Bones.Head, StringComparison.Ordinal))
+            if (!bone.Name.Equals(skeletonProfile.Landmarks.Head, StringComparison.Ordinal))
                 continue;
             headBone = bone;
             break;
@@ -905,7 +905,7 @@ public unsafe partial class Ragdoll
     /// tracks the named bone, while actual root height is resolved separately by the traversal
     /// query. Soft/body-mod landmarks therefore never become colliders, and clothing cannot win
     /// merely because it is the nearest large mesh.</summary>
-    public int CollectCorpseTraversalSlots(List<CorpseTraversalSlot> destination)
+    internal int CollectCorpseTraversalSlots(List<CorpseTraversalSlot> destination)
     {
         destination.Clear();
         if (simulation == null || !isActive || !physicsStarted)
@@ -1002,13 +1002,13 @@ public unsafe partial class Ragdoll
         }
 
         // Face definitions were captured once from the coherent initialization snapshot. From
-        // here on they are transformed exclusively by the BEPU j_kao body, so face and torso
+        // here on they are transformed exclusively by the BEPU head body, so face and torso
         // landmarks belong to the same physics tick and keep stable identities for the whole sim.
         var preciseFaceCount = 0;
         RagdollBone? faceSupportBone = null;
         foreach (var bone in ragdollBones)
         {
-            if (!bone.Name.Equals(Bones.Head, StringComparison.Ordinal))
+            if (!bone.Name.Equals(skeletonProfile.Landmarks.Head, StringComparison.Ordinal))
                 continue;
             faceSupportBone = bone;
             break;
@@ -1039,7 +1039,7 @@ public unsafe partial class Ragdoll
         {
             foreach (var bone in ragdollBones)
             {
-                if (!bone.Name.Equals(Bones.Head, StringComparison.Ordinal))
+                if (!bone.Name.Equals(skeletonProfile.Landmarks.Head, StringComparison.Ordinal))
                     continue;
                 var body = simulation.Bodies.GetBodyReference(bone.BodyHandle);
                 var profileOrigin = body.Pose.Position -
@@ -1062,7 +1062,7 @@ public unsafe partial class Ragdoll
     /// cloth, soft tissue and tiny decorative bodies cannot become accidental stairs, and the
     /// caller can impose a low maximum climb height relative to terrain.
     /// </summary>
-    public bool TryGetWalkableSurfaceHeight(Vector3 point, float probeRadius, out float surfaceY)
+    internal bool TryGetWalkableSurfaceHeight(Vector3 point, float probeRadius, out float surfaceY)
     {
         surfaceY = float.MinValue;
         if (simulation == null || !isActive || !physicsStarted)
@@ -1096,9 +1096,9 @@ public unsafe partial class Ragdoll
         foreach (var rb in ragdollBones)
         {
             if (rb.Mass < 0.45f ||
-                BoneClasses.Cloth.Matches(rb.Name) ||
-                BoneClasses.SoftTissue.Matches(rb.Name) ||
-                BoneClasses.Weapon.Matches(rb.Name))
+                skeletonProfile.Classes.Cloth.Matches(rb.Name) ||
+                skeletonProfile.Classes.SoftTissue.Matches(rb.Name) ||
+                skeletonProfile.Classes.Weapon.Matches(rb.Name))
                 continue;
 
             var body = simulation.Bodies.GetBodyReference(rb.BodyHandle);
@@ -1293,7 +1293,7 @@ public unsafe partial class Ragdoll
         }
     }
 
-    public bool TryGetNpcTraversalProxyRoot(
+    internal bool TryGetNpcTraversalProxyRoot(
         nint address,
         out Vector3 root,
         out bool onCorpseSupport)

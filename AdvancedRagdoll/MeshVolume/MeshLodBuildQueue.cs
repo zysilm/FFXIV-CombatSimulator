@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 namespace AdvancedRagdoll.MeshVolume;
 
 /// <summary>Serial background simplification of private managed snapshots. No native/game access.</summary>
-public sealed class MeshLodBuildQueue : IDisposable
+internal sealed class MeshLodBuildQueue : IDisposable
 {
     public readonly record struct Completion(int BodyId, MeshCollisionLodResult? Lod, Exception? Error);
     private readonly ConcurrentQueue<Completion> completed = new();

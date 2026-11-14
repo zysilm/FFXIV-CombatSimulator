@@ -10,7 +10,7 @@ namespace AdvancedRagdoll;
 public unsafe partial class Ragdoll
 {
     /// <summary>Debug draw data for a single ragdoll capsule body.</summary>
-    public struct DebugCapsule
+    internal struct DebugCapsule
     {
         public Vector3 Position;      // capsule center (world space)
         public Quaternion Orientation; // capsule rotation
@@ -29,7 +29,7 @@ public unsafe partial class Ragdoll
     /// Get current capsule positions/sizes for debug rendering.
     /// Returns empty if ragdoll is not active.
     /// </summary>
-    public List<DebugCapsule> GetDebugCapsules()
+    internal List<DebugCapsule> GetDebugCapsules()
     {
         var result = new List<DebugCapsule>();
         if (!isActive || simulation == null) return result;
@@ -65,7 +65,7 @@ public unsafe partial class Ragdoll
     /// Get capsule positions from the live skeleton pose (for overlay when ragdoll is OFF).
     /// Reads bone world positions from the character's current animation pose.
     /// </summary>
-    public List<DebugCapsule> GetDebugCapsulesFromSkeleton(nint characterAddress)
+    internal List<DebugCapsule> GetDebugCapsulesFromSkeleton(nint characterAddress)
     {
         var result = new List<DebugCapsule>();
         var skel = skeletons.TryGetSkeleton(characterAddress);
@@ -113,12 +113,12 @@ public unsafe partial class Ragdoll
     /// work), tracking living characters' collision, and stepping physics; and how many ragdoll
     /// frames were stepped (not resting) and how many character collision sets were tracked.
     /// </summary>
-    public readonly record struct FrameCost(int Frames, int SteppedFrames, long TrackedColliders,
+    internal readonly record struct FrameCost(int Frames, int SteppedFrames, long TrackedColliders,
         double TotalMs, double CollidersMs, double PhysicsMs);
 
     private static long costFrames, costStepped, costTracked, costTotalTicks, costColliderTicks, costPhysicsTicks;
 
-    public static FrameCost TakeFrameCost()
+    internal static FrameCost TakeFrameCost()
     {
         static double Ms(long ticks) => ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
         var cost = new FrameCost((int)costFrames, (int)costStepped, costTracked,

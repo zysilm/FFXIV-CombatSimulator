@@ -9,13 +9,13 @@ using AdvancedRagdoll.Hosting;
 namespace CombatSimulator.Animation.Hosting;
 
 /// <summary>The plugin's settings source: copies the user's <see cref="Configuration"/> (stays in the plugin with it).</summary>
-public sealed class ConfigRagdollSettings : IRagdollSettingsSource
+internal sealed class ConfigRagdollSettings : IHostSettingsSource
 {
     private readonly Configuration config;
 
     public ConfigRagdollSettings(Configuration config) => this.config = config;
 
-    public bool Refresh(RagdollSettings s)
+    public bool Refresh(HostSettings s)
     {
         var c = config;
         var changed = false;

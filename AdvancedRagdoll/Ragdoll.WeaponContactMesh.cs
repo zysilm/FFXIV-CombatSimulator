@@ -82,7 +82,7 @@ public unsafe partial class Ragdoll
             {
                 RemoveConstraintsOnBody(proxy.Body);
                 try { simulation.Bodies.Remove(proxy.Body); }
-                catch (Exception ex) { log.Warning(ex, $"RagdollController: failed to remove weapon contact surface {proxy.Body.Value}"); }
+                catch (Exception ex) { log.Warning(ex, $"Ragdoll: failed to remove weapon contact surface {proxy.Body.Value}"); }
                 try { simulation.Shapes.RemoveAndDispose(proxy.Shape, bufferPool); } catch { }
             }
         ClearWeaponContactProxyState();
@@ -144,7 +144,7 @@ public unsafe partial class Ragdoll
     /// <summary>A dropped weapon's collision hulls from the model it is drawn with (the mesh source reads it), or
     /// null when mesh collision for weapons is off or the model is unsupported. <paramref name="draw"/> is the weapon's
     /// draw object, an opaque id handed to the mesh source (0 = none).</summary>
-    public WeaponMeshGeometry? TryBuildWeaponMesh(nint draw)
+    internal WeaponMeshGeometry? TryBuildWeaponMesh(nint draw)
     {
         if (!settings.WeaponDropMeshCollision || draw == 0) return null;
         var result = meshes.BuildWeaponMesh(draw, settings.RagdollVerboseLog);

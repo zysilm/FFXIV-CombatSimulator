@@ -10,9 +10,9 @@ namespace AdvancedRagdoll;
 
 public unsafe partial class Ragdoll
 {
-    public bool IsStandingSupportActive => standingActive;
+    internal bool IsStandingSupportActive => standingActive;
 
-    private static ImmutableArray<string> StandingSpineBones => HumanoidSkeleton.StandingSupportSpine;
+    private ImmutableArray<string> StandingSpineBones => skeletonProfile.StandingSupportSpine;
 
     private bool CreateStandingSupportCore(Vector3 anchorWorldPos, Quaternion uprightRot, string anchorBoneName)
     {
@@ -29,7 +29,7 @@ public unsafe partial class Ragdoll
         BuildStandingConstraints(anchorWorldPos, uprightRot, anchorBoneName);
         standingActive = true;
         ApplyStandingAnchorCorrection();
-        log.Info($"RagdollController: Standing support created — {standingConstraints.Count} constraints, anchor={anchorBoneName} ({anchorWorldPos.X:F2},{anchorWorldPos.Y:F2},{anchorWorldPos.Z:F2})");
+        log.Info($"Ragdoll: Standing support created — {standingConstraints.Count} constraints, anchor={anchorBoneName} ({anchorWorldPos.X:F2},{anchorWorldPos.Y:F2},{anchorWorldPos.Z:F2})");
         return true;
     }
 
@@ -149,7 +149,7 @@ public unsafe partial class Ragdoll
 
         standingActive = false;
         BeginBiomechanicalSettle();
-        log.Info("RagdollController: Standing support removed");
+        log.Info("Ragdoll: Standing support removed");
     }
 
     private bool CreateWristConstraintsCore(Vector3 leftTarget, Vector3 rightTarget,
@@ -163,8 +163,8 @@ public unsafe partial class Ragdoll
 
         wristForce = force;
         wristFreq  = freq;
-        BuildWristConstraint(Bones.Hand.Left, leftTarget);
-        BuildWristConstraint(Bones.Hand.Right, rightTarget);
+        BuildWristConstraint(skeletonProfile.Landmarks.Hand.Left, leftTarget);
+        BuildWristConstraint(skeletonProfile.Landmarks.Hand.Right, rightTarget);
         BeginBiomechanicalSettle();
         return wristConstraints.Count > 0;
     }
@@ -177,8 +177,8 @@ public unsafe partial class Ragdoll
             try { simulation.Solver.Remove(h); } catch { }
         wristConstraints.Clear();
 
-        BuildWristConstraint(Bones.Hand.Left, leftTarget);
-        BuildWristConstraint(Bones.Hand.Right, rightTarget);
+        BuildWristConstraint(skeletonProfile.Landmarks.Hand.Left, leftTarget);
+        BuildWristConstraint(skeletonProfile.Landmarks.Hand.Right, rightTarget);
         return true;
     }
 

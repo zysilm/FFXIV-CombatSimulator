@@ -8,7 +8,7 @@ namespace AdvancedRagdoll;
 /// Physics constants that used to be Ragdoll-page settings. Every value equals the setting's former
 /// default; the runtime clamps that applied to the settings still apply where the values are used.
 /// </summary>
-public static class RagdollTuning
+internal static class RagdollTuning
 {
     // The coarse collision LOD tolerance (mm) of the body surface weapons collide with (moved here from the
     // plugin's Configuration in stage A4; it was a constant there too).

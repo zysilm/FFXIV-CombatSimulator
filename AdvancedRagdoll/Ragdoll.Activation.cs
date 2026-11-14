@@ -5,6 +5,7 @@
 using System;
 using System.Numerics;
 using AdvancedRagdoll.Hosting;
+using AdvancedRagdoll.Recording;
 
 namespace AdvancedRagdoll;
 
@@ -12,7 +13,7 @@ public unsafe partial class Ragdoll
 {
     // --- Follow-position transform, deferred out of the render hook ---
     //
-    // The follow feature moves the corpse's DrawObject (or the NPC phantom's GameObject) to
+    // The follow feature moves the corpse's draw object (or the NPC phantom's GameObject) to
     // the ragdoll root so the culling sphere tracks a thrown body. Doing that write INSIDE
     // the render hook — where the physics step runs — mutates the render scene graph while
     // the game is iterating it, and the corruption detonates later as the recurring native
@@ -24,7 +25,7 @@ public unsafe partial class Ragdoll
 
     /// <summary>Once per game tick (the plugin subscribes it to Framework.Update): the deferred follow write and the live
     /// hair's ground samples.</summary>
-    protected internal unsafe void OnFrameworkTick()
+    internal unsafe void OnFrameworkTick()
     {
         SampleAnimatedHairTerrain();
         if (!pendingFollowPos.HasValue)
@@ -50,20 +51,20 @@ public unsafe partial class Ragdoll
     }
 
     /// <summary>Arms the ragdoll the way the options say: their delay, and their choice of when physics starts.</summary>
-    public void Activate(nint characterAddress)
+    internal void Activate(nint characterAddress)
     {
         Activate(characterAddress, settings.RagdollActivationDelay, RagdollTrigger.ClampMode(settings.RagdollTriggerMode));
     }
 
     /// <summary>Arms the ragdoll to start physics a fixed time from now.</summary>
-    public void Activate(nint characterAddress, float delayOverride)
+    internal void Activate(nint characterAddress, float delayOverride)
     {
         Activate(characterAddress, delayOverride, RagdollTriggerMode.FixedDelay);
     }
 
     /// <param name="delay">Seconds to wait in <see cref="RagdollTriggerMode.FixedDelay"/>; the fallback in the other modes.</param>
     /// <param name="stagger">Extra seconds after the moment is reached, to spread out ragdolls that start together.</param>
-    public void Activate(nint characterAddress, float delay, RagdollTriggerMode mode, float stagger = 0f)
+    internal void Activate(nint characterAddress, float delay, RagdollTriggerMode mode, float stagger = 0f)
     {
         if (isActive) Deactivate();
 
@@ -76,7 +77,7 @@ public unsafe partial class Ragdoll
         elapsed = 0f;
         physicsStarted = false;
         animationFrozen = false;
-        if (host.Build.OptionalModule)
+        if (host.Build.RestoresFollowPosition)
             followWasActive = false;
         isActive = true;
         lastFrameTimestamp = 0;
@@ -87,7 +88,7 @@ public unsafe partial class Ragdoll
         biomechanicalSettleRemaining = 0f;
         hasPrevPhysicsState = false;
         // Save original position so we can restore if FollowPosition is toggled off
-        savedCharacterPosition = actors.GetPosition(characterAddress, ActorReadSite.Activation);
+        savedCharacterPosition = actors.GetPosition(characterAddress, ActorSite.Activation);
         targetEntityId = actors.GetEntityId(characterAddress);
         // The local player is always object-table index 0 (same convention the render pass uses).
         // Captured once here rather than re-read per frame, because it decides how the rig is BUILT
@@ -99,7 +100,7 @@ public unsafe partial class Ragdoll
         ArmConfiguredGuidedCollapse();
         RecBeginActivation(delay, mode, stagger);
 
-        log.Info($"RagdollController: Activated for 0x{characterAddress:X} (start: {RagdollTrigger.Labels[(int)mode]}, delay={activationDelay:F1}s)");
+        log.Info($"Ragdoll: Activated for 0x{characterAddress:X} (start: {RagdollTrigger.Labels[(int)mode]}, delay={activationDelay:F1}s)");
     }
 
     private void DeactivateCore()
@@ -118,11 +119,11 @@ public unsafe partial class Ragdoll
             try
             {
                 actors.SetAnimationSpeed(targetCharacterAddress, savedOverallSpeed);
-                log.Info($"RagdollController: Animation restored (speed={savedOverallSpeed:F2})");
+                log.Info($"Ragdoll: Animation restored (speed={savedOverallSpeed:F2})");
             }
             catch (Exception ex)
             {
-                log.Warning(ex, "RagdollController: Failed to restore animation speed");
+                log.Warning(ex, "Ragdoll: Failed to restore animation speed");
             }
         }
 
@@ -131,11 +132,11 @@ public unsafe partial class Ragdoll
         // keep squashed flesh.
         RestoreSquashScalesOnDeactivate();
 
-        // If follow moved the local player's client-side render transform, snap the DrawObject
+        // If follow moved the local player's client-side render transform, snap the draw object
         // back to the frozen death position so there is no one-frame pop before the game
         // re-syncs it from the (never-moved) logical position on revive. NPC phantoms are left
         // as-is (they despawn or are repositioned elsewhere), matching the prior behaviour.
-        if (host.Build.OptionalModule)
+        if (host.Build.RestoresFollowPosition)
         {
             if (followWasActive && targetCharacterAddress != nint.Zero && actors.GameRunning)
             {
@@ -146,7 +147,7 @@ public unsafe partial class Ragdoll
                 }
                 catch (Exception ex)
                 {
-                    log.Warning(ex, "RagdollController: Failed to restore DrawObject position on deactivate");
+                    log.Warning(ex, "Ragdoll: Failed to restore draw object position on deactivate");
                 }
             }
             followWasActive = false;
@@ -175,7 +176,7 @@ public unsafe partial class Ragdoll
         RemoveHairRig();
 
         DestroySimulation();
-        log.Info("RagdollController: Deactivated");
+        log.Info("Ragdoll: Deactivated");
     }
 
     // --- Coordinate conversion using Skeleton.Transform ---
@@ -207,7 +208,7 @@ public unsafe partial class Ragdoll
                 return false;
             triggeredAt = elapsed;
             if (trigger.Automatic)
-                log.Info($"RagdollController: physics starts {elapsed:F2}s after death.");
+                log.Info($"Ragdoll: physics starts {elapsed:F2}s after death.");
         }
         return elapsed >= triggeredAt + triggerStagger;
     }
@@ -226,7 +227,7 @@ public unsafe partial class Ragdoll
             var skel = skeletons.TryGetSkeleton(targetCharacterAddress);
             if (skel == null) return;
 
-            var pelvis = ResolveBoneIndex(skel, Bones.Pelvis);
+            var pelvis = ResolveBoneIndex(skel, skeletonProfile.Landmarks.Pelvis);
             if (pelvis >= 0 && pelvis < skel.BoneCount)
                 middleHeight = skel.ModelPose[pelvis].Translation.Y * GetCharacterScale(targetCharacterAddress, skel).Y;
 

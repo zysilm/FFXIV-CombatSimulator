@@ -8,7 +8,7 @@ using BepuUtilities.Memory;
 namespace AdvancedRagdoll;
 
 /// <summary>Bounded, closed compound fitted to clipped mesh triangles, not a single resource AABB.</summary>
-public sealed class WeaponMeshGeometry
+internal sealed class WeaponMeshGeometry
 {
     public readonly record struct Part(Vector3 Center, Vector3 Half, Vector3[] Points, float Volume);
     public Part[] Parts { get; private init; } = Array.Empty<Part>();

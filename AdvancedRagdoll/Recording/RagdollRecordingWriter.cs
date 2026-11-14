@@ -29,7 +29,7 @@ namespace AdvancedRagdoll.Recording;
 /// written, and neither is anything after it except the closing <see cref="RecordType.End"/> record,
 /// so a file never has a hole in the middle.
 /// </summary>
-public sealed class RagdollRecordingWriter : IDisposable
+internal sealed class RagdollRecordingWriter : IDisposable
 {
     private const int HeaderBytes = 6;
 
@@ -423,7 +423,7 @@ public sealed class RagdollRecordingWriter : IDisposable
 /// or refused; after the first refusal the budget stays <see cref="Exhausted"/>, so every writer
 /// that shares it stops at its next record.
 /// </summary>
-public sealed class RagdollRecordingBudget
+internal sealed class RagdollRecordingBudget
 {
     private long used;
     private volatile bool exhausted;

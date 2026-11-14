@@ -13,7 +13,7 @@ namespace AdvancedRagdoll.Hosting;
 // and the weapon's draw object address in the plugin), as everywhere else in the host interfaces.
 
 /// <summary>A character's weapon slot.</summary>
-public enum DrawnWeaponSlot
+internal enum DrawnWeaponSlot
 {
     MainHand = 0,
     OffHand = 1,
@@ -23,7 +23,7 @@ public enum DrawnWeaponSlot
 /// The weapons a character draws: each is a separate draw object with a skeleton of its own, whose root the host
 /// attaches to the hand every frame before the simulation runs.
 /// </summary>
-public interface IWeaponDrawSource
+internal interface IWeaponDrawSource
 {
     /// <summary>The weapon drawn in a slot (opaque id), or 0 when the slot is unarmed or not loaded.
     /// <paramref name="actor"/> is never 0.</summary>
@@ -33,7 +33,7 @@ public interface IWeaponDrawSource
     bool TryGetRoot(nint weapon, out Vector3 position, out Quaternion rotation);
 
     /// <summary>The weapon's own skeleton with a readable pose, or null.</summary>
-    ISkeletonPose? TryGetSkeleton(nint weapon);
+    IHostSkeleton? TryGetSkeleton(nint weapon);
 
     /// <summary>The scale the weapon is drawn with.</summary>
     Vector3 GetDrawScale(nint weapon);
@@ -44,17 +44,17 @@ public interface IWeaponDrawSource
 }
 
 /// <summary>The host services of a dropped-weapon simulation.</summary>
-public sealed class WeaponDropHost
+internal sealed class WeaponDropHost
 {
     /// <summary>The characters' body skeletons (their pose drives the kinematic body colliders).</summary>
-    public required ISkeletonSource Skeletons { get; init; }
+    public required IHostSkeletonSource Skeletons { get; init; }
     /// <summary>Ground rays for the terrain patch under each drop.</summary>
-    public required IWorldQuery World { get; init; }
+    public required IHostWorldQuery World { get; init; }
     /// <summary>The local player and the characters' draw scale.</summary>
-    public required IRagdollActor Actors { get; init; }
+    public required IHostActors Actors { get; init; }
     public required IWeaponDrawSource Weapons { get; init; }
     /// <summary>Read when a drop spawns (which characters get the detailed mesh contacts).</summary>
-    public required IRagdollSettingsSource Settings { get; init; }
+    public required IHostSettingsSource Settings { get; init; }
     public required IRagdollLog Log { get; init; }
     /// <summary>Which arm bones hold the weapon (their contacts are suppressed until the weapon has left the hand).</summary>
     public required SkeletonProfile Profile { get; init; }

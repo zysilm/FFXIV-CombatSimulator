@@ -127,7 +127,7 @@ public unsafe class BoneTransformService : IDisposable
     /// Preserves physics by never touching LocalPose.
     /// Returns modification result for further processing (head follow, partial skeleton propagation).
     /// </summary>
-    public BoneModificationResult ApplyRotationDeltas(
+    internal BoneModificationResult ApplyRotationDeltas(
         SkeletonAccess skel,
         Dictionary<int, Quaternion> deltas,
         HashSet<int>? skipBones = null)
@@ -203,7 +203,7 @@ public unsafe class BoneTransformService : IDisposable
     /// Write a bone's ModelPose transform directly and update accumulated delta tracking.
     /// Use this for custom bone handling (e.g., head follow modes).
     /// </summary>
-    public void WriteBoneTransform(
+    internal void WriteBoneTransform(
         SkeletonAccess skel,
         int boneIndex,
         Vector3 newPos,
@@ -235,7 +235,7 @@ public unsafe class BoneTransformService : IDisposable
     /// Propagate a connection bone's changes to all partial skeletons whose root matches the given bone name.
     /// Required for bones like j_kao (head) that are connection points between body and face skeletons.
     /// </summary>
-    public void PropagateToPartialSkeletons(
+    internal void PropagateToPartialSkeletons(
         SkeletonAccess skel,
         int boneIndex,
         string boneName,

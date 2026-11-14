@@ -199,6 +199,20 @@ public sealed class Ragdoll : IDisposable
 
 `Step` 和 `WritePose` 分开，是为了让宿主可以在自己的物理时点推进、在出图前写骨。插件的适配器在同一个渲染钩子里紧挨着调用两者，与今天的 `StepAndApply` 顺序相同。帧间隔的夹紧（3018–3033：首帧给 1/60，上限 0.1 s）做成库里的小工具 `FrameTimer`，由适配器使用。
 
+### 2.4 A7 实际落地的公开 API（与上面草图的差别）
+
+A7 把上面的草图做成了一层门面（`AdvancedRagdoll/Hosting/RagdollHost.cs`、`AdvancedRagdoll/Ragdoll.Facade.cs`），内部代码一行不改；插件仍走内部接口。
+
+- **两层宿主接口**：公开的是草图里的名字（`ISkeletonPose`、`IWorldQuery`、`IRagdollActor`、`RagdollHost`、`RagdollSettings`、`IRagdollSettingsSource`）；原来插件和回放实现的 `nint` 版接口改名为 internal 的 `IHostSkeleton`、`IHostSkeletonSource`、`IHostWorldQuery`、`IHostActors`、`IHostColliders`、`IHostSettingsSource`、`HostSettings`、`RagdollHostServices`。门面里的适配器（`FacadeHost`）把公开接口接到内部接口上：`ActorId` ↔ 不透明编号；每次 `Step` 开头把各子骨架整批读进缓冲区，内部代码在缓冲区里原地读写，`WritePose` 只把变了的骨整批写回；`Step(dt)` 的 dt 经一个手动时钟交给内部的帧间隔计算（其余墙钟读数仍是 Stopwatch）；设置在 `Activate` 时取快照、每步开头取实时项。
+- **与草图不同的地方**：`IRagdollActor.IsAlive` 改名 `Exists`（布娃娃的主人本来就死了，这里问的是“还是不是同一个角色”）；动画样本是公开的 `AnimationSample(ulong Id, …)`；`SkeletonPart` 多一个 `AttachingBone`（附属子骨架里与挂点重合的那根骨）；`Step` 返回 `RagdollPhase`，另有 `Phase` 属性；`RagdollActivation` 的三个参数都有默认值。
+- **这一版没有公开的**：其他角色的碰撞体（`IColliderActorProvider`）、网格源、时钟 / 随机数 / 调度器注入、冲量与抓取等其余方法、扩展点（0.1 里整个 `AdvancedRagdoll.Bepu` 命名空间和 `Ragdoll.RagdollColliderShape` 都是 internal，插件和私有模块经 `InternalsVisibleTo` 使用）。`SkeletonProfile.IsAuto` 只读（internal init）。`WeaponDropSimulation` 仍是 public：插件的公开类 `WeaponDropController` 继承它。`FrameTimer` 没有做：夹紧在库内部（首帧 1/60，上限 0.1 s）。
+- **每帧顺序**：§3.1 的写法是先 `SetModelPose` 放动画姿态、再 `Step`、再 `WritePose`（与 README 一致）。`Step` 在等待阶段读这一帧的动画姿态来判触发、算交接速度，所以姿态要在 `Step` 之前放好。
+- **角色消失**：`IRagdollActor.Exists` 变 false 时布娃娃自己停用、不调 `OnDeactivated`（没有身体可还）；同一个 `Ragdoll` 之后可以再 `Activate`，物理会重新开始并再次调 `OnPhysicsStarted`。
+- **`SkeletonProfile.Auto()` 没有骨盆地标**：看身体中部高度的触发（`FallingFastest`、`Landed`）读不到高度，退回到死亡动画结束时开始，没有动画样本时按 `Delay`（至少 1 s）。
+- **包**：版本 `0.1.0-beta.1`，BepuPhysics 依赖钉死为 `[2.5.0-beta.22]`。
+- **profile 每实例一份**：`Ragdoll` 的构造参数里有 `SkeletonProfile`；`Ragdoll.UseHumanoidProfile` 只剩插件的默认 profile（internal，插件自己的代码读 `AllBoneDefaults`/`DefaultBoneDefs`）。用默认 profile 的布娃娃共用同一份骨骼表数组，与以前相同。`SkeletonProfile.Auto()` 作构造参数时，任何骨架都走通用自动建骨。
+- **离线样例**：`Tests/LibrarySample` 只引用库项目，用手写的 22 骨人形 + 平地走完 §3.1 的用法，断言会倒下、落地、静止、两次运行逐位相同，以及角色消失后再激活时物理重新开始、`OnPhysicsStarted` 再次触发。
+
 ## 3. 用法
 
 ### 3.1 别的 .NET 游戏：一个角色 + 地面
@@ -219,8 +233,9 @@ ragdoll.Activate(new RagdollActivation(RagdollTriggerMode.FixedDelay, Delay: 0f)
 void Update(float dt)
 {
     skeleton.SetRoot(actor.Position, actor.Rotation, Vector3.One);
-    if (ragdoll.Step(dt) == RagdollPhase.Waiting)
-        skeleton.SetModelPose(actor.AnimatedModelPose);      // 物理开始前：动画姿态（用来算交接速度）
+    if (ragdoll.Phase == RagdollPhase.Waiting)
+        skeleton.SetModelPose(actor.AnimatedModelPose);      // 物理开始前：先放动画姿态，再 Step（Step 读它判触发、算交接速度）
+    ragdoll.Step(dt);
     if (ragdoll.WritePose())
         actor.SetModelPose(skeleton.ModelPose);              // 物理开始后：库算出的姿态
 }

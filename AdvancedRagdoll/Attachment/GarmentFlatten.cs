@@ -10,7 +10,7 @@ namespace AdvancedRagdoll.Attachment;
 /// flat panel. This class holds the pose-independent maths: is a segment off the body, how far has it
 /// collapsed, and what that does to a bone, a point skinned to it and the segment's collision box.
 /// </summary>
-public static class GarmentFlatten
+internal static class GarmentFlatten
 {
     /// <summary>Thickness a fully collapsed segment keeps, as a fraction of its worn depth.</summary>
     public const float CollapsedThickness = 0.2f;

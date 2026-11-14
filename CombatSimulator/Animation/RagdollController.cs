@@ -58,8 +58,8 @@ public unsafe class RagdollController : Ragdoll
     /// rendered frame (the plugin subscribes it to the render hook) and the public methods. Offline
     /// (<paramref name="boneService"/> null) nothing is subscribed.
     /// </summary>
-    internal RagdollController(RagdollHost host, BoneTransformService? boneService = null)
-        : base(host, new CollapseProfileBook(host.Log))
+    internal RagdollController(RagdollHostServices host, BoneTransformService? boneService = null)
+        : base(host, new CollapseProfileBook(host.Log), FfxivHumanoidProfile.Profile)
     {
         this.boneService = boneService;
     }
@@ -83,7 +83,7 @@ public unsafe class RagdollController : Ragdoll
 
     /// <summary>A dropped weapon's collision hulls from the model it is drawn with, or null when mesh collision for
     /// weapons is off or the model is unsupported.</summary>
-    public WeaponMeshGeometry? TryBuildWeaponMesh(DrawObject* draw) => TryBuildWeaponMesh((nint)draw);
+    internal WeaponMeshGeometry? TryBuildWeaponMesh(DrawObject* draw) => TryBuildWeaponMesh((nint)draw);
 
     /// <inheritdoc cref="Ragdoll.CreateStandingSupport"/>
     public new bool CreateStandingSupport(Vector3 anchorWorldPos, Quaternion uprightRot, string anchorBoneName = FfxivHumanoidProfile.PelvisBoneName)

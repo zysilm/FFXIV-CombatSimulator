@@ -22,13 +22,15 @@ namespace CombatSimulator.Animation.Hosting;
 /// <summary>Builds the host of a controller from the plugin's services.</summary>
 internal static class FfxivRagdollHost
 {
-    public static RagdollHost Create(BoneTransformService boneService, Configuration config, IPluginLog log,
+    public static RagdollHostServices Create(BoneTransformService boneService, Configuration config, IPluginLog log,
         Npcs.NpcSelector? npcSelector, Safety.MovementBlockHook? movementBlockHook,
         Func<IReadOnlyList<nint>>? extraCollisionProvider)
     {
         var actors = new FfxivRagdollActor(movementBlockHook);
         var ragdollLog = new DalamudRagdollLog(log);
-        return new RagdollHost
+        // One scheduler for the controller and its mesh source (the background fits and the hair load).
+        var scheduler = TaskRagdollScheduler.Instance;
+        return new RagdollHostServices
         {
             Skeletons = new FfxivSkeletonSource(boneService),
             World = FfxivWorldQuery.Instance,
@@ -36,29 +38,31 @@ internal static class FfxivRagdollHost
             Colliders = new FfxivColliderActors(npcSelector, movementBlockHook, extraCollisionProvider),
             Settings = new ConfigRagdollSettings(config),
             Log = ragdollLog,
-            Scheduler = TaskRagdollScheduler.Instance,
-            Meshes = new FfxivMeshSource(boneService, actors, ragdollLog, TaskRagdollScheduler.Instance),
+            Scheduler = scheduler,
+            Meshes = new FfxivMeshSource(boneService, actors, ragdollLog, scheduler),
             Build = ThisBuild,
         };
     }
 
-    /// <summary>This plugin build, for the library (compiled once): written into recordings, and the optional module
-    /// also resets and restores the follow position per activation (the conditional code the controller had).</summary>
+    /// <summary>This plugin build, for the library (compiled once): written into recordings (with the plugin's version);
+    /// the build with the optional module also resets and restores the follow position per activation (the conditional
+    /// code the controller had).</summary>
     internal static readonly RagdollBuildInfo ThisBuild = new(
 #if DEV_EXPERIMENTAL
-        OptionalModule: true,
+        RestoresFollowPosition: true,
 #else
-        OptionalModule: false,
+        RestoresFollowPosition: false,
 #endif
 #if PUBLIC_BUILD
-        PublicBuild: true);
+        PublicBuild: true,
 #else
-        PublicBuild: false);
+        PublicBuild: false,
 #endif
+        HostVersion: typeof(FfxivRagdollHost).Assembly.GetName().Version?.ToString());
 }
 
 /// <summary>A character's skeleton read straight from the game's memory, valid for the current frame.</summary>
-internal sealed unsafe class FfxivSkeletonPose : ISkeletonPose
+internal sealed unsafe class FfxivSkeletonPose : IHostSkeleton
 {
     public SkeletonAccess Access;
 
@@ -71,7 +75,7 @@ internal sealed unsafe class FfxivSkeletonPose : ISkeletonPose
     }
 
     /// <summary>The raw game skeleton behind a pose, for the mesh source (FfxivMeshSource), which reads the models.</summary>
-    public static SkeletonAccess Of(ISkeletonPose skeleton) => skeleton is FfxivSkeletonPose game
+    public static SkeletonAccess Of(IHostSkeleton skeleton) => skeleton is FfxivSkeletonPose game
         ? game.Access
         : throw new NotSupportedException("Only a skeleton read from the game has the game's models behind it.");
 
@@ -186,7 +190,7 @@ internal sealed unsafe class FfxivSkeletonPose : ISkeletonPose
     public int PartConnectedParentBone(int part) => GameRoot->PartialSkeletons[part].ConnectedParentBoneIndex;
 }
 
-internal sealed class FfxivSkeletonSource : ISkeletonSource
+internal sealed class FfxivSkeletonSource : IHostSkeletonSource
 {
     private readonly BoneTransformService boneService;
 
@@ -198,7 +202,7 @@ internal sealed class FfxivSkeletonSource : ISkeletonSource
 
     public BoneTransformService BoneService => boneService;
 
-    public ISkeletonPose? TryGetSkeleton(nint actor, SkeletonReadSite site = SkeletonReadSite.Other)
+    public IHostSkeleton? TryGetSkeleton(nint actor, PosePurpose site = PosePurpose.Other)
     {
         var access = boneService.TryGetSkeleton(actor);
         if (access == null) return null;
@@ -215,7 +219,7 @@ internal sealed class FfxivSkeletonSource : ISkeletonSource
     public Vector3? GetBoneWorldPosition(nint actor, string boneName) => boneService.GetBoneWorldPos(actor, boneName);
 }
 
-internal sealed class FfxivWorldQuery : IWorldQuery
+internal sealed class FfxivWorldQuery : IHostWorldQuery
 {
     public static readonly FfxivWorldQuery Instance = new();
 
@@ -242,7 +246,7 @@ internal sealed class FfxivWorldQuery : IWorldQuery
         => WorldCollisionMesh.TryFindWaterSurface(position, searchAbove, searchBelow, out surfaceY);
 }
 
-internal sealed unsafe class FfxivRagdollActor : IRagdollActor
+internal sealed unsafe class FfxivRagdollActor : IHostActors
 {
     private readonly Safety.MovementBlockHook? movementBlockHook;
 
@@ -265,13 +269,13 @@ internal sealed unsafe class FfxivRagdollActor : IRagdollActor
         return false;
     }
 
-    public Vector3 GetPosition(nint actor, ActorReadSite site)
+    public Vector3 GetPosition(nint actor, ActorSite site)
     {
         var go = (GameObject*)actor;
         return new Vector3(go->Position.X, go->Position.Y, go->Position.Z);
     }
 
-    public float GetFacing(nint actor, ActorReadSite site) => ((GameObject*)actor)->Rotation;
+    public float GetFacing(nint actor, ActorSite site) => ((GameObject*)actor)->Rotation;
     public uint GetEntityId(nint actor) => ((GameObject*)actor)->EntityId;
 
     /// <summary>The Dalamud game object id (only asked of the local player, as before).</summary>
@@ -296,7 +300,7 @@ internal sealed unsafe class FfxivRagdollActor : IRagdollActor
         modelCharaId = character->ModelContainer.ModelCharaId;
     }
 
-    public void ReadModelType(nint actor, ISkeletonPose? skeleton, out int modelType, out int raceSexId)
+    public void ReadModelType(nint actor, IHostSkeleton? skeleton, out int modelType, out int raceSexId)
     {
         modelType = -1;
         raceSexId = -1;
@@ -329,7 +333,7 @@ internal sealed unsafe class FfxivRagdollActor : IRagdollActor
     }
 }
 
-internal sealed unsafe class FfxivColliderActors : IColliderActorProvider
+internal sealed unsafe class FfxivColliderActors : IHostColliders
 {
     private readonly Npcs.NpcSelector? npcSelector;
     private readonly Safety.MovementBlockHook? movementBlockHook;

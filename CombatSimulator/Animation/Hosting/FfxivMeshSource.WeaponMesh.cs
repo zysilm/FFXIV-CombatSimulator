@@ -12,13 +12,12 @@ internal sealed unsafe partial class FfxivMeshSource
 {
     // A dropped weapon's collision hulls from its drawn model (moved here from RagdollController.WeaponMesh.cs
     // in stage A2b, unchanged; the setting check and the warning stay in RagdollController.TryBuildWeaponMesh).
-    public WeaponMeshGeometry? BuildWeaponMesh(nint weaponDrawObject, bool verboseLog)
+    public WeaponMeshGeometry? BuildWeaponMesh(nint weaponModel, bool verboseLog)
     {
-        FfxivMeshSource.verboseLog = verboseLog;
-        return BuildWeaponMesh((DrawObject*)weaponDrawObject);
+        return BuildWeaponMesh((DrawObject*)weaponModel, verboseLog);
     }
 
-    private WeaponMeshGeometry? BuildWeaponMesh(DrawObject* draw)
+    private WeaponMeshGeometry? BuildWeaponMesh(DrawObject* draw, bool verboseLog)
     {
         var clock = Stopwatch.StartNew();
         try
@@ -55,7 +54,7 @@ internal sealed unsafe partial class FfxivMeshSource
                     if (index >= mdl.VertexDeclarations.Length) return null;
                     var mesh = mdl.Meshes[index];
                     if (triangles.Count + mesh.IndexCount / 3 > 120000) return null;
-                    var map = BuildMdlMeshBoneMap(mdl, mesh, ns);
+                    var map = BuildMdlMeshBoneMap(mdl, mesh, ns, verboseLog);
                     var vertices = new Vector3[mesh.VertexCount];
                     for (var i = 0; i < vertices.Length; i++)
                     {

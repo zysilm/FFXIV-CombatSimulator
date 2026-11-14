@@ -9,7 +9,7 @@ namespace AdvancedRagdoll;
 
 // Moved from the plugin's BoneTransformService.cs in stage A4 (the ragdoll's pose writer uses it).
 /// <summary>Result of applying bone modifications. Contains originals and accumulated deltas for further processing.</summary>
-public class BoneModificationResult
+internal class BoneModificationResult
 {
     public Vector3[] OriginalPositions;
     public Quaternion[] OriginalRotations;

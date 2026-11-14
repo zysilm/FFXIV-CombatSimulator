@@ -11,7 +11,7 @@ namespace AdvancedRagdoll;
 public unsafe partial class Ragdoll
 {
     // Collapse the given limb's entire bone subtree to ~0 scale so the limb vanishes from the body.
-    private void HideLimbSubtree(ISkeletonPose skel, string rootName)
+    private void HideLimbSubtree(IHostSkeleton skel, string rootName)
     {
         if (string.IsNullOrEmpty(rootName)) return;
 
@@ -50,7 +50,7 @@ public unsafe partial class Ragdoll
         HideSubtreePartialSkeletons(skel, rootIdx, new Vector3(rx, ry, rz));
     }
 
-    private void HideSubtreePartialSkeletons(ISkeletonPose skel, int rootIdx, Vector3 collapsePoint)
+    private void HideSubtreePartialSkeletons(IHostSkeleton skel, int rootIdx, Vector3 collapsePoint)
     {
         if (!skel.HasRoot) return;
 
@@ -82,7 +82,7 @@ public unsafe partial class Ragdoll
         }
     }
 
-    private static bool IsDescendantOrSelf(ISkeletonPose skel, int bone, int root)
+    private static bool IsDescendantOrSelf(IHostSkeleton skel, int bone, int root)
     {
         var guard = 0;
         while (bone >= 0 && guard++ < 256)
@@ -94,7 +94,7 @@ public unsafe partial class Ragdoll
     }
 
     /// <summary>Index of a body bone by name, or -1 (what BoneTransformService.ResolveBoneIndex does).</summary>
-    internal static int ResolveBoneIndex(ISkeletonPose skel, string boneName)
+    internal static int ResolveBoneIndex(IHostSkeleton skel, string boneName)
     {
         var count = Math.Min(skel.BoneCount, skel.BoneNameCount);
         for (int i = 0; i < count; i++)
@@ -110,7 +110,7 @@ public unsafe partial class Ragdoll
     /// does to the game's memory, here on any skeleton).
     /// </summary>
     private static void WriteBoneTransform(
-        ISkeletonPose skel,
+        IHostSkeleton skel,
         int boneIndex,
         Vector3 newPos,
         Quaternion newRot,
@@ -142,7 +142,7 @@ public unsafe partial class Ragdoll
     /// BoneTransformService.PropagateToPartialSkeletons does to the game's memory, here on any skeleton).
     /// </summary>
     private static void PropagateToPartialSkeletons(
-        ISkeletonPose skel,
+        IHostSkeleton skel,
         int boneIndex,
         string boneName,
         BoneModificationResult result)

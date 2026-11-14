@@ -16,19 +16,18 @@ namespace AdvancedRagdoll.Hosting;
 
 // What the ragdoll asks of its host (docs/RAGDOLL_LIBRARY_ARCHITECTURE.md §2.3, stages A2a and A2b).
 //
-// Stage A2a made these in the plugin assembly; stage A4 moved them into the library unchanged. Two departures
-// from the §2.3 sketch, both to keep every memory access and every float operation exactly as it was (both
-// still open after A4, which changed no signature):
-// - actors are still identified by the game object address (nint, used only as an opaque id); the
-//   nint -> ActorId swap the design describes is still to do;
-// - a skeleton hands out its model pose as a writable span over the live pose (the game's memory, or the
-//   replay's copy of it) instead of the batch copy-in / copy-out of §2.3. The code reads and writes the
-//   same bytes in the same order as before; the batch form is still to do.
+// These are the internal host services the ragdoll core is written against (stage A2a made them in the plugin
+// assembly; stage A4 moved them into the library unchanged). They keep every memory access and every float operation
+// exactly as it was: characters are identified by an opaque native-sized id (the FFXIV host passes the game object
+// address), and a skeleton hands out its model pose as a writable span over the live pose. The public host API of
+// docs/RAGDOLL_LIBRARY_ARCHITECTURE.md §2.3 (ActorId, batch pose read and write) is the facade in RagdollHost.cs,
+// which adapts onto these (stage A7). Hosts inside the trusted assemblies (the FFXIV plugin, the replay) use these
+// directly.
 
 /// <summary>One bone transform with the exact layout of the game's hkQsTransformf (48 bytes):
 /// translation (x, y, z, w), rotation (x, y, z, w), scale (x, y, z, w).</summary>
 [StructLayout(LayoutKind.Sequential)]
-public struct BoneQs
+internal struct BoneQs
 {
     public Vector4 Translation;
     public Quaternion Rotation;
@@ -42,7 +41,7 @@ public readonly record struct RootTransform(Vector3 Position, Quaternion Rotatio
 /// One character's skeleton for the current frame. Part 0 is the body; the others are attached partial
 /// skeletons (face, hair, ...). The body members below are part 0 as the ragdoll has always read it.
 /// </summary>
-public interface ISkeletonPose
+internal interface IHostSkeleton
 {
     /// <summary>Opaque identity of the character the skeleton belongs to.</summary>
     nint Actor { get; }
@@ -101,32 +100,18 @@ public interface ISkeletonPose
     void ResyncPartModelPose(int part);
 }
 
-/// <summary>Why a skeleton is read. The named sites are where the recorder captures the pose that was read
-/// (their values are those of <see cref="PosePurpose"/>); every other read is <see cref="Other"/>.</summary>
-public enum SkeletonReadSite
-{
-    Other = -1,
-    PreFrame = PosePurpose.PreFrame,
-    Init = PosePurpose.Init,
-    FrameIn = PosePurpose.FrameIn,
-    ColliderBuild = PosePurpose.ColliderBuild,
-    ColliderFrame = PosePurpose.ColliderFrame,
-    /// <summary>A mesh collider follows its character's skeleton root each frame; only the root is used, and it is
-    /// recorded as the ActorTransform record of <see cref="ActorSite.ColliderMesh"/> (stage A2b names the site so a
-    /// replay can answer it from there).</summary>
-    ColliderMeshRoot = 100,
-}
-
 /// <summary>Skeletons by character.</summary>
-public interface ISkeletonSource
+internal interface IHostSkeletonSource
 {
     /// <summary>The body skeleton of a character, or null when it cannot be read this frame.</summary>
-    ISkeletonPose? TryGetSkeleton(nint actor, SkeletonReadSite site = SkeletonReadSite.Other);
+    IHostSkeleton? TryGetSkeleton(nint actor, PosePurpose site = PosePurpose.Other);
     /// <summary>A body bone's world position read now (outside the per-frame pose capture), or null.</summary>
     Vector3? GetBoneWorldPosition(nint actor, string boneName);
 }
 
-/// <summary>Answer of a ray query; field for field what the game's raycast returns.</summary>
+/// <summary>The answer of a ray query: the hit point, the surface normal and the distance along the ray.
+/// <see cref="Material"/> (an opaque host code) and the hit triangle <see cref="V1"/>..<see cref="V3"/> are optional:
+/// the ragdoll does not interpret them (a recording keeps them).</summary>
 public struct RayHit
 {
     public Vector3 Point;
@@ -137,7 +122,7 @@ public struct RayHit
 }
 
 /// <summary>Questions about the static world.</summary>
-public interface IWorldQuery
+internal interface IHostWorldQuery
 {
     bool Raycast(RaycastSite site, Vector3 origin, Vector3 direction, float maxDistance, out RayHit hit);
     /// <summary>Ground triangles (3 vertices each) in a box; false when the scene could not be read or had too many.</summary>
@@ -146,29 +131,11 @@ public interface IWorldQuery
     bool TryFindWaterSurface(Vector3 position, float searchAbove, float searchBelow, out float surfaceY);
 }
 
-/// <summary>Where a character's position or transform is read; recorded sites are those of <see cref="ActorSite"/>.</summary>
-public enum ActorReadSite
-{
-    TerrainPatchCandidate = ActorSite.TerrainPatchCandidate,
-    ColliderRoot = ActorSite.ColliderRoot,
-    ColliderMesh = ActorSite.ColliderMesh,
-    ColliderFallback = ActorSite.ColliderFallback,
-    ColliderFallbackBuild = ActorSite.ColliderFallbackBuild,
-    TraversalRoot = ActorSite.TraversalRoot,
-    TraversalPreviewRoot = ActorSite.TraversalPreviewRoot,
-    /// <summary>The target at activation (recorded inside the Activate record).</summary>
-    Activation = 100,
-    /// <summary>The recorder's read for the Identity record.</summary>
-    Identity = 102,
-    /// <summary>The target's facing when the joints are built (recorded with the Identity record).</summary>
-    Facing = 101,
-}
-
 /// <summary>A character the ragdoll may collide with, as the selector lists it.</summary>
-public readonly record struct ColliderCandidate(nint Address, bool HasCharacter, string Name);
+internal readonly record struct ColliderCandidate(nint Address, bool HasCharacter, string Name);
 
 /// <summary>The characters: the ragdoll's own target and everyone else. Addresses are opaque ids.</summary>
-public interface IRagdollActor
+internal interface IHostActors
 {
     /// <summary>False while the game is shutting down or logged out: then nothing may be written to characters.</summary>
     bool GameRunning { get; }
@@ -177,8 +144,8 @@ public interface IRagdollActor
     /// <summary>The character is still in the object table with this entity id (0 = any).</summary>
     bool IsAlive(nint actor, uint entityId);
 
-    Vector3 GetPosition(nint actor, ActorReadSite site);
-    float GetFacing(nint actor, ActorReadSite site);
+    Vector3 GetPosition(nint actor, ActorSite site);
+    float GetFacing(nint actor, ActorSite site);
     uint GetEntityId(nint actor);
     ulong GetGameObjectId(nint actor);
     int GetObjectIndex(nint actor);
@@ -189,7 +156,7 @@ public interface IRagdollActor
     void ReadAppearance(nint actor, Span<byte> customize, out int modelCharaId);
     /// <summary>The draw object's model type and race (-1 each when not read): only asked where the ragdoll
     /// code itself reads them, once a skeleton with models was obtained.</summary>
-    void ReadModelType(nint actor, ISkeletonPose? skeleton, out int modelType, out int raceSexId);
+    void ReadModelType(nint actor, IHostSkeleton? skeleton, out int modelType, out int raceSexId);
 
     float GetAnimationSpeed(nint actor);
     void SetAnimationSpeed(nint actor, float speed);
@@ -201,7 +168,7 @@ public interface IRagdollActor
 }
 
 /// <summary>Who else may touch the corpse.</summary>
-public interface IColliderActorProvider
+internal interface IHostColliders
 {
     bool HasSelector { get; }
     bool HasExtraColliders { get; }
@@ -224,7 +191,7 @@ public interface IRagdollLog
 }
 
 /// <summary>Where a wall-clock reading is used. Only some are recorded (see the recorder).</summary>
-public enum ClockSite
+internal enum ClockSite
 {
     /// <summary>The render frame's dt.</summary>
     FrameDelta,
@@ -242,7 +209,7 @@ public enum ClockSite
     WeaponDrop,
 }
 
-public interface IRagdollClock
+internal interface IRagdollClock
 {
     long Frequency { get; }
     long GetTimestamp(ClockSite site);
@@ -254,19 +221,19 @@ public interface IRagdollClock
     long GetTickCount64(ClockSite site);
 }
 
-public enum RandomSite
+internal enum RandomSite
 {
     ApplyShake,
     DirectedCollapseSideways,
 }
 
-public interface IRagdollRandom
+internal interface IRagdollRandom
 {
     double NextDouble(RandomSite site);
     int Next(RandomSite site, int maxExclusive);
 }
 
-public interface IRagdollScheduler
+internal interface IRagdollScheduler
 {
     Task<T> Run<T>(Func<T> work);
     /// <summary>Waits at most <paramref name="milliseconds"/> for a task: false when it is not done by then.
@@ -274,15 +241,15 @@ public interface IRagdollScheduler
     bool TryWait<T>(Task<T> task, int milliseconds, out T result);
 }
 
-public interface IRagdollSettingsSource
+internal interface IHostSettingsSource
 {
     /// <summary>Copies the current settings into <paramref name="settings"/>; true when anything changed.
     /// Called once at the start of every render frame (and when the controller is made).</summary>
-    bool Refresh(RagdollSettings settings);
+    bool Refresh(HostSettings settings);
 }
 
 /// <summary>Why a character's body surface is captured (<see cref="IMeshSource.ProvideBodySurface"/>).</summary>
-public enum BodySurfaceUse
+internal enum BodySurfaceUse
 {
     /// <summary>The controller's own frozen surface: mesh volumes, hair contacts, and weapon contacts on the main controller.</summary>
     Frozen = 0,
@@ -291,7 +258,7 @@ public enum BodySurfaceUse
 }
 
 /// <summary>Where a reduced collision surface is taken from a cached body surface.</summary>
-public enum CachedLodUse
+internal enum CachedLodUse
 {
     /// <summary>A mesh body built in InitializePhysics.</summary>
     Init = 0,
@@ -321,7 +288,7 @@ internal interface IMeshSource
 
     /// <summary>The visible models of a character as drawn now: world-space vertices with their skeleton bone
     /// weights, triangles, and notes on what was left out. Render or framework thread only.</summary>
-    RenderedGeometrySnapshot CaptureRenderedGeometry(nint actor, ISkeletonPose skeleton);
+    RenderedGeometrySnapshot CaptureRenderedGeometry(nint actor, IHostSkeleton skeleton);
 
     /// <summary>Starts (or stops) building the reduced collision surfaces of a cached body surface in the background.</summary>
     void ConfigureLod(FrozenMeshGeometryCache cache, bool enabled, float tolerance);
@@ -338,15 +305,15 @@ internal interface IMeshSource
 
     /// <summary>Starts fitting the target's torso and thigh hulls to the models it is drawn with (the models are
     /// read now, the fit runs on a background task); null when there is nothing to fit.</summary>
-    Task<Ragdoll.StructuralFitResult>? StartStructuralFit(nint actor, ISkeletonPose skeleton);
+    Task<Ragdoll.StructuralFitResult>? StartStructuralFit(nint actor, IHostSkeleton skeleton);
 
     /// <summary>Capsules fitted to the body-mesh vertices that each candidate bone (skeleton index) skins.</summary>
-    Dictionary<int, Ragdoll.SoftTissueMeshFit> SoftTissueFits(nint actor, ISkeletonPose skeleton,
+    Dictionary<int, Ragdoll.SoftTissueMeshFit> SoftTissueFits(nint actor, IHostSkeleton skeleton,
         HashSet<int> candidates, bool verboseLog);
 
     /// <summary>Another character's skinned models as one triangle soup (model space, unscaled, outward winding);
     /// false when its skin transforms cannot be read.</summary>
-    bool TryCollectActorTriangles(nint actor, ISkeletonPose skeleton, string label, bool verboseLog,
+    bool TryCollectActorTriangles(nint actor, IHostSkeleton skeleton, string label, bool verboseLog,
         List<Triangle> triangles, out int loadedModels, out int processedMeshes);
 
     /// <summary>Framework thread, under the controller's hair lock: follows the local player's hair model and loads
@@ -361,7 +328,7 @@ internal interface IMeshSource
     bool TakeHairMeshRebuild();
 
     /// <summary>A weapon's collision hulls from the model it is drawn with, or null.</summary>
-    WeaponMeshGeometry? BuildWeaponMesh(nint weaponDrawObject, bool verboseLog);
+    WeaponMeshGeometry? BuildWeaponMesh(nint weaponModel, bool verboseLog);
 }
 
 /// <summary>A host without models: nothing is read and every product is absent.</summary>
@@ -370,33 +337,33 @@ internal sealed class NoMeshSource : IMeshSource
     public static readonly NoMeshSource Instance = new();
     public nint ModelIdentity(nint actor) => 0;
     public FrozenMeshGeometryCache? ProvideBodySurface(nint actor, BodySurfaceUse use, Func<FrozenMeshGeometryCache?> capture) => null;
-    public RenderedGeometrySnapshot CaptureRenderedGeometry(nint actor, ISkeletonPose skeleton) => new();
+    public RenderedGeometrySnapshot CaptureRenderedGeometry(nint actor, IHostSkeleton skeleton) => new();
     public void ConfigureLod(FrozenMeshGeometryCache cache, bool enabled, float tolerance) { }
     public bool PollLod(FrozenMeshGeometryCache cache, out Exception? error) { error = null; return false; }
     public bool TryCreateLod(FrozenMeshGeometryCache cache, CachedLodUse use, string bone, BodyMeshGeometry local,
         out MeshCollisionLodResult lod) { lod = null!; return false; }
     public bool TryGetCollisionGeometry(FrozenMeshGeometryCache cache, string bone, out BodyMeshGeometry local)
         => cache.TryGetSurfaceGeometry(bone, out local);
-    public Task<Ragdoll.StructuralFitResult>? StartStructuralFit(nint actor, ISkeletonPose skeleton) => null;
-    public Dictionary<int, Ragdoll.SoftTissueMeshFit> SoftTissueFits(nint actor, ISkeletonPose skeleton,
+    public Task<Ragdoll.StructuralFitResult>? StartStructuralFit(nint actor, IHostSkeleton skeleton) => null;
+    public Dictionary<int, Ragdoll.SoftTissueMeshFit> SoftTissueFits(nint actor, IHostSkeleton skeleton,
         HashSet<int> candidates, bool verboseLog) => new();
-    public bool TryCollectActorTriangles(nint actor, ISkeletonPose skeleton, string label, bool verboseLog,
+    public bool TryCollectActorTriangles(nint actor, IHostSkeleton skeleton, string label, bool verboseLog,
         List<Triangle> triangles, out int loadedModels, out int processedMeshes)
     { loadedModels = processedMeshes = 0; return false; }
     public void PollHairMesh() { }
     public HairMeshBinding? HairMesh => null;
     public bool TakeHairMeshRebuild() => false;
-    public WeaponMeshGeometry? BuildWeaponMesh(nint weaponDrawObject, bool verboseLog) => null;
+    public WeaponMeshGeometry? BuildWeaponMesh(nint weaponModel, bool verboseLog) => null;
 }
 
 /// <summary>The host services of one controller.</summary>
-public sealed class RagdollHost
+internal sealed class RagdollHostServices
 {
-    public required ISkeletonSource Skeletons { get; init; }
-    public required IWorldQuery World { get; init; }
-    public required IRagdollActor Actors { get; init; }
-    public required IColliderActorProvider Colliders { get; init; }
-    public required IRagdollSettingsSource Settings { get; init; }
+    public required IHostSkeletonSource Skeletons { get; init; }
+    public required IHostWorldQuery World { get; init; }
+    public required IHostActors Actors { get; init; }
+    public required IHostColliders Colliders { get; init; }
+    public required IHostSettingsSource Settings { get; init; }
     public required IRagdollLog Log { get; init; }
     public IRagdollClock Clock { get; init; } = StopwatchRagdollClock.Instance;
     public IRagdollRandom Random { get; init; } = SharedRagdollRandom.Instance;
@@ -408,12 +375,15 @@ public sealed class RagdollHost
     public RagdollBuildInfo Build { get; init; }
 }
 
-/// <summary>The host's build: <see cref="OptionalModule"/> = built with the optional module (it also resets and
-/// restores the follow position per activation); <see cref="PublicBuild"/> = a public build.</summary>
-public readonly record struct RagdollBuildInfo(bool OptionalModule, bool PublicBuild);
+/// <summary>The host's build, as the recorder writes it into a recording's header, and the follow handling that differs
+/// with it. <see cref="RestoresFollowPosition"/>: each activation resets the follow flag and deactivation moves the
+/// local player's render position back (the FFXIV plugin sets it exactly in its build with the optional module, and
+/// the header's "optional module" flag is this value); <see cref="PublicBuild"/>: a public build;
+/// <see cref="HostVersion"/>: the host's version (the header's version string; "?" when null).</summary>
+internal readonly record struct RagdollBuildInfo(bool RestoresFollowPosition, bool PublicBuild, string? HostVersion = null);
 
 /// <summary>Default clock: the Stopwatch, as the controller always used.</summary>
-public sealed class StopwatchRagdollClock : IRagdollClock
+internal sealed class StopwatchRagdollClock : IRagdollClock
 {
     public static readonly StopwatchRagdollClock Instance = new();
     public long Frequency => System.Diagnostics.Stopwatch.Frequency;
@@ -424,7 +394,7 @@ public sealed class StopwatchRagdollClock : IRagdollClock
 }
 
 /// <summary>Default random source: one unseeded generator shared by every controller in the process, as before.</summary>
-public sealed class SharedRagdollRandom : IRagdollRandom
+internal sealed class SharedRagdollRandom : IRagdollRandom
 {
     public static readonly SharedRagdollRandom Instance = new();
     private static readonly System.Random Shared = new();
@@ -433,7 +403,7 @@ public sealed class SharedRagdollRandom : IRagdollRandom
 }
 
 /// <summary>Default scheduler: Task.Run and Task.Wait.</summary>
-public sealed class TaskRagdollScheduler : IRagdollScheduler
+internal sealed class TaskRagdollScheduler : IRagdollScheduler
 {
     public static readonly TaskRagdollScheduler Instance = new();
     public Task<T> Run<T>(Func<T> work) => Task.Run(work);

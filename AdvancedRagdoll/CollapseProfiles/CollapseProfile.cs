@@ -6,7 +6,7 @@ using System.Collections.Generic;
 
 namespace AdvancedRagdoll.CollapseProfiles;
 
-public sealed class CollapseProfile
+internal sealed class CollapseProfile
 {
     public string Id { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
@@ -14,14 +14,14 @@ public sealed class CollapseProfile
     public List<CollapsePhaseProfile> Phases { get; set; } = new();
 }
 
-public sealed class CollapsePhaseProfile
+internal sealed class CollapsePhaseProfile
 {
     public string Name { get; set; } = string.Empty;
     public float Duration { get; set; } = 1f;
     public List<CollapseControllerProfile> Controllers { get; set; } = new();
 }
 
-public sealed class CollapseControllerProfile
+internal sealed class CollapseControllerProfile
 {
     public string Type { get; set; } = string.Empty;
     public List<string> Bones { get; set; } = new();

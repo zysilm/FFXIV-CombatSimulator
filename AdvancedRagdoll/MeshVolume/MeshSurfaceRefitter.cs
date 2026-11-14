@@ -7,7 +7,7 @@ using BepuPhysics.Trees;
 namespace AdvancedRagdoll.MeshVolume;
 
 /// <summary>Updates an existing two-sided mesh without changing mass, centre or ownership.</summary>
-public static class MeshSurfaceRefitter
+internal static class MeshSurfaceRefitter
 {
     public static bool Refit(ref Mesh mesh, ReadOnlySpan<Vector3> vertices, ReadOnlySpan<int> indices)
     {

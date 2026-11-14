@@ -74,7 +74,7 @@ public unsafe partial class Ragdoll
     private const float GrabMaxSpeed = 12f;
     /// <summary>Request a firmer finite-force external Grab servo. This never makes a body
     /// kinematic and never changes internal joint stiffness or inertia.</summary>
-    public bool GrabRigid { get; set; }
+    internal bool GrabRigid { get; set; }
 
     /// <summary>
     /// Owner-supplied test: should this external rig ride along when the ragdoll is projected onto an
@@ -93,7 +93,7 @@ public unsafe partial class Ragdoll
     /// the floor must stay there, even though the corpse is very likely lying right on top of it. Only
     /// the rig's owner can tell those apart, so it supplies the test. Null = carry nothing.
     /// </summary>
-    public Func<ExternalRigHandle, bool>? CarryExternalRigOnAnchor { get; set; }
+    internal Func<ExternalRigHandle, bool>? CarryExternalRigOnAnchor { get; set; }
 
     /// <summary>
     /// Work out which rigs come along — BEFORE the body is moved.
@@ -160,7 +160,7 @@ public unsafe partial class Ragdoll
 
         if (!TryResolveGrabAttachment(boneName, out var targetBody, out var localOffset))
         {
-            log.Warning($"RagdollController: nothing on the rig carries bone '{boneName}'");
+            log.Warning($"Ragdoll: nothing on the rig carries bone '{boneName}'");
             return null;
         }
 
@@ -220,7 +220,7 @@ public unsafe partial class Ragdoll
         // Caught where it lies. Nothing moves on this frame — the bone is simply held from now on, and
         // the reel walks it to the grip from here. The capture is the GRIP POINT, which is the bone the
         // caller asked for, not the centre of whatever body happens to be carrying it.
-        log.Info($"RagdollController: Grab #{slotId} created on '{boneName}' — caught at ({slot.CapturePosition.X:F2},{slot.CapturePosition.Y:F2},{slot.CapturePosition.Z:F2}), " +
+        log.Info($"Ragdoll: Grab #{slotId} created on '{boneName}' — caught at ({slot.CapturePosition.X:F2},{slot.CapturePosition.Y:F2},{slot.CapturePosition.Z:F2}), " +
                  $"reeling to ({initialTarget.X:F2},{initialTarget.Y:F2},{initialTarget.Z:F2}), firm={slot.IsRigid}, " +
                  $"rig weighs {ragdollTotalMass:F1}kg, servo={slot.ServoSettings.MaximumForce:F0}N " +
                  $"(base floor {servoForce:F0}N, asked for {maxForce:F0}N)" +
@@ -274,7 +274,7 @@ public unsafe partial class Ragdoll
                 }
                 catch (Exception ex)
                 {
-                    log.Warning(ex, "RagdollController: Failed to drive grab target");
+                    log.Warning(ex, "Ragdoll: Failed to drive grab target");
                 }
             }
         }
@@ -286,7 +286,7 @@ public unsafe partial class Ragdoll
     /// False if the bone has no body
     /// or the ragdoll isn't simulating yet.
     /// </summary>
-    public bool TryGetBoneCapsule(string boneName, out BoneCapsule capsule)
+    internal bool TryGetBoneCapsule(string boneName, out BoneCapsule capsule)
     {
         capsule = default;
         if (simulation == null || !isActive || !physicsStarted) return false;
@@ -310,7 +310,7 @@ public unsafe partial class Ragdoll
     /// <see cref="TryResolveGrabAttachment"/> will carry a bone that has no body by whichever ancestor
     /// does.
     /// </summary>
-    public IReadOnlyList<string> GetSimulatedBoneNames()
+    internal IReadOnlyList<string> GetSimulatedBoneNames()
     {
         if (!isActive || !physicsStarted) return Array.Empty<string>();
 
@@ -326,7 +326,7 @@ public unsafe partial class Ragdoll
     /// carrying it rigidly, and the grab takes that carrier at the right offset. The rig defines what
     /// grabbing means, so it is the rig that answers what can be grabbed.
     /// </summary>
-    public IReadOnlyList<string> GetGrabbableBoneNames(nint characterAddress)
+    internal IReadOnlyList<string> GetGrabbableBoneNames(nint characterAddress)
     {
         // Every bone on the skeleton, in skeleton order (what BoneTransformService.GetBoneNames lists).
         if (characterAddress == nint.Zero) return Array.Empty<string>();
@@ -343,7 +343,7 @@ public unsafe partial class Ragdoll
     }
 
     /// <summary>True while this bone has a physics body of its very own.</summary>
-    public bool IsBoneSimulated(string boneName)
+    internal bool IsBoneSimulated(string boneName)
     {
         foreach (var rb in ragdollBones)
             if (rb.Name == boneName) return true;
@@ -410,7 +410,7 @@ public unsafe partial class Ragdoll
                         requested.Value - carrier.Pose.Position,
                         Quaternion.Inverse(carrier.Pose.Orientation));
 
-                    log.Info($"RagdollController: '{boneName}' has no body — carried by '{rb.Name}', " +
+                    log.Info($"Ragdoll: '{boneName}' has no body — carried by '{rb.Name}', " +
                              $"gripping it {localOffset.Length():F3}m off that body's centre");
                     return true;
                 }
@@ -482,7 +482,7 @@ public unsafe partial class Ragdoll
         }
         if (grabSlots.Count > 0)
         {
-            log.Info($"RagdollController: Grab #{slotId} released ({grabSlots.Count} still held)");
+            log.Info($"Ragdoll: Grab #{slotId} released ({grabSlots.Count} still held)");
             return;
         }
 
@@ -501,6 +501,6 @@ public unsafe partial class Ragdoll
         suspendedNpcAddress = nint.Zero;
         BeginBiomechanicalSettle();
 
-        log.Info("RagdollController: Grab constraint removed");
+        log.Info("Ragdoll: Grab constraint removed");
     }
 }

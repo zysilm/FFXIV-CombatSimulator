@@ -14,10 +14,10 @@ namespace AdvancedRagdoll;
 public unsafe partial class Ragdoll
 {
     /// <summary>The resolved race/body profile used by this corpse, if it has a supported humanoid identity.</summary>
-    public string? ActiveCharacterSurfaceProfileName => characterSurfaceRuntime?.Profile.Name;
+    internal string? ActiveCharacterSurfaceProfileName => characterSurfaceRuntime?.Profile.Name;
 
     /// <summary>Returns the lightweight profile surface nearest to a point on one named ragdoll bone.</summary>
-    public bool TryGetCharacterSurface(
+    internal bool TryGetCharacterSurface(
         string boneName,
         Vector3 worldPoint,
         CharacterSurfaceUsage usage,
@@ -29,7 +29,7 @@ public unsafe partial class Ragdoll
     }
 
     /// <summary>Returns the lightweight profile surface nearest to a point on the whole ragdoll.</summary>
-    public bool TryGetCharacterSurface(
+    internal bool TryGetCharacterSurface(
         Vector3 worldPoint,
         CharacterSurfaceUsage usage,
         float maxDistance,
@@ -41,7 +41,7 @@ public unsafe partial class Ragdoll
     }
 
     /// <summary>World-space profile triangles for developer visualization.</summary>
-    public IEnumerable<CharacterSurfaceDebugBone> GetCharacterSurfaceDebugBones(CharacterSurfaceUsage usage,
+    internal IEnumerable<CharacterSurfaceDebugBone> GetCharacterSurfaceDebugBones(CharacterSurfaceUsage usage,
         int maximumFacesPerBone = 0, int maximumFacesTotal = 0)
         => characterSurfaceRuntime?.GetDebugBones(usage, maximumFacesPerBone, maximumFacesTotal) ?? Array.Empty<CharacterSurfaceDebugBone>();
 
@@ -52,7 +52,7 @@ public unsafe partial class Ragdoll
         => ReadCharacterSurfaceIdentity(actors, characterAddress);
 
     /// <summary>The surface identity (race, body type, ...) of a character, read through the host.</summary>
-    internal static CharacterSurfaceIdentity ReadCharacterSurfaceIdentity(IRagdollActor actors, nint characterAddress)
+    internal static CharacterSurfaceIdentity ReadCharacterSurfaceIdentity(IHostActors actors, nint characterAddress)
     {
         if (characterAddress == nint.Zero)
             return default;
@@ -132,7 +132,7 @@ public unsafe partial class Ragdoll
 
         characterSurfaceRuntime = new CharacterSurfaceRuntime(profile, identity, seeds);
         UpdateCharacterSurfaceRuntime();
-        log.Info($"RagdollController: final collision-proxy surface cached for {ragdollBones.Count} bones.");
+        log.Info($"Ragdoll: final collision-proxy surface cached for {ragdollBones.Count} bones.");
     }
 
     private void UpdateCharacterSurfaceRuntime()

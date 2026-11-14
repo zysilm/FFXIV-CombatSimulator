@@ -9,7 +9,7 @@ using BepuPhysics;
 namespace AdvancedRagdoll.Recording;
 
 /// <summary>The parts of the recorder that read a BepuPhysics simulation.</summary>
-public static class RagdollRecordingBepu
+internal static class RagdollRecordingBepu
 {
     /// <summary>Version of the BepuPhysics assembly in use (informational version when present).</summary>
     public static string BepuVersion()

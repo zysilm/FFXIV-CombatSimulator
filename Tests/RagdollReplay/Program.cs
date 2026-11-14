@@ -97,7 +97,7 @@ internal static class ReplayDriver
         var clock = new ReplayClock(source);
         var meshes = new ReplayMeshSource(source);
         var actors = new ReplayActors(source, skeletons);
-        var host = new RagdollHost
+        var host = new RagdollHostServices
         {
             Skeletons = skeletons,
             World = new ReplayWorld(source),

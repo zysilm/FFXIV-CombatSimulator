@@ -17,7 +17,7 @@ namespace AdvancedRagdoll.MeshVolume;
 /// Limits mesh contact sampling before BEPU allocates continuation storage. The source
 /// triangles and queries stay exact; densely overlapping contacts use spatial representatives.
 /// </summary>
-public static class CollisionWorkBudget
+internal static class CollisionWorkBudget
 {
     public const int GridWidth = 2;
     public const int SamplesPerCell = 4;

@@ -5,9 +5,9 @@ using System.Numerics;
 namespace AdvancedRagdoll.MeshVolume;
 
 /// <summary>An unweighted skin contribution in its owning physical bone's local frame.</summary>
-public readonly record struct MeshSkinInfluence(int BoneIndex, float Weight, Vector3 BoneLocalPosition);
+internal readonly record struct MeshSkinInfluence(int BoneIndex, float Weight, Vector3 BoneLocalPosition);
 
-public static class MeshSkinDeformer
+internal static class MeshSkinDeformer
 {
     /// <summary>Render-order bone rotation, actor scale and root rotation, in row-vector convention.</summary>
     public static Matrix4x4 BoneTransform(Vector3 origin, Quaternion worldBoneRotation,

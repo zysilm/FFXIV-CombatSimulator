@@ -19,7 +19,7 @@ namespace AdvancedRagdoll.Recording;
 /// events happened. The first record is always <see cref="RecordType.Header"/>. A file that was cut
 /// short (crash, disk full) is still readable up to its last complete record.
 /// </summary>
-public static class RagdollRecordingFormat
+internal static class RagdollRecordingFormat
 {
     /// <summary>"RGDREC" + two zero bytes.</summary>
     public static ReadOnlySpan<byte> Magic => "RGDREC\0\0"u8;
@@ -101,7 +101,7 @@ public static class RagdollRecordingFormat
 }
 
 /// <summary>Tag byte in front of every value of a record payload.</summary>
-public enum ValueTag : byte
+internal enum ValueTag : byte
 {
     Null = 0,
     Bool = 1,       // 1 byte
@@ -127,7 +127,7 @@ public enum ValueTag : byte
 /// Record types and the values each one carries, in order. "actor" is the game object address as an
 /// opaque u64 (only equality matters). Positions are world space, metres, Y up.
 /// </summary>
-public enum RecordType : ushort
+internal enum RecordType : ushort
 {
     // ---- file ----
 
@@ -192,7 +192,7 @@ public enum RecordType : ushort
 
     /// <summary>actor:u64, purpose:i32 (<see cref="PosePurpose"/>), available:bool. When available:
     /// position:Vector3, rotation:Quaternion, scale:Vector3 (Skeleton.Transform), drawScaleValid:bool,
-    /// drawScale:Vector3 (DrawObject.Scale), partialCount:i32, then per captured partial:
+    /// drawScale:Vector3 (the render scale), partialCount:i32, then per captured partial:
     /// partial:i32, state:i32 (low two bits: 0 = data follows, 1 = identical to the previous record of the same
     /// purpose and partial, 2 = unreadable; bit 2 set = the game marked the model pose as not in sync),
     /// [modelPose:Bytes (48 bytes per bone, model space)].</summary>
@@ -262,7 +262,7 @@ public enum RecordType : ushort
     /// surface for a weapon-contact twin ("collisionGeometry"), soft-tissue fits ("softTissueFits"), another
     /// character's triangle soup ("actorTriangles"), whether the live hair must rebuild ("hairMeshRebuild"), and the
     /// body surfaces carried over from earlier activations ("carried", right after <see cref="Activate"/>). The
-    /// layouts are listed with the kinds in the plugin (Animation/Hosting/RecordingDecorators.cs, MeshProductKind).</summary>
+    /// layouts are listed with the kinds (<see cref="MeshProductKind"/>, below).</summary>
     MeshProduct = 49,
 
     // ---- physics frames ----
@@ -339,9 +339,12 @@ public enum RecordType : ushort
     Event = 93,
 }
 
-/// <summary>Why a skeleton pose was captured.</summary>
-public enum PosePurpose
+/// <summary>Why a skeleton pose was captured, and why a host skeleton is read (one enum since stage A7, which merged the
+/// host's read sites into it: <see cref="Other"/> and <see cref="ColliderMeshRoot"/> are read sites only).</summary>
+internal enum PosePurpose
 {
+    /// <summary>A read that is not captured.</summary>
+    Other = -1,
     /// <summary>Target, a render frame before physics started (hand-over sample, trigger input).</summary>
     PreFrame = 0,
     /// <summary>Target, at the start of InitializePhysics (every partial skeleton).</summary>
@@ -356,9 +359,13 @@ public enum PosePurpose
     ColliderFrame = 5,
     /// <summary>Target, when the hull fit was started at activation.</summary>
     Activation = 6,
+    /// <summary>A mesh collider follows its character's skeleton root each frame; only the root is used, and it is
+    /// recorded as the ActorTransform record of <see cref="ActorSite.ColliderMesh"/> (stage A2b names the site so a
+    /// replay can answer it from there).</summary>
+    ColliderMeshRoot = 100,
 }
 
-public enum RaycastSite
+internal enum RaycastSite
 {
     InitGround = 0,
     PatchCenter = 1,
@@ -371,7 +378,9 @@ public enum RaycastSite
     WeaponDrop = 5,
 }
 
-public enum ActorSite
+/// <summary>Where a character's position or transform is read: the recorded sites (below 100), and the reads recorded
+/// inside other records (100 and up; stage A7 merged the host's read sites into this enum).</summary>
+internal enum ActorSite
 {
     TerrainPatchCandidate = 0,
     ColliderRoot = 1,
@@ -383,4 +392,41 @@ public enum ActorSite
     /// <summary>Read by the look-ahead query <c>TryPreviewNpcTraversalRootHeight</c>, which is not a recorded
     /// call and changes nothing: a replay skips these records.</summary>
     TraversalPreviewRoot = 6,
+    /// <summary>The target at activation (recorded inside the Activate record).</summary>
+    Activation = 100,
+    /// <summary>The target's facing when the joints are built (recorded with the Identity record).</summary>
+    Facing = 101,
+    /// <summary>The recorder's read for the Identity record.</summary>
+    Identity = 102,
+}
+
+/// <summary>Kinds of <see cref="RecordType.MeshProduct"/> records (their first value), with the layout of the values
+/// that follow each kind. A cache is: id:i32 (-1 for none; per recording, the same object keeps its id), count:i32 (0
+/// when the id was written before), then per region: name:str, vertices:Vector3Array, indices:I32Array (the full
+/// bone-local surface), and, where a layout says "with LOD flag", hasLod:bool (whether a reduced surface was ready).
+/// Written by the recorder's RecordingMeshSource.WriteCache.</summary>
+internal static class MeshProductKind
+{
+    /// <summary>use:i32 (0 = the frozen surface, 1 = a weapon-contact surface), actor:u64, then a cache (see above, no LOD flag).</summary>
+    public const string BodySurface = "bodySurface";
+    /// <summary>use:i32 (0 = built at initialization, 1 = installed between steps), bone:str, ok:bool; when ok: sourceVertexIndices:I32Array,
+    /// indices:I32Array, sourceFaceCount:i32, requestedTolerance:f32, maxVertexDisplacement:f32, maxSampledError:f32,
+    /// acceptedCollapses:i32, candidateChecks:i32. The vertices are the given surface's, picked by sourceVertexIndices.</summary>
+    public const string Lod = "lod";
+    /// <summary>bone:str, ok:bool, vertices:Vector3Array, indices:I32Array (bone-local).</summary>
+    public const string CollisionGeometry = "collisionGeometry";
+    /// <summary>actor:u64, count:i32, then per fit: bone:i32 (skeleton index), radius:f32, halfLength:f32,
+    /// centerModelOffset:Vector3, axisModel:Vector3, samples:i32.</summary>
+    public const string SoftTissueFits = "softTissueFits";
+    /// <summary>actor:u64, label:str, ok:bool, loadedModels:i32, processedMeshes:i32, triangles:Vector3Array (3 per triangle).
+    /// The label (the character's name, as the collider provider lists it) only goes into log lines; it is kept to
+    /// show whose mesh it is, and a replay does not compare it.</summary>
+    public const string ActorTriangles = "actorTriangles";
+    /// <summary>rebuild:bool.</summary>
+    public const string HairMeshRebuild = "hairMeshRebuild";
+    /// <summary>Written by the controller after the Activate record: the body surfaces it carries over from earlier
+    /// activations. frozenActor:u64, frozenEntity:u32, observedEnabled:bool, observedRevision:i32, lodEnabled:bool,
+    /// lodTolerance:f32, nextAttempt:i64, frozen cache (no LOD flag), weaponContactCount:i32, then per entry in
+    /// eviction order: actor:u64, entity:u32, model:u64, cache (no LOD flag).</summary>
+    public const string Carried = "carried";
 }

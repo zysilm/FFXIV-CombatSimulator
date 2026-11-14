@@ -95,7 +95,7 @@ public unsafe partial class Ragdoll
     /// propagation) so the scale annotation is never clobbered downstream. Cheap no-op when
     /// the feature is off and nothing needs restoring.
     /// </summary>
-    private void UpdateSquashAndStretch(ISkeletonPose skel, float dt)
+    private void UpdateSquashAndStretch(IHostSkeleton skel, float dt)
     {
         if (!settings.RagdollSquashStretch)
         {
@@ -224,7 +224,7 @@ public unsafe partial class Ragdoll
     /// ragdoll, so the game will NOT refresh scale for us until animation resumes — without
     /// this a revived character keeps squashed flesh.
     /// </summary>
-    private void RestoreSquashScales(ISkeletonPose skel)
+    private void RestoreSquashScales(IHostSkeleton skel)
     {
         if (squashStates == null) return;
         var pose = skel.ModelPose;
@@ -315,7 +315,7 @@ public unsafe partial class Ragdoll
         }
         catch (Exception ex)
         {
-            log.Warning(ex, "RagdollController: failed to restore soft-tissue scales on deactivate");
+            log.Warning(ex, "Ragdoll: failed to restore soft-tissue scales on deactivate");
         }
         squashStates = null;
     }

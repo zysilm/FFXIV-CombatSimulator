@@ -25,7 +25,7 @@ public sealed class SkeletonProfile
     public required string Name { get; init; }
 
     /// <summary>True for the generated rig (<see cref="Auto"/>): bodies come from the skeleton's topology, not from <see cref="BoneDefinitions"/>.</summary>
-    public bool IsAuto { get; init; }
+    public bool IsAuto { get; internal init; }
 
     /// <summary>The character's forward axis in skeleton space.</summary>
     public required Vector3 Forward { get; init; }

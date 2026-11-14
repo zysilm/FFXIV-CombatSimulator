@@ -32,7 +32,7 @@ public unsafe partial class Ragdoll
     private static Quaternion NpcModelRotToWorld(Quaternion modelRot, Quaternion skelRot)
         => Quaternion.Normalize(skelRot * modelRot);
 
-    internal static Vector3 GetSkeletonScale(ISkeletonPose ns)
+    internal static Vector3 GetSkeletonScale(IHostSkeleton ns)
     {
         if (!ns.HasRoot)
             return Vector3.One;
@@ -46,19 +46,19 @@ public unsafe partial class Ragdoll
 
     /// <summary>
     /// Read the scale that is actually applied to the rendered character. The NPC Scale effect
-    /// writes DrawObject.Scale directly, while ordinary actors normally expose the same
+    /// writes the render scale directly, while ordinary actors normally expose the same
     /// value through Skeleton.Transform.Scale. Prefer the draw object so collision follows live
     /// live scale changes, and retain the skeleton value as a safe fallback.
     /// </summary>
-    internal Vector3 GetCharacterScale(nint address, ISkeletonPose ns)
+    internal Vector3 GetCharacterScale(nint address, IHostSkeleton ns)
     {
-        if (TryGetDrawObjectScale(address, out var drawScale))
+        if (TryGetVisualScale(address, out var drawScale))
             return drawScale;
 
         return GetSkeletonScale(ns);
     }
 
-    private bool TryGetDrawObjectScale(nint address, out Vector3 scale)
+    private bool TryGetVisualScale(nint address, out Vector3 scale)
     {
         scale = Vector3.One;
         if (address != nint.Zero)
