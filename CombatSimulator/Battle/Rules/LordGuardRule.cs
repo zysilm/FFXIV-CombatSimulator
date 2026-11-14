@@ -150,7 +150,7 @@ public sealed unsafe class LordGuardRule : BattleRule, IAllyLeash
                 prayerStall += deltaTime;
             if (off > PrayerReach && prayerStall < PrayerStallSeconds)
             {
-                ctx.Allies.EnterState(companion, CompanionAiState.MovingToTarget, deltaTime);
+                ctx.Allies.EnterState(companion, CombatantAiState.MovingToTarget, deltaTime);
                 ctx.Allies.MoveToward(companion, post, deltaTime);
                 return true;
             }

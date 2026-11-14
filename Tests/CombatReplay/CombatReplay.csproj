@@ -19,17 +19,18 @@
   <ItemGroup>
     <Compile Include="../../CombatSimulator/Ai/NpcAiController.cs" Link="Production/Loop/NpcAiController.cs" />
     <Compile Include="../../CombatSimulator/Ai/NpcAiController.Tactics.cs" Link="Production/Loop/NpcAiController.Tactics.cs" />
-    <Compile Include="../../CombatSimulator/Ai/NpcAiState.cs" Link="Production/Loop/NpcAiState.cs" />
+    <Compile Include="../../CombatSimulator/Combat/CombatantAiState.cs" Link="Production/Loop/CombatantAiState.cs" />
     <Compile Include="../../CombatSimulator/Companions/CombatCompanion.cs" Link="Production/Loop/CombatCompanion.cs" />
     <Compile Include="../../CombatSimulator/Companions/CombatCompanionManager.cs" Link="Production/Loop/CombatCompanionManager.cs" />
     <Compile Include="../../CombatSimulator/Companions/CombatCompanionManager.Aggro.cs" Link="Production/Loop/CombatCompanionManager.Aggro.cs" />
     <Compile Include="../../CombatSimulator/Companions/CombatCompanionManager.Crowd.cs" Link="Production/Loop/CombatCompanionManager.Crowd.cs" />
     <Compile Include="../../CombatSimulator/Companions/CombatCompanionManager.Lord.cs" Link="Production/Loop/CombatCompanionManager.Lord.cs" />
     <Compile Include="../../CombatSimulator/Companions/CombatCompanionManager.Rescue.cs" Link="Production/Loop/CombatCompanionManager.Rescue.cs" />
-    <Compile Include="../../CombatSimulator/Companions/CompanionAiState.cs" Link="Production/Loop/CompanionAiState.cs" />
     <Compile Include="../../CombatSimulator/Combat/Combatant.cs" Link="Production/Loop/Combatant.cs" />
     <Compile Include="../../CombatSimulator/Combat/CombatLoopSeams.cs" Link="Production/Loop/CombatLoopSeams.cs" />
     <Compile Include="../../CombatSimulator/Combat/CombatStep.cs" Link="Production/Loop/CombatStep.cs" />
+    <Compile Include="../../CombatSimulator/Combat/CombatantController.cs" Link="Production/Loop/CombatantController.cs" />
+    <Compile Include="../../CombatSimulator/Combat/CombatActivityTally.cs" Link="Production/Loop/CombatActivityTally.cs" />
     <Compile Include="../../CombatSimulator/Combat/TargetingService.cs" Link="Production/Loop/TargetingService.cs" />
     <Compile Include="../../CombatSimulator/Npcs/SimulatedNpc.cs" Link="Production/Loop/SimulatedNpc.cs" />
     <Compile Include="../../CombatSimulator/Npcs/NpcSpawnRequest.cs" Link="Production/Loop/NpcSpawnRequest.cs" />
@@ -37,6 +38,7 @@
     <Compile Include="../../CombatSimulator/Simulation/SimulationState.cs" Link="Production/Loop/SimulationState.cs" />
     <Compile Include="../../CombatSimulator/Simulation/SimulatedActionResult.cs" Link="Production/Loop/SimulatedActionResult.cs" />
     <Compile Include="../../CombatSimulator/Simulation/CombatLogType.cs" Link="Production/Loop/CombatLogType.cs" />
+    <Compile Include="../../CombatSimulator/Simulation/CombatEvents.cs" Link="Production/Loop/CombatEvents.cs" />
     <Compile Include="../../CombatSimulator/Simulation/TelegraphShape.cs" Link="Production/Loop/TelegraphShape.cs" />
     <Compile Include="../../CombatSimulator/Simulation/WarFallenRule.cs" Link="Production/Loop/WarFallenRule.cs" />
     <Compile Include="../../CombatSimulator/Battle/BattleRules.cs" Link="Production/Loop/BattleRules.cs" />

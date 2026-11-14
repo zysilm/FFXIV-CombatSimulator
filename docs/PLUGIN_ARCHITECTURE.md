@@ -92,7 +92,7 @@ public abstract unsafe class Combatant : ICombatantView
 | | `AiState`（`CompanionAiState`）、`CurrentTargetId`、`NextTargetSelectAt`、`RecentDamage`、`RecentDps`、`DeathAnimationPlayed` | 队友状态机与目标 |
 | | `CaptiveEmotePlayed`、`CaptiveLoop`、`ReturningToLord` | 俘虏表情、守尸拴绳 |
 
-`AiState` 两边同名但类型不同（6 个状态对 7 个），到 B9 才合并成一个枚举；之前不动。
+`AiState` 两边曾同名不同型（6 个状态对 7 个）；B9 已合并为 `Combat/CombatantAiState.cs` 并上提到 `Combatant`，敌人的编号不变，队友除 Idle 外重新编号（没有任何地方按数字使用状态）。两侧控制器都继承 `CombatantController<TSelf>`，仍是两个实例、两个调用点。
 
 ### 2.3 只读视图与策略
 

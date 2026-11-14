@@ -46,4 +46,19 @@ public sealed class CombatEvents
 
     /// <summary>An enemy's attack landed on the still-living player (the attacker's simulated id).</summary>
     public Action<uint>? PlayerHitBy { get; set; }
+
+    // The allies' side (stage B9; raised by CombatCompanionManager, whose older members OnCompanionSpawnComplete,
+    // OnCompanionDeathRagdoll, OnCompanionRevived and OnSpawnError read and write these same slots).
+
+    /// <summary>A cloned ally finished drawing and joined the party (an adopted catalog ally does not raise it).</summary>
+    public Action<Companions.CombatCompanion>? AllySpawned { get; set; }
+
+    /// <summary>An ally's body goes to its ragdoll (its character address); only with the allies' death ragdoll on.</summary>
+    public Action<nint>? AllyDied { get; set; }
+
+    /// <summary>A fallen or captive ally was brought back on its feet (its character address).</summary>
+    public Action<nint>? AllyRevived { get; set; }
+
+    /// <summary>An ally could not be added or cloned (the reason, for the chat).</summary>
+    public Action<string>? AllySpawnError { get; set; }
 }

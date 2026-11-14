@@ -87,7 +87,7 @@ public interface IRuleAllies
     /// <summary>Drops its target.</summary>
     void ClearTarget(CombatCompanion ally);
 
-    void EnterState(CombatCompanion ally, CompanionAiState state, float deltaTime);
+    void EnterState(CombatCompanion ally, CombatantAiState state, float deltaTime);
     void MoveToward(CombatCompanion ally, Vector3 goal, float deltaTime);
     void RotateToward(CombatCompanion ally, Vector3 point, float deltaTime);
 

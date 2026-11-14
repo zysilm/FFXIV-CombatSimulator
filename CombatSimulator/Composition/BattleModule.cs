@@ -139,7 +139,7 @@ internal sealed unsafe class BattleModule
         public IReadOnlyList<SimulatedNpc> Enemies => plugin.npcSelector.SelectedNpcs;
         public bool IsPresent(SimulatedNpc npc) => npc.IsSpawned && npc.IsAlive && npc.BattleChara != null;
         public bool IsCaptive(SimulatedNpc npc) => npc.State.IsCaptive;
-        public bool IsIdleSentry(SimulatedNpc npc) => npc.IsSentry && npc.AiState == Ai.NpcAiState.Idle;
+        public bool IsIdleSentry(SimulatedNpc npc) => npc.IsSentry && npc.AiState == CombatSimulator.Combat.CombatantAiState.Idle;
         public Vector3 PositionOf(SimulatedNpc npc) => (Vector3)((GameObject*)npc.BattleChara)->Position;
         public float HitboxRadiusOf(SimulatedNpc npc) => npc.HitboxRadius;
         public string NameOf(SimulatedNpc npc) => npc.Name;

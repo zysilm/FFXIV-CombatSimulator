@@ -5,6 +5,7 @@
 using System;
 using System.Numerics;
 using CombatSimulator.Battle.Rules;
+using CombatSimulator.Combat;
 using CombatSimulator.Simulation;
 
 namespace CombatSimulator.Companions;
@@ -18,7 +19,7 @@ namespace CombatSimulator.Companions;
 public unsafe partial class CombatCompanionManager
 {
     /// <summary>A companion that has been freed or raised: its body comes back from the ragdoll.</summary>
-    public Action<nint>? OnCompanionRevived { get; set; }
+    public Action<nint>? OnCompanionRevived { get => combatEngine.Events.AllyRevived; set => combatEngine.Events.AllyRevived = value; }
 
     public const float RaiseSeconds = SpringAutumnRescueRule.RaiseSeconds;
     public const float RaiserDamageScale = SpringAutumnRescueRule.RaiserDamageScale;
@@ -65,7 +66,7 @@ public unsafe partial class CombatCompanionManager
         {
             log.Warning(ex, $"Failed to revive companion '{companion.Name}'.");
         }
-        EnterCompanionState(companion, CompanionAiState.CombatReady);
+        EnterCompanionState(companion, CombatantAiState.CombatReady);
     }
 
     /// <summary>
@@ -86,10 +87,10 @@ public unsafe partial class CombatCompanionManager
             return false;
         }
 
-        ClearCompanionActionState(companion);
+        ClearActionState(companion);
         ClearCompanionTargetState(companion);
         HaltForEmote(companion);
-        companion.AiState = CompanionAiState.Captive;
+        companion.AiState = CombatantAiState.Captive;
         if (!companion.CaptiveEmotePlayed && companion.BattleChara != null)
         {
             companion.CaptiveLoop = world.PlayEmoteOn(companion, config.WarCaptiveEmoteId)

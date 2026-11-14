@@ -20,14 +20,13 @@ namespace CombatSimulator.Companions;
 /// </summary>
 public unsafe partial class CombatCompanionManager
 {
-    /// <summary>The crowd on the navigation mesh; null or not ready: allies stand.</summary>
-    public ICrowdAgents? Crowd { private get; set; }
-
+    // The crowd on the navigation mesh (CombatantController.Crowd); null or not ready: allies stand.
     private bool CrowdReady => Crowd is { Ready: true };
 
     // The same standing rules as enemies (CombatantMath): melee closes to a 1 m gap, ranged stops
     // 1 m inside its reach; moving resumes only once the target is out of reach. Reach is
-    // ReachPolicy.Ally: authored ranges, a melee auto-attack at least 3, a caster's swing 3.5.
+    // ReachPolicy.Ally (CombatantController.ReachNowOf): authored ranges, a melee auto-attack at least 3,
+    // a caster's swing 3.5.
     // A corpse lower than this under an ally's feet is stepped onto; a higher one is walked through.
     private const float CorpseStepLimit = 0.65f;
 
@@ -35,28 +34,17 @@ public unsafe partial class CombatCompanionManager
     // an ally standing about can be explained from the log.
     private const int ActivityFighting = 0, ActivityWalkingIn = 1, ActivityNoTarget = 2, ActivityReturning = 3, ActivityOther = 4;
     private static readonly string[] ActivityNames = { "in reach", "walking in", "no target", "back to the lord", "praying/raising/captive" };
-    private readonly long[] activityFrames = new long[5];
-    private readonly System.Diagnostics.Stopwatch activityClock = System.Diagnostics.Stopwatch.StartNew();
+    private readonly CombatActivityTally activity = new(ActivityNames, listUnseen: false);
 
-    private void NoteActivity(int activity) => activityFrames[activity]++;
+    private void NoteActivity(int activity) => this.activity.Note(activity);
 
     private void ReportActivity(System.Collections.Generic.IReadOnlyList<SimulatedNpc> enemies)
     {
-        if (activityClock.Elapsed.TotalSeconds < 5)
+        if (activity.TakeShares() is not { } shares)
             return;
-        activityClock.Restart();
-        long total = 0;
-        foreach (var n in activityFrames) total += n;
-        if (total == 0)
-            return;
-        var parts = new System.Collections.Generic.List<string>();
-        for (var i = 0; i < activityFrames.Length; i++)
-            if (activityFrames[i] > 0)
-                parts.Add($"{ActivityNames[i]} {100.0 * activityFrames[i] / total:0}%");
         var living = 0;
         foreach (var e in enemies) if (e.IsSpawned && e.State.IsAlive) living++;
-        log.Info($"Allies (share of ally-frames over 5 s, {living} enemies alive): {string.Join(", ", parts)}.");
-        System.Array.Clear(activityFrames);
+        log.Info($"Allies (share of ally-frames over 5 s, {living} enemies alive): {shares}.");
     }
 
     private float HitboxOf(Combatant self)
@@ -69,24 +57,12 @@ public unsafe partial class CombatCompanionManager
     }
 
     /// <summary>
-    /// How far this ally can attack from right now: its auto-attack (a caster's is a melee swing), or the
-    /// longest skill it could use this moment (off cooldown, affordable).
-    /// </summary>
-    private float CrowdReachNow(CombatCompanion companion)
-        => CombatantMath.ReachNow(companion.Behavior, companion.State, ReachPolicy.Ally, default, mpPriceOf ??= MpPriceOf);
-
-    private System.Func<uint, int>? mpPriceOf;
-
-    /// <summary>A skill's price against the player's pool (0 when the action is unknown).</summary>
-    private int MpPriceOf(uint actionId) => combatEngine.GetActionData(actionId)?.MpCost ?? 0;
-
-    /// <summary>
     /// Decide whether to close in on the target: true (and the ally walks) while it is out of reach,
     /// false once it is close enough to fight, with the same hysteresis as enemies.
     /// </summary>
     private bool CrowdApproach(CombatCompanion companion, SimulatedNpc target, float deltaTime)
     {
-        var reach = CrowdReachNow(companion);
+        var reach = ReachNowOf(companion);
         var gap = CrowdGap(companion, target);
         var stand = CombatantMath.StandGap(reach);
 
@@ -111,7 +87,7 @@ public unsafe partial class CombatCompanionManager
         if (crowd == null || companion.BattleChara == null || !companion.State.IsAlive)
             return false;
 
-        var speed = CombatantMath.MoveSpeed(companion.Behavior.MoveSpeed, MovePolicy.Ally);
+        var speed = MoveSpeedOf(companion);
         if (!crowd.Drive(companion.Address, world.PositionOf(companion), HitboxOf(companion), speed, goal))
             return false;
         if (!crowd.TryGetMotion(companion.Address, out var position, out var velocity))
@@ -125,14 +101,13 @@ public unsafe partial class CombatCompanionManager
 
         world.AddApproachNpc(companion.Address);
         world.SetApproachPosition(companion, position.X, position.Y, position.Z);
-        var flat = new Vector3(velocity.X, 0f, velocity.Z);
-        if (flat.LengthSquared() > 0.3f * 0.3f)
+        if (IsWalking(velocity, out var flat))
         {
             EnterCompanionState(
                 companion,
-                companion.CurrentTargetId == 0 ? CompanionAiState.ReturningToCommandRange : CompanionAiState.MovingToTarget,
+                companion.CurrentTargetId == 0 ? CombatantAiState.ReturningToCommandRange : CombatantAiState.MovingToTarget,
                 deltaTime);
-            RotateToward(companion, position + flat, deltaTime);
+            TurnToward(companion, position + flat, deltaTime);
         }
         else
             StopMoveAnim(companion);

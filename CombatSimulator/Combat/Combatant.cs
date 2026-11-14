@@ -52,6 +52,8 @@ public abstract unsafe class Combatant
     public SimulatedEntityState State { get; set; } = new();
 
     // AI
+    /// <summary>Where its AI is. One enum for both sides (stage B9); each side uses its own states of it (<see cref="CombatantAiState"/>).</summary>
+    public CombatantAiState AiState { get; set; } = CombatantAiState.Idle;
     public NpcBehavior Behavior { get; set; } = new();
     public Vector3 SpawnPosition { get; set; }
     public float AutoAttackTimer { get; set; }

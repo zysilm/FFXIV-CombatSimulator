@@ -35,11 +35,11 @@ public unsafe partial class CombatCompanionManager
         public ICrowdAgents? Crowd => owner.Crowd;
         public int AttackersOn(uint entityId) => owner.targeting.AttackersOn(entityId);
         public bool CanReach(CombatCompanion ally, SimulatedNpc enemy) => owner.ComputeCompanionReachability(ally, enemy).Reachable;
-        public void ClearAction(CombatCompanion ally) => ClearCompanionActionState(ally);
+        public void ClearAction(CombatCompanion ally) => ClearActionState(ally);
         public void ClearTarget(CombatCompanion ally) => owner.ClearCompanionTargetState(ally);
-        public void EnterState(CombatCompanion ally, CompanionAiState state, float deltaTime) => owner.EnterCompanionState(ally, state, deltaTime);
+        public void EnterState(CombatCompanion ally, CombatantAiState state, float deltaTime) => owner.EnterCompanionState(ally, state, deltaTime);
         public void MoveToward(CombatCompanion ally, Vector3 goal, float deltaTime) => owner.MoveToward(ally, goal, deltaTime);
-        public void RotateToward(CombatCompanion ally, Vector3 point, float deltaTime) => owner.RotateToward(ally, point, deltaTime);
+        public void RotateToward(CombatCompanion ally, Vector3 point, float deltaTime) => owner.TurnToward(ally, point, deltaTime);
         public void HaltForEmote(CombatCompanion ally) => owner.HaltForEmote(ally);
         public void Revive(CombatCompanion ally, float hpShare) => owner.ReviveCompanion(ally, hpShare);
         public void Info(string text) => owner.log.Info(text);

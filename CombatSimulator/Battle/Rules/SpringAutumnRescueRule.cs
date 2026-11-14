@@ -177,7 +177,7 @@ public sealed unsafe class SpringAutumnRescueRule : BattleRule
         {
             if (!enemy.IsSpawned || !enemy.State.IsAlive || enemy.BattleChara == null)
                 continue;
-            if (enemy.IsSentry && enemy.AiState == Ai.NpcAiState.Idle)
+            if (enemy.IsSentry && enemy.AiState == CombatantAiState.Idle)
                 continue;
             if (CombatantMath.FlatDistance(ctx.World.PositionOf(enemy), at) <= RescueDangerRadius)
                 foes++;
@@ -276,7 +276,7 @@ public sealed unsafe class SpringAutumnRescueRule : BattleRule
                 EndRescue(ctx, rescue.PatientId);
                 return false;
             }
-            ctx.Allies.EnterState(companion, CompanionAiState.MovingToTarget, deltaTime);
+            ctx.Allies.EnterState(companion, CombatantAiState.MovingToTarget, deltaTime);
             ctx.Allies.MoveToward(companion, at, deltaTime);
             return true;
         }

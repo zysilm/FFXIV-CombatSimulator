@@ -55,7 +55,12 @@ the war (seizers), `NpcAiController.Tick`. Seeds: `NpcAiController.RandomSource`
 `CombatCompanionManager.RandomSource` Random(s+1), `AggroSeedSource` Random(s+2), the `DamageCalculator` Random(s+3).
 Allies join through the real `CombatCompanionManager.AdoptNpc` (HP = the player's 60000 × level factor 0.5).
 Since stage B4b both loops attack through the shared step `Combat/CombatStep.cs` (each side's `ActPolicy` and its
-own sink); the loop golden files were recorded by B4a from the old loops and were not re-recorded.
+own sink); the loop golden files were recorded by B4a from the old loops and were not re-recorded. Since stage B9
+both controllers are `Combat/CombatantController.cs` (the shared turn head, reach, speed, turning and the step's
+context from each fighter's policies), one per side, ticked at their old points; and the two AI state enums are one,
+`Combat/CombatantAiState.cs`. The `F` line hashes a fighter's state as a number: `LoopReplay.AllyStateCode` /
+`EnemyStateCode` give each state the number its side's old enum (`CompanionAiState` / `NpcAiState`) gave it, so the
+files kept their bytes (the merged enum numbers them differently); a side found in a state it never had throws.
 
 Lines: `C` a fighter's target, AI state, in-reach or life changed (with the distance to its target); `A` an attack
 committed (enemy: auto or skill and target, MP before; ally: damage, HP left, MP before); `H` an enemy telegraph

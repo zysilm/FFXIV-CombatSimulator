@@ -115,19 +115,20 @@ internal sealed unsafe class ActorsModule
     {
         companionManager.IsSourceEnemy = entityId => npcSelector.GetSelectedNpc(entityId) != null;
 
-        companionManager.OnCompanionSpawnComplete = companion =>
+        // The allies' notifications are CombatEvents slots (stage B9).
+        combatEngine.Events.AllySpawned = companion =>
         {
             combatEngine.RegisterCompanionEntity(companion);
             ApplyCompanionGlamourer(companion);
             log.Info($"Spawned companion '{companion.Name}' registered as friendly combatant.");
         };
-        companionManager.OnCompanionDeathRagdoll = corpse.OnCompanionDeathRagdoll;
-        companionManager.OnCompanionRevived = address =>
+        combatEngine.Events.AllyDied = corpse.OnCompanionDeathRagdoll;
+        combatEngine.Events.AllyRevived = address =>
         {
             corpse.RemoveNpcRagdoll(address);
             weaponDropController.RemoveFor(address);
         };
-        companionManager.OnSpawnError = msg =>
+        combatEngine.Events.AllySpawnError = msg =>
         {
             chatGui.PrintError($"[CombatSim] Party error: {msg}");
         };

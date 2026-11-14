@@ -136,6 +136,8 @@ public interface ICombatLoopEngine
     Battle.BattleRules Rules { get; }
     Action? OnSimulationStarted { get; set; }
     Action? OnSimulationReset { get; set; }
+    /// <summary>The engine's notifications; the allies' controller raises the allies' ones (spawned, died, revived, spawn error).</summary>
+    CombatEvents Events { get; }
     Func<uint, nint?>? ResolveExternalEntityAddress { get; }
     Func<bool>? HasLivingCompanions { get; }
     bool IsEnemyInitiationSuppressed { get; }

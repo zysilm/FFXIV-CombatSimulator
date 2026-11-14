@@ -524,7 +524,7 @@ static unsafe class SeizureReplay
         public IReadOnlyList<SimulatedNpc> Enemies => All;
         public bool IsPresent(SimulatedNpc npc) => npc.IsSpawned && npc.IsAlive && npc.BattleChara != null;
         public bool IsCaptive(SimulatedNpc npc) => npc.State.IsCaptive;
-        public bool IsIdleSentry(SimulatedNpc npc) => npc.IsSentry && npc.AiState == CombatSimulator.Ai.NpcAiState.Idle;
+        public bool IsIdleSentry(SimulatedNpc npc) => npc.IsSentry && npc.AiState == CombatantAiState.Idle;
         public Vector3 PositionOf(SimulatedNpc npc) => At[npc];
         public float HitboxRadiusOf(SimulatedNpc npc) => 0.5f;
         public string NameOf(SimulatedNpc npc) => npc.Name;
