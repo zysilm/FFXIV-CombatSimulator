@@ -16,7 +16,7 @@
 ### 工作方式 / git
 
 - 协调者 + 子代理工作流，实现交给后台子代理，主线留给讨论（2026-11-14，用户裁决）→ [AGENT_WORKFLOW.md](AGENT_WORKFLOW.md)。
-- 只有协调者提交推送；不用 `git stash`、不强推、不改历史；提交只 `git add -A CombatSimulator Tests docs ':!CombatSimulator/Dev/Experimental'`。
+- 只有协调者提交推送；不用 `git stash`、不强推、不改历史；提交只 `git add -A CombatSimulator RagdollLib Tests docs CombatSimulator.sln CLAUDE.md ':!CombatSimulator/Dev/Experimental'`。
 - 对用户一律中文；界面指引写确切页签名和折叠栏标题，先在 `Gui/MainWindow.cs` 核对（2026-10-24，用户裁决）。
 - 简短反馈既像报 bug 又像提需求时，先一句话复述确认再动手；修 bug 只改根因（2026-10-25）。
 - 重写就删干净，旧路径不留作退路（2026-11-13，用户裁决）。
@@ -141,6 +141,13 @@
 - （日期不详）ORZ 死亡姿势膝肘冻结，根因是折叠止挡轴取自初始姿态（`-forwardWorld`）→ 改用父段方向测弯曲角。
 - 2026-06-27：关节轴由死亡瞬间姿态 `Cross(thigh, shin)` 推导，近乎伸直时数值退化，左右膝轴不对称。
 
+### 构建 / 配置
+
+- 2026-11-14：游戏的热重载只监视 `CombatSimulator.dll` 的写入；被引用的库若生成引用程序集，只改库里的方法体不会重写插件 DLL，游戏不重载 → 库项目设 `ProduceReferenceAssembly=false`（`fa89b5a`）。
+- 2026-11-14：命令行的 `-p:DefineConstants=…` 会传给被引用的项目并顶掉它自己的编译常量 → `ProjectReference` 上加 `GlobalPropertiesToRemove="DefineConstants"`。
+- 2026-11-14：用户配置按“类型名, 程序集名”保存（`$type`），写进配置的类型换了程序集，旧配置就读不回来 → 这类类型留在插件程序集里。
+- 2026-11-14：用 `-p:DefineConstants=PUBLIC_BUILD` 验证公开构建时要加 `-o <仓库外目录>`，否则会覆盖游戏正在加载的 `bin/Release`。
+
 ### 游戏数据 / 逆向
 
 - 2026-11-01：Lumina 的 `MdlFile` 解析当前 v6（0x01000006）模型会抛异常 → 用 `RagdollController.TryReadModelGeometryData(byte[])`；`MtrlFile`/`TexFile` 正常。
@@ -239,6 +246,7 @@
 - **重构期间行为必须完全一致。**
 - 布娃娃在范围内，而且是重点（风险高，所以先调查）。
 - 插件侧的架构（战斗单位统一、规则模块、`Plugin.cs` 拆分等）由协调者设计。
+- “行为完全一致”定义为：同一份录制输入下，重构前后输出逐位相同；方案 [REFACTOR_PLAN.md](REFACTOR_PLAN.md) 获准，第一批开工。
 - 库先只面向 .NET；虚幻引擎等非 .NET 环境怎么用，以后再定。
 - 库公开。
 
@@ -248,6 +256,8 @@
 | --- | --- | --- | --- |
 | 研究者（只读） | 布娃娃抽库可行性 | 依赖地图、文件分类、确定性与“回放对照”方案、分阶段计划 | 已报告（2026-11-14） |
 | 研究者（只读） | 插件侧架构 | 战斗单位统一、规则模块、`Plugin.cs` 拆分、配置分组、行为一致的验证办法、分阶段计划 | 已报告（2026-11-14） |
+| 实现者 | A1 搬纯净文件 | `RagdollLib/`、插件 csproj、sln、16 个测试 csproj | 已合入（`fa89b5a`） |
+| 实现者（worktree） | B0 基线日志与可注入随机源 | `Ai/NpcAiController*.cs`、`Companions/CombatCompanionManager.cs`、`.Aggro.cs` | 已合入（`3e72047`） |
 
 ### 子代理报告要点
 
@@ -269,15 +279,18 @@
   - 随机源：选目标的种子不确定；敌人 AI 13 处、队友战斗路径 3 处 `Random.Shared`；`DamageCalculator` 已支持传入 `Random` 但没用上。
   - 敌人侧没有周期汇总日志，双方换目标频率也没有日志；重构前先补。
 
+- 2026-11-14 · A1 实现者 · 完成。35 个文件 4,954 行原样搬进 `RagdollLib/`（git 显示 35 个 100% 相似的改名）；库用 net8.0 不改源码即可编译；15 份离线测试输出搬移前后相同（4 份只差耗时数字）；公开配置和含子模块的配置都编译通过；库 DLL 在 `bin/Release` 和发布包里都有。未在游戏内加载验证。
+- 2026-11-14 · B0 实现者 · 完成。新日志行 `Enemies (…)`（9 类固定顺序）和 `Targets:`；随机源 `NpcAiController.RandomSource`（13 处）、`CombatCompanionManager.RandomSource`（3 处）、`AggroSeedSource`，默认行为不变。遗留：`StaggerTimers` 的两个外部调用（`CombatEngine`、`MapEnemyController`）和“感知到的玩家随机分边”仍用共享随机源；`casting` 一项在动作战斗下恒为 0%（读条归预警系统）。
+
 ### 待用户裁决
 
-- “行为完全一致”的定义：同一份录制输入下，重构前后输出逐位相同（游戏里子步数取决于墙钟，线上本身不可复现）。
-- 是否按 REFACTOR_PLAN §5 开工第一批（A1 搬纯净文件、A0 录制、B0 基线日志与可注入随机源；都不改行为）。
 - 库用什么许可证（插件现在是 MPL-2.0）。
 - 哪些功能的物理部分进公开的库（用户已定库公开，这一项还没回答）。
 
 ### 日志（新的在上）
 
+- 2026-11-14 · A1 与 B0 合入 `refactor/architecture`，含子模块的构建编译通过。下一步：A0（布娃娃录制）；之后请用户开游戏录战斗基线日志和布娃娃录制，录完才开始 A2 / B1。
+- 2026-11-14 · 协调者核对用户已保存的配置：有 10 种带程序集名的类型记录，没有一种在 A1 搬走的文件里。
 - 2026-11-14 · 协调者把两份调查合成 [REFACTOR_PLAN.md](REFACTOR_PLAN.md)（方案稿，等用户确认后开工）。
 - 2026-11-14 · 协调者初步测量：`Animation/RagdollController.cs`（1.3 万行）里引用游戏类型的只有约 84 行，集中在骨骼读写、地面射线、世界碰撞网格、模型文件读取、配置和日志；骨骼名字面量约 215 处，集中在骨骼定义表；已有按任意骨架自动建布娃娃的通用路径（`BuildGenericSkeletonDefs`）；`Animation/` 有 36 个文件已被离线测试直接编译（不依赖游戏）。
 - 2026-11-14 · 协调者量了现状：`RagdollController` 一个类 1.6 万行（15 个文件）；`Animation/` 3.5 万行，装着物理、网格几何和特效；`Plugin.cs` 70 个成员、约 100 行手工接线；`Configuration` 369 个设置、全项目直接读取约 2400 处；`MainWindow` 6350 行（12 个文件）；敌人 AI（`NpcAiController`）和队友 AI（`CombatCompanionManager`）是两套出手循环、两种数据类型；战斗规则散在 `Plugin.War.cs`、队友管理器的 Lord / Rescue 两个文件和 `CombatEngine` 里；离线测试 27 个项目。

@@ -75,7 +75,7 @@ flowchart TB
 ## 4. 所有 agent 都遵守的项目规矩
 
 - **语言**：对用户一律用中文，包括回答、汇报、进度说明。仓库里的提交说明用英文；文档中英皆可，跟随所在文件。简报用英文或中文都行；子代理向协调者报告用中文。
-- **不碰** `CombatSimulator/Dev/Experimental`（独立仓库，子模块）。提交只用：`git add -A CombatSimulator Tests docs ':!CombatSimulator/Dev/Experimental'`。
+- **不碰** `CombatSimulator/Dev/Experimental`（独立仓库，子模块）。提交只用：`git add -A CombatSimulator RagdollLib Tests docs CombatSimulator.sln CLAUDE.md ':!CombatSimulator/Dev/Experimental'`。
 - **git**：只有协调者提交和推送，推送用普通 `git push`。任何人都不用 `git stash`，不做强推，不改历史。
 - **提交说明**：私有或实验性功能的提交说明保持中性措辞（具体名单协调者知道，子代理按简报写）。提交说明结尾带会话指定的署名行。
 - **重写就删干净**：新系统替换旧系统时，旧路径同一批删掉，不留作“退路”。
