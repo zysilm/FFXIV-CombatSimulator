@@ -14,7 +14,6 @@ public unsafe class CombatCompanion : Combatant
     public override CombatPolicy Policy => CombatPolicy.Ally;
 
     public uint SourceEntityId { get; set; }
-    public CompanionAiState AiState { get; set; }
     public uint CurrentTargetId { get; set; }
     // Simulation-time stamp at which this companion is next allowed to re-run the
     // (heavy) target-selection scoring. Reselection happens early if the current

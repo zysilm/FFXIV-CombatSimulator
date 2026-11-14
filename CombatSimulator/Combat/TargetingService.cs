@@ -229,7 +229,7 @@ public sealed class TargetingService
             return;
         var fightingEnemies = 0;
         foreach (var e in enemies)
-            if (e.IsSpawned && e.State.IsAlive && !(e.IsSentry && e.AiState == Ai.NpcAiState.Idle)) fightingEnemies++;
+            if (e.IsSpawned && e.State.IsAlive && !(e.IsSentry && e.AiState == CombatantAiState.Idle)) fightingEnemies++;
         var fightingAllies = 0;
         foreach (var c in companions)
             if (c.IsSpawned && c.State.IsAlive) fightingAllies++;

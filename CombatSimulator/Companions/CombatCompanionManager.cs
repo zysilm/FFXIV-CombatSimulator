@@ -25,18 +25,17 @@ using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 
 namespace CombatSimulator.Companions;
 
-public unsafe partial class CombatCompanionManager : IDisposable
+/// <summary>
+/// The allies' controller: the one combatant controller (<see cref="CombatantController{TSelf}"/>) for the
+/// ally side, ticked before the crowd step and also out of combat. What stays here is the allies' own
+/// (docs/PLUGIN_ARCHITECTURE.md §2.2, §3.3): spawning and cloning, the command anchor and formation,
+/// captives, the battle rules' takeovers (rescue, prayer, the guard's leash), where to go without a target,
+/// their death (in their own next turn), the DPS tally, and for now both sides' target draws.
+/// </summary>
+public unsafe partial class CombatCompanionManager : CombatantController<CombatCompanion>
 {
     private readonly IObjectTable objectTable;
     private readonly IClientState clientState;
-    private readonly ICombatAiSettings config;
-    private readonly ICombatLoopEngine combatEngine;
-    // The game objects, the movement block hook, the visual states and the animations (stage B4a:
-    // GameCombatWorld in the plugin, a flat fake world in Tests/CombatReplay).
-    private readonly ICombatWorld world;
-    // Where the companions' attacks go: the engine's companion action (GameAttackSink in the plugin).
-    private readonly IAttackSink attackSink;
-    private readonly IPluginLog log;
 
     private readonly List<CombatCompanion> companions = new();
     private readonly List<PendingSpawn> pendingSpawns = new();
@@ -108,18 +107,14 @@ public unsafe partial class CombatCompanionManager : IDisposable
     public bool HasActiveCompanions => config.EnableCombatCompanions && companions.Any(c => c.IsSpawned && c.State.IsAlive);
     public bool HasLivingCompanions => config.EnableCombatCompanions && companions.Any(c => c.IsSpawned && c.State.IsAlive);
 
-    public Action<CombatCompanion>? OnCompanionSpawnComplete { get; set; }
-    public Action<nint>? OnCompanionDeathRagdoll { get; set; }
-    public Action<string>? OnSpawnError { get; set; }
+    // What the allies' side reports (stage B9: slots of the engine's CombatEvents; these names read and
+    // write the same slots).
+    public Action<CombatCompanion>? OnCompanionSpawnComplete { get => combatEngine.Events.AllySpawned; set => combatEngine.Events.AllySpawned = value; }
+    public Action<nint>? OnCompanionDeathRagdoll { get => combatEngine.Events.AllyDied; set => combatEngine.Events.AllyDied = value; }
+    public Action<string>? OnSpawnError { get => combatEngine.Events.AllySpawnError; set => combatEngine.Events.AllySpawnError = value; }
     public Func<uint, bool>? IsSourceEnemy { get; set; }
     /// <summary>Optional world-space surface height for walking over active corpses.</summary>
     public Func<nint, Vector3, float?>? CorpseSupportHeightProvider { private get; set; }
-    /// <summary>
-    /// The random numbers behind the allies' combat timers (the stagger of a new ally's first attack and
-    /// skills). The shared generator, unless a caller wants a repeatable run and gives a seeded one.
-    /// Who fights whom is drawn separately: see AggroSeedSource.
-    /// </summary>
-    public Random RandomSource { private get; set; } = Random.Shared;
 
     /// <summary>The manager over its seams (the plugin's constructor is in CombatCompanionManager.Game.cs).</summary>
     public CombatCompanionManager(
@@ -130,15 +125,11 @@ public unsafe partial class CombatCompanionManager : IDisposable
         ICombatWorld world,
         IAttackSink attackSink,
         IPluginLog log)
+        : base(combatEngine, world, attackSink, config, log)
     {
         this.objectTable = objectTable;
         this.clientState = clientState;
-        this.config = config;
-        this.combatEngine = combatEngine;
         targeting = new TargetingService(() => this.combatEngine.State.SimulationTime);
-        this.world = world;
-        this.attackSink = attackSink;
-        this.log = log;
         stepSink = new AllyStepSink(this);
         ruleParts = new BattleRuleSet(
             new BattleContext(combatEngine.Rules, combatEngine, world, new RuleAllies(this)),
@@ -299,7 +290,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         return true;
     }
 
-    public void Tick(float deltaTime, IReadOnlyList<SimulatedNpc> enemies)
+    public override void Tick(float deltaTime, IReadOnlyList<SimulatedNpc> enemies)
     {
         while (spawnQueue.TryDequeue(out var source))
             ProcessSpawnRequest(source);
@@ -343,7 +334,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
             if (!enemy.IsSpawned || !enemy.State.IsAlive)
                 continue;
             // A sentry that has not noticed the party presses on nobody.
-            if (enemy.IsSentry && enemy.AiState == Ai.NpcAiState.Idle)
+            if (enemy.IsSentry && enemy.AiState == CombatantAiState.Idle)
                 continue;
             SelectEnemyTargetInternal(enemy);
         }
@@ -846,30 +837,10 @@ public unsafe partial class CombatCompanionManager : IDisposable
         if (SuspendCombat?.Invoke() == true || !companion.IsSpawned || companion.BattleChara == null)
             return;
 
-        TickCompanionActionTimers(companion, deltaTime);
-
-        if (!companion.State.IsAlive)
-        {
-            ClearCompanionActionState(companion);
-            ClearCompanionTargetState(companion);
-            StopMove(companion);
-            EnterCompanionState(companion, CompanionAiState.Dead);
-            if (!companion.DeathAnimationPlayed)
-            {
-                ApplyCompanionDefeatAppearance(companion);
-                // (An executed captive drops from its kneel straight into the ragdoll.)
-                if (!companion.State.Executed)
-                    world.PlayDeathAnimation(ToSimulatedNpcView(companion));
-                if (config.PartyCompanionDeathRagdoll && companion.Address != nint.Zero)
-                    OnCompanionDeathRagdoll?.Invoke(companion.Address);
-                companion.DeathAnimationPlayed = true;
-                combatEngine.TriggerEnemyVictoryIfPartyDefeated();
-            }
+        // Lock and cooldowns run down; dead: OnDeadTurn; alive: MP comes back as it does for enemies
+        // (steadily, and with each auto-attack).
+        if (!BeginTurn(companion, deltaTime))
             return;
-        }
-
-        // MP comes back as it does for enemies: steadily, and with each auto-attack.
-        companion.State.RegenerateMp(CombatBudgetModel.EnemyMpRegenPerSecond, deltaTime);
 
         if (TickCaptive(companion) || ruleParts.TakesOverAlly(companion, deltaTime))
         {
@@ -882,9 +853,9 @@ public unsafe partial class CombatCompanionManager : IDisposable
         if (LeashOf(companion) != null && !IsWithinCommandRange(companion))
         {
             NoteActivity(ActivityReturning);
-            ClearCompanionActionState(companion);
+            ClearActionState(companion);
             ClearCompanionTargetState(companion);
-            EnterCompanionState(companion, CompanionAiState.ReturningToCommandRange, deltaTime);
+            EnterCompanionState(companion, CombatantAiState.ReturningToCommandRange, deltaTime);
             MoveToCommandRange(companion, deltaTime, companionIndex, companionCount);
             return;
         }
@@ -893,9 +864,9 @@ public unsafe partial class CombatCompanionManager : IDisposable
         if (target == null || target.BattleChara == null)
         {
             NoteActivity(ActivityNoTarget);
-            ClearCompanionActionState(companion);
+            ClearActionState(companion);
             ClearCompanionTargetState(companion);
-            EnterCompanionState(companion, CompanionAiState.ReturningToCommandRange, deltaTime);
+            EnterCompanionState(companion, CombatantAiState.ReturningToCommandRange, deltaTime);
             MoveToCommandRange(companion, deltaTime, companionIndex, companionCount);
             return;
         }
@@ -904,7 +875,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         // reach, as enemies do, walking or not: in a crush it may never reach its spot.
         var walking = CrowdApproach(companion, target, deltaTime);
         var dist = CrowdGap(companion, target);
-        if (walking && dist > CrowdReachNow(companion))
+        if (walking && dist > ReachNowOf(companion))
         {
             NoteActivity(ActivityWalkingIn);
             return;
@@ -913,23 +884,38 @@ public unsafe partial class CombatCompanionManager : IDisposable
         {
             var targetPos = world.PositionOf(target);
             StopMove(companion);
-            EnterCompanionState(companion, CompanionAiState.CombatReady);
-            RotateToward(companion, targetPos, deltaTime);
+            EnterCompanionState(companion, CombatantAiState.CombatReady);
+            TurnToward(companion, targetPos, deltaTime);
         }
         NoteActivity(ActivityFighting);
 
         // Lock, skills (the first ready one by priority), auto-attack: the step both sides share
         // (Combat/CombatStep.cs).
-        CombatStep.Run(companion, target, dist, deltaTime, stepSink, new CombatStepContext
-        {
-            Settings = config,
-            MpPriceOf = mpPriceOf ??= MpPriceOf,
-            Pace = ActionPace(),
-        });
+        Act(companion, target, dist, deltaTime, stepSink);
     }
 
-    // Companions keep pace with Action Mode's faster combat (same multiplier as enemies).
-    private float ActionPace() => CombatantMath.ActionPace(config.ActionMode, config.ActionEnemyAttackSpeed);
+    /// <summary>
+    /// A dead ally's turn: it drops its action and target and lies dead; the first time, its death
+    /// animation, its ragdoll and the check whether the party has fallen (no 0.5 s queue, unlike enemies).
+    /// </summary>
+    protected override void OnDeadTurn(CombatCompanion companion)
+    {
+        ClearActionState(companion);
+        ClearCompanionTargetState(companion);
+        StopMove(companion);
+        EnterCompanionState(companion, CombatantAiState.Dead);
+        if (!companion.DeathAnimationPlayed)
+        {
+            ApplyCompanionDefeatAppearance(companion);
+            // (An executed captive drops from its kneel straight into the ragdoll.)
+            if (!companion.State.Executed)
+                world.PlayDeathAnimation(ToSimulatedNpcView(companion));
+            if (config.PartyCompanionDeathRagdoll && companion.Address != nint.Zero)
+                OnCompanionDeathRagdoll?.Invoke(companion.Address);
+            companion.DeathAnimationPlayed = true;
+            combatEngine.TriggerEnemyVictoryIfPartyDefeated();
+        }
+    }
 
     private readonly AllyStepSink stepSink;
 
@@ -940,7 +926,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
     private sealed class AllyStepSink(CombatCompanionManager owner) : ICombatStepSink<CombatCompanion, SimulatedNpc>
     {
         public void ShowLocked(CombatCompanion companion)
-            => owner.EnterCompanionState(companion, CompanionAiState.ActionLocked);
+            => owner.EnterCompanionState(companion, CombatantAiState.ActionLocked);
 
         // Its stance was set before the step (CombatReady when standing, the crowd's when walking).
         public void ShowReady(CombatCompanion companion)
@@ -975,23 +961,6 @@ public unsafe partial class CombatCompanionManager : IDisposable
     {
         RegisterDamage(companion.SimulatedEntityId, result.Damage);
         targeting.AddThreat(target.SimulatedEntityId, companion.SimulatedEntityId, result.Damage, companion.State.IsTank);
-    }
-
-    private static void TickCompanionActionTimers(CombatCompanion companion, float deltaTime)
-    {
-        companion.State.AnimationLock = Math.Max(0, companion.State.AnimationLock - deltaTime);
-        foreach (var skill in companion.Behavior.Skills)
-            skill.CooldownRemaining = Math.Max(0, skill.CooldownRemaining - deltaTime);
-    }
-
-    private static void ClearCompanionActionState(CombatCompanion companion)
-    {
-        companion.State.IsCasting = false;
-        companion.State.CastActionId = 0;
-        companion.State.CastTimeElapsed = 0;
-        companion.State.CastTimeTotal = 0;
-        companion.State.CastTargetId = 0;
-        companion.State.AnimationLock = 0;
     }
 
     private void ClearCompanionTargetState(CombatCompanion companion)
@@ -1102,18 +1071,17 @@ public unsafe partial class CombatCompanionManager : IDisposable
             return;
         }
         StopMove(companion);
-        EnterCompanionState(companion, companion.CurrentTargetId == 0 ? CompanionAiState.Idle : CompanionAiState.CombatReady);
-        RotateToward(companion, player.Position, deltaTime);
+        EnterCompanionState(companion, companion.CurrentTargetId == 0 ? CombatantAiState.Idle : CombatantAiState.CombatReady);
+        TurnToward(companion, player.Position, deltaTime);
     }
 
-    private static float FlatDistance(Vector3 a, Vector3 b) => CombatantMath.FlatDistance(a, b);
 
     private SimulatedNpc? SelectCompanionTarget(CombatCompanion companion, IReadOnlyList<SimulatedNpc> enemies)
     {
         // (A sentry that has not noticed the party is left alone: it may be far off on the map.)
         var aliveEnemies = enemies
             .Where(e => e.IsSpawned && e.State.IsAlive && e.BattleChara != null &&
-                        !(e.IsSentry && e.AiState == Ai.NpcAiState.Idle))
+                        !(e.IsSentry && e.AiState == CombatantAiState.Idle))
             .ToList();
         if (aliveEnemies.Count == 0)
             return null;
@@ -1147,7 +1115,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
 
         var enemyPos = world.PositionOf(enemy);
         var anchor = CommandAnchor(player.Position, leash);
-        var standOff = CrowdReachNow(companion) + HitboxOf(companion) + world.HitboxRadiusOf(enemy);
+        var standOff = ReachNowOf(companion) + HitboxOf(companion) + world.HitboxRadiusOf(enemy);
         var overflow = FlatDistance(enemyPos, anchor) - standOff - CommandLimit(companion.SimulatedEntityId, leash);
         return (overflow <= ReachabilityRecoveryDistance, MathF.Max(0f, overflow));
     }
@@ -1196,8 +1164,8 @@ public unsafe partial class CombatCompanionManager : IDisposable
         StopMove(companion);
         EnterCompanionState(
             companion,
-            companion.CurrentTargetId == 0 ? CompanionAiState.Idle : CompanionAiState.CombatReady);
-        RotateToward(companion, faceTarget, deltaTime);
+            companion.CurrentTargetId == 0 ? CombatantAiState.Idle : CombatantAiState.CombatReady);
+        TurnToward(companion, faceTarget, deltaTime);
     }
 
     private void TickCombatAnchor(IReadOnlyList<SimulatedNpc> enemies)
@@ -1327,7 +1295,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         character->DrawData.LoadEquipment(slot, &model, true);
     }
 
-    private void EnterCompanionState(CombatCompanion companion, CompanionAiState state, float deltaTime = 0)
+    private void EnterCompanionState(CombatCompanion companion, CombatantAiState state, float deltaTime = 0)
     {
         companion.AiState = state;
         if (companion.BattleChara == null)
@@ -1335,14 +1303,14 @@ public unsafe partial class CombatCompanionManager : IDisposable
 
         switch (state)
         {
-            case CompanionAiState.ReturningToCommandRange:
-            case CompanionAiState.MovingToTarget:
+            case CombatantAiState.ReturningToCommandRange:
+            case CombatantAiState.MovingToTarget:
                 world.ApplyMoving(companion, deltaTime);
                 break;
-            case CompanionAiState.ActionLocked:
+            case CombatantAiState.ActionLocked:
                 world.ApplyActionLocked(companion);
                 break;
-            case CompanionAiState.Dead:
+            case CombatantAiState.Dead:
                 world.ApplyDead(companion);
                 break;
             default:
@@ -1351,13 +1319,6 @@ public unsafe partial class CombatCompanionManager : IDisposable
         }
     }
 
-    private void RotateToward(CombatCompanion companion, Vector3 targetPos, float deltaTime)
-    {
-        if (!CombatantMath.TurnToward(world.PositionOf(companion), world.RotationOf(companion), targetPos,
-                CombatantMath.TurnRate(MovePolicy.Ally, false, 0f), deltaTime, out var nextRot))
-            return;
-        world.SetApproachRotation(companion, nextRot);
-    }
 
     private void TickRecentDps(CombatCompanion companion, float deltaTime)
     {
@@ -1461,7 +1422,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
     private static bool IsTankJob(uint classJobId)
         => classJobId is 19 or 21 or 32 or 37;
 
-    public void Dispose() => DespawnAll();
+    public override void Dispose() => DespawnAll();
 
     private class PendingSpawn
     {

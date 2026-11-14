@@ -81,7 +81,7 @@
 - 敌人：`NpcSpawner` 造角色 → `OnNpcSpawnComplete` → 注册为敌人（`NpcSelector` + `CombatEngine.RegisterNpcEntity`）。阵营只由 `SimulatedEntityState.IsCompanion / IsPlayer` 决定。
 - 队友：`CombatCompanionManager`，只能克隆玩家模型（可见玩家 / 自己）。队友 AI、选目标、移动、伤害都在这里。伤害按自身 MaxHp 折算，所以 HP 同时决定了耐打和输出。
 - 敌人选目标：`CombatCompanionManager.ScoreEnemyTargetCandidate`（唯一可加“低优先级”权重的地方）。
-- 敌人待机：`NpcAiState.Idle` 只站着；队友模式下每帧强制全员 `EngageNpc`；没有巡逻、没有感知范围。
+- 敌人待机：`CombatantAiState.Idle` 只站着；队友模式下每帧强制全员 `EngageNpc`；没有巡逻、没有感知范围。
 - battle profile 在代码里叫 Combat Recipe：`Recipes/CombatRecipe*.cs`，只有内置的 `Resources/CombatRecipes/default.json`，不能保存用户自己的。
 - 死亡：玩家 `CombatEngine.ExecuteDeathAnimation`；队友在 `TickCompanion` 里；敌方胜利 `TriggerEnemyVictoryIfPartyDefeated`；`OnOutcomeDecided(bool)`。
 - 0 延迟布娃娃：玩家 `ForcePlayerInstantDeath()`；NPC/队友需绕过排队直接 `Activate(addr, 0f)`。

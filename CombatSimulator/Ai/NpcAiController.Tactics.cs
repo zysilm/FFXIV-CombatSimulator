@@ -98,7 +98,7 @@ public unsafe partial class NpcAiController
     private const float ChargeStopDistance = 8f;
     private const float ChargeSpeedScale = 1.8f;
 
-    // Turn rate: MovePolicy.Enemy (5 rad/s, slower when big with enhanced tactics on).
+    // Turn rate: MovePolicy.Enemy (5 rad/s, slower when big with enhanced tactics on), CombatantController.TurnRateOf.
 
     /// <summary>
     /// Once per frame: every enemy that has just entered the fight wakes idle allies within its aggro
@@ -124,7 +124,7 @@ public unsafe partial class NpcAiController
             var callerPos = GetNpcPosition(caller);
             foreach (var ally in npcs)
             {
-                if (ally == caller || !ally.IsSpawned || !ally.State.IsAlive || ally.AiState != NpcAiState.Idle)
+                if (ally == caller || !ally.IsSpawned || !ally.State.IsAlive || ally.AiState != CombatantAiState.Idle)
                     continue;
                 if (FlatDistance(GetNpcPosition(ally), callerPos) > radius)
                     continue;
@@ -184,7 +184,7 @@ public unsafe partial class NpcAiController
     /// </summary>
     private Vector3? FleeGoal(SimulatedNpc npc, Vector3 npcPos, Vector3 threatPos, float deltaTime)
     {
-        if (npc.AiState != NpcAiState.Combat)
+        if (npc.AiState != CombatantAiState.Combat)
             return null;
 
         var allies = tickNpcs;
@@ -255,7 +255,7 @@ public unsafe partial class NpcAiController
         float centres, float deltaTime)
     {
         tactics.RepositionCooldown = MathF.Max(0f, tactics.RepositionCooldown - deltaTime);
-        if (npc.AiState != NpcAiState.Combat || IsNpcBusyAttacking(npc))
+        if (npc.AiState != CombatantAiState.Combat || IsNpcBusyAttacking(npc))
         {
             tactics.Strafing = false;
             tactics.WasBusy = true;
@@ -474,10 +474,6 @@ public unsafe partial class NpcAiController
             tactics.Charging = gap > ChargeStartDistance && npc.IsEngaged;
         return tactics.Charging ? ChargeSpeedScale : 1f;
     }
-
-    /// <summary>Facing turn rate (rad/s): slower for big bodies with heavy turning enabled.</summary>
-    private float NpcTurnRate(SimulatedNpc npc)
-        => CombatantMath.TurnRate(MovePolicy.Enemy, config.EnhancedEnemyTactics, world.HitboxRadiusOf(npc));
 
     private EnemyTacticsState Tactics(SimulatedNpc npc)
     {

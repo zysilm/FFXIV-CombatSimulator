@@ -19,20 +19,17 @@ using FFXIVClientStructs.FFXIV.Client.Game.Object;
 
 namespace CombatSimulator.Ai;
 
-public unsafe partial class NpcAiController : IDisposable
+/// <summary>
+/// The enemies' controller: the one combatant controller (<see cref="CombatantController{TSelf}"/>) for
+/// the enemy side, ticked after the crowd step and only in combat. What stays here is the enemies' own
+/// (docs/PLUGIN_ARCHITECTURE.md §2.2, §3.3): engaging, sentries and patrols, call for help, tactics, casts
+/// and their telegraph snapshots, the passive pack, their movement pass and their death state.
+/// </summary>
+public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
 {
     public const float PlayerTriggeredEngageDelay = 0.5f;
 
-    private readonly ICombatLoopEngine combatEngine;
-    // The game objects, the movement block hook, the visual states, the battle stance and the foot
-    // solver (stage B4a: GameCombatWorld in the plugin, a flat fake world in Tests/CombatReplay).
-    private readonly ICombatWorld world;
-    private readonly ICombatAiSettings config;
-    private readonly IPluginLog log;
-    // Where attacks go: the attack router and the telegraph snapshot (GameAttackSink in the plugin).
-    private readonly IAttackSink attackSink;
     private readonly Func<nint, bool> isExternallyControlled;
-    private readonly Func<uint, bool> isTelegraphBusy;
     // Enemies the crowd has set running, with the look to clear when they stop.
     private readonly Dictionary<nint, ActorVisualState> movingNpcs = new();
     private readonly HashSet<nint> passiveEnemyAddresses = new();
@@ -41,8 +38,8 @@ public unsafe partial class NpcAiController : IDisposable
     // Enemy MP economy: enemies have half the player's max MP (set at spawn) but recover at double
     // rate, and only from natural regen + auto-attacks — never from guarding (they don't guard). This
     // makes them lead with skills while they have MP, then fall back to auto-attacks to recover.
-    // The numbers live in CombatBudgetModel, which also predicts what a kit sustains from them.
-    private const int EnemyMpRegenPerSecond = CombatBudgetModel.EnemyMpRegenPerSecond;       // 2× the player's ~67/s natural regen
+    // The numbers live in CombatBudgetModel (the rate: CombatantController.BeginTurn), which also
+    // predicts what a kit sustains from them.
 
     // Auto-engage countdown: when >= 0, every Tick decrements; on reaching
     // 0 we call EngageNpc on each selected NPC. Negative = inactive.
@@ -57,23 +54,15 @@ public unsafe partial class NpcAiController : IDisposable
         IPluginLog log,
         Func<nint, bool>? isExternallyControlled = null,
         Func<uint, bool>? isTelegraphBusy = null)
+        : base(combatEngine, world, attackSink, config, log, isTelegraphBusy)
     {
-        this.combatEngine = combatEngine;
-        this.world = world;
-        this.config = config;
-        this.log = log;
-        this.attackSink = attackSink;
         this.isExternallyControlled = isExternallyControlled ?? (_ => false);
-        this.isTelegraphBusy = isTelegraphBusy ?? (_ => false);
-        skillTokens = new SkillTokenBucket(config);
         stepSink = new EnemyStepSink(this);
 
         combatEngine.OnSimulationStarted += ScheduleAutoEngage;
         combatEngine.OnSimulationReset += OnSimulationResetOrStop;
     }
 
-    /// <summary>The crowd on the plugin's navigation mesh: the only thing that moves enemies. Null or not ready: they stand.</summary>
-    public ICrowdAgents? Crowd { private get; set; }
     private readonly List<SimulatedNpc> crowdDriven = new();
 
     /// <summary>Fills a list with where the living party stands (player and companions); sentries watch for them.</summary>
@@ -81,13 +70,6 @@ public unsafe partial class NpcAiController : IDisposable
 
     /// <summary>Where telegraphed casts register their snapshotted area (null = none drawn).</summary>
     public ICastAreaMarkers? AreaMarkers { private get; set; }
-
-    /// <summary>
-    /// The random numbers behind the enemies' decisions (timer stagger, engage jitter, patrol legs,
-    /// which ready skill, sidesteps). The shared generator, unless a caller wants a repeatable run and
-    /// gives a seeded one.
-    /// </summary>
-    public Random RandomSource { private get; set; } = Random.Shared;
 
     // What the enemies did, counted per frame and written to the log every few seconds of a fight
     // (the mirror of the allies' line in CombatCompanionManager.Crowd.cs). Counting reads what the
@@ -98,10 +80,9 @@ public unsafe partial class NpcAiController : IDisposable
     {
         "in reach", "walking in", "waiting a turn", "going for the body", "fleeing", "casting", "unaware", "idle", "off the mesh",
     };
-    private readonly long[] enemyActivityFrames = new long[9];
-    private readonly System.Diagnostics.Stopwatch enemyActivityClock = System.Diagnostics.Stopwatch.StartNew();
+    private readonly CombatActivityTally enemyActivity = new(EnemyActivityNames, listUnseen: true);
 
-    private void NoteEnemyActivity(int activity) => enemyActivityFrames[activity]++;
+    private void NoteEnemyActivity(int activity) => enemyActivity.Note(activity);
 
     /// <summary>
     /// What an enemy on the mesh did this frame, read from what TryCrowdMove left behind, in the order
@@ -118,7 +99,7 @@ public unsafe partial class NpcAiController : IDisposable
             return EnemyUnaware;
         if (!fightingLiveTarget)
             return EnemyIdle;
-        if (npc.AiState == NpcAiState.Combat && IsTacticsFleeing(npc))
+        if (npc.AiState == CombatantAiState.Combat && IsTacticsFleeing(npc))
             return EnemyFleeing;
         if (config.EnhancedEnemyTactics && IsMeleeFighter(npc) &&
             tacticsStates.TryGetValue(npc.SimulatedEntityId, out var tactics) && !tactics.Admitted)
@@ -128,28 +109,18 @@ public unsafe partial class NpcAiController : IDisposable
 
     private void ReportEnemyActivity()
     {
-        if (enemyActivityClock.Elapsed.TotalSeconds < 5)
+        if (enemyActivity.TakeShares() is not { } shares)
             return;
-        enemyActivityClock.Restart();
-        long total = 0;
-        foreach (var n in enemyActivityFrames) total += n;
-        if (total == 0)
-            return;
-        var parts = new List<string>();
-        for (var i = 0; i < enemyActivityFrames.Length; i++)
-            parts.Add($"{EnemyActivityNames[i]} {100.0 * enemyActivityFrames[i] / total:0}%");
         var allies = 0;
         foreach (var entity in combatEngine.State.Entities.Values)
             if (entity.IsCompanion && entity.IsAlive) allies++;
-        log.Info($"Enemies (share of enemy-frames over 5 s, {allies} allies alive): {string.Join(", ", parts)}.");
-        Array.Clear(enemyActivityFrames);
+        log.Info($"Enemies (share of enemy-frames over 5 s, {allies} allies alive): {shares}.");
     }
 
     private void ScheduleAutoEngage()
     {
         // (A fight starts or is reset: the enemies' summary starts a new 5 s window with it.)
-        Array.Clear(enemyActivityFrames);
-        enemyActivityClock.Restart();
+        enemyActivity.Restart();
 
         if (!config.EnableNpcAutoEngage || combatEngine.IsEnemyInitiationSuppressed)
         {
@@ -171,14 +142,7 @@ public unsafe partial class NpcAiController : IDisposable
         ScheduleAutoEngage();
     }
 
-    /// <summary>
-    /// Shared skill-start budget for every hostile NPC (see config.NpcSkillRateLimit). This
-    /// controller only ever ticks enemies — companions are driven by CombatCompanionManager — so
-    /// gating here throttles the hostile side alone, which is the intent.
-    /// </summary>
-    private readonly SkillTokenBucket skillTokens;
-
-    public void Tick(float deltaTime, IReadOnlyList<SimulatedNpc> npcs)
+    public override void Tick(float deltaTime, IReadOnlyList<SimulatedNpc> npcs)
     {
         var player = world.LocalPlayer;
         if (player == null)
@@ -186,7 +150,9 @@ public unsafe partial class NpcAiController : IDisposable
 
         tickNpcs = npcs;
 
-        skillTokens.Refill(deltaTime);
+        // The shared skill-start budget of the enemy side (config.NpcSkillRateLimit): this controller
+        // only ever ticks enemies, so it throttles the hostile side alone.
+        RefillSkillTokens(deltaTime);
 
         if (combatEngine.IsEnemyInitiationSuppressed)
         {
@@ -241,7 +207,7 @@ public unsafe partial class NpcAiController : IDisposable
                 world.TrackFootIk(npc.Address, deltaTime);
 
             // Keep active targets in battle stance (drawn weapon / combat idle)
-            if (npc.BattleChara != null && npc.AiState != NpcAiState.Dead)
+            if (npc.BattleChara != null && npc.AiState != CombatantAiState.Dead)
                 world.SetBattleStance(npc);
 
             var targetState = combatEngine.GetNpcTarget(npc);
@@ -257,8 +223,8 @@ public unsafe partial class NpcAiController : IDisposable
             // Only clear when NPC itself is dead or resetting.
             if (config.EnableNpcTargetPlayer && npc.BattleChara != null && targetState.IsPlayer)
             {
-                bool shouldTarget = npc.AiState != NpcAiState.Dead
-                                 && npc.AiState != NpcAiState.Resetting;
+                bool shouldTarget = npc.AiState != CombatantAiState.Dead
+                                 && npc.AiState != CombatantAiState.Resetting;
                 if (shouldTarget)
                     world.SetTargetId(npc, playerGameObjectId);
                 else if (world.TargetObjectIdOf(npc) == playerEntityId)
@@ -292,13 +258,13 @@ public unsafe partial class NpcAiController : IDisposable
             if (!npc.IsSpawned || npc.BattleChara == null || isExternallyControlled(npc.Address))
                 continue;
             // Freshly spawned clones are pinned to their spawn placement by NpcSpawner for a moment.
-            if (npc.SpawnPlacementFrames > 0 || npc.AiState == NpcAiState.Dead)
+            if (npc.SpawnPlacementFrames > 0 || npc.AiState == CombatantAiState.Dead)
                 continue;
             // Real NPCs of the map: keep the server from moving them under us.
             if (!npc.IsClientControlled)
                 world.AddApproachNpc(npc.Address);
-            if (npc.AiState == NpcAiState.Resetting)
-                npc.AiState = npc.State.IsAlive ? NpcAiState.Idle : NpcAiState.Dead;
+            if (npc.AiState == CombatantAiState.Resetting)
+                npc.AiState = npc.State.IsAlive ? CombatantAiState.Idle : CombatantAiState.Dead;
 
             if (crowdReady && TryCrowdMove(npc, deltaTime))
             {
@@ -340,13 +306,13 @@ public unsafe partial class NpcAiController : IDisposable
 
             if (!npc.State.IsAlive)
             {
-                npc.AiState = NpcAiState.Dead;
+                npc.AiState = CombatantAiState.Dead;
                 if (npc.BattleChara != null)
                     world.ApplyDead(npc);
                 continue;
             }
 
-            npc.AiState = NpcAiState.Idle;
+            npc.AiState = CombatantAiState.Idle;
             liveAddresses.Add(npc.Address);
             if (npc.BattleChara != null)
             {
@@ -360,7 +326,7 @@ public unsafe partial class NpcAiController : IDisposable
     }
 
     private static bool IsUnawareSentry(SimulatedNpc npc)
-        => npc.IsSentry && npc.AiState == NpcAiState.Idle;
+        => npc.IsSentry && npc.AiState == CombatantAiState.Idle;
 
     // A sentry notices the party within sight, or a neighbour that is already fighting.
     private const float SentrySightRange = 14f;
@@ -465,13 +431,7 @@ public unsafe partial class NpcAiController : IDisposable
     /// How far this enemy can attack from right now: its auto-attack (a caster's is a melee swing), or
     /// the longest skill it could use this moment (off cooldown, unlocked by HP, affordable).
     /// </summary>
-    private float ReachNow(SimulatedNpc npc)
-        => CombatantMath.ReachNow(npc.Behavior, npc.State, ReachPolicy.Enemy, ReachScale.From(config), mpPriceOf ??= MpPriceOf);
-
-    private Func<uint, int>? mpPriceOf;
-
-    /// <summary>A skill's price against the player's pool (0 when the action is unknown).</summary>
-    private int MpPriceOf(uint actionId) => combatEngine.GetActionData(actionId)?.MpCost ?? 0;
+    private float ReachNow(SimulatedNpc npc) => ReachNowOf(npc);
 
     /// <summary>
     /// Decide where this enemy goes and hand it to the crowd. Going for the lord's body: there. A sentry
@@ -483,12 +443,12 @@ public unsafe partial class NpcAiController : IDisposable
     {
         var crowd = Crowd!;
         var npcPos = GetNpcPosition(npc);
-        var speed = CombatantMath.MoveSpeed(npc.Behavior.MoveSpeed, MovePolicy.Enemy);
+        var speed = MoveSpeedOf(npc);
         Vector3? goal = null;
         npc.WalkPace = false;
 
         var target = combatEngine.GetNpcTarget(npc);
-        var fighting = npc.AiState is NpcAiState.Engaging or NpcAiState.Combat or NpcAiState.Chasing;
+        var fighting = npc.AiState is CombatantAiState.Engaging or CombatantAiState.Combat or CombatantAiState.Chasing;
         if (npc.SeizeGoal is { } seize)
         {
             // Going for the lord's body: while a retainer holds it, a guard within reach is fought where
@@ -561,8 +521,7 @@ public unsafe partial class NpcAiController : IDisposable
             position.Y += lift + config.DefaultNpcHeightOffset;
             world.SetApproachPosition(npc, position.X, position.Y, position.Z);
 
-            var flat = new Vector3(velocity.X, 0f, velocity.Z);
-            if (flat.LengthSquared() > 0.3f * 0.3f)
+            if (IsWalking(velocity, out var flat))
             {
                 StartApproachMoveAnim(npc, deltaTime, npc.WalkPace ? ActorVisualStateController.NormalWalkTimelineId : (ushort)0);
                 ForceRotateToward(npc, position + flat, deltaTime);
@@ -578,12 +537,12 @@ public unsafe partial class NpcAiController : IDisposable
 
     public void EngageNpc(SimulatedNpc npc)
     {
-        if (npc.AiState == NpcAiState.Dead || npc.AiState == NpcAiState.Resetting)
+        if (npc.AiState == CombatantAiState.Dead || npc.AiState == CombatantAiState.Resetting)
             return;
 
-        if (npc.AiState == NpcAiState.Idle)
+        if (npc.AiState == CombatantAiState.Idle)
         {
-            npc.AiState = NpcAiState.Engaging;
+            npc.AiState = CombatantAiState.Engaging;
             StaggerTimers(npc, RandomSource);
             ApplyEngageJitter(npc);
             log.Verbose($"NPC '{npc.Name}' engaging (auto-attack in {npc.AutoAttackTimer:F1}s).");
@@ -606,31 +565,9 @@ public unsafe partial class NpcAiController : IDisposable
 
     private void TickNpc(SimulatedNpc npc, float deltaTime, Vector3 playerPos, uint playerEntityId)
     {
-        // Tick skill cooldowns
-        foreach (var skill in npc.Behavior.Skills)
-        {
-            if (skill.CooldownRemaining > 0)
-                skill.CooldownRemaining = Math.Max(0, skill.CooldownRemaining - deltaTime);
-        }
-
-        if (!npc.State.IsAlive)
-        {
-            ClearNpcActionState(npc);
-            if (npc.AiState != NpcAiState.Dead)
-            {
-                npc.AiState = NpcAiState.Dead;
-                npc.DeadTimer = 0;
-                if (npc.BattleChara != null)
-                    world.ApplyDead(npc);
-            }
+        // Lock and cooldowns run down; dead: OnDeadTurn; alive: natural MP regen (double the player's rate).
+        if (!BeginTurn(npc, deltaTime))
             return;
-        }
-
-        if (npc.State.AnimationLock > 0)
-            npc.State.AnimationLock = Math.Max(0, npc.State.AnimationLock - deltaTime);
-
-        // Natural MP regen (double the player's rate).
-        npc.State.RegenerateMp(EnemyMpRegenPerSecond, deltaTime);
 
         DiscardInvalidNpcActionState(npc);
 
@@ -639,14 +576,14 @@ public unsafe partial class NpcAiController : IDisposable
 
         switch (npc.AiState)
         {
-            case NpcAiState.Idle:
+            case CombatantAiState.Idle:
                 // (A sentry walking its patrol, or an enemy going for the lord's body, keeps its
                 // stride: the approach pass owns its look.)
                 if (npc.BattleChara != null && !(npc.IsSentry && npc.Patrols && npc.HasPatrolGoal) && npc.SeizeGoal == null)
                     world.ApplyCombatIdle(npc);
                 break;
 
-            case NpcAiState.Engaging:
+            case CombatantAiState.Engaging:
                 if (!npc.CrowdDriven)
                     RotateTowardPlayer(npc, playerPos, deltaTime);
                 if (npc.EngageDelayTimer > 0)
@@ -654,34 +591,46 @@ public unsafe partial class NpcAiController : IDisposable
                     npc.EngageDelayTimer = Math.Max(0, npc.EngageDelayTimer - deltaTime);
                     break;
                 }
-                npc.AiState = NpcAiState.Combat;
+                npc.AiState = CombatantAiState.Combat;
                 break;
 
-            case NpcAiState.Combat:
+            case CombatantAiState.Combat:
                 TickCombat(npc, deltaTime, playerPos, playerEntityId, npcPos, distToPlayer);
                 break;
 
-            case NpcAiState.Chasing:
-                npc.AiState = NpcAiState.Combat;
+            case CombatantAiState.Chasing:
+                npc.AiState = CombatantAiState.Combat;
                 TickCombat(npc, deltaTime, playerPos, playerEntityId, npcPos, distToPlayer);
                 break;
 
-            case NpcAiState.Dead:
+            case CombatantAiState.Dead:
                 if (npc.BattleChara != null)
                     world.ApplyDead(npc);
                 npc.DeadTimer += deltaTime;
                 break;
 
-            case NpcAiState.Resetting:
+            case CombatantAiState.Resetting:
                 npc.State.CurrentHp = npc.State.MaxHp;
-                npc.AiState = NpcAiState.Idle;
+                npc.AiState = CombatantAiState.Idle;
                 break;
         }
     }
 
-    // Action Mode initiates attacks faster (auto delay + skill CDs divided by this)
-    // so enemies pressure the player at action-game pace instead of the ~3s tab-target cadence.
-    private float ActionPace() => CombatantMath.ActionPace(config.ActionMode, config.ActionEnemyAttackSpeed);
+    /// <summary>
+    /// A dead enemy's turn: it drops what it was doing and lies dead. Its death animation and ragdoll
+    /// come from the engine's death queue (0.5 s after the blow), not from here.
+    /// </summary>
+    protected override void OnDeadTurn(SimulatedNpc npc)
+    {
+        ClearNpcActionState(npc);
+        if (npc.AiState != CombatantAiState.Dead)
+        {
+            npc.AiState = CombatantAiState.Dead;
+            npc.DeadTimer = 0;
+            if (npc.BattleChara != null)
+                world.ApplyDead(npc);
+        }
+    }
 
     private void TickCombat(
         SimulatedNpc npc, float deltaTime,
@@ -692,7 +641,7 @@ public unsafe partial class NpcAiController : IDisposable
         if (simulatedTarget == null || !simulatedTarget.IsAlive)
         {
             ClearNpcActionState(npc);
-            npc.AiState = NpcAiState.Idle;
+            npc.AiState = CombatantAiState.Idle;
             return;
         }
 
@@ -758,15 +707,7 @@ public unsafe partial class NpcAiController : IDisposable
 
         // Lock, telegraph still running, skills (a random ready one after a token), auto-attack:
         // the step both sides share (Combat/CombatStep.cs).
-        CombatStep.Run(npc, simulatedTarget, distToTarget, deltaTime, stepSink, new CombatStepContext
-        {
-            Settings = config,
-            Rng = RandomSource,
-            Tokens = skillTokens,
-            IsTelegraphBusy = isTelegraphBusy,
-            MpPriceOf = mpPriceOf ??= MpPriceOf,
-            Pace = ActionPace(),
-        });
+        Act(npc, simulatedTarget, distToTarget, deltaTime, stepSink);
     }
 
     private readonly EnemyStepSink stepSink;
@@ -915,13 +856,7 @@ public unsafe partial class NpcAiController : IDisposable
 
     private static void ClearNpcActionState(SimulatedNpc npc)
     {
-        npc.State.IsCasting = false;
-        npc.State.CastActionId = 0;
-        npc.State.CastTimeElapsed = 0;
-        npc.State.CastTimeTotal = 0;
-        npc.State.CastTargetId = 0;
-        npc.State.AnimationLock = 0;
-        npc.CurrentCastSkill = null;
+        ClearActionState(npc);
         npc.CastArea = null; // its marker sees the cast end and leaves on the next tick
     }
 
@@ -932,7 +867,7 @@ public unsafe partial class NpcAiController : IDisposable
 
         var target = combatEngine.State.GetEntity(npc.State.CastTargetId);
         var selectedTarget = combatEngine.GetNpcTarget(npc);
-        var stateAllowsCast = npc.AiState is NpcAiState.Combat or NpcAiState.Chasing;
+        var stateAllowsCast = npc.AiState is CombatantAiState.Combat or CombatantAiState.Chasing;
         var invalid = npc.CurrentCastSkill == null ||
                       npc.State.CastTargetId == 0 ||
                       target == null ||
@@ -946,7 +881,7 @@ public unsafe partial class NpcAiController : IDisposable
             return;
 
         ClearNpcActionState(npc);
-        if (npc.BattleChara != null && npc.AiState != NpcAiState.Dead)
+        if (npc.BattleChara != null && npc.AiState != CombatantAiState.Dead)
             world.ApplyCombatIdle(npc);
     }
 
@@ -987,8 +922,6 @@ public unsafe partial class NpcAiController : IDisposable
         }
         return npc.SpawnPosition;
     }
-
-    private static float FlatDistance(Vector3 a, Vector3 b) => CombatantMath.FlatDistance(a, b);
 
     private float EntityHitboxRadius(SimulatedEntityState entity)
     {
@@ -1040,14 +973,10 @@ public unsafe partial class NpcAiController : IDisposable
     private void ForceRotateToward(SimulatedNpc npc, Vector3 targetPos, float deltaTime)
     {
         if (npc.BattleChara == null) return;
-
-        if (!CombatantMath.TurnToward((Vector3)world.PositionOf(npc), world.RotationOf(npc), targetPos, NpcTurnRate(npc), deltaTime, out var newRot))
-            return;
-
-        world.SetApproachRotation(npc, newRot);
+        TurnToward(npc, targetPos, deltaTime);
     }
 
-    public void Dispose()
+    public override void Dispose()
     {
         combatEngine.OnSimulationStarted -= ScheduleAutoEngage;
         combatEngine.OnSimulationReset -= OnSimulationResetOrStop;

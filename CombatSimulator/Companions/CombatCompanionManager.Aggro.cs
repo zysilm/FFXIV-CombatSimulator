@@ -142,7 +142,7 @@ public unsafe partial class CombatCompanionManager
         targeting.BeginDraw();
         var self = world.PositionOf(companion);
         var selfRanged = IsRangedStyle(companion.Behavior.AutoAttackStyle);
-        var reach = CrowdReachNow(companion);
+        var reach = ReachNowOf(companion);
         var playerId = combatEngine.State.PlayerState.EntityId;
         ruleParts.BeginAllyDraw(companion);
         foreach (var enemy in enemies)

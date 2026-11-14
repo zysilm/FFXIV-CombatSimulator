@@ -19,7 +19,11 @@
 //     and m.Corpse.PlayerRagdoll are "ragdollController", corpseModule.DeactivateAllNpcRagdolls() is
 //     "DeactivateAllNpcRagdolls()" (the accessor table is read from the modules' "public T Name => field;" members);
 //   - CombatEvents' slots are read as the engine members they back (combatEvents.SimulationReset is
-//     combatEngine.OnSimulationReset; Simulation/CombatEvents.cs, CombatEngine.cs);
+//     combatEngine.OnSimulationReset; Simulation/CombatEvents.cs, CombatEngine.cs), the allies' slots (stage B9) as the
+//     companion manager's members that now forward to them (combatEngine.Events.AllySpawned is
+//     companionManager.OnCompanionSpawnComplete);
+//   - a state of the two AI state enums merged at stage B9 (Ai.NpcAiState.Idle, CompanionAiState.Dead) is read as the
+//     merged enum's member of the same name (CombatantAiState.Idle);
 //   - "this." is dropped;
 //   - creating an object is compared by the "new ..." expression alone (a field of the plugin that became a module
 //     field, or a local that became a field, is the same creation);
@@ -187,17 +191,34 @@ sealed class Model
         "combatEvents", "combatModule.Events", "combatEngine.Events", "Events", "m.Combat.Events",
     };
 
+    // Stage B9 merged the enemies' NpcAiState and the allies' CompanionAiState into one enum, CombatantAiState, with the
+    // same member names (CombatSimulator/Combat/CombatantAiState.cs): a member of any of them, however qualified, is
+    // read as the merged enum's member of that name.
+    static readonly HashSet<string> AiStateTypes = new(StringComparer.Ordinal)
+    {
+        "NpcAiState", "Ai.NpcAiState", "CombatSimulator.Ai.NpcAiState",
+        "CompanionAiState", "Companions.CompanionAiState", "CombatSimulator.Companions.CompanionAiState",
+        "CombatantAiState", "Combat.CombatantAiState", "CombatSimulator.Combat.CombatantAiState",
+    };
+
     static readonly Dictionary<string, string> EventSlots = new(StringComparer.Ordinal)
     {
-        ["SimulationStarted"] = "OnSimulationStarted",
-        ["SimulationReset"] = "OnSimulationReset",
-        ["OutcomeDecided"] = "OnOutcomeDecided",
-        ["DamageLanded"] = "OnDamageLanded",
-        ["EnemyDied"] = "OnNpcDeathRagdoll",
-        ["BeforePlayerDeath"] = "BeforePlayerDeath",
-        ["PlayerDied"] = "OnPlayerDeath",
-        ["PlayerDamaged"] = "OnPlayerDamagedByNpc",
-        ["PlayerHitBy"] = "OnPlayerHitByNpc",
+        ["SimulationStarted"] = "combatEngine.OnSimulationStarted",
+        ["SimulationReset"] = "combatEngine.OnSimulationReset",
+        ["OutcomeDecided"] = "combatEngine.OnOutcomeDecided",
+        ["DamageLanded"] = "combatEngine.OnDamageLanded",
+        ["EnemyDied"] = "combatEngine.OnNpcDeathRagdoll",
+        ["BeforePlayerDeath"] = "combatEngine.BeforePlayerDeath",
+        ["PlayerDied"] = "combatEngine.OnPlayerDeath",
+        ["PlayerDamaged"] = "combatEngine.OnPlayerDamagedByNpc",
+        ["PlayerHitBy"] = "combatEngine.OnPlayerHitByNpc",
+        // Stage B9: the allies' notifications moved from the companion manager's own delegate properties into
+        // CombatEvents slots; the manager's old members are now forwarders to these slots (CombatCompanionManager.cs,
+        // .Rescue.cs), so assigning the slot is assigning the old member.
+        ["AllySpawned"] = "companionManager.OnCompanionSpawnComplete",
+        ["AllyDied"] = "companionManager.OnCompanionDeathRagdoll",
+        ["AllyRevived"] = "companionManager.OnCompanionRevived",
+        ["AllySpawnError"] = "companionManager.OnSpawnError",
     };
 
     readonly Dictionary<string, List<TypeDeclarationSyntax>> classes = new(StringComparer.Ordinal);
@@ -485,7 +506,9 @@ sealed class Model
             if (ModuleReceivers.Contains(receiver))
                 return SyntaxFactory.IdentifierName(model.accessors.TryGetValue(name, out var field) ? field : name);
             if (EventReceivers.Contains(receiver) && EventSlots.TryGetValue(name, out var slot))
-                return SyntaxFactory.ParseExpression("combatEngine." + slot);
+                return SyntaxFactory.ParseExpression(slot);
+            if (AiStateTypes.Contains(receiver))
+                return SyntaxFactory.ParseExpression("CombatantAiState." + name);
             return base.VisitMemberAccessExpression(node);
         }
     }

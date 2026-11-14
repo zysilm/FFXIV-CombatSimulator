@@ -270,7 +270,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         foreach (var npc in npcSelector.SelectedNpcs)
         {
             npc.State.Reset();
-            npc.AiState = Ai.NpcAiState.Idle;
+            npc.AiState = CombatSimulator.Combat.CombatantAiState.Idle;
             npc.AutoAttackTimer = 0;
             npc.EngageDelayTimer = 0;
             npc.DeadTimer = 0;
@@ -542,7 +542,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
                 continue;
 
             ForceNpcTarget?.Invoke(npc.SimulatedEntityId, playerId);
-            npc.AiState = Ai.NpcAiState.Combat;
+            npc.AiState = CombatSimulator.Combat.CombatantAiState.Combat;
             npc.EngageDelayTimer = 0f;
             npc.AutoAttackTimer = 0f;
             AddLogEntry($"{npc.Name} is provoked!", CombatLogType.Info);
@@ -1276,7 +1276,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
             bool allDead = true;
             foreach (var npc in npcSelector.SelectedNpcs)
             {
-                if (npc.State.IsAlive && !(npc.IsSentry && npc.AiState == Ai.NpcAiState.Idle))
+                if (npc.State.IsAlive && !(npc.IsSentry && npc.AiState == CombatSimulator.Combat.CombatantAiState.Idle))
                 {
                     allDead = false;
                     break;
@@ -1778,10 +1778,10 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         foreach (var npc in npcSelector.SelectedNpcs)
         {
             if (npc.SimulatedEntityId != entityId ||
-                npc.AiState != Ai.NpcAiState.Idle ||
+                npc.AiState != CombatSimulator.Combat.CombatantAiState.Idle ||
                 !npc.State.IsAlive)
                 continue;
-            npc.AiState = Ai.NpcAiState.Engaging;
+            npc.AiState = CombatSimulator.Combat.CombatantAiState.Engaging;
             npc.EngageDelayTimer = Ai.NpcAiController.PlayerTriggeredEngageDelay;
             Ai.NpcAiController.StaggerTimers(npc);
             AddLogEntry($"{npc.Name} engages!", CombatLogType.Info);

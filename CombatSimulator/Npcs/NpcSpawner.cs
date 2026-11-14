@@ -118,7 +118,7 @@ public unsafe class NpcSpawner : IDisposable
         {
             if (!spawnedNpcs[i].IsSpawned || !spawnedNpcs[i].IsAlive)
                 continue;
-            if (!spawnedNpcs[i].IsSentry || spawnedNpcs[i].AiState != Ai.NpcAiState.Idle)
+            if (!spawnedNpcs[i].IsSentry || spawnedNpcs[i].AiState != CombatSimulator.Combat.CombatantAiState.Idle)
                 return spawnedNpcs[i];
             unaware ??= spawnedNpcs[i];
         }

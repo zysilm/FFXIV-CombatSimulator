@@ -3,7 +3,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 using System.Numerics;
-using CombatSimulator.Ai;
 using CombatSimulator.Combat;
 
 namespace CombatSimulator.Npcs;
@@ -28,10 +27,9 @@ public unsafe class SimulatedNpc : Combatant
     public byte OriginalObjectKind { get; set; }
     public byte OriginalSubKind { get; set; }
 
-    // AI
-    public NpcAiState AiState { get; set; } = NpcAiState.Idle;
+    // AI (its state, AiState, is on Combatant)
     public float DeadTimer { get; set; }
-    public bool IsEngaged => AiState is NpcAiState.Engaging or NpcAiState.Combat or NpcAiState.Chasing;
+    public bool IsEngaged => AiState is CombatantAiState.Engaging or CombatantAiState.Combat or CombatantAiState.Chasing;
 
     /// <summary>
     /// Holds its post while idle instead of joining the fight with everyone else: it engages when

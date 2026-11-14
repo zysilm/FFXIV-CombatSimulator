@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using CombatSimulator.Ai;
+using CombatSimulator.Combat;
 using CombatSimulator.Companions;
 using CombatSimulator.Simulation;
 using Dalamud.Game.ClientState.Objects.SubKinds;
@@ -207,7 +208,7 @@ public sealed unsafe class MapEnemyController
         combatEngine.RegisterNpcEntity(npc);
         if (!combatEngine.IsEnemyInitiationSuppressed)
         {
-            npc.AiState = NpcAiState.Engaging;
+            npc.AiState = CombatantAiState.Engaging;
             npc.EngageDelayTimer = NpcAiController.PlayerTriggeredEngageDelay;
             NpcAiController.StaggerTimers(npc);
         }

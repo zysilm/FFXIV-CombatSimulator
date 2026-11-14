@@ -390,6 +390,7 @@ sealed class FakeEngine : ICombatLoopEngine
     public BattleRules Rules { get; }
     public Action? OnSimulationStarted { get; set; }
     public Action? OnSimulationReset { get; set; }
+    public CombatEvents Events { get; } = new();
     public Func<SimulatedNpc, SimulatedEntityState?>? ResolveNpcTarget { get; set; }
     public Func<uint, nint?>? ResolveExternalEntityAddress { get; set; }
     public Func<bool>? HasLivingCompanions { get; set; }
@@ -857,6 +858,34 @@ sealed unsafe class LoopReplay
         }
     }
 
+    // The frame hash takes a fighter's AI state as a number. Before stage B9 each side had its own enum
+    // (NpcAiState, CompanionAiState) and the hash took their ordinals; the merged CombatantAiState numbers
+    // the states differently (the two enums gave Dead different numbers). These give each state the number
+    // its side's old enum gave it, so the golden files keep their bytes. A state the side never had
+    // throws: a side using the other side's states would be a behaviour change.
+    private static int AllyStateCode(CombatantAiState s) => s switch
+    {
+        CombatantAiState.Idle => 0,
+        CombatantAiState.ReturningToCommandRange => 1,
+        CombatantAiState.MovingToTarget => 2,
+        CombatantAiState.CombatReady => 3,
+        CombatantAiState.ActionLocked => 4,
+        CombatantAiState.Dead => 5,
+        CombatantAiState.Captive => 6,
+        _ => throw new InvalidOperationException($"an ally in the enemies' state {s}"),
+    };
+
+    private static int EnemyStateCode(CombatantAiState s) => s switch
+    {
+        CombatantAiState.Idle => 0,
+        CombatantAiState.Engaging => 1,
+        CombatantAiState.Combat => 2,
+        CombatantAiState.Chasing => 3,
+        CombatantAiState.Dead => 4,
+        CombatantAiState.Resetting => 5,
+        _ => throw new InvalidOperationException($"an enemy in the allies' state {s}"),
+    };
+
     /// <summary>One line a frame: a hash of everything every fighter and the crowd hold, and of the effectful calls made.</summary>
     private void FrameLine()
     {
@@ -871,13 +900,13 @@ sealed unsafe class LoopReplay
             foreach (var s in c.Behavior.Skills) h.Add(s.CooldownRemaining);
             if (c is CombatCompanion a)
             {
-                h.Add((int)a.AiState); h.Add(a.CurrentTargetId); h.Add(a.NextTargetSelectAt); h.Add(a.RecentDps); h.Add(a.ReturningToLord);
+                h.Add(AllyStateCode(a.AiState)); h.Add(a.CurrentTargetId); h.Add(a.NextTargetSelectAt); h.Add(a.RecentDps); h.Add(a.ReturningToLord);
                 h.Add(a.DeathAnimationPlayed);
             }
             else
             {
                 var e = (SimulatedNpc)c;
-                h.Add((int)e.AiState); h.Add(targeting.EnemyTargetOf(e.SimulatedEntityId)); h.Add(e.CrowdDriven); h.Add(e.WalkPace);
+                h.Add(EnemyStateCode(e.AiState)); h.Add(targeting.EnemyTargetOf(e.SimulatedEntityId)); h.Add(e.CrowdDriven); h.Add(e.WalkPace);
                 h.Add(e.IsAttackingPlayer); h.Add(e.DeadTimer);
             }
             if (world.Agents.TryGetValue(c.Address, out var agent))
