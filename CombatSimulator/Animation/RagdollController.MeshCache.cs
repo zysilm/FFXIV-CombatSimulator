@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Numerics;
 using CombatSimulator.Animation.MeshVolume;
 using CombatSimulator.Animation.Hosting;
-using FFXIVClientStructs.FFXIV.Client.Game.Object;
 
 namespace CombatSimulator.Animation;
 
@@ -48,7 +47,7 @@ public unsafe partial class RagdollController
             ? (float.IsFinite(settings.RagdollMeshLodToleranceMm) ? Math.Clamp(settings.RagdollMeshLodToleranceMm, .5f, 50f) : 3f) * .001f
             : Configuration.WeaponBodyMeshLodToleranceMm * .001f;
         PollWeaponContactMeshes();
-        var localPlayer = Core.Services.ObjectTable.LocalPlayer?.Address ?? 0;
+        var localPlayer = actors.LocalPlayer;
         nint address;
         if (settings.RagdollMeshVolumes)
         {
@@ -57,37 +56,37 @@ public unsafe partial class RagdollController
         }
         else address = localPlayer; // Weapon-only: other actors are captured on demand by GetWeaponContactMesh.
         if (address == 0) return;
-        var entity = ((GameObject*)address)->EntityId;
+        var entity = actors.GetEntityId(address);
         if (frozenMeshActor != address || frozenMeshEntity != entity)
         {
             frozenMeshCache?.Dispose(); frozenMeshCache = null;
             frozenMeshActor = address; frozenMeshEntity = entity; nextMeshCacheAttempt = 0;
         }
-        if (frozenMeshCache == null && Environment.TickCount64 >= nextMeshCacheAttempt)
+        if (frozenMeshCache == null && clock.GetTickCount64(ClockSite.MeshCacheRetry) >= nextMeshCacheAttempt)
         {
-            nextMeshCacheAttempt = Environment.TickCount64 + 2000;
-            frozenMeshCache = CaptureFrozenMeshCache(address);
+            nextMeshCacheAttempt = clock.GetTickCount64(ClockSite.MeshCacheRetry) + 2000;
+            frozenMeshCache = meshes.ProvideBodySurface(address, BodySurfaceUse.Frozen, () => CaptureFrozenMeshCache(address));
             cachedMeshLodTolerance = -1; // Queue LOD once for this capture, including prewarming.
         }
         if (frozenMeshCache == null) return;
         if (cachedMeshLodEnabled != lodEnabled || cachedMeshLodTolerance != tolerance)
         {
             cachedMeshLodEnabled = lodEnabled; cachedMeshLodTolerance = tolerance;
-            frozenMeshCache.ConfigureLod(cachedMeshLodEnabled, tolerance);
+            meshes.ConfigureLod(frozenMeshCache, cachedMeshLodEnabled, tolerance);
         }
-        if (frozenMeshCache.Poll(out var error) && error != null)
+        if (meshes.PollLod(frozenMeshCache, out var error) && error != null)
             log.Warning(error, "Frozen collision cache LOD failed; full cached surface retained.");
     }
 
     /// <summary>Cached bone-local surface of an actor for weapon contacts. Reuses this controller's
     /// own cache when it holds that actor; otherwise captures once (synchronously) per actor.</summary>
-    internal FrozenMeshGeometryCache? GetWeaponContactMesh(nint address)
+    private FrozenMeshGeometryCache? GetWeaponContactMeshCore(nint address)
     {
         if (!settings.WeaponBodyMeshContacts || address == 0) return null;
-        var entity = ((GameObject*)address)->EntityId;
+        var entity = actors.GetEntityId(address);
         if (frozenMeshCache != null && frozenMeshActor == address && frozenMeshEntity == entity) return frozenMeshCache;
         // Client-spawned actors can reuse an address and entity id; a new draw object means a new model.
-        var draw = (nint)((GameObject*)address)->DrawObject;
+        var draw = meshes.ModelIdentity(address);
         if (weaponContactMeshes.TryGetValue(address, out var known) && known.Entity == entity && known.Draw == draw) return known.Cache;
         known.Cache?.Dispose();
         weaponContactMeshOrder.Remove(address);
@@ -99,9 +98,9 @@ public unsafe partial class RagdollController
         }
         // Body status text belongs to this controller's own ragdoll, not to another actor's capture.
         var status = MeshGeometryStatus;
-        var cache = CaptureFrozenMeshCache(address);
+        var cache = meshes.ProvideBodySurface(address, BodySurfaceUse.WeaponContact, () => CaptureFrozenMeshCache(address));
         MeshGeometryStatus = status;
-        cache?.ConfigureLod(true, Configuration.WeaponBodyMeshLodToleranceMm * .001f);
+        if (cache != null) meshes.ConfigureLod(cache, true, Configuration.WeaponBodyMeshLodToleranceMm * .001f);
         weaponContactMeshes[address] = (entity, draw, cache);
         weaponContactMeshOrder.Add(address);
         return cache;
@@ -110,7 +109,7 @@ public unsafe partial class RagdollController
     private void PollWeaponContactMeshes()
     {
         foreach (var entry in weaponContactMeshes.Values)
-            if (entry.Cache != null && entry.Cache.Poll(out var error) && error != null)
+            if (entry.Cache != null && meshes.PollLod(entry.Cache, out var error) && error != null)
                 log.Warning(error, "Weapon contact mesh LOD failed; full cached surface retained.");
     }
 
@@ -121,40 +120,39 @@ public unsafe partial class RagdollController
         weaponContactMeshOrder.Clear();
     }
 
+    /// <summary>The rendered body of a character, partitioned into the rig's regions and frozen bone-local. The
+    /// mesh source runs this (<see cref="IMeshSource.ProvideBodySurface"/>); the models come from it too.</summary>
     private FrozenMeshGeometryCache? CaptureFrozenMeshCache(nint address)
     {
-        var maybeSkeleton = boneService.TryGetSkeleton(address);
-        if (maybeSkeleton == null) return null;
-        var skel = maybeSkeleton.Value;
-        if (skel.CharBase->Skeleton == null) return null;
+        var skel = skeletons.TryGetSkeleton(address);
+        if (skel == null) return null;
+        if (!skel.HasRoot) return null;
         var defs = GetBoneDefs();
         var names = new Dictionary<string, int>();
         var byName = new Dictionary<string, RagdollBoneDef>();
         foreach (var def in defs)
         {
-            var index = boneService.ResolveBoneIndex(skel, def.Name);
+            var index = ResolveBoneIndex(skel, def.Name);
             if (index < 0) continue;
             names[def.Name] = index; byName[def.Name] = def;
         }
         if (!IsHumanoidSkeleton(names)) return null;
-        var previousAddress = targetCharacterAddress;
-        targetCharacterAddress = address; // Capture resolves this actor's Penumbra collection.
         FrozenMeshGeometryCache? next = null;
         try
         {
-            if (settings.RagdollSoftTissueModBones && address == Core.Services.ObjectTable.LocalPlayer?.Address)
-                AppendModSoftTissueDefs(new FfxivSkeletonPose(address, skel), defs, names, byName);
-            var worldParts = CaptureBodyMeshVolumes(skel, byName, names);
+            if (settings.RagdollSoftTissueModBones && address == actors.LocalPlayer)
+                AppendModSoftTissueDefs(skel, defs, names, byName);
+            var worldParts = CaptureBodyMeshVolumes(address, skel, byName, names);
             if (worldParts.Count == 0) return null;
             next = new();
-            var root = skel.CharBase->Skeleton->Transform;
+            var root = skel.Root;
             var rootPosition = new Vector3(root.Position.X, root.Position.Y, root.Position.Z);
             var rootRotation = Quaternion.Normalize(new(root.Rotation.X, root.Rotation.Y, root.Rotation.Z, root.Rotation.W));
             var scale = GetCharacterScale(address, skel);
             foreach (var entry in names)
             {
                 if (!worldParts.TryGetValue(entry.Value, out var geometry)) continue;
-                ref var pose = ref skel.Pose->ModelPose.Data[entry.Value];
+                ref var pose = ref skel.ModelPose[entry.Value];
                 var origin = rootPosition + Vector3.Transform(new Vector3(pose.Translation.X, pose.Translation.Y, pose.Translation.Z) * scale, rootRotation);
                 var rotation = Quaternion.Normalize(rootRotation * new Quaternion(pose.Rotation.X, pose.Rotation.Y, pose.Rotation.Z, pose.Rotation.W));
                 next.Add(entry.Key, geometry, origin, rotation);
@@ -163,6 +161,11 @@ public unsafe partial class RagdollController
             log.Info($"Frozen collision cache loaded for 0x{address:X}: {result.Count} regions; reused until explicit refresh or actor change.");
             return result;
         }
-        finally { next?.Dispose(); targetCharacterAddress = previousAddress; }
+        finally { next?.Dispose(); }
     }
+
+    /// <summary>The validated model parser, which stage A2b moved to the mesh source (FfxivMeshSource). Kept here
+    /// under its old name for callers outside the ragdoll that still use it.</summary>
+    internal static bool TryReadModelGeometryData(byte[] bytes, out ModelGeometryData data)
+        => FfxivMeshSource.TryReadModelGeometryData(bytes, out data);
 }

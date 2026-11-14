@@ -56,7 +56,7 @@ public unsafe partial class RagdollController
         {
             var rb = ragdollBones[i];
             // Bodies that already collide through their rendered mesh need no twin.
-            if (rb.BoneIndex < 0 || rb.MeshGeometry != null || !cache.TryGetCollisionGeometry(rb.Name, out var local)) continue;
+            if (rb.BoneIndex < 0 || rb.MeshGeometry != null || !meshes.TryGetCollisionGeometry(cache, rb.Name, out var local)) continue;
             Mesh mesh;
             try { mesh = TwoSidedMesh.Create(local, bufferPool); }
             catch (Exception ex) { log.Warning(ex, $"Weapon contact surface rejected for {rb.Name}; weapon uses its volume."); continue; }
@@ -139,5 +139,15 @@ public unsafe partial class RagdollController
         origin = bodyPosition - Vector3.Transform(rb.ShapeCenterOffset, body.Pose.Orientation);
         if (rb.SegmentHalfLength > 0)
             origin -= rb.SegmentHalfLength * Vector3.Transform(Vector3.UnitY, body.Pose.Orientation);
+    }
+
+    /// <summary>A dropped weapon's collision hulls from the model it is drawn with (the mesh source reads it), or
+    /// null when mesh collision for weapons is off or the model is unsupported.</summary>
+    public WeaponMeshGeometry? TryBuildWeaponMesh(FFXIVClientStructs.FFXIV.Client.Graphics.Scene.DrawObject* draw)
+    {
+        if (!settings.WeaponDropMeshCollision || draw == null) return null;
+        var result = meshes.BuildWeaponMesh((nint)draw, settings.RagdollVerboseLog);
+        if (result == null) log.Warning("Weapon mesh: geometry unavailable or unsupported; using simple collision for this drop.");
+        return result;
     }
 }

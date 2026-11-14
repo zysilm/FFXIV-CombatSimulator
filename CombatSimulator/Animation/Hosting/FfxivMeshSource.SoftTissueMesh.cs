@@ -7,39 +7,13 @@ using System.Collections.Generic;
 using System.Numerics;
 using FFXIVClientStructs.FFXIV.Client.System.Resource.Handle;
 
-namespace CombatSimulator.Animation;
+namespace CombatSimulator.Animation.Hosting;
 
-public unsafe partial class RagdollController
+// Capsules fitted to the body-mesh vertices each soft-tissue bone skins (moved here from
+// RagdollController.SoftTissueMesh.cs in stage A2b, unchanged).
+internal sealed unsafe partial class FfxivMeshSource
 {
-    // A mesh-less helper bone must still have a body so its spring/servo can drive the pose, but
-    // there is no honest anatomical volume to infer. Keep that fallback deliberately tiny instead
-    // of resurrecting the old ancestor-distance estimator.
-    private const float SoftTissueFallbackRadius = 0.006f;
-    private const float SoftTissueFallbackHalfLength = 0.004f;
     private const int SoftTissueMeshMinimumSamples = 8;
-
-    internal readonly struct SoftTissueMeshFit
-    {
-        public readonly float Radius;
-        public readonly float HalfLength;
-        public readonly Vector3 CenterModelOffset;
-        public readonly Vector3 AxisModel;
-        public readonly int SampleCount;
-
-        public SoftTissueMeshFit(
-            float radius,
-            float halfLength,
-            Vector3 centerModelOffset,
-            Vector3 axisModel,
-            int sampleCount)
-        {
-            Radius = radius;
-            HalfLength = halfLength;
-            CenterModelOffset = centerModelOffset;
-            AxisModel = axisModel;
-            SampleCount = sampleCount;
-        }
-    }
 
     private readonly struct SoftTissueMeshSample
     {
@@ -71,11 +45,11 @@ public unsafe partial class RagdollController
     /// skinning path as mesh collision, but preserves ownership instead of flattening everything
     /// into an anonymous triangle soup.
     /// </summary>
-    private Dictionary<int, SoftTissueMeshFit> BuildSoftTissueMeshFits(
+    private Dictionary<int, RagdollController.SoftTissueMeshFit> BuildSoftTissueMeshFits(
         SkeletonAccess skel,
         HashSet<int> targetBoneIndices)
     {
-        var result = new Dictionary<int, SoftTissueMeshFit>();
+        var result = new Dictionary<int, RagdollController.SoftTissueMeshFit>();
         if (targetBoneIndices.Count == 0 || skel.CharBase == null)
             return result;
 
@@ -133,7 +107,7 @@ public unsafe partial class RagdollController
             result[target] = fit;
         }
 
-        if (result.Count > 0 || settings.RagdollVerboseLog)
+        if (result.Count > 0 || verboseLog)
         {
             log.Info($"SoftTissue mesh fit: {result.Count}/{targetBoneIndices.Count} bone(s) fitted " +
                      $"from {loadedBodyModels} body model(s), {sampledMeshes} mesh(es).");
@@ -232,7 +206,7 @@ public unsafe partial class RagdollController
         SkeletonAccess skel,
         int boneIndex,
         List<SoftTissueMeshSample> samples,
-        out SoftTissueMeshFit fit)
+        out RagdollController.SoftTissueMeshFit fit)
     {
         fit = default;
         if (samples.Count < SoftTissueMeshMinimumSamples ||
@@ -319,13 +293,13 @@ public unsafe partial class RagdollController
             retainedWeight <= 0f)
             return false;
 
-        fit = new SoftTissueMeshFit(
+        fit = new RagdollController.SoftTissueMeshFit(
             MathF.Max(0.002f, radius),
             halfLength,
             centerOffset,
             axis,
             radial.Count);
-        if (settings.RagdollVerboseLog)
+        if (verboseLog)
         {
             var name = skel.HavokSkeleton->Bones[boneIndex].Name.String ?? $"bone_{boneIndex}";
             log.Info($"SoftTissue mesh fit '{name}': samples={radial.Count}, " +
@@ -397,7 +371,7 @@ public unsafe partial class RagdollController
             zz += delta.Z * delta.Z * w;
         }
 
-        var axis = NormalizeOrFallback(seed, Vector3.UnitY);
+        var axis = RagdollController.NormalizeOrFallback(seed, Vector3.UnitY);
         for (int iteration = 0; iteration < 10; iteration++)
         {
             var next = new Vector3(

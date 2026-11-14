@@ -178,8 +178,17 @@ public static class RagdollRecordingAnalysis
     /// the header, the end, notes and wall-clock stamps). The offline replay feeds the recorded clock stamps back,
     /// so it compares those too.</param>
     public static RagdollRecordingDifference Compare(string pathA, string pathB, Func<RecordType, bool>? isComparableInput)
+        => Compare(pathA, pathB, isComparableInput == null ? null : record => isComparableInput(record.Type), null);
+
+    /// <param name="isComparableInput">Which input records to compare, record by record (applied to both files);
+    /// null for the default.</param>
+    /// <param name="inputsEqual">When two compared input records count as equal; null for identical content. A
+    /// replay of an older format uses it to compare a record the newer format extended (by its common prefix).</param>
+    public static RagdollRecordingDifference Compare(string pathA, string pathB, Func<RagdollRecord, bool>? isComparableInput,
+        Func<RagdollRecord, RagdollRecord, bool>? inputsEqual)
     {
-        isComparableInput ??= IsComparableInput;
+        isComparableInput ??= record => IsComparableInput(record.Type);
+        inputsEqual ??= (x, y) => x.ContentEquals(y);
         var result = new RagdollRecordingDifference();
         using var a = RagdollRecordingReader.Open(pathA);
         using var b = RagdollRecordingReader.Open(pathB);
@@ -197,7 +206,7 @@ public static class RagdollRecordingAnalysis
                 var x = inputsA.Dequeue();
                 var y = inputsB.Dequeue();
                 inputIndex++;
-                if (!x.ContentEquals(y))
+                if (!inputsEqual(x, y))
                     result.InputDifference =
                         $"input record #{inputIndex} differs (after tick {tick}, physics frame {frame}): " +
                         $"A = {Clip(x.ToString())} | B = {Clip(y.ToString())}";
@@ -210,7 +219,7 @@ public static class RagdollRecordingAnalysis
             while (reader.Read() is { } record)
             {
                 if (RagdollRecordingFormat.IsOutput(record.Type)) return record;
-                if (isComparableInput(record.Type) && result.InputDifference == null) inputs.Enqueue(record);
+                if (isComparableInput(record) && result.InputDifference == null) inputs.Enqueue(record);
             }
             return null;
         }

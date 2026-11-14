@@ -7,11 +7,14 @@ using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
+using BepuPhysics.Collidables;
+using CombatSimulator.Animation.Hair;
+using CombatSimulator.Animation.MeshVolume;
 using CombatSimulator.Animation.Recording;
 
 namespace CombatSimulator.Animation.Hosting;
 
-// What the ragdoll asks of its host (docs/RAGDOLL_LIBRARY_ARCHITECTURE.md §2.3, stage A2a).
+// What the ragdoll asks of its host (docs/RAGDOLL_LIBRARY_ARCHITECTURE.md §2.3, stages A2a and A2b).
 //
 // Stage A2a keeps these in the plugin assembly; they move to the library in A4. Two departures from the
 // §2.3 sketch, both to keep every memory access and every float operation exactly as it was:
@@ -107,6 +110,10 @@ public enum SkeletonReadSite
     FrameIn = PosePurpose.FrameIn,
     ColliderBuild = PosePurpose.ColliderBuild,
     ColliderFrame = PosePurpose.ColliderFrame,
+    /// <summary>A mesh collider follows its character's skeleton root each frame; only the root is used, and it is
+    /// recorded as the ActorTransform record of <see cref="ActorSite.ColliderMesh"/> (stage A2b names the site so a
+    /// replay can answer it from there).</summary>
+    ColliderMeshRoot = 100,
 }
 
 /// <summary>Skeletons by character.</summary>
@@ -228,6 +235,8 @@ public enum ClockSite
     MeshLodInstall,
     /// <summary>The live hair's own dt.</summary>
     AnimatedHair,
+    /// <summary>Retry pause of a body-surface capture that found no model (Environment.TickCount64, milliseconds).</summary>
+    MeshCacheRetry,
 }
 
 public interface IRagdollClock
@@ -236,6 +245,10 @@ public interface IRagdollClock
     long GetTimestamp(ClockSite site);
     /// <summary>Wall time since <paramref name="since"/> (a time stamp of the same clock).</summary>
     TimeSpan GetElapsedTime(ClockSite site, long since);
+    /// <summary>Wall time between two time stamps of this clock (no new reading).</summary>
+    TimeSpan GetElapsedTime(ClockSite site, long since, long until);
+    /// <summary>Milliseconds since the system started (Environment.TickCount64).</summary>
+    long GetTickCount64(ClockSite site);
 }
 
 public enum RandomSite
@@ -265,17 +278,112 @@ public interface IRagdollSettingsSource
     bool Refresh(RagdollSettings settings);
 }
 
-/// <summary>
-/// Stage A2a stand-in for the products the controller's own model-reading code makes (A2b moves that code
-/// out and replaces this with IMeshSource). Null on the game: the controller then reads the models itself.
-/// </summary>
-internal interface IRagdollMeshProducts
+/// <summary>Why a character's body surface is captured (<see cref="IMeshSource.ProvideBodySurface"/>).</summary>
+public enum BodySurfaceUse
 {
-    /// <summary>The hull fit for the target, as the fit task would deliver it; null when none was started.</summary>
-    Task<RagdollController.StructuralFitResult>? StartStructuralFit(nint actor);
+    /// <summary>The controller's own frozen surface: mesh volumes, hair contacts, and weapon contacts on the main controller.</summary>
+    Frozen = 0,
+    /// <summary>A surface for weapon contacts only, when the frozen one does not hold that character.</summary>
+    WeaponContact = 1,
+}
 
-    /// <summary>The soft-tissue bodies fitted to the rendered mesh, by skeleton bone index, for the given candidates.</summary>
-    Dictionary<int, RagdollController.SoftTissueMeshFit> SoftTissueFits(nint actor, HashSet<int> candidates);
+/// <summary>Where a reduced collision surface is taken from a cached body surface.</summary>
+public enum CachedLodUse
+{
+    /// <summary>A mesh body built in InitializePhysics.</summary>
+    Init = 0,
+    /// <summary>Installed on a mesh body between fixed steps, once its reduced surface is ready.</summary>
+    Step = 1,
+}
+
+/// <summary>
+/// The character models, as the ragdoll needs them (docs/RAGDOLL_LIBRARY_ARCHITECTURE.md §2.3, stage A2b). The
+/// ragdoll never reads model files or the game's model memory itself: it asks for finished products (frozen body
+/// surfaces, rendered vertices with their bone weights, triangle soups, fitted volumes, hair samples).
+/// <para>Departures from the §2.3 sketch, all to keep every read, every float operation and every background task
+/// where it was: characters are addressed by their game object address (as in A2a); the body-surface capture keeps
+/// the controller's own partitioning code (<see cref="ProvideBodySurface"/> is handed it); and the reduced surfaces
+/// of a cached body surface, which a background queue builds, are asked of the mesh source too, so a replay can say
+/// when each one was ready.</para>
+/// </summary>
+internal interface IMeshSource
+{
+    /// <summary>Opaque identity of the model a character is drawn with: changes when the character is redrawn.</summary>
+    nint ModelIdentity(nint actor);
+
+    /// <summary>A character's frozen body surface (bone-local regions), or null when it cannot be read. The game
+    /// runs <paramref name="capture"/> (the controller's capture over <see cref="CaptureRenderedGeometry"/>); a replay
+    /// hands back the surface the game captured.</summary>
+    FrozenMeshGeometryCache? ProvideBodySurface(nint actor, BodySurfaceUse use, Func<FrozenMeshGeometryCache?> capture);
+
+    /// <summary>The visible models of a character as drawn now: world-space vertices with their skeleton bone
+    /// weights, triangles, and notes on what was left out. Render or framework thread only.</summary>
+    RenderedGeometrySnapshot CaptureRenderedGeometry(nint actor, ISkeletonPose skeleton);
+
+    /// <summary>Starts (or stops) building the reduced collision surfaces of a cached body surface in the background.</summary>
+    void ConfigureLod(FrozenMeshGeometryCache cache, bool enabled, float tolerance);
+
+    /// <summary>Takes one finished background build of a cached surface; false when none finished.</summary>
+    bool PollLod(FrozenMeshGeometryCache cache, out Exception? error);
+
+    /// <summary>The reduced collision surface of a region, rebased onto <paramref name="local"/>, once it is ready.</summary>
+    bool TryCreateLod(FrozenMeshGeometryCache cache, CachedLodUse use, string bone, BodyMeshGeometry local,
+        out MeshCollisionLodResult lod);
+
+    /// <summary>A region's bone-local collision surface: the reduced one once it is ready, otherwise the full one.</summary>
+    bool TryGetCollisionGeometry(FrozenMeshGeometryCache cache, string bone, out BodyMeshGeometry local);
+
+    /// <summary>Starts fitting the target's torso and thigh hulls to the models it is drawn with (the models are
+    /// read now, the fit runs on a background task); null when there is nothing to fit.</summary>
+    Task<RagdollController.StructuralFitResult>? StartStructuralFit(nint actor, ISkeletonPose skeleton);
+
+    /// <summary>Capsules fitted to the body-mesh vertices that each candidate bone (skeleton index) skins.</summary>
+    Dictionary<int, RagdollController.SoftTissueMeshFit> SoftTissueFits(nint actor, ISkeletonPose skeleton,
+        HashSet<int> candidates, bool verboseLog);
+
+    /// <summary>Another character's skinned models as one triangle soup (model space, unscaled, outward winding);
+    /// false when its skin transforms cannot be read.</summary>
+    bool TryCollectActorTriangles(nint actor, ISkeletonPose skeleton, string label, bool verboseLog,
+        List<Triangle> triangles, out int loadedModels, out int processedMeshes);
+
+    /// <summary>Framework thread, under the controller's hair lock: follows the local player's hair model and loads
+    /// its samples in the background; when <see cref="HairMesh"/> changes the live hair rebuilds
+    /// (<see cref="TakeHairMeshRebuild"/>).</summary>
+    void PollHairMesh();
+
+    /// <summary>The local player's hair samples, as last loaded (null while none).</summary>
+    HairMeshBinding? HairMesh { get; }
+
+    /// <summary>True once after <see cref="HairMesh"/> changed: the live hair must rebuild.</summary>
+    bool TakeHairMeshRebuild();
+
+    /// <summary>A weapon's collision hulls from the model it is drawn with, or null.</summary>
+    WeaponMeshGeometry? BuildWeaponMesh(nint weaponDrawObject, bool verboseLog);
+}
+
+/// <summary>A host without models: nothing is read and every product is absent.</summary>
+internal sealed class NoMeshSource : IMeshSource
+{
+    public static readonly NoMeshSource Instance = new();
+    public nint ModelIdentity(nint actor) => 0;
+    public FrozenMeshGeometryCache? ProvideBodySurface(nint actor, BodySurfaceUse use, Func<FrozenMeshGeometryCache?> capture) => null;
+    public RenderedGeometrySnapshot CaptureRenderedGeometry(nint actor, ISkeletonPose skeleton) => new();
+    public void ConfigureLod(FrozenMeshGeometryCache cache, bool enabled, float tolerance) { }
+    public bool PollLod(FrozenMeshGeometryCache cache, out Exception? error) { error = null; return false; }
+    public bool TryCreateLod(FrozenMeshGeometryCache cache, CachedLodUse use, string bone, BodyMeshGeometry local,
+        out MeshCollisionLodResult lod) { lod = null!; return false; }
+    public bool TryGetCollisionGeometry(FrozenMeshGeometryCache cache, string bone, out BodyMeshGeometry local)
+        => cache.TryGetSurfaceGeometry(bone, out local);
+    public Task<RagdollController.StructuralFitResult>? StartStructuralFit(nint actor, ISkeletonPose skeleton) => null;
+    public Dictionary<int, RagdollController.SoftTissueMeshFit> SoftTissueFits(nint actor, ISkeletonPose skeleton,
+        HashSet<int> candidates, bool verboseLog) => new();
+    public bool TryCollectActorTriangles(nint actor, ISkeletonPose skeleton, string label, bool verboseLog,
+        List<Triangle> triangles, out int loadedModels, out int processedMeshes)
+    { loadedModels = processedMeshes = 0; return false; }
+    public void PollHairMesh() { }
+    public HairMeshBinding? HairMesh => null;
+    public bool TakeHairMeshRebuild() => false;
+    public WeaponMeshGeometry? BuildWeaponMesh(nint weaponDrawObject, bool verboseLog) => null;
 }
 
 /// <summary>The host services of one controller.</summary>
@@ -290,7 +398,8 @@ public sealed class RagdollHost
     public IRagdollClock Clock { get; init; } = StopwatchRagdollClock.Instance;
     public IRagdollRandom Random { get; init; } = SharedRagdollRandom.Instance;
     public IRagdollScheduler Scheduler { get; init; } = TaskRagdollScheduler.Instance;
-    internal IRagdollMeshProducts? MeshProducts { get; init; }
+    /// <summary>The character models (stage A2b); none by default.</summary>
+    internal IMeshSource Meshes { get; init; } = NoMeshSource.Instance;
 }
 
 /// <summary>Default clock: the Stopwatch, as the controller always used.</summary>
@@ -300,6 +409,8 @@ public sealed class StopwatchRagdollClock : IRagdollClock
     public long Frequency => System.Diagnostics.Stopwatch.Frequency;
     public long GetTimestamp(ClockSite site) => System.Diagnostics.Stopwatch.GetTimestamp();
     public TimeSpan GetElapsedTime(ClockSite site, long since) => System.Diagnostics.Stopwatch.GetElapsedTime(since);
+    public TimeSpan GetElapsedTime(ClockSite site, long since, long until) => System.Diagnostics.Stopwatch.GetElapsedTime(since, until);
+    public long GetTickCount64(ClockSite site) => Environment.TickCount64;
 }
 
 /// <summary>Default random source: one unseeded generator shared by every controller in the process, as before.</summary>

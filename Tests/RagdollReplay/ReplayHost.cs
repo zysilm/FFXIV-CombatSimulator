@@ -194,6 +194,14 @@ internal sealed class ReplaySkeletons : ISkeletonSource
 
     public ISkeletonPose? TryGetSkeleton(nint actor, SkeletonReadSite site = SkeletonReadSite.Other)
     {
+        if (site == SkeletonReadSite.ColliderMeshRoot)
+        {
+            // Only the root is used, recorded as the collider's transform. When the game had no skeleton the
+            // controller read the position instead and turned it by nothing: the record holds exactly that.
+            var t = source.Take(RecordType.ActorTransform, x => x[0].AsInt == (int)ActorSite.ColliderMesh && (nint)x[1].AsULong == actor);
+            if (t == null) { source.Diverged($"mesh collider root of 0x{actor:X} read, none recorded"); return null; }
+            return new ReplaySkeleton(actor, source) { Available = true, RootValue = new RootTransform(t[2].AsVector3, t[3].AsQuaternion, Vector3.One) };
+        }
         if (site != SkeletonReadSite.Other)
         {
             var (record, index) = source.Peek(RecordType.SkeletonPose,
@@ -347,7 +355,9 @@ internal sealed class ReplayActors : IRagdollActor
     }
 
     public float GetFacing(nint actor, ActorReadSite site) => identity?[5].AsFloat ?? 0f;
-    public uint GetEntityId(nint actor) => source.Activate[5].AsUInt;
+    /// <summary>Entity ids the recording names (the carried body surfaces); every other actor reads as the target.</summary>
+    public readonly Dictionary<nint, uint> KnownEntities = new();
+    public uint GetEntityId(nint actor) => KnownEntities.TryGetValue(actor, out var entity) ? entity : source.Activate[5].AsUInt;
     public ulong GetGameObjectId(nint actor) => 0;
     public int GetObjectIndex(nint actor) => source.Activate[6].AsInt;
 
@@ -496,25 +506,34 @@ internal sealed class ReplayClock : IRagdollClock
         frameTicks += ticks;
     }
 
+    // Format version 2 recorded only the walking-support query stamp; version 3 records every reading but the dt.
     public long GetTimestamp(ClockSite site)
     {
-        switch (site)
+        if (site == ClockSite.FrameDelta) return frameTicks;
+        if (site != ClockSite.NpcTraversalQuery && !source.HasMeshProducts)
         {
-            case ClockSite.FrameDelta:
-                return frameTicks;
-            case ClockSite.NpcTraversalQuery:
-            {
-                var r = source.Take(RecordType.Clock, x => x[0].AsString == nameof(ClockSite.NpcTraversalQuery));
-                if (r == null) { source.Diverged("walking-support query time read, none recorded"); return 0; }
-                return r[1].AsLong;
-            }
-            default:
-                source.Diverged($"wall clock read at {site} (not replayable in stage A2a)");
-                return System.Diagnostics.Stopwatch.GetTimestamp();
+            source.Diverged($"wall clock read at {site} (not in a version 2 recording)");
+            return System.Diagnostics.Stopwatch.GetTimestamp();
         }
+        return Read(site.ToString());
     }
 
-    public TimeSpan GetElapsedTime(ClockSite site, long since) => TimeSpan.Zero;
+    public TimeSpan GetElapsedTime(ClockSite site, long since)
+        => source.HasMeshProducts ? TimeSpan.FromTicks(Read(site + RecordingClock.ElapsedSuffix)) : TimeSpan.Zero;
+
+    // An interval between two recorded stamps, computed as the game computed it (same machine, same Stopwatch).
+    public TimeSpan GetElapsedTime(ClockSite site, long since, long until) => System.Diagnostics.Stopwatch.GetElapsedTime(since, until);
+
+    // A version 2 recording has no tick counts: 0 lets the body-surface capture try once (the replay has no surfaces
+    // to hand out for such a file) and then wait for good.
+    public long GetTickCount64(ClockSite site) => source.HasMeshProducts ? Read(site.ToString()) : 0;
+
+    private long Read(string site)
+    {
+        var r = source.Take(RecordType.Clock, x => x[0].AsString == site);
+        if (r == null) { source.Diverged($"wall clock read at {site}, none recorded"); return 0; }
+        return r[1].AsLong;
+    }
 }
 
 internal sealed class ReplayRandom : IRagdollRandom
@@ -531,83 +550,6 @@ internal sealed class ReplayRandom : IRagdollRandom
 
     public double NextDouble(RandomSite site) => Next(site);
     public int Next(RandomSite site, int maxExclusive) => (int)Next(site);
-}
-
-internal sealed class ReplayMeshProducts : IRagdollMeshProducts
-{
-    private readonly ReplaySource source;
-    public ReplayMeshProducts(ReplaySource source) => this.source = source;
-
-    public Task<RagdollController.StructuralFitResult>? StartStructuralFit(nint actor)
-    {
-        var r = source.Peek(RecordType.StructuralFits).Record;
-        if (r == null) return null;
-        switch (r[0].AsInt)
-        {
-            case 2: return new TaskCompletionSource<RagdollController.StructuralFitResult>().Task; // timed out
-            case 3: return Task.FromResult(new RagdollController.StructuralFitResult(DecodeFits(r), "replayed"));
-            case 4: return Task.FromException<RagdollController.StructuralFitResult>(new InvalidOperationException("the recorded fit failed"));
-            default: return null;
-        }
-    }
-
-    /// <summary>The fitted soft-tissue bodies, read back from the bone definitions they became (each fit field is
-    /// copied into one definition field: radius, half length, centre offset, axis).</summary>
-    public Dictionary<int, RagdollController.SoftTissueMeshFit> SoftTissueFits(nint actor, HashSet<int> candidates)
-    {
-        var fits = new Dictionary<int, RagdollController.SoftTissueMeshFit>();
-        var r = source.Peek(RecordType.BoneDefs).Record;
-        if (r == null) { source.Diverged("soft-tissue fits asked, no BoneDefs record"); return fits; }
-        var count = r[1].AsInt;
-        var at = 2;
-        for (var d = 0; d < count; d++)
-        {
-            var pairs = r[at++].Count;
-            var fields = new Dictionary<string, RecValue>(StringComparer.Ordinal);
-            for (var p = 0; p < pairs; p += 2) fields[r[at + p].AsString!] = r[at + p + 1];
-            at += pairs;
-            var index = r[at++].AsInt;
-            if (!fields.TryGetValue("HasMeshFit", out var has) || !has.AsBool || !candidates.Contains(index)) continue;
-            fits[index] = new RagdollController.SoftTissueMeshFit(fields["CapsuleRadius"].AsFloat, fields["CapsuleHalfLength"].AsFloat,
-                fields["MeshFitCenterModelOffset"].AsVector3, fields["MeshFitAxisModel"].AsVector3, 0);
-        }
-        return fits;
-    }
-
-    private static Dictionary<string, StructuralMeshFitter.Fit> DecodeFits(RagdollRecord r)
-    {
-        var fits = new Dictionary<string, StructuralMeshFitter.Fit>(StringComparer.Ordinal);
-        var count = r[1].AsInt;
-        var at = 2;
-        for (var i = 0; i < count; i++)
-        {
-            var bone = r[at++].AsString!;
-            var pairs = r[at++].Count;
-            var fit = new StructuralMeshFitter.Fit();
-            for (var p = 0; p < pairs; p += 2)
-            {
-                var name = r[at++].AsString!;
-                var value = r[at++];
-                var field = typeof(StructuralMeshFitter.Fit).GetField(name, BindingFlags.Public | BindingFlags.Instance)
-                            ?? throw new ReplayUnsupportedException($"fit field {name} unknown");
-                field.SetValue(fit, DecodeField(field.FieldType, value));
-            }
-            fits[bone] = fit;
-        }
-        return fits;
-    }
-
-    private static object? DecodeField(Type type, RecValue value)
-    {
-        if (value.IsNull) return null;
-        if (type == typeof(float)) return value.AsFloat;
-        if (type == typeof(int)) return value.AsInt;
-        if (type == typeof(bool)) return value.AsBool;
-        if (type == typeof(Vector3)) return value.AsVector3;
-        if (type == typeof(Quaternion)) return value.AsQuaternion;
-        if (type == typeof(Vector3[])) return Rec.Vectors(value);
-        throw new ReplayUnsupportedException($"fit field type {type.Name} cannot be read back");
-    }
 }
 
 internal sealed class ReplayLog : IRagdollLog

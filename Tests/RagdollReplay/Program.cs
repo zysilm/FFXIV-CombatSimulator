@@ -10,16 +10,19 @@ using CombatSimulator.Animation.Recording;
 using RagdollReplay;
 
 // Usage:
-//   RagdollReplay <file.rgdrec | folder> [--keep]
+//   RagdollReplay <file.rgdrec | folder> [--keep] [--synthetic-meshes | --synthetic-colliders | --synthetic-hair]
 // Replays each recording through the plugin's RagdollController and reports, per file, "identical" or the
 // first difference. Exit code 0 when every file replayed identically.
 
 if (args.Length < 1)
 {
-    Console.Error.WriteLine("usage: RagdollReplay <file.rgdrec | folder> [--keep]");
+    Console.Error.WriteLine("usage: RagdollReplay <file.rgdrec | folder> [--keep] [--synthetic-meshes | --synthetic-colliders | --synthetic-hair]");
     return 2;
 }
 var keep = args.Contains("--keep");
+var synthetic = args.Contains("--synthetic-meshes") || args.Contains("--synthetic-colliders") || args.Contains("--synthetic-hair");
+SyntheticSettings.MeshVolumes = args.Contains("--synthetic-meshes");
+SyntheticSettings.Hair = args.Contains("--synthetic-hair");
 var target = args[0];
 var files = Directory.Exists(target)
     ? Directory.GetFiles(target, "*" + RagdollRecordingFormat.FileExtension).OrderBy(p => p, StringComparer.Ordinal).ToArray()
@@ -35,7 +38,16 @@ foreach (var file in files)
     string outcome;
     try
     {
-        outcome = ReplayDriver.Run(file, keep);
+        if (!synthetic)
+            outcome = ReplayDriver.Run(file, keep, false, out _);
+        else
+        {
+            // Two runs: the first with made-up models (SyntheticMeshes.cs), the second replays its recording.
+            var first = ReplayDriver.Run(file, true, true, out var produced);
+            outcome = produced == null
+                ? "SYNTHETIC RUN FAILED: " + first
+                : ReplayDriver.Run(produced, keep, false, out _) + "\n    synthetic mesh products: " + ReplayDriver.MeshProducts(produced);
+        }
     }
     catch (ReplayUnsupportedException ex)
     {
@@ -54,7 +66,7 @@ return identical == files.Length ? 0 : 1;
 
 internal static class ReplayDriver
 {
-    public static string Run(string path, bool keep)
+    public static string Run(string path, bool keep, bool synthetic, out string? produced)
     {
         var source = new ReplaySource(path);
         var header = source.Header;
@@ -64,27 +76,34 @@ internal static class ReplayDriver
             throw new ReplayUnsupportedException("not recorded with a PUBLIC_BUILD plugin");
         if (RagdollRecordingAnalysis.Summarize(path).CarriedState == null)
             throw new ReplayUnsupportedException("the Activate record holds no carried-over state");
-        foreach (var index in source.IndicesOf(RecordType.Decision))
-            if (source.Records[index][0].AsString == "MeshFrameEarlyOut")
-                throw new ReplayUnsupportedException("mesh volumes were on (mesh-frame early out): mesh input is stage A2b");
-        if (source.IndicesOf(RecordType.MeshLod).Count > 0 || source.IndicesOf(RecordType.Triangles).Count > 0 ||
-            source.IndicesOf(RecordType.HairMesh).Count > 0)
-            throw new ReplayUnsupportedException("uses mesh products (reduced meshes, mesh colliders or hair meshes): stage A2b");
+        // A version 2 recording has the mesh products only where the controller used them, which is not enough to
+        // answer the mesh paths (stage A2b records what the mesh source hands over: version 3).
+        if (!source.HasMeshProducts)
+        {
+            foreach (var index in source.IndicesOf(RecordType.Decision))
+                if (source.Records[index][0].AsString == "MeshFrameEarlyOut")
+                    throw new ReplayUnsupportedException("mesh volumes were on (mesh-frame early out): a version 2 recording cannot answer the mesh source");
+            if (source.IndicesOf(RecordType.MeshLod).Count > 0 || source.IndicesOf(RecordType.Triangles).Count > 0 ||
+                source.IndicesOf(RecordType.HairMesh).Count > 0)
+                throw new ReplayUnsupportedException("uses mesh products (reduced meshes, mesh colliders or hair meshes): a version 2 recording cannot answer the mesh source");
+        }
 
         var skeletons = new ReplaySkeletons(source);
         var log = new ReplayLog();
         var clock = new ReplayClock(source);
+        var meshes = new ReplayMeshSource(source);
+        var actors = new ReplayActors(source, skeletons);
         var host = new RagdollHost
         {
             Skeletons = skeletons,
             World = new ReplayWorld(source),
-            Actors = new ReplayActors(source, skeletons),
+            Actors = actors,
             Colliders = new ReplayColliders(source),
-            Settings = new ReplaySettings(source),
+            Settings = synthetic ? new SyntheticSettings(new ReplaySettings(source)) : new ReplaySettings(source),
             Log = log,
             Clock = clock,
             Random = new ReplayRandom(source),
-            MeshProducts = new ReplayMeshProducts(source),
+            Meshes = synthetic ? new SyntheticMeshSource(meshes, skeletons) : meshes,
         };
 
         // The target as the game showed it when the ragdoll was armed: its first recorded pose.
@@ -103,7 +122,15 @@ internal static class ReplayDriver
                 if (r == null) { source.Diverged("carry decision asked, none recorded"); return false; }
                 return r[1].AsBool;
             };
-        controller.RestoreCarriedState(CarriedState(source));
+        var carried = CarriedState(source, meshes);
+        if (carried.HasBodySurfaces)
+        {
+            // The target reads as its Activate entity; the others as the carried surfaces name them.
+            if (carried.FrozenMeshActor != 0 && carried.FrozenMeshActor != actor) actors.KnownEntities[carried.FrozenMeshActor] = carried.FrozenMeshEntity;
+            foreach (var entry in carried.WeaponContactMeshes)
+                if (entry.Actor != actor) actors.KnownEntities[entry.Actor] = entry.Entity;
+        }
+        controller.RestoreCarriedState(carried);
 
         var folder = Path.Combine(Path.GetTempPath(), "AdvancedRagdollReplay", "out", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
@@ -145,10 +172,18 @@ internal static class ReplayDriver
             controller.Dispose();
             replayed = Directory.GetFiles(folder, "*" + RagdollRecordingFormat.FileExtension).SingleOrDefault();
         }
+        produced = null;
         if (replayed == null) return "REPLAY ERROR: the replay wrote no recording";
+        if (synthetic)
+        {
+            produced = replayed;
+            return "synthetic run: " + replayed;
+        }
 
-        var difference = RagdollRecordingAnalysis.Compare(path, replayed,
-            type => type is not (RecordType.Header or RecordType.End or RecordType.Note or RecordType.MeshCache));
+        var difference = source.HasMeshProducts
+            ? RagdollRecordingAnalysis.Compare(path, replayed,
+                type => type is not (RecordType.Header or RecordType.End or RecordType.Note or RecordType.MeshCache))
+            : RagdollRecordingAnalysis.Compare(path, replayed, IsComparableWithVersion2, EqualToVersion2);
         var leftovers = Leftovers(source);
         var text = (difference.Identical ? "IDENTICAL (" : "DIFFERENT: ") + difference.Description + (difference.Identical ? ")" : string.Empty);
         if (difference.InputDifference != null) text += "\n    first input difference: " + difference.InputDifference;
@@ -159,6 +194,40 @@ internal static class ReplayDriver
         if (!keep) Directory.Delete(folder, true);
         else text += "\n    replayed recording: " + replayed;
         return text;
+    }
+
+    /// <summary>How many mesh products of each kind a recording holds (the synthetic self-check reports what it exercised).</summary>
+    public static string MeshProducts(string path)
+    {
+        var counts = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        using var reader = RagdollRecordingReader.Open(path);
+        foreach (var record in reader.ReadAll())
+        {
+            if (record.Type != RecordType.MeshProduct) continue;
+            var kind = record[0].AsString ?? "?";
+            if (kind == MeshProductKind.Lod) kind += record[3].AsBool ? " (ready)" : " (not ready)";
+            counts[kind] = counts.GetValueOrDefault(kind) + 1;
+        }
+        return counts.Count == 0 ? "none" : string.Join(", ", counts.Select(c => $"{c.Value} {c.Key}"));
+    }
+
+    // A version 2 original against its version 3 replay: what version 3 added (the mesh products, the clock readings
+    // other than the walking-support query stamp) is left out, and the Activate record is compared on what version 2
+    // wrote (version 3 appends followWasActive).
+    private static bool IsComparableWithVersion2(RagdollRecord record) => record.Type switch
+    {
+        RecordType.Header or RecordType.End or RecordType.Note or RecordType.MeshCache or RecordType.MeshProduct => false,
+        RecordType.Clock => record[0].AsString == nameof(ClockSite.NpcTraversalQuery),
+        _ => true,
+    };
+
+    private static bool EqualToVersion2(RagdollRecord original, RagdollRecord replayed)
+    {
+        if (original.Type != RecordType.Activate) return original.ContentEquals(replayed);
+        if (replayed.Type != RecordType.Activate || replayed.Values.Length != original.Values.Length + 1) return false;
+        for (var i = 0; i < original.Values.Length; i++)
+            if (!original.Values[i].Equals(replayed.Values[i])) return false;
+        return true;
     }
 
     private static string Leftovers(ReplaySource source)
@@ -179,10 +248,12 @@ internal static class ReplayDriver
         Check(RecordType.BoneWorldPosition, "bone position(s)");
         Check(RecordType.WeaponSample, "weapon sample(s)");
         Check(RecordType.TriggerInputs, "trigger input(s)");
+        Check(RecordType.MeshProduct, "mesh product(s)", r => r[0].AsString != MeshProductKind.Carried);
+        Check(RecordType.HairMesh, "hair sample set(s)");
         return string.Join(", ", parts);
     }
 
-    private static RagdollController.ReplayCarriedState CarriedState(ReplaySource source)
+    private static RagdollController.ReplayCarriedState CarriedState(ReplaySource source, ReplayMeshSource meshes)
     {
         var a = source.Activate;
         var s = new RagdollController.ReplayCarriedState
@@ -221,9 +292,12 @@ internal static class ReplayDriver
                 a[at + 5].AsFloat, a[at + 6].AsFloat, a[at + 7].AsFloat, a[at + 8].AsFloat, a[at + 9].AsInt, a[at + 10].AsBool));
             at += 11;
         }
-        // Not listed in the Activate record: public builds never reset it between activations. The first
-        // physics frame records the value it started with.
-        s.FollowWasActive = source.Peek(RecordType.FrameBegin).Record?[6].AsBool ?? false;
+        // Version 3 lists it at the end of the Activate record. Version 2 did not: public builds never reset it
+        // between activations, and the first physics frame records the value it started with.
+        s.FollowWasActive = source.HasMeshProducts
+            ? a[at].AsBool
+            : source.Peek(RecordType.FrameBegin).Record?[6].AsBool ?? false;
+        meshes.ReadCarried(s);
         return s;
     }
 
@@ -251,6 +325,9 @@ internal static class ReplayDriver
                 break;
             case nameof(RagdollController.RemoveGrabConstraint):
                 controller.RemoveGrabConstraint(call[2].AsInt);
+                break;
+            case nameof(RagdollController.GetWeaponContactMesh):
+                controller.GetWeaponContactMesh((nint)call[2].AsULong);
                 break;
             default:
                 throw new ReplayUnsupportedException($"the recording calls {method}, which this replay does not drive yet");

@@ -222,6 +222,33 @@ public unsafe partial class RagdollController
                         w.Bool(request.Locomoting);
                     }
                 }
+                // Format version 3: whether the previous activation's last frame wrote a follow position
+                // (public builds never reset it).
+                w.Bool(followWasActive);
+            }
+            // Format version 3: the body surfaces this controller carries over from earlier activations (the main
+            // controller captures the local player's long before it dies), with the bookkeeping that decides
+            // whether they are captured again.
+            using (w.Begin(RecordType.MeshProduct))
+            {
+                w.Str(MeshProductKind.Carried);
+                w.U64((ulong)frozenMeshActor);
+                w.U32(frozenMeshEntity);
+                w.Bool(observedMeshEnabled);
+                w.I32(observedMeshCacheRevision);
+                w.Bool(cachedMeshLodEnabled);
+                w.F32(cachedMeshLodTolerance);
+                w.I64(nextMeshCacheAttempt);
+                RecordingMeshSource.WriteCache(w, frozenMeshCache, recMeshCaches, false);
+                w.I32(weaponContactMeshOrder.Count);
+                foreach (var address in weaponContactMeshOrder)
+                {
+                    var entry = weaponContactMeshes[address];
+                    w.U64((ulong)address);
+                    w.U32(entry.Entity);
+                    w.U64((ulong)entry.Draw);
+                    RecordingMeshSource.WriteCache(w, entry.Cache, recMeshCaches, false);
+                }
             }
             RecIdentity(skeletons.TryGetSkeleton(targetCharacterAddress));
         }
@@ -906,43 +933,10 @@ public unsafe partial class RagdollController
         if (w == null) return;
         try
         {
-            if (cache == null)
-            {
-                using (w.Begin(RecordType.MeshCache))
-                {
-                    w.Str(use);
-                    w.I32(-1);
-                    w.I32(0);
-                }
-                return;
-            }
-            var known = recMeshCaches.TryGetValue(cache, out var id);
-            if (!known) recMeshCaches[cache] = id = recMeshCaches.Count + 1;
             using (w.Begin(RecordType.MeshCache))
             {
                 w.Str(use);
-                w.I32(id);
-                if (known)
-                {
-                    // Already written in this file under the same id.
-                    w.I32(0);
-                    return;
-                }
-                w.I32(cache.Count);
-                foreach (var name in cache.Names)
-                {
-                    w.Str(name);
-                    if (!cache.TryGetSurfaceGeometry(name, out var surface))
-                    {
-                        w.V3s(default);
-                        w.Ints(default);
-                        w.Bool(false);
-                        continue;
-                    }
-                    w.V3s(surface.Vertices);
-                    w.Ints(surface.Indices);
-                    w.Bool(cache.TryGetCollisionGeometry(name, out var collision) && !ReferenceEquals(collision, surface));
-                }
+                RecordingMeshSource.WriteCache(w, cache, recMeshCaches, true);
             }
         }
         catch (Exception ex) when (RecAbortPartial())
@@ -1879,6 +1873,23 @@ public unsafe partial class RagdollController
         using (RecCall(w, nameof(DetachWeaponContactBody))) w.I32(weapon.Value);
         recDepth++;
         try { DetachWeaponContactBodyCore(weapon); }
+        finally { RecLeave(); }
+    }
+
+    /// <summary>Recorded since stage A2b: the weapon-drop simulation asks it from outside, and a capture it makes
+    /// stays in this controller (its hair can rest on that surface).</summary>
+    internal FrozenMeshGeometryCache? GetWeaponContactMesh(nint address)
+    {
+        var w = rec;
+        if (w == null) return GetWeaponContactMeshCore(address);
+        using (RecCall(w, nameof(GetWeaponContactMesh))) w.U64((ulong)address);
+        recDepth++;
+        try
+        {
+            var cache = GetWeaponContactMeshCore(address);
+            using (w.Begin(RecordType.ApiReturn)) { w.Str(nameof(GetWeaponContactMesh)); w.Bool(cache != null); }
+            return cache;
+        }
         finally { RecLeave(); }
     }
 }

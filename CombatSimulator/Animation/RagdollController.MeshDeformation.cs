@@ -14,12 +14,12 @@ public unsafe partial class RagdollController
     {
         if (simulation == null || bufferPool == null || frozenMeshCache == null || !settings.RagdollMeshCollisionLod) return;
         var now = clock.GetTimestamp(Hosting.ClockSite.MeshLodInstall);
-        if (lastMeshLodInstall != 0 && System.Diagnostics.Stopwatch.GetElapsedTime(lastMeshLodInstall, now).TotalMilliseconds < 16.7) return;
+        if (lastMeshLodInstall != 0 && clock.GetElapsedTime(Hosting.ClockSite.MeshLodInstall, lastMeshLodInstall, now).TotalMilliseconds < 16.7) return;
         for (int index = 0; index < ragdollBones.Count; index++)
         {
             var bone = ragdollBones[index];
             if (bone.MeshGeometry is not { } full || bone.MeshLod != null ||
-                !frozenMeshCache.TryCreateLod(bone.Name, full, out var lod)) continue;
+                !meshes.TryCreateLod(frozenMeshCache, Hosting.CachedLodUse.Step, bone.Name, full, out var lod)) continue;
             var body = simulation.Bodies.GetBodyReference(bone.BodyHandle);
             var replacement = CreateBodyTriangleMesh(lod.Geometry);
             TypedIndex replacementIndex;

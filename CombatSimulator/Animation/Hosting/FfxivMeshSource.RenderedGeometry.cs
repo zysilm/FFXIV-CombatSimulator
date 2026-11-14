@@ -1,4 +1,4 @@
-// This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
+// This Source Code Form is subject to the Mozilla Public License, v. 2.0.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -10,9 +10,9 @@ using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using FFXIVClientStructs.FFXIV.Client.System.Resource.Handle;
 
-namespace CombatSimulator.Animation;
+namespace CombatSimulator.Animation.Hosting;
 
-public unsafe partial class RagdollController
+internal sealed unsafe partial class FfxivMeshSource
 {
     private readonly record struct RenderedModelStamp(int Slot, nint Model, nint Resource, nint ModelData, uint Attributes, uint Shapes);
     private readonly List<RenderedModelStamp> renderedGeometryStamps = new();
@@ -35,12 +35,12 @@ public unsafe partial class RagdollController
         renderedPartialStamps.Clear(); renderedPartialCount = 0;
     }
 
-    private bool RenderedGeometrySourcesMatch(SkeletonAccess skel)
+    private bool RenderedGeometrySourcesMatch(nint actor, SkeletonAccess skel)
     {
         var cb = skel.CharBase;
         if (cb == null || renderedGeometryCharBase != (nint)cb || renderedGeometrySkeleton != (nint)cb->Skeleton ||
             renderedGeometryPose != (nint)skel.Pose || renderedGeometryHavok != (nint)skel.HavokSkeleton ||
-            renderedGeometrySlotCount != cb->SlotCount || renderedGeometryScale != GetCharacterScale(targetCharacterAddress, skel)) return false;
+            renderedGeometrySlotCount != cb->SlotCount || renderedGeometryScale != GetCharacterScale(actor, skel)) return false;
         if (!RenderedPartialSourcesMatch(skel)) return false;
         if (renderedGeometryCustomize.Length != 0)
         {
@@ -53,7 +53,7 @@ public unsafe partial class RagdollController
             renderedGeometryNextResolveCheck = now + 500;
             if (IsRenderedPenumbraLoaded() != renderedGeometryPenumbra) return false;
             foreach (var resolved in renderedGeometryResolvedPaths)
-                if (!TryResolveRenderedActorPath(resolved.Key, out var current) || current != resolved.Value) return false;
+                if (!TryResolveRenderedActorPath(actor, resolved.Key, out var current) || current != resolved.Value) return false;
         }
         foreach (var stamp in renderedGeometryStamps)
         {
@@ -69,7 +69,7 @@ public unsafe partial class RagdollController
 
     /// <summary>Framework/render-thread only. Snapshot currently loaded visible models and pose;
     /// returned arrays own all data. It captures CPU geometry, not shader/GPU displacement.</summary>
-    private RenderedGeometrySnapshot BuildRenderedGeometrySnapshot(SkeletonAccess skel)
+    private RenderedGeometrySnapshot BuildRenderedGeometrySnapshot(nint actor, SkeletonAccess skel)
     {
         var result = new RenderedGeometrySnapshot();
         var diagnostics = new List<string>();
@@ -83,7 +83,7 @@ public unsafe partial class RagdollController
             return result;
         }
         var transform = cb->Skeleton->Transform;
-        var scale = GetCharacterScale(targetCharacterAddress, skel);
+        var scale = GetCharacterScale(actor, skel);
         var rotation = Quaternion.Normalize(new Quaternion(transform.Rotation.X, transform.Rotation.Y, transform.Rotation.Z, transform.Rotation.W));
         var world = Matrix4x4.CreateScale(scale) * Matrix4x4.CreateFromQuaternion(rotation) *
                     Matrix4x4.CreateTranslation(transform.Position.X, transform.Position.Y, transform.Position.Z);
@@ -126,12 +126,12 @@ public unsafe partial class RagdollController
                 // replacement filename contains no race identifier.
                 string logicalPath = cb->ResolveMdlPath(logicalBuffer, CharacterBase.PathBufferSize, (uint)slot).ToString();
                 ushort sourceRace = ReadRenderedModelRace(logicalPath);
-                if (renderedGeometryPenumbra && targetCharacterAddress != 0)
+                if (renderedGeometryPenumbra && actor != 0)
                 {
                     try
                     {
                         var reverse = Services.PluginInterface.GetIpcSubscriber<string, int, string[]>("Penumbra.ReverseResolveGameObjectPath")
-                            .InvokeFunc(path, ((GameObject*)targetCharacterAddress)->ObjectIndex);
+                            .InvokeFunc(path, ((GameObject*)actor)->ObjectIndex);
                         var candidateRaces = reverse.Select(ReadRenderedModelRace).Where(r => r != 0).Distinct().ToArray();
                         if (candidateRaces.Length == 1) sourceRace = candidateRaces[0];
                         else if (candidateRaces.Length > 1 && !reverse.Contains(logicalPath, StringComparer.OrdinalIgnoreCase)) sourceRace = 0;
@@ -143,7 +143,7 @@ public unsafe partial class RagdollController
                     if (!triedPbd)
                     {
                         triedPbd = true;
-                        var rawPbd = TryLoadRenderedPbd(out pbdRoute);
+                        var rawPbd = TryLoadRenderedPbd(actor, out pbdRoute);
                         if (rawPbd != null) pbd = new RenderedRaceDeformation(rawPbd);
                     }
                     if (pbd == null || !pbd.TryBuild(sourceRace, targetRace, names, parents, out raceDeform))
@@ -210,25 +210,25 @@ public unsafe partial class RagdollController
     private static bool IsRenderedPenumbraLoaded() => Services.PluginInterface.InstalledPlugins.Any(p =>
         p.IsLoaded && string.Equals(p.InternalName, "Penumbra", StringComparison.OrdinalIgnoreCase));
 
-    private bool TryResolveRenderedActorPath(string logical, out string resolved)
+    private static bool TryResolveRenderedActorPath(nint actor, string logical, out string resolved)
     {
         resolved = logical;
         if (!IsRenderedPenumbraLoaded()) return true;
-        if (targetCharacterAddress == 0) return false;
+        if (actor == 0) return false;
         try
         {
             resolved = Services.PluginInterface.GetIpcSubscriber<string, int, string>("Penumbra.ResolveGameObjectPath")
-                .InvokeFunc(logical, ((GameObject*)targetCharacterAddress)->ObjectIndex);
+                .InvokeFunc(logical, ((GameObject*)actor)->ObjectIndex);
             return !string.IsNullOrEmpty(resolved);
         }
         catch { return false; }
     }
 
-    private byte[]? TryLoadRenderedPbd(out string route)
+    private byte[]? TryLoadRenderedPbd(nint actor, out string route)
     {
         const string path = "chara/xls/boneDeformer/human.pbd";
         route = "actor collection unresolved";
-        if (!TryResolveRenderedActorPath(path, out var resolved)) return null;
+        if (!TryResolveRenderedActorPath(actor, path, out var resolved)) return null;
         renderedGeometryResolvedPaths[path] = resolved;
         route = $"actor collection '{resolved}'";
         if (resolved.StartsWith('|')) { int end = resolved.IndexOf('|', 1); if (end < 0) return null; resolved = resolved[(end + 1)..]; }

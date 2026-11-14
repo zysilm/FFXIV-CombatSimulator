@@ -2,9 +2,9 @@
 using System;
 using Lumina.Data.Parsing;
 
-namespace CombatSimulator.Animation;
+namespace CombatSimulator.Animation.Hosting;
 
-public unsafe partial class RagdollController
+internal sealed unsafe partial class FfxivMeshSource
 {
     /// <summary>
     /// Read-only metadata bridge to the existing validated raw MDL parser. Does not

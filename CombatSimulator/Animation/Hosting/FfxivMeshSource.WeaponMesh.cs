@@ -6,16 +6,16 @@ using System.Numerics;
 using BepuPhysics.Collidables;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 
-namespace CombatSimulator.Animation;
+namespace CombatSimulator.Animation.Hosting;
 
-public unsafe partial class RagdollController
+internal sealed unsafe partial class FfxivMeshSource
 {
-    public WeaponMeshGeometry? TryBuildWeaponMesh(DrawObject* draw)
+    // A dropped weapon's collision hulls from its drawn model (moved here from RagdollController.WeaponMesh.cs
+    // in stage A2b, unchanged; the setting check and the warning stay in RagdollController.TryBuildWeaponMesh).
+    public WeaponMeshGeometry? BuildWeaponMesh(nint weaponDrawObject, bool verboseLog)
     {
-        if (!settings.WeaponDropMeshCollision || draw == null) return null;
-        var result = BuildWeaponMesh(draw);
-        if (result == null) log.Warning("Weapon mesh: geometry unavailable or unsupported; using simple collision for this drop.");
-        return result;
+        FfxivMeshSource.verboseLog = verboseLog;
+        return BuildWeaponMesh((DrawObject*)weaponDrawObject);
     }
 
     private WeaponMeshGeometry? BuildWeaponMesh(DrawObject* draw)

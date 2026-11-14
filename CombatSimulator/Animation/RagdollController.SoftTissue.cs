@@ -30,6 +30,35 @@ namespace CombatSimulator.Animation;
 // racial / Customize+ scaling survives. Deactivate restores every touched bone exactly.
 public unsafe partial class RagdollController
 {
+    // A mesh-less helper bone must still have a body so its spring/servo can drive the pose, but
+    // there is no honest anatomical volume to infer. Keep that fallback deliberately tiny instead
+    // of resurrecting the old ancestor-distance estimator.
+    private const float SoftTissueFallbackRadius = 0.006f;
+    private const float SoftTissueFallbackHalfLength = 0.004f;
+
+    internal readonly struct SoftTissueMeshFit
+    {
+        public readonly float Radius;
+        public readonly float HalfLength;
+        public readonly Vector3 CenterModelOffset;
+        public readonly Vector3 AxisModel;
+        public readonly int SampleCount;
+
+        public SoftTissueMeshFit(
+            float radius,
+            float halfLength,
+            Vector3 centerModelOffset,
+            Vector3 axisModel,
+            int sampleCount)
+        {
+            Radius = radius;
+            HalfLength = halfLength;
+            CenterModelOffset = centerModelOffset;
+            AxisModel = axisModel;
+            SampleCount = sampleCount;
+        }
+    }
+
     private struct SquashState
     {
         public float Compression;     // c, 0 = relaxed, 1 = max

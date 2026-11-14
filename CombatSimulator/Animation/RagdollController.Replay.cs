@@ -7,10 +7,11 @@ using System.Numerics;
 
 namespace CombatSimulator.Animation;
 
-// Entry points for the offline replay (Tests/RagdollReplay, stage A2a). A recording starts in the middle of a
-// controller's life: what earlier activations left behind is in the Activate record (and, for one value the
-// recorder does not list there, in the first FrameBegin record); the replay puts it back before it calls
-// Activate. Nothing here runs in the game.
+// Entry points for the offline replay (Tests/RagdollReplay, stages A2a and A2b). A recording starts in the middle of
+// a controller's life: what earlier activations left behind is in the Activate record and, since format version 3,
+// in the MeshProduct "carried" record after it (the body surfaces); a version 2 recording does not list
+// followWasActive, which its first FrameBegin record shows. The replay puts it back before it calls Activate.
+// Nothing here runs in the game.
 public unsafe partial class RagdollController
 {
     /// <summary>One request of the walking-support proxy, as the Activate record lists it.</summary>
@@ -37,6 +38,17 @@ public unsafe partial class RagdollController
         public List<ReplayTraversalRequest> TraversalRequests = new();
         /// <summary>Whether the previous activation's last frame wrote a follow position (public builds never reset it).</summary>
         public bool FollowWasActive;
+        /// <summary>The body surfaces carried over from earlier activations (format version 3, MeshProduct "carried").</summary>
+        public bool HasBodySurfaces;
+        public nint FrozenMeshActor;
+        public uint FrozenMeshEntity;
+        public bool ObservedMeshEnabled;
+        public int ObservedMeshCacheRevision = -1;
+        public bool CachedMeshLodEnabled;
+        public float CachedMeshLodTolerance;
+        public long NextMeshCacheAttempt;
+        public MeshVolume.FrozenMeshGeometryCache? FrozenMeshCache;
+        public List<(nint Actor, uint Entity, nint Draw, MeshVolume.FrozenMeshGeometryCache? Cache)> WeaponContactMeshes = new();
     }
 
     internal void RestoreCarriedState(ReplayCarriedState s)
@@ -75,6 +87,24 @@ public unsafe partial class RagdollController
                 };
         }
         followWasActive = s.FollowWasActive;
+        if (s.HasBodySurfaces)
+        {
+            frozenMeshActor = s.FrozenMeshActor;
+            frozenMeshEntity = s.FrozenMeshEntity;
+            observedMeshEnabled = s.ObservedMeshEnabled;
+            observedMeshCacheRevision = s.ObservedMeshCacheRevision;
+            cachedMeshLodEnabled = s.CachedMeshLodEnabled;
+            cachedMeshLodTolerance = s.CachedMeshLodTolerance;
+            nextMeshCacheAttempt = s.NextMeshCacheAttempt;
+            frozenMeshCache = s.FrozenMeshCache;
+            weaponContactMeshes.Clear();
+            weaponContactMeshOrder.Clear();
+            foreach (var entry in s.WeaponContactMeshes)
+            {
+                weaponContactMeshes[entry.Actor] = (entry.Entity, entry.Draw, entry.Cache);
+                weaponContactMeshOrder.Add(entry.Actor);
+            }
+        }
     }
 
     /// <summary>One render frame, as the render hook runs it.</summary>

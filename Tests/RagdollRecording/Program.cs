@@ -441,8 +441,8 @@ void SimulationRecordings()
     {
         var activate = reader.ReadAll().First(r => r.Type == RecordType.Activate);
         var at = RagdollRecordingFormat.ActivateCarriedStateIndex(activate);
-        Check(reader.FormatVersion == RagdollRecordingFormat.Version && RagdollRecordingFormat.Version == 2 && summary.FormatVersion == 2,
-            "format version 2 in the header, the reader and the summary");
+        Check(reader.FormatVersion == RagdollRecordingFormat.Version && RagdollRecordingFormat.Version == 3 && summary.FormatVersion == 3,
+            "format version 3 in the header, the reader and the summary");
         Check(at == 30 && activate[at].Tag == ValueTag.U32 && activate[at].AsUInt == 0x1234ABCDu && activate[at + 1].AsInt == 7 && activate[at + 2].AsInt == 3 &&
               activate[at + 3].Count == 2 && activate[at + 4].AsInt == 11 && activate[at + 5].AsInt == 12 &&
               activate[at + 6].Count == 1 && activate[at + 7].AsULong == 0x99 &&

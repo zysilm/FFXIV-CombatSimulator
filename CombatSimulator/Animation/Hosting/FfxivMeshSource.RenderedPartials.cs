@@ -3,9 +3,9 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 
-namespace CombatSimulator.Animation;
+namespace CombatSimulator.Animation.Hosting;
 
-public unsafe partial class RagdollController
+internal sealed unsafe partial class FfxivMeshSource
 {
     private readonly record struct RenderedPartialStamp(int Index, nint Pose, nint Havok, nint Resource, short Connected, short Parent, bool Readable);
     private readonly List<RenderedPartialStamp> renderedPartialStamps = new();

@@ -31,6 +31,14 @@ public sealed class FrozenMeshGeometryCache : IDisposable
         parts.Add(part);
     }
 
+    /// <summary>Adds a region whose surface is already bone-local (a recorded surface handed back by a replay).</summary>
+    public void AddLocal(string name, BodyMeshGeometry local)
+    {
+        var part = new Part(name, local);
+        byName.Add(name, part);
+        parts.Add(part);
+    }
+
     public void ConfigureLod(bool enabled, float tolerance)
     {
         builds?.Dispose();

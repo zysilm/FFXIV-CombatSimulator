@@ -24,15 +24,22 @@ internal static class FfxivRagdollHost
 {
     public static RagdollHost Create(BoneTransformService boneService, Configuration config, IPluginLog log,
         Npcs.NpcSelector? npcSelector, Safety.MovementBlockHook? movementBlockHook,
-        Func<IReadOnlyList<nint>>? extraCollisionProvider) => new()
+        Func<IReadOnlyList<nint>>? extraCollisionProvider)
     {
-        Skeletons = new FfxivSkeletonSource(boneService),
-        World = FfxivWorldQuery.Instance,
-        Actors = new FfxivRagdollActor(movementBlockHook),
-        Colliders = new FfxivColliderActors(npcSelector, movementBlockHook, extraCollisionProvider),
-        Settings = new ConfigRagdollSettings(config),
-        Log = new DalamudRagdollLog(log),
-    };
+        var actors = new FfxivRagdollActor(movementBlockHook);
+        var ragdollLog = new DalamudRagdollLog(log);
+        return new RagdollHost
+        {
+            Skeletons = new FfxivSkeletonSource(boneService),
+            World = FfxivWorldQuery.Instance,
+            Actors = actors,
+            Colliders = new FfxivColliderActors(npcSelector, movementBlockHook, extraCollisionProvider),
+            Settings = new ConfigRagdollSettings(config),
+            Log = ragdollLog,
+            Scheduler = TaskRagdollScheduler.Instance,
+            Meshes = new FfxivMeshSource(boneService, actors, ragdollLog, TaskRagdollScheduler.Instance),
+        };
+    }
 }
 
 /// <summary>A character's skeleton read straight from the game's memory, valid for the current frame.</summary>
@@ -48,10 +55,10 @@ internal sealed unsafe class FfxivSkeletonPose : ISkeletonPose
         Access = access;
     }
 
-    /// <summary>The raw game skeleton behind a pose, for the code that still reads models itself (stage A2b moves it).</summary>
+    /// <summary>The raw game skeleton behind a pose, for the mesh source (FfxivMeshSource), which reads the models.</summary>
     public static SkeletonAccess Of(ISkeletonPose skeleton) => skeleton is FfxivSkeletonPose game
         ? game.Access
-        : throw new NotSupportedException("This needs the game's models (mesh input), which only the game provides until stage A2b.");
+        : throw new NotSupportedException("Only a skeleton read from the game has the game's models behind it.");
 
     private FFXIVClientStructs.FFXIV.Client.Graphics.Render.Skeleton* GameRoot => Access.CharBase->Skeleton;
 

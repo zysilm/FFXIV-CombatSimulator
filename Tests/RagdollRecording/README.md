@@ -23,8 +23,8 @@ Self-checks, all on synthetic data (no game needed):
   within the limit, still ends with its End record, and nothing follows the refused record;
 - watching configuration properties for changes allocates nothing while nothing changes, and reports each change
   once, for the property that changed (the plugin does this once per render frame for every recorded ragdoll);
-- the state a controller carries over between activations is found at the end of the Activate record (format
-  version 2), and a version 1 file is reported as lacking it;
+- the files are written in format version 3; the state a controller carries over between activations is found
+  after the two lists of the Activate record (since version 2), and a version 1 file is reported as lacking it;
 - a small real BepuPhysics simulation (two dynamic bodies and one kinematic body over a static box) is stepped
   and recorded twice: the two recordings must be identical;
 - changing one bit of one body's state, or of one written-back bone, is reported with the tick, the body

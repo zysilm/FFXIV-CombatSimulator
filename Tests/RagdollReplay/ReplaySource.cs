@@ -19,6 +19,10 @@ internal sealed class ReplaySource
     public readonly RagdollRecord Activate;
     public readonly int ActivateIndex;
     public readonly long StopwatchFrequency;
+    public readonly int FormatVersion;
+
+    /// <summary>Format version 3 and later: the mesh source's products and every clock reading are recorded.</summary>
+    public bool HasMeshProducts => FormatVersion >= RagdollRecordingFormat.FirstVersionWithMeshProducts;
 
     private readonly Dictionary<RecordType, List<int>> byType = new();
     private readonly Dictionary<RecordType, int> cursor = new();
@@ -37,8 +41,10 @@ internal sealed class ReplaySource
         Path = path;
         using var reader = RagdollRecordingReader.Open(path);
         Records = reader.ReadAll().ToList();
-        if (reader.FormatVersion != RagdollRecordingFormat.Version)
-            throw new ReplayUnsupportedException($"format version {reader.FormatVersion} (the replay reads version {RagdollRecordingFormat.Version})");
+        FormatVersion = reader.FormatVersion;
+        if (FormatVersion < RagdollRecordingFormat.FirstVersionWithCarriedState || FormatVersion > RagdollRecordingFormat.Version)
+            throw new ReplayUnsupportedException($"format version {FormatVersion} (the replay reads versions " +
+                                                 $"{RagdollRecordingFormat.FirstVersionWithCarriedState} to {RagdollRecordingFormat.Version})");
         Header = Records.Count > 0 && Records[0].Type == RecordType.Header
             ? Records[0]
             : throw new ReplayUnsupportedException("no header");

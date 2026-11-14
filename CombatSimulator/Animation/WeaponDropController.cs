@@ -442,7 +442,7 @@ public unsafe class WeaponDropController : IDisposable
         if (simulation == null || bufferPool == null) return null;
         var cache = ragdoll.GetWeaponContactMesh(characterAddress);
         if (cache == null || cache.Count == 0) return null;
-        var scale = RagdollController.GetCharacterScale(characterAddress, skel);
+        var scale = Hosting.FfxivMeshSource.GetCharacterScale(characterAddress, skel);
         var result = new List<BodyKinematicCollider>();
         foreach (var name in cache.Names)
         {
@@ -511,7 +511,7 @@ public unsafe class WeaponDropController : IDisposable
             skeleton->Transform.Rotation.Y,
             skeleton->Transform.Rotation.Z,
             skeleton->Transform.Rotation.W);
-        var scale = RagdollController.GetCharacterScale(entry.CharacterAddress, skel);
+        var scale = Hosting.FfxivMeshSource.GetCharacterScale(entry.CharacterAddress, skel);
 
         for (int i = 0; i < entry.BodyColliders.Count; i++)
         {

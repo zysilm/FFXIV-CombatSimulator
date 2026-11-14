@@ -100,7 +100,7 @@ public sealed unsafe class ArrowMeshLibrary
         var body = parts[^1];
         var mdlPath = $"{weaponFolder}/model/{name}{body}.mdl";
         var raw = Core.Services.DataManager.GameData.GetFile(mdlPath)?.Data;
-        if (raw == null || !RagdollController.TryReadModelGeometryData(raw, out var mdl) || mdl.Lods.Length == 0) return null;
+        if (raw == null || !Animation.Hosting.FfxivMeshSource.TryReadModelGeometryData(raw, out var mdl) || mdl.Lods.Length == 0) return null;
 
         // Strings: attribute names first, then bones, then materials. Attribute i is bit i.
         var attributes = new List<string>();

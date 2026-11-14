@@ -5,6 +5,7 @@ using System.Numerics;
 using BepuPhysics;
 using BepuPhysics.Collidables;
 using CombatSimulator.Animation.MeshVolume;
+using CombatSimulator.Animation.Hosting;
 using BepuUtilities.Memory;
 
 namespace CombatSimulator.Animation;
@@ -49,7 +50,7 @@ public unsafe partial class RagdollController
         return true;
     }
 
-    private Dictionary<int, BodyMeshGeometry> BuildBodyMeshVolumes(SkeletonAccess skel,
+    private Dictionary<int, BodyMeshGeometry> BuildBodyMeshVolumes(ISkeletonPose skel,
         IReadOnlyDictionary<string, RagdollBoneDef> definitions,
         IReadOnlyDictionary<string, int> activeIndices,
         IReadOnlyDictionary<string, Vector3> bonePositions,
@@ -65,14 +66,14 @@ public unsafe partial class RagdollController
         return result;
     }
 
-    private Dictionary<int, BodyMeshGeometry> CaptureBodyMeshVolumes(SkeletonAccess skel,
+    private Dictionary<int, BodyMeshGeometry> CaptureBodyMeshVolumes(nint address, ISkeletonPose skel,
         IReadOnlyDictionary<string, RagdollBoneDef> definitions,
         IReadOnlyDictionary<string, int> activeIndices)
     {
         var empty = new Dictionary<int, BodyMeshGeometry>();
         try
         {
-            var source = BuildRenderedGeometrySnapshot(skel);
+            var source = meshes.CaptureRenderedGeometry(address, skel);
             foreach (var diagnostic in source.Diagnostics) log.Info($"Ragdoll rendered mesh: {diagnostic}");
             if (source.TriangleIndices.Length == 0)
             {
@@ -89,7 +90,7 @@ public unsafe partial class RagdollController
             if (severed != null)
                 foreach (var name in severed)
                 {
-                    var root = boneService.ResolveBoneIndex(skel, name);
+                    var root = ResolveBoneIndex(skel, name);
                     if (root < 0) continue;
                     var keptDescendant = false;
                     foreach (var index in activeIndices.Values)
@@ -108,7 +109,7 @@ public unsafe partial class RagdollController
                         (!def.SoftBody || settings.RagdollSoftTissueCollision) &&
                         !def.Name.StartsWith("j_sk_", StringComparison.Ordinal) &&
                         !def.Name.StartsWith("j_buki", StringComparison.Ordinal)) return bone;
-                    bone = skel.HavokSkeleton->ParentIndices[bone];
+                    bone = skel.Parent(bone);
                 }
                 return -1;
             }
@@ -180,7 +181,7 @@ public unsafe partial class RagdollController
             for (int i = 0; i < points.Length; i++) points[i] -= localCenter;
             localGeometry = new BodyMeshGeometry(points, indices, worldGeometry.SourceBindings);
             if (settings.RagdollMeshCollisionLod && frozenMeshCache != null &&
-                frozenMeshCache.TryCreateLod(boneName, localGeometry, out var cachedLod))
+                meshes.TryCreateLod(frozenMeshCache, Hosting.CachedLodUse.Init, boneName, localGeometry, out var cachedLod))
             {
                 var reduced = CreateBodyTriangleMesh(cachedLod.Geometry);
                 mesh.Dispose(bufferPool); mesh = reduced; collisionLod = cachedLod;

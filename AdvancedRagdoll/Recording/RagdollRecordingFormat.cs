@@ -34,8 +34,17 @@ public static class RagdollRecordingFormat
     /// finish is replaced by a note (<see cref="DiscardedRecordNote"/>); the traversal look-ahead query
     /// tags its reads <see cref="ActorSite.TraversalPreviewRoot"/>; <c>TryResolveGrabAttachment</c> is a
     /// recorded call; <see cref="RecordType.Identity"/> reports model type -1 when it was not read.</item>
+    /// <item>3: what the host's mesh source hands the ragdoll is recorded as finished products
+    /// (<see cref="RecordType.MeshProduct"/>, including the body surfaces carried over from earlier activations,
+    /// right after <see cref="RecordType.Activate"/>); every wall-clock reading except the frame's dt is a
+    /// <see cref="RecordType.Clock"/> record (version 2 had only the walking-support query stamp);
+    /// <see cref="RecordType.Activate"/> ends with followWasActive. Version 2 files stay readable; a replay of one
+    /// cannot answer the mesh paths.</item>
     /// </list></summary>
-    public const int Version = 2;
+    public const int Version = 3;
+
+    /// <summary>The oldest version with <see cref="RecordType.MeshProduct"/> records and the full set of clock readings.</summary>
+    public const int FirstVersionWithMeshProducts = 3;
 
     /// <summary>The oldest version whose <see cref="RecordType.Activate"/> record holds the carried-over state.</summary>
     public const int FirstVersionWithCarriedState = 2;
@@ -163,7 +172,9 @@ public enum RecordType : ushort
     /// struckThisWindow: List of i32 (body handles already hit in the current strike window),
     /// strikeColliders: List of u64, traversalProxyRequests:i32, then per request (in the order the
     /// simulation will walk them): actor:u64, enabled:bool, initialRoot:Vector3, targetRoot:Vector3, floorY:f32,
-    /// visualScale:f32, moveSpeed:f32, maxClimb:f32, stompResponse:f32, concurrentStompers:i32, locomoting:bool.</summary>
+    /// visualScale:f32, moveSpeed:f32, maxClimb:f32, stompResponse:f32, concurrentStompers:i32, locomoting:bool,
+    /// then (format version 3) followWasActive:bool (the previous activation's last frame wrote a follow position;
+    /// public builds never reset it).</summary>
     Activate = 12,
 
     /// <summary>actor:u64, customize:Bytes (the character's customize block), modelCharaId:i32,
@@ -246,6 +257,14 @@ public enum RecordType : ushort
     /// hairChains:i32.</summary>
     InitEnd = 48,
 
+    /// <summary>kind:str, then values by kind (format version 3). What the host's mesh source handed the ragdoll, as
+    /// a finished product: a body surface ("bodySurface"), a reduced surface taken from one ("lod"), a collision
+    /// surface for a weapon-contact twin ("collisionGeometry"), soft-tissue fits ("softTissueFits"), another
+    /// character's triangle soup ("actorTriangles"), whether the live hair must rebuild ("hairMeshRebuild"), and the
+    /// body surfaces carried over from earlier activations ("carried", right after <see cref="Activate"/>). The
+    /// layouts are listed with the kinds in the plugin (Animation/Hosting/RecordingDecorators.cs, MeshProductKind).</summary>
+    MeshProduct = 49,
+
     // ---- physics frames ----
 
     /// <summary>physicsFrame:i32, dt:f32, accumulator:f32 (before this frame), prevAllAsleep:bool,
@@ -311,7 +330,9 @@ public enum RecordType : ushort
     /// task or on code outside this recording; a replay must take the same one.</summary>
     Decision = 91,
 
-    /// <summary>site:str, ticks:i64 (Stopwatch timestamp; frequency in the header).</summary>
+    /// <summary>site:str, ticks:i64 (Stopwatch timestamp; frequency in the header). Format version 3 records every
+    /// wall-clock reading but the frame's dt: a site name ending in ".elapsed" holds an elapsed time in TimeSpan
+    /// ticks, and the site "MeshCacheRetry" holds Environment.TickCount64 (milliseconds).</summary>
     Clock = 92,
 
     /// <summary>name:str, then values. Something the ragdoll told the rest of the plugin (for example a hard landing).</summary>

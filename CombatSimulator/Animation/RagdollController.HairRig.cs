@@ -2,12 +2,8 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
-using System.Diagnostics;
 using System.Threading;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
-using System.IO;
-using System.Text;
-using System.Threading.Tasks;
 using BepuPhysics;
 using BepuPhysics.Collidables;
 using BepuPhysics.Trees;
@@ -50,13 +46,6 @@ public unsafe partial class RagdollController
     private Quaternion animatedHeadRotation, animatedFrameHeadRotation, animatedPreviousFrameHeadRotation;
     private readonly object animatedHairGate = new();
     private int animatedGroundCursor;
-    private HairMeshBinding? hairMesh;
-    private Task<HairMeshBinding?>? hairMeshLoad;
-    private nint hairMeshResource;
-    private uint hairMeshAttributes;
-    private uint hairMeshShapeMask;
-    private nint hairMeshResourceData;
-    private bool hairMeshReadyRebuild;
     private const int MaxHairRigBones = 256;
     public bool HairRigActive => hairRigActive;
     private bool HairNeedsStep
@@ -85,7 +74,7 @@ public unsafe partial class RagdollController
 
     private void BuildHairRig(ISkeletonPose skel)
     {
-        var meshBinding = hairMesh;
+        var meshBinding = meshes.HairMesh;
         if (rec != null) RecHairMesh(meshBinding);
         hairRigChains.Clear(); hairRigActive = false; hairGroundCursor = 0;
         ClearHairSurfaceRegions();
@@ -329,8 +318,8 @@ public unsafe partial class RagdollController
         var skel = skeletons.TryGetSkeleton(playerAddress);
         if (skel == null) return;
         var playerObjectId = actors.GetGameObjectId(playerAddress);
-        bool changed = !animatedHair || animatedHairDraw != skel.DrawIdentity || animatedHairObject != playerObjectId || hairMeshReadyRebuild;
-        hairMeshReadyRebuild = false;
+        var hairMeshRebuild = meshes.TakeHairMeshRebuild();
+        bool changed = !animatedHair || animatedHairDraw != skel.DrawIdentity || animatedHairObject != playerObjectId || hairMeshRebuild;
         if (!changed)
             foreach (var c in hairRigChains)
             {
@@ -353,7 +342,7 @@ public unsafe partial class RagdollController
         animatedFrameHeadRotation = ModelRotToWorld(new(head.Rotation.X, head.Rotation.Y, head.Rotation.Z, head.Rotation.W));
         animatedHead = animatedFrameHead; animatedHeadRotation = animatedFrameHeadRotation;
         long now = clock.GetTimestamp(ClockSite.AnimatedHair);
-        float dt = animatedHairTimestamp == 0 ? FixedTimestep : Math.Clamp((float)Stopwatch.GetElapsedTime(animatedHairTimestamp, now).TotalSeconds, 0, .1f);
+        float dt = animatedHairTimestamp == 0 ? FixedTimestep : Math.Clamp((float)clock.GetElapsedTime(ClockSite.AnimatedHair, animatedHairTimestamp, now).TotalSeconds, 0, .1f);
         animatedHairTimestamp = now;
         if (changed)
         {
@@ -423,7 +412,7 @@ public unsafe partial class RagdollController
 
     private void SampleAnimatedHairTerrain()
     {
-        if (ReadsGameModels) UpdateHairMeshMetadata();
+        UpdateHairMeshMetadata();
         if (!RunAnimatedHair || !animatedHair || !settings.RagdollHairPhysics || !Monitor.TryEnter(animatedHairGate)) return;
         try
         {
@@ -490,56 +479,11 @@ public unsafe partial class RagdollController
         return Matrix4x4.Invert(attachment, out inverse) && Matrix4x4.Decompose(attachment, out _, out rotation, out _) && FlexibleHairSolver.Finite(rotation);
     }
 
+    // Framework tick: the mesh source follows the local player's hair model (stage A2b moved the reading there).
     private void UpdateHairMeshMetadata()
     {
         if (!RunAnimatedHair || !settings.RagdollHairPhysics || !Monitor.TryEnter(animatedHairGate)) return;
-        try
-        {
-            var player = Services.ObjectTable.LocalPlayer; if (player == null) return;
-            var access = boneService.TryGetSkeleton(player.Address); if (access == null) return;
-            var cb = access.Value.CharBase;
-            if (cb->SlotCount <= 10 || cb->Models == null || cb->Models[10] == null || cb->Models[10]->ModelResourceHandle == null) return;
-            var model = cb->Models[10]; var resource = model->ModelResourceHandle;
-            if (hairMeshLoad != null)
-            {
-                if (!hairMeshLoad.IsCompleted) return;
-                var result = hairMeshLoad.GetAwaiter().GetResult(); hairMeshLoad = null;
-                if (hairMeshResource == (nint)resource && hairMeshResourceData == (nint)resource->ModelData &&
-                    hairMeshAttributes == model->EnabledAttributeIndexMask && hairMeshShapeMask == model->EnabledShapeKeyIndexMask)
-                {
-                    hairMesh = result; hairMeshReadyRebuild = true;
-                    log.Info($"Hair mesh binding: visibleVertices={result?.VisibleVertices ?? 0}, weightedRegions={result?.Samples.Count ?? 0}; native vertex deformation pending, guide envelopes only.");
-                }
-            }
-            if (hairMeshResource == (nint)resource && hairMeshResourceData == (nint)resource->ModelData &&
-                hairMeshAttributes == model->EnabledAttributeIndexMask && hairMeshShapeMask == model->EnabledShapeKeyIndexMask) return;
-            hairMeshResource = (nint)resource; hairMeshAttributes = model->EnabledAttributeIndexMask;
-            hairMeshResourceData = (nint)resource->ModelData; hairMeshShapeMask = model->EnabledShapeKeyIndexMask;
-            hairMesh = null; hairMeshReadyRebuild = true;
-            // Active shape replacements require a separate index snapshot; omit
-            // mesh fitting rather than reading disabled replacement geometry.
-            if (model->EnabledShapeKeyIndexMask != 0) return;
-            var fileName = resource->FileName;
-            if (fileName.Length == 0 || fileName.Length > 4096) return;
-            string path = Encoding.UTF8.GetString(fileName.AsSpan());
-            if (path.StartsWith('|')) { int end = path.IndexOf('|', 1); if (end >= 0) path = path[(end + 1)..]; }
-            var gameData = Services.DataManager.GameData; uint attributes = hairMeshAttributes;
-            hairMeshLoad = scheduler.Run<HairMeshBinding?>(() =>
-            {
-                try
-                {
-                    byte[]? data;
-                    if (Path.IsPathRooted(path))
-                    {
-                        var info = new FileInfo(path); if (!info.Exists || info.Length > 64 * 1024 * 1024) return null;
-                        data = File.ReadAllBytes(path);
-                    }
-                    else data = gameData.GetFile(path)?.Data;
-                    return data == null || data.Length > 64 * 1024 * 1024 ? null : HairMeshBinding.Decode(data, attributes);
-                }
-                catch { return null; }
-            });
-        }
+        try { meshes.PollHairMesh(); }
         finally { Monitor.Exit(animatedHairGate); }
     }
     private static bool IsHairBoneName(string? name) => name != null &&

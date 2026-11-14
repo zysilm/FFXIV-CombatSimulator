@@ -38,7 +38,7 @@ internal sealed class HairMeshBinding
     }
     public static HairMeshBinding? Decode(byte[] raw, uint attributes)
     {
-        if (!RagdollController.TryReadModelGeometryData(raw, out var mdl) || mdl.Lods.Length == 0 || mdl.Meshes.Length > 256) return null;
+        if (!Hosting.FfxivMeshSource.TryReadModelGeometryData(raw, out var mdl) || mdl.Lods.Length == 0 || mdl.Meshes.Length > 256) return null;
         var buckets = new Dictionary<string, Bucket>(StringComparer.Ordinal);
         int visibleVertices = 0; var lod = mdl.Lods[0];
         Span<float> weights = stackalloc float[8];
