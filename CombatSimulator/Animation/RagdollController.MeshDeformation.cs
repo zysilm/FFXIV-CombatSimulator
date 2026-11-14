@@ -29,6 +29,7 @@ public unsafe partial class RagdollController
             body.SetShape(replacementIndex);
             simulation.Shapes.RemoveAndDispose(previous, bufferPool);
             bone.MeshLod = lod;
+            if (rec != null) RecMeshLod("step", bone.Name, lod);
             ragdollBones[index] = bone;
             body.Awake = true; body.UpdateBounds();
             lastMeshLodInstall = now;

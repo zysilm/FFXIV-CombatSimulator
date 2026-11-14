@@ -54,6 +54,7 @@ public unsafe partial class RagdollController
         var cache = config.RagdollHairBodyMesh ? CachedSurfaceFor(address) : null;
         if (cache == hairSurfaceCache) return;
         hairSurfaceCache = cache;
+        if (rec != null) RecMeshCache(cache, "hairSurface");
         hairSurfaceRegions.Clear(); hairSurfaceNames.Clear();
         if (cache == null) return;
         foreach (var name in cache.Names)

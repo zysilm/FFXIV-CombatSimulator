@@ -184,6 +184,7 @@ public unsafe partial class RagdollController
             {
                 var reduced = CreateBodyTriangleMesh(cachedLod.Geometry);
                 mesh.Dispose(bufferPool); mesh = reduced; collisionLod = cachedLod;
+                if (rec != null) RecMeshLod("init", boneName, cachedLod);
             }
             center = boneOrigin + Vector3.Transform(localCenter, bodyRotation);
             shapeIndex = simulation.Shapes.Add(mesh);

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup>
+    <!-- The plugin's exact BepuPhysics package: the body-state record is read from a real simulation. -->
+    <PackageReference Include="BepuPhysics" Version="2.5.0-beta.22" />
+    <Compile Include="../../RagdollLib/Recording/RagdollRecordingFormat.cs" Link="Production/RagdollRecordingFormat.cs" />
+    <Compile Include="../../RagdollLib/Recording/RagdollRecordingWriter.cs" Link="Production/RagdollRecordingWriter.cs" />
+    <Compile Include="../../RagdollLib/Recording/RagdollRecordingReader.cs" Link="Production/RagdollRecordingReader.cs" />
+    <Compile Include="../../RagdollLib/Recording/RagdollRecordingAnalysis.cs" Link="Production/RagdollRecordingAnalysis.cs" />
+    <Compile Include="../../RagdollLib/Recording/RagdollRecordingBepu.cs" Link="Production/RagdollRecordingBepu.cs" />
+    <Compile Include="../../RagdollLib/Recording/RagdollRecordingWatch.cs" Link="Production/RagdollRecordingWatch.cs" />
+  </ItemGroup>
+</Project>

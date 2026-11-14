@@ -11,6 +11,7 @@ using System.Text;
 using CombatSimulator.Animation.CollapseProfiles;
 using CombatSimulator.Animation.SurfaceProfiles;
 using CombatSimulator.Animation.MeshVolume;
+using CombatSimulator.Animation.Recording;
 using CombatSimulator.Core;
 using BepuPhysics;
 using BepuPhysics.Collidables;
@@ -550,7 +551,7 @@ public unsafe partial class RagdollController : IDisposable
         return result;
     }
 
-    public bool TryCreateExternalDynamicBody(IReadOnlyList<ExternalShapePart> parts, float mass,
+    private bool TryCreateExternalDynamicBodyCore(IReadOnlyList<ExternalShapePart> parts, float mass,
         Vector3 position, Quaternion orientation, Vector3 linearVelocity, Vector3 angularVelocity,
         out ExternalBodyHandle? handle)
     {
@@ -593,7 +594,7 @@ public unsafe partial class RagdollController : IDisposable
         }
     }
 
-    public bool TryCreateExternalRig(
+    private bool TryCreateExternalRigCore(
         IReadOnlyList<ExternalRigBodySpec> bodySpecs,
         IReadOnlyList<ExternalRigJointSpec> jointSpecs,
         out ExternalRigHandle? handle,
@@ -765,7 +766,7 @@ public unsafe partial class RagdollController : IDisposable
         externalRigConnectedPairs.Add(pair);
     }
 
-    public bool TrySetExternalBodyShape(ExternalBodyHandle? handle,
+    private bool TrySetExternalBodyShapeCore(ExternalBodyHandle? handle,
         IReadOnlyList<ExternalShapePart> parts, float mass)
     {
         if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration ||
@@ -889,7 +890,7 @@ public unsafe partial class RagdollController : IDisposable
     /// Carry one rig body to a pose (a garment segment that stays on the body). It remains a dynamic body
     /// and is simply re-placed every frame, with the velocity that takes it there.
     /// </summary>
-    public bool TrySetExternalRigBodyPose(ExternalRigHandle? handle, int bodyIndex,
+    private bool TrySetExternalRigBodyPoseCore(ExternalRigHandle? handle, int bodyIndex,
         Vector3 position, Quaternion orientation, Vector3 linearVelocity, Vector3 angularVelocity)
     {
         if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration ||
@@ -914,7 +915,7 @@ public unsafe partial class RagdollController : IDisposable
     }
 
     /// <summary>Let one rig body start (or stop) colliding with the ragdoll's own bodies.</summary>
-    public bool SetExternalRigBodyRagdollContact(ExternalRigHandle? handle, int bodyIndex, bool collide)
+    private bool SetExternalRigBodyRagdollContactCore(ExternalRigHandle? handle, int bodyIndex, bool collide)
     {
         if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration ||
             simulation == null || bodyIndex < 0 || bodyIndex >= handle.Bodies.Count)
@@ -927,7 +928,7 @@ public unsafe partial class RagdollController : IDisposable
     }
 
     /// <summary>Replace one rig body's collision shape (a garment segment collapsing flat).</summary>
-    public bool TrySetExternalRigBodyShape(ExternalRigHandle? handle, int bodyIndex,
+    private bool TrySetExternalRigBodyShapeCore(ExternalRigHandle? handle, int bodyIndex,
         IReadOnlyList<ExternalShapePart> parts, float mass)
     {
         if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration ||
@@ -937,7 +938,7 @@ public unsafe partial class RagdollController : IDisposable
         return TrySetExternalBodyShape(handle.Bodies[bodyIndex], parts, mass);
     }
 
-    public bool TryApplyExternalRigVelocityDelta(ExternalRigHandle? handle, Vector3 velocityDelta)
+    private bool TryApplyExternalRigVelocityDeltaCore(ExternalRigHandle? handle, Vector3 velocityDelta)
     {
         if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration || simulation == null)
             return false;
@@ -959,7 +960,7 @@ public unsafe partial class RagdollController : IDisposable
         return true;
     }
 
-    public bool TryDampenExternalRigVelocity(ExternalRigHandle? handle,
+    private bool TryDampenExternalRigVelocityCore(ExternalRigHandle? handle,
         float horizontalScale, float verticalScale, float angularScale)
     {
         if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration || simulation == null)
@@ -989,7 +990,7 @@ public unsafe partial class RagdollController : IDisposable
 
     /// <summary>Re-apply each garment swing constraint's ROM as <paramref name="factor"/> (0..1) of its
     /// stored target, widening the joints from their tight spawn ROM to full as the garment settles.</summary>
-    public bool RelaxExternalRigSwingLimits(ExternalRigHandle? handle, float factor)
+    private bool RelaxExternalRigSwingLimitsCore(ExternalRigHandle? handle, float factor)
     {
         if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration || simulation == null)
             return false;
@@ -1017,7 +1018,7 @@ public unsafe partial class RagdollController : IDisposable
     }
 
     /// <summary>Fade temporary garment pose-guide servos from their captured handoff pose toward zero force.</summary>
-    public bool ApplyExternalRigPoseGuidance(ExternalRigHandle? handle, float strength)
+    private bool ApplyExternalRigPoseGuidanceCore(ExternalRigHandle? handle, float strength)
     {
         if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration || simulation == null)
             return false;
@@ -1043,7 +1044,7 @@ public unsafe partial class RagdollController : IDisposable
         return true;
     }
 
-    public bool TrySetExternalBodyRotation(ExternalBodyHandle? handle, Quaternion orientation, float angularVelocityScale)
+    private bool TrySetExternalBodyRotationCore(ExternalBodyHandle? handle, Quaternion orientation, float angularVelocityScale)
     {
         if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration || simulation == null)
             return false;
@@ -1062,7 +1063,7 @@ public unsafe partial class RagdollController : IDisposable
         }
     }
 
-    public bool TryApplyExternalVelocityDelta(ExternalBodyHandle? handle, Vector3 velocityDelta)
+    private bool TryApplyExternalVelocityDeltaCore(ExternalBodyHandle? handle, Vector3 velocityDelta)
     {
         if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration || simulation == null)
             return false;
@@ -1080,7 +1081,7 @@ public unsafe partial class RagdollController : IDisposable
         }
     }
 
-    public bool TryDampenExternalBodyVelocity(ExternalBodyHandle? handle,
+    private bool TryDampenExternalBodyVelocityCore(ExternalBodyHandle? handle,
         float horizontalScale, float verticalScale, float angularScale)
     {
         if (handle == null || handle.Removed || handle.Generation != externalBodyGeneration || simulation == null)
@@ -1141,7 +1142,7 @@ public unsafe partial class RagdollController : IDisposable
         }
     }
 
-    public void RemoveExternalBody(ExternalBodyHandle? handle)
+    private void RemoveExternalBodyCore(ExternalBodyHandle? handle)
     {
         if (handle == null || handle.Removed)
             return;
@@ -1160,7 +1161,7 @@ public unsafe partial class RagdollController : IDisposable
         externalBodies.Remove(handle);
     }
 
-    public void RemoveExternalRig(ExternalRigHandle? handle)
+    private void RemoveExternalRigCore(ExternalRigHandle? handle)
     {
         if (handle == null || handle.Removed)
             return;
@@ -1678,7 +1679,7 @@ public unsafe partial class RagdollController : IDisposable
     public enum AnatomicalRole { Auto, Generic, Pelvis, Spine, Head, Shoulder, Elbow, Hand, Hip, Knee, Ankle, Foot, Cloth, SoftBody, Weapon }
     public enum RagdollColliderShape { Capsule, Box, ProfileHull, Mesh }
 
-    public void SetDismemberedBones(IEnumerable<string> bones)
+    private void SetDismemberedBonesCore(IEnumerable<string> bones)
     {
         localDismemberBones.Clear();
         foreach (var bone in bones)
@@ -2836,11 +2837,12 @@ public unsafe partial class RagdollController : IDisposable
         // Fit the collision hulls now, on a worker, so they are ready when physics starts.
         PrewarmStructuralMeshFits();
         ArmConfiguredGuidedCollapse();
+        RecBeginActivation(delay, mode, stagger);
 
         log.Info($"RagdollController: Activated for 0x{characterAddress:X} (start: {RagdollTrigger.Labels[(int)mode]}, delay={activationDelay:F1}s)");
     }
 
-    public void Deactivate()
+    private void DeactivateCore()
     {
         if (!isActive) return;
         isActive = false;
@@ -2924,7 +2926,7 @@ public unsafe partial class RagdollController : IDisposable
         log.Info("RagdollController: Deactivated");
     }
 
-    private void OnRenderFrame()
+    private void OnRenderFrameCore()
     {
         try { UpdateFrozenMeshCache(); }
         catch (Exception ex) { log.Warning(ex, "Frozen collision cache capture failed; retrying when the model is ready."); }
@@ -2940,6 +2942,7 @@ public unsafe partial class RagdollController : IDisposable
             if (!config.RagdollHairPhysics && hairRigActive) RemoveHairRig();
             var dt = ComputeFrameDelta();
             elapsed += dt;
+            if (rec != null) RecRenderFrame(dt);
 
             if (attackStrikeTimer > 0f) attackStrikeTimer -= dt;
             UpdateWeaponStrike(dt);
@@ -2947,7 +2950,8 @@ public unsafe partial class RagdollController : IDisposable
             // Wait for activation delay (death animation plays first)
             if (!physicsStarted)
             {
-                if (!ShouldStartPhysics(dt))
+                if (rec != null) RecPreFrame();
+                if (!RecDecision("ShouldStartPhysics", ShouldStartPhysics(dt)))
                 {
                     OnAnimatedHairFrame();
                     // Keep sampling the animated pose so the last frame before handoff carries
@@ -3047,7 +3051,10 @@ public unsafe partial class RagdollController : IDisposable
             float? middleHeight = null;
             float? motion = null;
             if (trigger.Automatic)
+            {
                 ReadTriggerInputs(dt, out animation, out middleHeight, out motion);
+                if (rec != null) RecTriggerInputs(animation, middleHeight, motion);
+            }
             if (!trigger.Update(dt, elapsed, animation, middleHeight, motion))
                 return false;
             triggeredAt = elapsed;
@@ -4224,6 +4231,7 @@ public unsafe partial class RagdollController : IDisposable
         if (skelNullable == null) return false;
         var skel = skelNullable.Value;
         initialBoneCount = skel.BoneCount;
+        if (rec != null) RecInitBegin(skel);
         var BoneDefs = GetBoneDefs();
 
         // Get skeleton transform for proper world↔model conversion
@@ -4310,10 +4318,11 @@ public unsafe partial class RagdollController : IDisposable
         activeDefByName.Clear();
         foreach (var def in BoneDefs)
             activeDefByName[def.Name] = def;
+        if (rec != null) RecBoneDefs(BoneDefs, nameToIndex, genericSkeleton);
 
         // Raycast for ground height
         groundY = skelWorldPos.Y;
-        if (BGCollisionModule.RaycastMaterialFilter(
+        if (RecordedRaycast(RaycastSite.InitGround,
                 new Vector3(skelWorldPos.X, skelWorldPos.Y + TerrainRaycastStartYOffset, skelWorldPos.Z),
                 new Vector3(0, -1, 0),
                 out var hitInfo,
@@ -4448,11 +4457,13 @@ public unsafe partial class RagdollController : IDisposable
             const int maxEnemyPatches = 16;
 
             var nearby = new List<(float DistSq, float X, float Z)>();
+            if (rec != null) RecSelectedNpcs("terrainPatchCandidates");
             foreach (var npc in npcSelector.SelectedNpcs)
             {
                 if (npc.BattleChara == null || npc.Address == targetCharacterAddress)
                     continue;
                 var pos = ((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npc.BattleChara)->Position;
+                if (rec != null) RecActorPosition(ActorSite.TerrainPatchCandidate, npc.Address, pos);
                 var dx = pos.X - skelWorldPos.X;
                 var dz = pos.Z - skelWorldPos.Z;
                 var distSq = dx * dx + dz * dz;
@@ -4523,6 +4534,7 @@ public unsafe partial class RagdollController : IDisposable
 
         // Fit collision geometry before body creation. Bodies may be offset from their bone and use
         // a measured axis/length, but joint anchors and topology remain on the skeleton pivots.
+        if (rec != null) RecMeshCache(frozenMeshCache, "body");
         var bodyMeshVolumes = config.RagdollMeshVolumes && !genericSkeleton
             ? BuildBodyMeshVolumes(skel, defByName, nameToIndex, boneWorldPositions, boneWorldRotations)
             : new Dictionary<int, BodyMeshGeometry>();
@@ -4531,6 +4543,7 @@ public unsafe partial class RagdollController : IDisposable
                                  ReadCharacterSurfaceIdentity().IsHumanoid
             ? ResolveStructuralMeshFits(skel)
             : new Dictionary<string, StructuralMeshFitter.Fit>(StringComparer.Ordinal);
+        if (rec != null) RecStructuralFits(structuralMeshFits);
 
         // Knee/ankle hinge frames from the bind pose (see BuildBindPoseHingeFrames). Always on
         // for humanoids — unlike structural mesh geometry, this is not an Advanced Filter; it
@@ -5610,6 +5623,7 @@ public unsafe partial class RagdollController : IDisposable
         // corpse stuck mid-pose. Caller (OnRenderFrame) Deactivates on the false return.
         if (ragdollBones.Count == 0)
         {
+            if (rec != null) RecInitEnd(false, solverIterations, solverSubsteps, genericSkeleton);
             log.Warning("RagdollController: no ragdoll bodies were created; aborting activation.");
             return false;
         }
@@ -5655,6 +5669,7 @@ public unsafe partial class RagdollController : IDisposable
             // ragdoll collides with every living character, not just enemies. Evaluated
             // here (at activation) so a dying player's ragdoll sees the live companions.
             var extraCollisionAddresses = extraCollisionProvider?.Invoke() ?? Array.Empty<nint>();
+            if (rec != null) { RecActorList("extraCollisionProvider", extraCollisionAddresses); RecSelectedNpcs("selectedNpcs"); }
             foreach (var address in extraCollisionAddresses)
             {
                 if (address == nint.Zero || address == targetCharacterAddress)
@@ -5705,6 +5720,7 @@ public unsafe partial class RagdollController : IDisposable
         if (config.RagdollHairPhysics && kaoBodyBoneIndex >= 0)
             BuildHairRig(skel);
 
+        if (rec != null) RecInitEnd(ragdollBones.Count > 0, solverIterations, solverSubsteps, genericSkeleton);
         return ragdollBones.Count > 0;
     }
 
@@ -5728,7 +5744,7 @@ public unsafe partial class RagdollController : IDisposable
         // A larger patch may hold proportionally more triangles, up to four times the base budget.
         var budget = (int)MathF.Min(ExactGroundMaxTriangles * 4f,
             ExactGroundMaxTriangles * (terrainPatchRadius / 6f) * (terrainPatchRadius / 6f));
-        if (!WorldCollisionMesh.TryCollectGround(min, max, exactGroundScratch, budget) ||
+        if (!RecordedCollectGround(min, max, exactGroundScratch, budget) ||
             exactGroundScratch.Count < 3)
         {
             log.Info("RagdollController: exact ground unavailable for this patch; using the sampled grid");
@@ -5786,7 +5802,7 @@ public unsafe partial class RagdollController : IDisposable
         // Ground estimate at the patch center — used as the ray origin height and the
         // miss fallback, so a patch under an enemy on different ground still works.
         float patchGroundY = defaultGroundY;
-        if (BGCollisionModule.RaycastMaterialFilter(
+        if (RecordedRaycast(RaycastSite.PatchCenter,
                 new Vector3(centerX, defaultGroundY + TerrainRaycastStartYOffset, centerZ),
                 new Vector3(0, -1, 0), out var centerHit, TerrainRaycastDistance))
             patchGroundY = centerHit.Point.Y;
@@ -5809,7 +5825,7 @@ public unsafe partial class RagdollController : IDisposable
         {
             var wx = ox + gx * terrainPatchStep;
             var wz = oz + gz * terrainPatchStep;
-            if (BGCollisionModule.RaycastMaterialFilter(
+            if (RecordedRaycast(RaycastSite.PatchGrid,
                     new Vector3(wx, patchGroundY + TerrainRaycastStartYOffset, wz),
                     new Vector3(0, -1, 0), out var gridHit, TerrainRaycastDistance))
                 heights[gx, gz] = gridHit.Point.Y - gridDrop;
@@ -5912,6 +5928,7 @@ public unsafe partial class RagdollController : IDisposable
     private void BuildCharacterCollision(nint address, string label, float scale, float capsuleRadius)
     {
         var charSkel = boneService.TryGetSkeleton(address);
+        if (rec != null) RecSkeleton(RecordType.SkeletonPose, PosePurpose.ColliderBuild, address, charSkel, false);
         if (charSkel == null)
         {
             CreateFallbackCharacterCollision(label, address);
@@ -6502,6 +6519,7 @@ public unsafe partial class RagdollController : IDisposable
         shapeIndex = default;
         if (simulation == null || bufferPool == null || triangles.Count < 4)
             return false;
+        if (rec != null) RecTriangles("actorMesh", triangles, scale);
 
         Buffer<Triangle> triangleBuffer = default;
         var ownsTriangleBuffer = false;
@@ -7438,6 +7456,7 @@ public unsafe partial class RagdollController : IDisposable
         var baseLength = config.RagdollNpcCollisionAutoSize ? 1.2f : MathF.Max(0.2f, 1.6f - baseRadius * 2f);
         var shapeIndex = simulation!.Shapes.Add(new Capsule(baseRadius * collisionScale, baseLength * collisionScale));
         var npcPos = new Vector3(go->Position.X, go->Position.Y + 0.8f * visualScale.Y, go->Position.Z);
+        if (rec != null) RecActorTransform(ActorSite.ColliderFallbackBuild, address, go->Position, Quaternion.Identity, true, visualScale);
         var handle = simulation!.Bodies.Add(BodyDescription.CreateKinematic(
             new RigidPose(npcPos, Quaternion.Identity),
             default(BodyVelocity),
@@ -7810,7 +7829,7 @@ public unsafe partial class RagdollController : IDisposable
 
         waterProbeCountdown = WaterProbeInterval;
         waterProbePosition = position;
-        waterLevel = WorldCollisionMesh.TryFindWaterSurface(position, 30f, 60f, out var surface) ? surface : float.NaN;
+        waterLevel = RecordedFindWaterSurface(position, 30f, 60f, out var surface) ? surface : float.NaN;
         if (float.IsNaN(waterLevel)) inWater = false;
     }
 
@@ -8054,6 +8073,7 @@ public unsafe partial class RagdollController : IDisposable
 
         log.Info($"RagdollController: landing at {speed:F1} m/s (severity {severity:F2}) — " +
                  $"{impactFreezeRemaining * 1000f:F0}ms freeze, {heave:F2} m/s heave, follow-through released");
+        if (rec != null) RecEvent("HardLanding", speed);
         HardLanding?.Invoke(speed);
     }
 
@@ -8152,6 +8172,7 @@ public unsafe partial class RagdollController : IDisposable
         var skelNullable = boneService.TryGetSkeleton(targetCharacterAddress);
         if (skelNullable == null) return;
         var skel = skelNullable.Value;
+        if (rec != null) RecFrameBegin(dt, skel);
 
         if (activeRagdollMeshVolumes != config.RagdollMeshVolumes ||
             (activeRagdollMeshVolumes && activeMeshCacheRevision != config.RagdollMeshCacheRevision))
@@ -8209,7 +8230,7 @@ public unsafe partial class RagdollController : IDisposable
                     skeletonMoved = true;
                 if (config.RagdollVerboseLog)
                     log.Info($"[Ragdoll F{frameCount}] Skeleton moved {skelDist:F3}m: ({skelWorldPos.X:F3},{skelWorldPos.Y:F3},{skelWorldPos.Z:F3})→({newSkelPos.X:F3},{newSkelPos.Y:F3},{newSkelPos.Z:F3})");
-                if (BGCollisionModule.RaycastMaterialFilter(
+                if (RecordedRaycast(RaycastSite.SkeletonMoved,
                         new Vector3(newSkelPos.X, newSkelPos.Y + TerrainRaycastStartYOffset, newSkelPos.Z),
                         new Vector3(0, -1, 0),
                         out var hitInfo,
@@ -8316,6 +8337,7 @@ public unsafe partial class RagdollController : IDisposable
                 // skip the expensive skeleton read + per-bone reposition.
                 var npcGo = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)npcState.NpcAddress;
                 var npcRootPos = new Vector3(npcGo->Position.X, npcGo->Position.Y, npcGo->Position.Z);
+                if (rec != null) RecActorPosition(ActorSite.ColliderRoot, npcState.NpcAddress, npcRootPos);
                 if (!NpcMayTouchCorpse(npcState, npcRootPos))
                 {
                     // Park its capsules far below ONCE on exit so a character that walks away
@@ -8355,6 +8377,7 @@ public unsafe partial class RagdollController : IDisposable
                         meshWorldRot = Quaternion.Identity;
                     }
 
+                    if (rec != null) RecActorTransform(ActorSite.ColliderMesh, npcState.NpcAddress, meshWorldPos, meshWorldRot, false, Vector3.One);
                     MoveNpcKinematic(ref npcState, npcState.MeshHandle, meshWorldPos, meshWorldRot, dt);
                     npcCollisionStates[i] = npcState;
                     continue;
@@ -8368,6 +8391,7 @@ public unsafe partial class RagdollController : IDisposable
                     var visualScale = TryGetDrawObjectScale(npcState.NpcAddress, out var drawScale)
                         ? drawScale
                         : Vector3.One;
+                    if (rec != null) RecActorTransform(ActorSite.ColliderFallback, npcState.NpcAddress, fallbackRoot, Quaternion.Identity, true, visualScale);
                     RescaleNpcFallbackCollision(ref npcState, CollisionScale(visualScale));
                     MoveNpcKinematic(ref npcState, npcState.FallbackHandle,
                         new Vector3(fallbackRoot.X, fallbackRoot.Y + 0.8f * visualScale.Y, fallbackRoot.Z),
@@ -8380,6 +8404,7 @@ public unsafe partial class RagdollController : IDisposable
 
                 // Bone-based update: read NPC skeleton and reposition each bone static
                 var npcSkel = boneService.TryGetSkeleton(npcState.NpcAddress);
+                if (rec != null) RecSkeleton(RecordType.SkeletonPose, PosePurpose.ColliderFrame, npcState.NpcAddress, npcSkel, false);
                 if (npcSkel == null) continue; // skeleton temporarily unavailable, keep last positions
 
                 var ns = npcSkel.Value;
@@ -8568,6 +8593,7 @@ public unsafe partial class RagdollController : IDisposable
                 UpdateCharacterSurfaceRuntime();
                 StepHairRig(); // one-way guides follow the accepted head pose
                 DetectImpact(FixedTimestep);
+                if (rec != null) RecStep(substeps, steppedExternally);
                 physicsAccumulator -= FixedTimestep;
                 substeps++;
 
@@ -8584,6 +8610,7 @@ public unsafe partial class RagdollController : IDisposable
                 if (meshFrameStart != 0 &&
                     System.Diagnostics.Stopwatch.GetElapsedTime(meshFrameStart).TotalSeconds >= FixedTimestep)
                 {
+                    if (rec != null) RecDecision("MeshFrameEarlyOut", true);
                     physicsAccumulator = 0f;
                     break;
                 }
@@ -8617,6 +8644,7 @@ public unsafe partial class RagdollController : IDisposable
         var renderAlpha = (!resting && hasPrevPhysicsState)
             ? Math.Clamp(physicsAccumulator / FixedTimestep, 0f, 1f)
             : 1f;
+        if (rec != null) RecFrameEnd(substeps, resting, renderAlpha);
 
         var pose = skel.Pose;
 
@@ -8806,6 +8834,7 @@ public unsafe partial class RagdollController : IDisposable
 
         // Reassert flexible hair after head propagation, including settled frames.
         if (hairRigActive) ReadbackHairRig(skel);
+        if (rec != null) RecSkeleton(RecordType.PoseOut, PosePurpose.FrameOut, targetCharacterAddress, skel, true);
 
         // (Dev) Keep the character visible when the ragdoll is flung far from the frozen death
         // position. Culling tests the DrawObject's bounding sphere, whose centre tracks the
@@ -8891,7 +8920,7 @@ public unsafe partial class RagdollController : IDisposable
     /// scaled together, so footsteps impart less linear and angular acceleration. Rigid-grab restore
     /// inertias are updated too, preventing a grabbed bone from reappearing with a stale mass.
     /// </summary>
-    public void SetTraversalMassMultiplier(float multiplier)
+    private void SetTraversalMassMultiplierCore(float multiplier)
     {
         multiplier = float.IsFinite(multiplier) ? Math.Clamp(multiplier, 1f, 12f) : 1f;
         if (MathF.Abs(multiplier - traversalMassMultiplier) < 0.001f)
@@ -9012,7 +9041,7 @@ public unsafe partial class RagdollController : IDisposable
         foreach (var rig in externalRigs)
         {
             if (rig.Removed || rig.Generation != externalBodyGeneration) continue;
-            if (CarryExternalRigOnAnchor(rig)) carriedRigs.Add(rig);
+            if (RecDecision("CarryExternalRigOnAnchor", CarryExternalRigOnAnchor(rig))) carriedRigs.Add(rig);
         }
     }
 
@@ -9055,7 +9084,7 @@ public unsafe partial class RagdollController : IDisposable
     /// target position. The target is updated each frame via UpdateGrabTarget().
     /// Also ensures all ragdoll bodies stay awake (SleepThreshold = -1).
     /// </summary>
-    public int? CreateGrabConstraint(string boneName, Vector3 initialTarget, nint grabbingNpcAddress = 0, float maxForce = 1000f, float maxSpeed = 50f, float springFreq = 120f)
+    private int? CreateGrabConstraintCore(string boneName, Vector3 initialTarget, nint grabbingNpcAddress = 0, float maxForce = 1000f, float maxSpeed = 50f, float springFreq = 120f)
     {
         if (simulation == null || !isActive) return null;
 
@@ -9252,7 +9281,7 @@ public unsafe partial class RagdollController : IDisposable
     /// grip to where the bone the caller actually asked for is. Pull a corpse by the ear and the head
     /// comes round by its ear, rather than being towed from the middle of the skull.
     /// </summary>
-    public bool TryResolveGrabAttachment(string boneName, out BodyHandle body, out Vector3 localOffset)
+    private bool TryResolveGrabAttachmentCore(string boneName, out BodyHandle body, out Vector3 localOffset)
     {
         body = default;
         localOffset = Vector3.Zero;
@@ -9274,6 +9303,7 @@ public unsafe partial class RagdollController : IDisposable
         if (index < 0) return false;
 
         var requested = boneService.GetBoneWorldPos(targetCharacterAddress, boneName);
+        if (rec != null) RecBoneWorldPosition("TryResolveGrabAttachment", targetCharacterAddress, boneName, requested);
         if (requested == null) return false;
 
         // Up the parent chain until something with a body turns up.
@@ -9315,7 +9345,7 @@ public unsafe partial class RagdollController : IDisposable
     /// every frame, so a caller driving the grab from sliders needs this to make them take effect
     /// without tearing the constraint down and rebuilding it.
     /// </summary>
-    public void SetGrabTuning(int slotId, float maxForce, float maxSpeed, float springFreq)
+    private void SetGrabTuningCore(int slotId, float maxForce, float maxSpeed, float springFreq)
     {
         if (!grabSlots.TryGetValue(slotId, out var slot)) return;
         ConfigureGrabTuning(slot, maxForce, maxSpeed, springFreq);
@@ -9347,7 +9377,7 @@ public unsafe partial class RagdollController : IDisposable
     /// <summary>
     /// Update the grab constraint's target position (call each frame with NPC hand world pos).
     /// </summary>
-    public void UpdateGrabTarget(int slotId, Vector3 worldTarget)
+    private void UpdateGrabTargetCore(int slotId, Vector3 worldTarget)
     {
         if (simulation == null || !grabSlots.TryGetValue(slotId, out var slot)) return;
 
@@ -9355,7 +9385,7 @@ public unsafe partial class RagdollController : IDisposable
 
     }
     /// <summary>Remove one Grab constraint. Shared sleep state is restored after the last slot.</summary>
-    public void RemoveGrabConstraint(int slotId)
+    private void RemoveGrabConstraintCore(int slotId)
     {
         if (simulation == null || !grabSlots.TryGetValue(slotId, out var slot)) return;
         grabSlots.Remove(slotId);
@@ -9445,7 +9475,7 @@ public unsafe partial class RagdollController : IDisposable
 
     public bool DirectedCollapseSpikeActive => directedCollapseActive;
 
-    public void RequestDirectedKneelPitchOnReady(float duration, float footForce, float pelvisForce,
+    private void RequestDirectedKneelPitchOnReadyCore(float duration, float footForce, float pelvisForce,
         float drop, float forward, float pitchDegrees)
     {
         if (IsSimulationReady)
@@ -9465,7 +9495,7 @@ public unsafe partial class RagdollController : IDisposable
         log.Info("RagdollController: directed kneel-pitch armed for next death");
     }
 
-    public void RequestProfileDirectedCollapseOnReady(string profileId)
+    private void RequestProfileDirectedCollapseOnReadyCore(string profileId)
     {
         if (IsSimulationReady)
         {
@@ -9478,7 +9508,7 @@ public unsafe partial class RagdollController : IDisposable
         log.Info($"RagdollController: directed collapse profile armed for next death - profile={profileId}");
     }
 
-    public bool BeginProfileDirectedCollapseSpike(string profileId)
+    private bool BeginProfileDirectedCollapseSpikeCore(string profileId)
     {
         var profile = collapseProfileBook.FindById(profileId);
         if (profile == null)
@@ -9536,7 +9566,7 @@ public unsafe partial class RagdollController : IDisposable
         return true;
     }
 
-    public bool BeginDirectedKneelPitchSpike(float duration, float footForce, float pelvisForce,
+    private bool BeginDirectedKneelPitchSpikeCore(float duration, float footForce, float pelvisForce,
         float drop, float forward, float pitchDegrees)
     {
         if (simulation == null || !isActive) return false;
@@ -9593,7 +9623,7 @@ public unsafe partial class RagdollController : IDisposable
         return true;
     }
 
-    public void StopDirectedCollapseSpike()
+    private void StopDirectedCollapseSpikeCore()
     {
         if (simulation != null)
         {
@@ -9858,7 +9888,7 @@ public unsafe partial class RagdollController : IDisposable
         return direction.Equals("backward", StringComparison.OrdinalIgnoreCase) ? -directedForward :
                direction.Equals("left", StringComparison.OrdinalIgnoreCase) ? -directedRight :
                direction.Equals("right", StringComparison.OrdinalIgnoreCase) ? directedRight :
-               direction.Equals("sideways", StringComparison.OrdinalIgnoreCase) ? (ShakeRng.Next(2) == 0 ? -directedRight : directedRight) :
+               direction.Equals("sideways", StringComparison.OrdinalIgnoreCase) ? (RecRandom("DirectedCollapseSideways", ShakeRng.Next(2)) == 0 ? -directedRight : directedRight) :
                directedForward;
     }
 
@@ -9978,7 +10008,7 @@ public unsafe partial class RagdollController : IDisposable
     private float entryRightKneeAngle;
     private bool entryWasNeeded;
 
-    public void RequestEntryConditionedKneePowerLossOnReady()
+    private void RequestEntryConditionedKneePowerLossOnReadyCore()
     {
         var knee = EffectiveKneePowerLossSettings();
         if (!knee.EntryConditioningEnabled)
@@ -10180,7 +10210,7 @@ public unsafe partial class RagdollController : IDisposable
 
     public bool KneePowerLossPatternActive => kneePowerLossActive;
 
-    public void RequestKneePowerLossForwardOnReady()
+    private void RequestKneePowerLossForwardOnReadyCore()
     {
         if (IsSimulationReady)
         {
@@ -10221,7 +10251,7 @@ public unsafe partial class RagdollController : IDisposable
         return true;
     }
 
-    public bool BeginKneePowerLossForwardPattern()
+    private bool BeginKneePowerLossForwardPatternCore()
     {
         if (simulation == null || !isActive) return false;
 
@@ -10315,7 +10345,7 @@ public unsafe partial class RagdollController : IDisposable
         return true;
     }
 
-    public void StopKneePowerLossPattern()
+    private void StopKneePowerLossPatternCore()
     {
         if (simulation != null)
         {
@@ -10672,7 +10702,7 @@ public unsafe partial class RagdollController : IDisposable
 
     private static readonly string[] StandingSpineBones = { "j_sebo_a", "j_sebo_b", "j_sebo_c" };
 
-    public bool CreateStandingSupport(Vector3 anchorWorldPos, Quaternion uprightRot, string anchorBoneName = "j_kosi")
+    private bool CreateStandingSupportCore(Vector3 anchorWorldPos, Quaternion uprightRot, string anchorBoneName = "j_kosi")
     {
         if (simulation == null || !isActive || grabSlots.Count > 0) return false;
 
@@ -10692,7 +10722,7 @@ public unsafe partial class RagdollController : IDisposable
     }
 
     /// <summary>Swap the anchor bone/position while the support is already active, without re-waking bodies.</summary>
-    public bool UpdateStandingSupport(Vector3 anchorWorldPos, Quaternion uprightRot, string anchorBoneName = "j_kosi")
+    private bool UpdateStandingSupportCore(Vector3 anchorWorldPos, Quaternion uprightRot, string anchorBoneName = "j_kosi")
     {
         if (!standingActive || simulation == null) return false;
 
@@ -10782,7 +10812,7 @@ public unsafe partial class RagdollController : IDisposable
         TranslateCarriedExternalRigs(correction, anchorVelocity);
     }
 
-    public void RemoveStandingSupport()
+    private void RemoveStandingSupportCore()
     {
         if (!standingActive || simulation == null) return;
 
@@ -10816,7 +10846,7 @@ public unsafe partial class RagdollController : IDisposable
     private float wristForce = 500f;
     private float wristFreq  = 80f;
 
-    public bool CreateWristConstraints(Vector3 leftTarget, Vector3 rightTarget,
+    private bool CreateWristConstraintsCore(Vector3 leftTarget, Vector3 rightTarget,
         float force = 500f, float freq = 80f)
     {
         if (simulation == null || !isActive || grabSlots.Count > 0) return false;
@@ -10833,7 +10863,7 @@ public unsafe partial class RagdollController : IDisposable
         return wristConstraints.Count > 0;
     }
 
-    public bool UpdateWristConstraints(Vector3 leftTarget, Vector3 rightTarget)
+    private bool UpdateWristConstraintsCore(Vector3 leftTarget, Vector3 rightTarget)
     {
         if (simulation == null || wristConstraints.Count == 0) return false;
 
@@ -10846,7 +10876,7 @@ public unsafe partial class RagdollController : IDisposable
         return true;
     }
 
-    public void RemoveWristConstraints()
+    private void RemoveWristConstraintsCore()
     {
         if (simulation == null) return;
         foreach (var h in wristConstraints)
@@ -10870,7 +10900,7 @@ public unsafe partial class RagdollController : IDisposable
 
     // ─── Direct impulse ──────────────────────────────────────────────────────
 
-    public void ApplyImpulse(string boneName, Vector3 velocityDelta)
+    private void ApplyImpulseCore(string boneName, Vector3 velocityDelta)
     {
         if (simulation == null || !isActive) return;
         var handle = FindBodyHandle(boneName);
@@ -10940,7 +10970,7 @@ public unsafe partial class RagdollController : IDisposable
     /// <summary>Add an angular velocity to a bone's body (a rotational kick) and briefly release its
     /// joint (drop the motor, widen the swing limit) so the stump above a severed cut actually swings
     /// up instead of being held in place. Used for the body-side recoil when a limb is kicked off.</summary>
-    public void ApplyAngularVelocity(string boneName, Vector3 angularVelocityDelta)
+    private void ApplyAngularVelocityCore(string boneName, Vector3 angularVelocityDelta)
     {
         if (simulation == null || !isActive) return;
         var handle = FindBodyHandle(boneName);
@@ -11033,7 +11063,7 @@ public unsafe partial class RagdollController : IDisposable
     /// single named bone, so contact anywhere on the body registers. The impulse points away from
     /// <paramref name="from"/> horizontally plus an upward kick. Returns true if a body was hit.
     /// </summary>
-    public bool PuntNearest(Vector3 from, float maxDist, float strength, float upBias = 0.5f)
+    private bool PuntNearestCore(Vector3 from, float maxDist, float strength, float upBias = 0.5f)
     {
         if (simulation == null || !isActive) return false;
 
@@ -11118,6 +11148,7 @@ public unsafe partial class RagdollController : IDisposable
         if (sk == null) { weaponPrevValid = false; return; }
         var center = new Vector3(sk->Transform.Position.X, sk->Transform.Position.Y, sk->Transform.Position.Z);
         var rot = new Quaternion(sk->Transform.Rotation.X, sk->Transform.Rotation.Y, sk->Transform.Rotation.Z, sk->Transform.Rotation.W);
+        if (rec != null) RecWeaponSample(center, rot);
         // Weapon-drop models the weapon as a Y-aligned capsule, so the blade runs along local Y.
         // Sample both ends so the blade direction's sign doesn't matter.
         var dir = Vector3.Transform(Vector3.UnitY, rot);
@@ -11174,7 +11205,7 @@ public unsafe partial class RagdollController : IDisposable
 
     /// <summary>Forget the retained corpse-support pair for one live NPC. Call when an external
     /// movement controller stops ground traversal or releases ownership of that actor.</summary>
-    public void ClearNpcTraversalSupport(nint npcAddress)
+    private void ClearNpcTraversalSupportCore(nint npcAddress)
     {
         if (npcAddress != nint.Zero)
             npcTraversalAnchors.Remove(npcAddress);
@@ -11298,7 +11329,7 @@ public unsafe partial class RagdollController : IDisposable
     /// navigation footprint: every query originates from an NPC capsule the simulation is actually
     /// using, and every target is one of the corpse shapes drawn by the collision debug overlay.
     /// </summary>
-    public bool TryGetNpcTraversalRootHeight(
+    private bool TryGetNpcTraversalRootHeightCore(
         nint npcAddress,
         Vector3 proposedRootPosition,
         float terrainY,
@@ -11341,6 +11372,7 @@ public unsafe partial class RagdollController : IDisposable
 
         var gameObject = (GameObject*)npcAddress;
         var currentRoot = new Vector3(gameObject->Position.X, gameObject->Position.Y, gameObject->Position.Z);
+        if (rec != null) RecActorPosition(ActorSite.TraversalRoot, npcAddress, currentRoot);
         var proxySampleRoot = npcState.HasTraversalSampleRoot
             ? npcState.TraversalSampleRoot
             : currentRoot;
@@ -11387,7 +11419,7 @@ public unsafe partial class RagdollController : IDisposable
             return horizontalHandoff || candidateRootY > terrainY + 0.001f;
         }
 
-        var queryTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
+        var queryTimestamp = RecClock("NpcTraversalQuery", System.Diagnostics.Stopwatch.GetTimestamp());
         float? previousSupportRootY = null;
         if (npcTraversalAnchors.TryGetValue(npcAddress, out var anchor))
         {
@@ -11628,6 +11660,7 @@ public unsafe partial class RagdollController : IDisposable
         var lowerBandTop = minBottom + MathF.Max(0.0002f, (maxTop - minBottom) * 0.18f);
         var gameObject = (GameObject*)npcAddress;
         var currentRoot = new Vector3(gameObject->Position.X, gameObject->Position.Y, gameObject->Position.Z);
+        if (rec != null) RecActorPosition(ActorSite.TraversalPreviewRoot, npcAddress, currentRoot);
         var proxySampleRoot = npcState.HasTraversalSampleRoot
             ? npcState.TraversalSampleRoot
             : currentRoot;
@@ -12300,7 +12333,7 @@ public unsafe partial class RagdollController : IDisposable
     /// by the render/physics owner before the next timestep; callers never mutate BEPU from
     /// Framework.Update. The carrier is a foot-volume, not a duplicate full character collider.
     /// </summary>
-    public void DriveNpcTraversalProxy(
+    private void DriveNpcTraversalProxyCore(
         nint address,
         Vector3 initialRoot,
         Vector3 targetRoot,
@@ -12332,7 +12365,7 @@ public unsafe partial class RagdollController : IDisposable
         }
     }
 
-    public void ReleaseNpcTraversalProxy(nint address)
+    private void ReleaseNpcTraversalProxyCore(nint address)
     {
         if (address == nint.Zero)
             return;
@@ -12593,7 +12626,7 @@ public unsafe partial class RagdollController : IDisposable
     /// not just on an explicit attack. Returns false if the sim isn't ready yet — callers should
     /// retry until it succeeds. Pair with <see cref="RemoveLiveCollider"/> before the actor despawns.
     /// </summary>
-    public bool AddLiveCollider(nint address)
+    private bool AddLiveColliderCore(nint address)
     {
         if (simulation == null || !isActive || !physicsStarted) return false;
         if (address == nint.Zero || address == targetCharacterAddress) return false;
@@ -12617,7 +12650,7 @@ public unsafe partial class RagdollController : IDisposable
     /// <summary>Use only a representative prefix of an actor's already allocated bone proxies.
     /// Intended for large swarms where full-detail collision would create hundreds of simultaneous
     /// contacts. Changing the mode never adds or removes a BEPU body from the running simulation.</summary>
-    public void SetLiveColliderLightweight(nint address, bool lightweight)
+    private void SetLiveColliderLightweightCore(nint address, bool lightweight)
     {
         if (address == nint.Zero) return;
         if (lightweight)
@@ -12642,7 +12675,7 @@ public unsafe partial class RagdollController : IDisposable
     /// determines the follower root, but a root correction cannot feed an infinite-mass kinematic
     /// impulse back into that same corpse. No bodies are added/removed from the running simulation.
     /// </summary>
-    public void SetLiveColliderTraversalGhost(nint address, bool ghost)
+    private void SetLiveColliderTraversalGhostCore(nint address, bool ghost)
     {
         if (address == nint.Zero)
             return;
@@ -12672,7 +12705,7 @@ public unsafe partial class RagdollController : IDisposable
 
     /// <summary>Remove a live collider registered via <see cref="AddLiveCollider"/> (parks its
     /// statics far away and drops the per-frame tracking entry so a despawned actor isn't read).</summary>
-    public void RemoveLiveCollider(nint address)
+    private void RemoveLiveColliderCore(nint address)
     {
         lightweightNpcCollisionAddresses.Remove(address);
         SetLiveColliderTraversalGhost(address, false);
@@ -12689,7 +12722,7 @@ public unsafe partial class RagdollController : IDisposable
         }
     }
 
-    public void CancelAttackStrike()
+    private void CancelAttackStrikeCore()
     {
         attackStrikeTimer = 0f;
         strikePower = 0f;
@@ -12700,12 +12733,12 @@ public unsafe partial class RagdollController : IDisposable
 
     private static readonly System.Random ShakeRng = new();
 
-    public void ApplyShake(float intensity)
+    private void ApplyShakeCore(float intensity)
     {
         if (simulation == null || !isActive) return;
         var handle = FindBodyHandle("j_kosi");
         if (!handle.HasValue) return;
-        var angle = (float)(ShakeRng.NextDouble() * MathF.PI * 2f);
+        var angle = (float)(RecRandom("ApplyShake", ShakeRng.NextDouble()) * MathF.PI * 2f);
         var impulse = new Vector3(MathF.Cos(angle) * intensity, 0f, MathF.Sin(angle) * intensity);
         var body = simulation.Bodies.GetBodyReference(handle.Value);
         body.Velocity.Linear += impulse;

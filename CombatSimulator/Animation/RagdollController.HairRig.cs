@@ -84,6 +84,7 @@ public unsafe partial class RagdollController
     private void BuildHairRig(in SkeletonAccess skel)
     {
         var meshBinding = hairMesh;
+        if (rec != null) RecHairMesh(meshBinding);
         hairRigChains.Clear(); hairRigActive = false; hairGroundCursor = 0;
         ClearHairSurfaceRegions();
         if (!animatedHair)

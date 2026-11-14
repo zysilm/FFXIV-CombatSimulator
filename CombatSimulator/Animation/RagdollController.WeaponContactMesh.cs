@@ -33,14 +33,14 @@ public unsafe partial class RagdollController
     private readonly HashSet<int> weaponContactProxiedBodyHandles = new();
 
     /// <summary>Weapon body contacts use the cached body surface instead of the ragdoll volumes.</summary>
-    internal void AttachWeaponContactBody(BodyHandle weapon)
+    private void AttachWeaponContactBodyCore(BodyHandle weapon)
     {
         if (simulation == null || !config.WeaponBodyMeshContacts || activeRagdollIsGeneric) return;
         if (weaponContactProxies.Count == 0) CreateWeaponContactProxies();
         if (weaponContactProxies.Count > 0) weaponContactBodyHandles.Add(weapon.Value);
     }
 
-    internal void DetachWeaponContactBody(BodyHandle weapon)
+    private void DetachWeaponContactBodyCore(BodyHandle weapon)
     {
         if (!weaponContactBodyHandles.Remove(weapon.Value) || weaponContactBodyHandles.Count > 0) return;
         RemoveWeaponContactProxies();
@@ -50,6 +50,7 @@ public unsafe partial class RagdollController
     {
         if (simulation == null || bufferPool == null) return;
         var cache = GetWeaponContactMesh(targetCharacterAddress);
+        if (rec != null) RecMeshCache(cache, "weaponContact");
         if (cache == null) return;
         for (int i = 0; i < ragdollBones.Count; i++)
         {
@@ -63,6 +64,7 @@ public unsafe partial class RagdollController
             try { shape = simulation.Shapes.Add(mesh); }
             catch { mesh.Dispose(bufferPool); throw; }
             GetBonePoseFromBody(rb, out var origin, out var rotation, out _, out _);
+            if (rec != null) RecMeshUse("weaponContactProxy", rb.Name, local);
             var body = simulation.Bodies.Add(BodyDescription.CreateKinematic(new RigidPose(origin, rotation), default,
                 new CollidableDescription(shape, 0.04f), new BodyActivityDescription(0.01f)));
             weaponContactProxies.Add(new WeaponContactProxy { BoneListIndex = i, RagdollBody = rb.BodyHandle, Body = body, Shape = shape });

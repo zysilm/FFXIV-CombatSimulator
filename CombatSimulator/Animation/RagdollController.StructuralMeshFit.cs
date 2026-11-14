@@ -67,22 +67,28 @@ public unsafe partial class RagdollController
             var task = structuralFitTask ?? StartStructuralMeshFit(skel);
             structuralFitTask = null;
             if (task == null)
+            {
+                if (rec != null) recFitOutcome = 1;
                 return NoStructuralFits;
+            }
 
             // Normally long finished. With no activation delay the first death of an appearance
             // waits here once, briefly; past that the built-in volumes are better than a stall.
             if (!task.IsCompleted && !task.Wait(150))
             {
                 log.Info("Ragdoll mesh geometry: fit not ready yet; built-in volumes used for this ragdoll.");
+                if (rec != null) recFitOutcome = 2;
                 return NoStructuralFits;
             }
             var result = task.Result;
+            if (rec != null) recFitOutcome = 3;
             log.Info($"Ragdoll mesh geometry: {result.Summary}");
             return result.Fits;
         }
         catch (Exception ex)
         {
             log.Warning(ex, "Ragdoll mesh geometry: fit failed; built-in volumes used.");
+            if (rec != null) recFitOutcome = 4;
             return NoStructuralFits;
         }
     }

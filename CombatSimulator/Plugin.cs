@@ -234,6 +234,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         navMesh = new Navigation.NavMeshService(worldGeometryRenderer, log);
         crowdMover = new Navigation.CrowdMover(navMesh, log);
         navMesh.DumpPath = System.IO.Path.Combine(pluginInterface.GetPluginConfigDirectory(), "navmesh-last-input.bin");
+        RagdollRecordingSession.Configure(System.IO.Path.Combine(pluginInterface.GetPluginConfigDirectory(), "ragdoll-rec"), log);
         dismembermentController = new DismembermentController(boneTransformService, glamourerIpc, animationController, objectTable, config, log);
         dismembermentController.PlayerRagdollController = ragdollController;
         // Clothes still on the corpse ride along when it is picked up; the dismemberment side owns the
@@ -712,6 +713,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         ragdollController.Dispose();
         weaponDropController.Dispose();
         dismembermentController.Dispose();
+        // Any ragdoll recording still open (docs/REFACTOR_PLAN.md, stage A0) is closed with the plugin.
+        RagdollRecordingSession.Stop();
         boneTransformService.Dispose();
         dynamicCameraController.Dispose();
         gameCameraUpdateHook.Dispose();
@@ -761,6 +764,20 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
                         log.Info($"NavMesh: {floorText} at {navPlayer.Position}");
                     }
                     chatGui.Print($"[CombatSim] Navigation mesh: {navMesh.Status}" + (navMesh.ShowDebug ? " (shown)" : ""));
+                    break;
+                }
+
+            case "ragdollrec":
+                {
+                    // Stage A0 of the refactor (docs/REFACTOR_PLAN.md): record ragdoll runs for offline replay.
+                    var recCommand = parts.Length > 1 ? parts[1].Trim().ToLowerInvariant() : "status";
+                    var recText = recCommand switch
+                    {
+                        "start" => RagdollRecordingSession.Start(),
+                        "stop" => RagdollRecordingSession.Stop(),
+                        _ => RagdollRecordingSession.Status(),
+                    };
+                    chatGui.Print($"[CombatSim] Ragdoll recording: {recText}");
                     break;
                 }
 
