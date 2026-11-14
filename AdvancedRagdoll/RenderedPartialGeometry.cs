@@ -2,7 +2,7 @@
 using System;
 using System.Numerics;
 
-namespace CombatSimulator.Animation;
+namespace AdvancedRagdoll;
 
 /// <summary>Connection-aligned partial-skeleton skin matrices. Both input arrays are
 /// MODEL-space poses. Align the reference and animated connections independently; this

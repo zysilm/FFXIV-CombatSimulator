@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Numerics;
 
-namespace CombatSimulator.Animation.MeshVolume;
+namespace AdvancedRagdoll.MeshVolume;
 
 public readonly record struct MeshLodValidationSample(int A, int B, int C, Vector3 Barycentric, int CollisionTriangle);
 

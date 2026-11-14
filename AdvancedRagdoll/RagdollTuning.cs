@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-namespace CombatSimulator.Animation;
+namespace AdvancedRagdoll;
 
 /// <summary>
 /// Physics constants that used to be Ragdoll-page settings. Every value equals the setting's former
@@ -10,6 +10,10 @@ namespace CombatSimulator.Animation;
 /// </summary>
 public static class RagdollTuning
 {
+    // The coarse collision LOD tolerance (mm) of the body surface weapons collide with (moved here from the
+    // plugin's Configuration in stage A4; it was a constant there too).
+    public const float WeaponBodyMeshLodToleranceMm = 8f;
+
     public const float Gravity = 9.8f;
     public const float Damping = 0.97f;
 

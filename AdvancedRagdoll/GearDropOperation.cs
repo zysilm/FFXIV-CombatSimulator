@@ -1,4 +1,4 @@
-namespace CombatSimulator.Animation;
+namespace AdvancedRagdoll;
 
 /// <summary>A drop is prepared while the original is still visible. The strip controller commits
 /// only after every piece of a slot (including both gloves/boots) is ready.</summary>

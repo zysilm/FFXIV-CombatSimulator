@@ -4,7 +4,7 @@
 
 using System;
 
-namespace CombatSimulator.Animation;
+namespace AdvancedRagdoll;
 
 /// <summary>When, after death, ragdoll physics takes the body over from the death animation.</summary>
 public enum RagdollTriggerMode

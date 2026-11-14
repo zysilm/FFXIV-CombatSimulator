@@ -3,7 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 
-namespace CombatSimulator.Animation.MeshVolume;
+namespace AdvancedRagdoll.MeshVolume;
 
 /// <summary>Rigid local triangle surface. Scale is baked before this representation is built.</summary>
 public sealed class BodyMeshGeometry

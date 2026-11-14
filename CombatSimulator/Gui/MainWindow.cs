@@ -3509,18 +3509,18 @@ public partial class MainWindow : IDisposable
                            "Takes effect at the next ragdoll. Not used together with Rendered Mesh Body Collision. Default on.");
 
                 // One dropdown: off, or which liquid the water behaves as.
-                var liquid = config.RagdollWaterBuoyancy ? Math.Clamp(config.RagdollWaterLiquid, 0, Animation.WaterBuoyancy.LiquidLabels.Length - 1) + 1 : 0;
+                var liquid = config.RagdollWaterBuoyancy ? Math.Clamp(config.RagdollWaterLiquid, 0, AdvancedRagdoll.WaterBuoyancy.LiquidLabels.Length - 1) + 1 : 0;
                 ImGui.SetNextItemWidth(Math.Clamp(ImGui.GetContentRegionAvail().X * 0.6f, 220f, 380f));
-                if (ImGui.BeginCombo("Float in water##ragdoll", liquid == 0 ? "Off" : Animation.WaterBuoyancy.LiquidLabels[liquid - 1]))
+                if (ImGui.BeginCombo("Float in water##ragdoll", liquid == 0 ? "Off" : AdvancedRagdoll.WaterBuoyancy.LiquidLabels[liquid - 1]))
                 {
                     if (ImGui.Selectable("Off", liquid == 0))
                     {
                         config.RagdollWaterBuoyancy = false;
                         config.Save();
                     }
-                    for (var i = 0; i < Animation.WaterBuoyancy.LiquidLabels.Length; i++)
+                    for (var i = 0; i < AdvancedRagdoll.WaterBuoyancy.LiquidLabels.Length; i++)
                     {
-                        if (!ImGui.Selectable(Animation.WaterBuoyancy.LiquidLabels[i], liquid == i + 1)) continue;
+                        if (!ImGui.Selectable(AdvancedRagdoll.WaterBuoyancy.LiquidLabels[i], liquid == i + 1)) continue;
                         config.RagdollWaterBuoyancy = true;
                         config.RagdollWaterLiquid = i;
                         config.Save();

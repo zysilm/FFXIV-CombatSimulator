@@ -6,7 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 
-namespace CombatSimulator.Animation.SurfaceProfiles;
+namespace AdvancedRagdoll.SurfaceProfiles;
 
 public enum CharacterSurfaceUsage
 {

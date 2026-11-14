@@ -1,7 +1,7 @@
 // This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
 using System;
 
-namespace CombatSimulator.Animation.Hair;
+namespace AdvancedRagdoll.Hair;
 
 /// <summary>Where a fixed hair step falls inside the render frame that triggered it.</summary>
 internal static class HairInputTiming

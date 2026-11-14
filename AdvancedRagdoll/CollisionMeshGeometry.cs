@@ -3,7 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 
-namespace CombatSimulator.Animation;
+namespace AdvancedRagdoll;
 
 /// <summary>
 /// Pure geometry and material rules for turning the game's collision scene into triangles. Kept apart

@@ -3,7 +3,7 @@ using BepuPhysics;
 using BepuPhysics.Collidables;
 using BepuPhysics.Constraints;
 using BepuUtilities.Memory;
-using CombatSimulator.Animation.MeshVolume;
+using AdvancedRagdoll.MeshVolume;
 
 static class LiveMeshPhysics
 {

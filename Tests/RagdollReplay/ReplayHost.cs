@@ -6,10 +6,11 @@ using System.Numerics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using CombatSimulator;
+using AdvancedRagdoll;
+using AdvancedRagdoll.Bepu;
 using CombatSimulator.Animation;
-using CombatSimulator.Animation.Hosting;
-using CombatSimulator.Animation.Recording;
+using AdvancedRagdoll.Hosting;
+using AdvancedRagdoll.Recording;
 
 namespace RagdollReplay;
 
@@ -482,8 +483,8 @@ internal sealed class ReplaySettings : IRagdollSettingsSource
         if (type.IsEnum) return Enum.ToObject(type, value.AsInt);
         if (type == typeof(List<string>))
             return value.IsNull ? null : JsonSerializer.Deserialize<List<string>>(value.AsString!) ?? new List<string>();
-        if (type == typeof(GuidedCollapseSettings))
-            return JsonSerializer.Deserialize<GuidedCollapseSettings>(value.AsString!) ?? new GuidedCollapseSettings();
+        if (type == typeof(GuidedCollapseOptions))
+            return JsonSerializer.Deserialize<GuidedCollapseOptions>(value.AsString!) ?? new GuidedCollapseOptions();
         throw new ReplayUnsupportedException($"setting type {type.Name} cannot be read back");
     }
 }

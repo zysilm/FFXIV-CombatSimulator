@@ -4,7 +4,7 @@
 
 using System.Collections.Generic;
 
-namespace CombatSimulator.Animation.CollapseProfiles;
+namespace AdvancedRagdoll.CollapseProfiles;
 
 public sealed class CollapseProfile
 {

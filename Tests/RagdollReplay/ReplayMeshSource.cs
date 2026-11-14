@@ -6,11 +6,13 @@ using System.Numerics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using BepuPhysics.Collidables;
+using AdvancedRagdoll;
+using AdvancedRagdoll.Bepu;
 using CombatSimulator.Animation;
-using CombatSimulator.Animation.Hair;
-using CombatSimulator.Animation.Hosting;
-using CombatSimulator.Animation.MeshVolume;
-using CombatSimulator.Animation.Recording;
+using AdvancedRagdoll.Hair;
+using AdvancedRagdoll.Hosting;
+using AdvancedRagdoll.MeshVolume;
+using AdvancedRagdoll.Recording;
 
 namespace RagdollReplay;
 

@@ -5,8 +5,9 @@ using BepuPhysics.CollisionDetection;
 using BepuPhysics.Constraints;
 using BepuUtilities;
 using BepuUtilities.Memory;
+using AdvancedRagdoll;
 using CombatSimulator.Animation;
-using CombatSimulator.Animation.MeshVolume;
+using AdvancedRagdoll.MeshVolume;
 
 // A dropped weapon resting on a kinematic two-sided body surface, stepped the way the weapon drop
 // simulation steps mesh contacts (2 x 1/120 s, 4 substeps, stiff mesh material).

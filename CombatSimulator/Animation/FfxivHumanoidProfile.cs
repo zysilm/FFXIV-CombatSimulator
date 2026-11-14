@@ -6,7 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Numerics;
-using CombatSimulator.Animation.SkeletonProfiles;
+using AdvancedRagdoll.SkeletonProfiles;
 
 namespace CombatSimulator.Animation;
 

@@ -6,7 +6,7 @@ using BepuPhysics.CollisionDetection.CollisionTasks;
 using BepuPhysics.Constraints;
 using BepuUtilities;
 using BepuUtilities.Memory;
-using CombatSimulator.Animation.MeshVolume;
+using AdvancedRagdoll.MeshVolume;
 
 TerrainRegression.Run();
 foreach (var yaw in new[] { 0f, .7f }) Run(yaw, false, false);

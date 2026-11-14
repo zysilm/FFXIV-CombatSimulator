@@ -7,6 +7,7 @@
   <ItemGroup>
     <Compile Include="../../CombatSimulator/Animation/ModelGeometryData.cs" Link="Production/ModelGeometryData.cs" />
     <Compile Include="../../CombatSimulator/Animation/RenderedGeometryDecoder.cs" Link="Production/RenderedGeometryDecoder.cs" />
+    <Compile Include="../../AdvancedRagdoll/RenderedGeometrySnapshot.cs" Link="Production/RenderedGeometrySnapshot.cs" />
     <Compile Include="../../CombatSimulator/Animation/RenderedRaceDeformation.cs" Link="Production/RenderedRaceDeformation.cs" />
     <Compile Include="../../AdvancedRagdoll/StructuralMeshFitter.cs" Link="Production/StructuralMeshFitter.cs" />
     <!-- Skeleton profile (stage A3): the library types and the FFXIV humanoid profile the helpers ask for bone names. -->

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 using System;
-using CombatSimulator.Animation.Attachment;
+using AdvancedRagdoll.Attachment;
 using CombatSimulator.Dev;
 using Dalamud.Bindings.ImGui;
 

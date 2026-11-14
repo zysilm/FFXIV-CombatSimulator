@@ -6,7 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 
-namespace CombatSimulator.Animation;
+namespace AdvancedRagdoll;
 
 /// <summary>
 /// Fits one ragdoll body's collision volume to the character surface skinned to its bone. Pure

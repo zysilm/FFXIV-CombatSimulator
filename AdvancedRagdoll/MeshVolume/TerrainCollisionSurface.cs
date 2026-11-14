@@ -5,7 +5,7 @@ using BepuPhysics;
 using BepuPhysics.Collidables;
 using BepuUtilities.Memory;
 
-namespace CombatSimulator.Animation.MeshVolume;
+namespace AdvancedRagdoll.MeshVolume;
 
 /// <summary>Closed ground below the original sampled top surface. Convex/mesh
 /// dispatch queries the complete body BVH without body/body contact sampling.</summary>

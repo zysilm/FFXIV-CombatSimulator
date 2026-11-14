@@ -6,7 +6,7 @@ using System;
 using System.Collections.Generic;
 using BepuPhysics.CollisionDetection;
 
-namespace CombatSimulator.Animation;
+namespace AdvancedRagdoll;
 
 /// <summary>
 /// Lets the bodies of a ragdoll start out overlapping without being thrown apart.

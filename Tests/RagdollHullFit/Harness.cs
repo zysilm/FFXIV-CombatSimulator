@@ -3,10 +3,11 @@ using System.Numerics;
 using BepuPhysics;
 using BepuPhysics.Collidables;
 using BepuUtilities.Memory;
+using AdvancedRagdoll;
 using CombatSimulator.Animation;
 using Lumina;
-using Fitter = CombatSimulator.Animation.StructuralMeshFitter;
-using Sample = CombatSimulator.Animation.StructuralMeshFitter.Sample;
+using Fitter = AdvancedRagdoll.StructuralMeshFitter;
+using Sample = AdvancedRagdoll.StructuralMeshFitter.Sample;
 
 /// <summary>A collision volume in the reference pose, for either the built-in set or the fitted one.</summary>
 internal sealed class Volume

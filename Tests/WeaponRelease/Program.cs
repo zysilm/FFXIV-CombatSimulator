@@ -5,6 +5,7 @@ using BepuPhysics.CollisionDetection;
 using BepuPhysics.Constraints;
 using BepuUtilities;
 using BepuUtilities.Memory;
+using AdvancedRagdoll;
 using CombatSimulator.Animation;
 
 static void Check(bool ok, string message) { if (!ok) throw new Exception(message); }

@@ -1,7 +1,7 @@
 using System.Numerics;
 using System.Diagnostics;
-using CombatSimulator.Animation.Hair;
-using CombatSimulator.Animation.MeshVolume;
+using AdvancedRagdoll.Hair;
+using AdvancedRagdoll.MeshVolume;
 
 int assertions = 0;
 void Check(bool ok, string message) { assertions++; if (!ok) throw new Exception(message); }

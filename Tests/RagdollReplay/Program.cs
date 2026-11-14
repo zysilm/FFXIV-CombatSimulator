@@ -4,9 +4,11 @@
 
 using System.Diagnostics;
 using System.Globalization;
+using AdvancedRagdoll;
+using AdvancedRagdoll.Bepu;
 using CombatSimulator.Animation;
-using CombatSimulator.Animation.Hosting;
-using CombatSimulator.Animation.Recording;
+using AdvancedRagdoll.Hosting;
+using AdvancedRagdoll.Recording;
 using RagdollReplay;
 
 // Usage:
@@ -106,6 +108,9 @@ internal static class ReplayDriver
             Clock = clock,
             Random = new ReplayRandom(source),
             Meshes = synthetic ? new SyntheticMeshSource(meshes, skeletons) : meshes,
+            // The plugin build under test, as the game's host gives it (written into the replayed recording's header; the
+            // library is compiled once, so this replaces the plugin's conditional compilation, stage A4).
+            Build = CombatSimulator.Animation.Hosting.FfxivRagdollHost.ThisBuild,
         };
 
         // The target as the game showed it when the ragdoll was armed: its first recorded pose.

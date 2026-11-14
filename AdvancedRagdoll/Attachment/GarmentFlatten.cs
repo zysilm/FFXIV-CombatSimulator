@@ -2,7 +2,7 @@
 using System;
 using System.Numerics;
 
-namespace CombatSimulator.Animation.Attachment;
+namespace AdvancedRagdoll.Attachment;
 
 /// <summary>
 /// A dropped garment is a chain of boxes, each driving one bone of the garment's skin. A box that still

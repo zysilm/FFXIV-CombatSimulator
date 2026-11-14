@@ -3,7 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 
-namespace CombatSimulator.Animation.MeshVolume;
+namespace AdvancedRagdoll.MeshVolume;
 
 internal static class SurfaceSmoothing
 {

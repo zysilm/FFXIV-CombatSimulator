@@ -1,9 +1,9 @@
 // This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
 using System;
 using System.Numerics;
-using CombatSimulator.Animation.SkeletonProfiles;
+using AdvancedRagdoll.SkeletonProfiles;
 
-namespace CombatSimulator.Animation.Attachment;
+namespace AdvancedRagdoll.Attachment;
 
 /// <summary>
 /// "Half off, hanging on the body": the garment is the same limp chain as a dropped one, except that the

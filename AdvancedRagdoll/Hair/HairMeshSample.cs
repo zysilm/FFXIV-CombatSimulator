@@ -3,7 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 
-namespace CombatSimulator.Animation.Hair;
+namespace AdvancedRagdoll.Hair;
 
 internal readonly record struct HairMeshInfluence(string Bone, float Weight);
 

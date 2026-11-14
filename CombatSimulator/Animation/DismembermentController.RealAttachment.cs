@@ -1,7 +1,7 @@
 // This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
 using System;
 using System.Numerics;
-using CombatSimulator.Animation.Attachment;
+using AdvancedRagdoll.Attachment;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 
 namespace CombatSimulator.Animation;

@@ -10,7 +10,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 
-namespace CombatSimulator.Animation.Recording;
+namespace AdvancedRagdoll.Recording;
 
 /// <summary>
 /// Writes a ragdoll recording (see <see cref="RagdollRecordingFormat"/>). A record is built between

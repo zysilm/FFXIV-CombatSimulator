@@ -1,6 +1,7 @@
 // Fails when a string literal starting with an FFXIV bone prefix ("j_" or "n_", also $"..." and @"...")
-// appears in the ragdoll library (AdvancedRagdoll/) or in the ragdoll core (CombatSimulator/Animation/
-// RagdollController*.cs). Comments count too: quote a bone name in a comment without the quotes.
+// appears in the ragdoll library (AdvancedRagdoll/, which holds the ragdoll core Ragdoll*.cs since stage A4) or in
+// the plugin's thin shell over it (CombatSimulator/Animation/RagdollController*.cs). Comments count too: quote a
+// bone name in a comment without the quotes.
 using System.Text.RegularExpressions;
 
 var root = FindRoot(AppContext.BaseDirectory) ?? FindRoot(Directory.GetCurrentDirectory());
@@ -39,10 +40,11 @@ foreach (var relative in scanned)
 var profile = Path.Combine(root, "CombatSimulator", "Animation", "FfxivHumanoidProfile.cs");
 var control = File.Exists(profile) ? File.ReadAllLines(profile).Count(l => literal.IsMatch(l)) : 0;
 
+var coreFiles = scanned.Count(f => f.StartsWith("AdvancedRagdoll/Ragdoll.", StringComparison.Ordinal));
 Console.WriteLine($"scanned {scanned.Count} files ({scanned.Count(f => f.StartsWith("AdvancedRagdoll/", StringComparison.Ordinal))} library, " +
-                  $"{scanned.Count(f => f.StartsWith("CombatSimulator/", StringComparison.Ordinal))} ragdoll core); " +
+                  $"of which {coreFiles} ragdoll core; {scanned.Count(f => f.StartsWith("CombatSimulator/", StringComparison.Ordinal))} plugin shell); " +
                   $"control: {control} bone-name lines in FfxivHumanoidProfile.cs");
-if (scanned.Count(f => f.StartsWith("CombatSimulator/", StringComparison.Ordinal)) == 0 || control == 0)
+if (coreFiles == 0 || scanned.Count(f => f.StartsWith("CombatSimulator/", StringComparison.Ordinal)) == 0 || control == 0)
 {
     Console.WriteLine("FAIL: the check did not find the files it is meant to scan");
     return 2;

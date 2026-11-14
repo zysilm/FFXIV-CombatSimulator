@@ -8,11 +8,12 @@ using System.IO;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using CombatSimulator.Animation.Hosting;
+using AdvancedRagdoll.CollapseProfiles;
+using AdvancedRagdoll.Hosting;
 
 namespace CombatSimulator.Animation.CollapseProfiles;
 
-public sealed class CollapseProfileBook
+public sealed class CollapseProfileBook : ICollapseProfileSource
 {
     private readonly IRagdollLog log;
     private List<CollapseProfile>? profiles;

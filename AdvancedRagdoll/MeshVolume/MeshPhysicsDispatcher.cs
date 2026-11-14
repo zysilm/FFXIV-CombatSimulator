@@ -4,7 +4,7 @@ using System.Threading;
 using BepuPhysics;
 using BepuUtilities;
 
-namespace CombatSimulator.Animation.MeshVolume;
+namespace AdvancedRagdoll.MeshVolume;
 
 /// <summary>
 /// Shared, reference-counted BEPU workers. All leases serialize synchronous steps;

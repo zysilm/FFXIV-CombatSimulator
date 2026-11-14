@@ -1,5 +1,5 @@
 using System.Numerics;
-using CombatSimulator.Animation.Attachment;
+using AdvancedRagdoll.Attachment;
 
 static void Check(bool condition, string reason) { if (!condition) throw new Exception(reason); }
 var cases = new (string, Action)[]

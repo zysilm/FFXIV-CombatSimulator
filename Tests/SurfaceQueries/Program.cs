@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Numerics;
-using CombatSimulator.Animation.MeshVolume;
-using CombatSimulator.Animation.SurfaceProfiles;
+using AdvancedRagdoll.MeshVolume;
+using AdvancedRagdoll.SurfaceProfiles;
 
 int checks = 0;
 void Check(bool value, string message) { if (!value) throw new Exception(message); checks++; }

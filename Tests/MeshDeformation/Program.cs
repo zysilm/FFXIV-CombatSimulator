@@ -4,7 +4,7 @@ using BepuPhysics;
 using BepuPhysics.Collidables;
 using BepuPhysics.Trees;
 using BepuUtilities.Memory;
-using CombatSimulator.Animation.MeshVolume;
+using AdvancedRagdoll.MeshVolume;
 
 void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
 var positions = new[] { new Vector3(-1, 0, 0), new Vector3(1, 0, 0), new Vector3(0, 0, 1) };

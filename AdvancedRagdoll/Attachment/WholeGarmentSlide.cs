@@ -1,7 +1,7 @@
 using System;
 using System.Numerics;
 
-namespace CombatSimulator.Animation.Attachment;
+namespace AdvancedRagdoll.Attachment;
 
 /// <summary>A single translation shared by the whole garment; no deformation or contact projection.</summary>
 public sealed class WholeGarmentSlide

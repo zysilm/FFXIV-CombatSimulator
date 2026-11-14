@@ -4,7 +4,7 @@ using System.Numerics;
 using BepuPhysics.Collidables;
 using BepuPhysics.Trees;
 
-namespace CombatSimulator.Animation.MeshVolume;
+namespace AdvancedRagdoll.MeshVolume;
 
 /// <summary>Updates an existing two-sided mesh without changing mass, centre or ownership.</summary>
 public static class MeshSurfaceRefitter

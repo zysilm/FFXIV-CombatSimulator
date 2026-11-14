@@ -10,7 +10,7 @@ using System.Text;
 using System.Threading.Tasks;
 using BepuPhysics.Collidables;
 using CombatSimulator.Animation.Hair;
-using CombatSimulator.Animation.MeshVolume;
+using AdvancedRagdoll.MeshVolume;
 using CombatSimulator.Core;
 
 namespace CombatSimulator.Animation.Hosting;
@@ -131,7 +131,7 @@ internal sealed unsafe partial class FfxivMeshSource : IMeshSource
                     data = File.ReadAllBytes(path);
                 }
                 else data = gameData.GetFile(path)?.Data;
-                return data == null || data.Length > 64 * 1024 * 1024 ? null : HairMeshBinding.Decode(data, attributes);
+                return data == null || data.Length > 64 * 1024 * 1024 ? null : HairMeshDecoder.Decode(data, attributes);
             }
             catch { return null; }
         });

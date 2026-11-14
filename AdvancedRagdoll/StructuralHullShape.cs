@@ -8,7 +8,7 @@ using System.Numerics;
 using BepuPhysics.Collidables;
 using BepuUtilities.Memory;
 
-namespace CombatSimulator.Animation;
+namespace AdvancedRagdoll;
 
 /// <summary>Turns a fitted hull (see <see cref="StructuralMeshFitter"/>) into a physics shape.</summary>
 internal static class StructuralHullShape

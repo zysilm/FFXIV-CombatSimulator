@@ -3,7 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 
-namespace CombatSimulator.Animation.MeshVolume;
+namespace AdvancedRagdoll.MeshVolume;
 
 /// <summary>Exact local-space triangle queries. Topology is built once; skin changes refit
 /// bounds without rebuilding, and rigid motion only transforms query points/node bounds.</summary>

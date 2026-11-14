@@ -2,7 +2,7 @@
 using System;
 using System.Numerics;
 
-namespace CombatSimulator.Animation.Hair;
+namespace AdvancedRagdoll.Hair;
 
 internal readonly record struct HairMeshEnvelope(Vector3 Tip, float Radius)
 {

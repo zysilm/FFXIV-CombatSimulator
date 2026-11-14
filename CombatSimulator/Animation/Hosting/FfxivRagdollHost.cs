@@ -5,7 +5,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
-using CombatSimulator.Animation.Recording;
+using AdvancedRagdoll.Recording;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
@@ -38,8 +38,23 @@ internal static class FfxivRagdollHost
             Log = ragdollLog,
             Scheduler = TaskRagdollScheduler.Instance,
             Meshes = new FfxivMeshSource(boneService, actors, ragdollLog, TaskRagdollScheduler.Instance),
+            Build = ThisBuild,
         };
     }
+
+    /// <summary>This plugin build, for the library (compiled once): written into recordings, and the optional module
+    /// also resets and restores the follow position per activation (the conditional code the controller had).</summary>
+    internal static readonly RagdollBuildInfo ThisBuild = new(
+#if DEV_EXPERIMENTAL
+        OptionalModule: true,
+#else
+        OptionalModule: false,
+#endif
+#if PUBLIC_BUILD
+        PublicBuild: true);
+#else
+        PublicBuild: false);
+#endif
 }
 
 /// <summary>A character's skeleton read straight from the game's memory, valid for the current frame.</summary>

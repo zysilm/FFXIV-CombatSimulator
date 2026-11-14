@@ -1,4 +1,4 @@
-using CombatSimulator.Animation;
+using AdvancedRagdoll;
 
 // Plays synthetic deaths through the production RagdollTrigger at several frame rates and checks
 // when each mode starts physics.

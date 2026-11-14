@@ -5,8 +5,10 @@
 using BepuPhysics;
 using BepuPhysics.Constraints;
 using BepuPhysics.CollisionDetection;
+using AdvancedRagdoll;
+using AdvancedRagdoll.Bepu;
 using CombatSimulator.Animation;
-using CombatSimulator.Animation.Recording;
+using AdvancedRagdoll.Recording;
 using BepuSimulation = BepuPhysics.Simulation;
 
 namespace RagdollReplay;

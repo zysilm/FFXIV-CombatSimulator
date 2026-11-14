@@ -9,7 +9,7 @@ public partial class Configuration
     /// <summary>Weapons collide with the cached body surface even while ragdoll bodies keep their
     /// lightweight volumes. Only weapon contacts use it, at a coarse collision LOD.</summary>
     public bool WeaponBodyMeshContacts { get; set; } = true;
-    public const float WeaponBodyMeshLodToleranceMm = 8f;
+    public const float WeaponBodyMeshLodToleranceMm = AdvancedRagdoll.RagdollTuning.WeaponBodyMeshLodToleranceMm;
     public int RagdollMeshContactQuality { get; set; } = 50;
     public bool RagdollMeshCollisionLod { get; set; } = true;
     public float RagdollMeshLodToleranceMm { get; set; } = 5.5f;

@@ -5,7 +5,7 @@ using BepuPhysics.CollisionDetection;
 using BepuPhysics.Constraints;
 using BepuUtilities;
 using BepuUtilities.Memory;
-using CombatSimulator.Animation.MeshVolume;
+using AdvancedRagdoll.MeshVolume;
 
 static void Check(bool condition,string reason){if(!condition)throw new Exception(reason);}
 long generation=MeshPhysicsDispatcher.Generation;

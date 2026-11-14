@@ -5,8 +5,8 @@ using BepuPhysics.CollisionDetection;
 using BepuPhysics.Constraints;
 using BepuUtilities;
 using BepuUtilities.Memory;
-using CombatSimulator.Animation.MeshVolume;
-using CombatSimulator.Animation.SurfaceProfiles;
+using AdvancedRagdoll.MeshVolume;
+using AdvancedRagdoll.SurfaceProfiles;
 
 var failed = 0;
 foreach (var (name, run) in new (string, Action)[] {

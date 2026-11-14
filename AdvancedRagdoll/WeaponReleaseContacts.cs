@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using BepuPhysics;
-using CombatSimulator.Animation.SkeletonProfiles;
+using AdvancedRagdoll.SkeletonProfiles;
 
-namespace CombatSimulator.Animation;
+namespace AdvancedRagdoll;
 
 // Only pairs belonging to a newly released weapon and its owner's hands/forearms enter
 // this set. Once separated, a pair stays enabled, including subsequent falls onto the arm.

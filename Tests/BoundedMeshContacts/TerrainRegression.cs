@@ -4,7 +4,7 @@ using BepuPhysics.Collidables;
 using BepuPhysics.Trees;
 using BepuUtilities;
 using BepuUtilities.Memory;
-using CombatSimulator.Animation.MeshVolume;
+using AdvancedRagdoll.MeshVolume;
 
 static class TerrainRegression
 {

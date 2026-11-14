@@ -4,18 +4,10 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Text;
+using AdvancedRagdoll;
 using Lumina.Data.Parsing;
 
 namespace CombatSimulator.Animation;
-
-internal readonly record struct RenderedGeometryInfluence(int BoneIndex, float Weight, Vector3 WorldContribution = default);
-internal readonly record struct RenderedGeometryVertex(Vector3 WorldPosition, RenderedGeometryInfluence[] Influences, int SourceSlot);
-internal sealed class RenderedGeometrySnapshot
-{
-    public RenderedGeometryVertex[] Vertices = Array.Empty<RenderedGeometryVertex>();
-    public int[] TriangleIndices = Array.Empty<int>();
-    public string[] Diagnostics = Array.Empty<string>();
-}
 
 /// <summary>Managed decoder: visible topology, active shape replacements and up to eight influences.
 /// No native references survive capture. Invalid vertices remove their triangles rather than

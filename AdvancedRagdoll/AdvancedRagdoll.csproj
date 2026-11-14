@@ -1,9 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- AdvancedRagdoll: the ragdoll physics library. Holds the parts of CombatSimulator/Animation that
-       do not depend on the game: no Dalamud SDK, FFXIVClientStructs, Lumina or ImGui here, and nothing
-       from the plugin. The plugin references this project; the offline tests under Tests/ link these
-       sources directly. See docs/REFACTOR_PLAN.md (track A) and docs/RAGDOLL_LIBRARY_ARCHITECTURE.md.
-       The namespaces are still CombatSimulator.Animation.*; they become AdvancedRagdoll.* in stage A4. -->
+  <!-- AdvancedRagdoll: the ragdoll physics library. Holds the ragdoll core (the Ragdoll class, stage A4) and the
+       parts of the old CombatSimulator/Animation that do not depend on the game: no Dalamud SDK, FFXIVClientStructs,
+       Lumina or ImGui here, and nothing from the plugin; it references BepuPhysics only. The plugin references this
+       project (its RagdollController is a thin shell over Ragdoll); the offline tests under Tests/ link these sources
+       directly. See docs/REFACTOR_PLAN.md (track A) and docs/RAGDOLL_LIBRARY_ARCHITECTURE.md. Namespaces:
+       AdvancedRagdoll.* (stage A4). -->
   <PropertyGroup>
     <!-- BepuPhysics 2.5.0-beta.22 only targets net8.0, so that is the floor. -->
     <TargetFramework>net8.0</TargetFramework>
@@ -12,8 +13,8 @@
          project file name when it writes the plugin's deps.json. If the two differ, the DLL is listed
          there twice (once more as "AdvancedRagdoll.Reference"). Keep this equal to the project file name. -->
     <PackageId>AdvancedRagdoll</PackageId>
-    <!-- Folders mirror the namespaces below CombatSimulator.Animation (as they did in the plugin). -->
-    <RootNamespace>CombatSimulator.Animation</RootNamespace>
+    <!-- Folders mirror the namespaces below AdvancedRagdoll. -->
+    <RootNamespace>AdvancedRagdoll</RootNamespace>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- Same as the plugin (its SDK embeds symbols): stack traces in dalamud.log keep line numbers
@@ -24,7 +25,7 @@
          plugin DLL untouched, so nothing would reload. Without one, any change here recompiles the
          plugin as well (the Dalamud SDK sets the same for the plugin). -->
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
-    <!-- Not published yet: the code stays in this repository until stage A4. -->
+    <!-- Not published yet. -->
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>

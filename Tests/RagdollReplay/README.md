@@ -6,8 +6,8 @@ real `RagdollController`, offline, and checks that it produces the same output b
 
 ## How the controller runs offline
 
-The controller asks everything of the game through the host interfaces in
-`CombatSimulator/Animation/Hosting/` (skeletons, world queries, characters, colliders, the models (`IMeshSource`,
+The controller (since stage A4 the library's `Ragdoll`, which the plugin's `RagdollController` derives from) asks
+everything of the game through the host interfaces in `AdvancedRagdoll/Hosting/` (skeletons, world queries, characters, colliders, the models (`IMeshSource`,
 A2b), settings, clock, random, scheduler, log). In the game those are thin adapters over the old calls; here
 `ReplayHost.cs` and `ReplayMeshSource.cs` implement them from the recording: every query takes the record its own
 call produced in the game, checks that it was asked the same thing, and answers what the game answered. The

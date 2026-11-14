@@ -1,4 +1,5 @@
 using System.Numerics;
+using AdvancedRagdoll;
 using CombatSimulator.Animation;
 
 static void Check(bool condition, string reason) { if (!condition) throw new Exception(reason); }

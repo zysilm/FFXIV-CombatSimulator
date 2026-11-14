@@ -6,7 +6,7 @@ using System;
 using System.Reflection;
 using BepuPhysics;
 
-namespace CombatSimulator.Animation.Recording;
+namespace AdvancedRagdoll.Recording;
 
 /// <summary>The parts of the recorder that read a BepuPhysics simulation.</summary>
 public static class RagdollRecordingBepu

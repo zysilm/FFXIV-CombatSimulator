@@ -5,7 +5,7 @@ using System.Numerics;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace CombatSimulator.Animation.MeshVolume;
+namespace AdvancedRagdoll.MeshVolume;
 
 /// <summary>Serial background simplification of private managed snapshots. No native/game access.</summary>
 public sealed class MeshLodBuildQueue : IDisposable

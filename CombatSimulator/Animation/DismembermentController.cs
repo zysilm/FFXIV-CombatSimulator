@@ -8,12 +8,12 @@ using System.Numerics;
 using System.Text;
 using BepuPhysics;
 using BepuPhysics.Collidables;
-using CombatSimulator.Animation.Attachment;
+using AdvancedRagdoll.Attachment;
 using BepuPhysics.Constraints;
 using BepuUtilities.Memory;
 using CombatSimulator.Integration;
 using CombatSimulator.Animation.SurfaceProfiles;
-using CombatSimulator.Animation.MeshVolume;
+using AdvancedRagdoll.MeshVolume;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
@@ -43,7 +43,7 @@ public unsafe partial class DismembermentController : IDisposable
     private readonly Configuration config;
     // What the local simulation's contact callbacks read on the physics worker threads: a copy of the
     // settings taken before each step, never the Configuration itself.
-    private readonly Hosting.RagdollSettings contactSettings = new();
+    private readonly RagdollSettings contactSettings = new();
     private Hosting.ConfigRagdollSettings? contactSettingsSource;
     private readonly IPluginLog log;
 
@@ -6762,7 +6762,7 @@ public unsafe partial class DismembermentController : IDisposable
                 Joint = RagdollController.JointType.Ball,
                 TwistMinAngle = -0.35f,
                 TwistMaxAngle = 0.35f,
-                AnatomicalRole = RagdollController.AnatomicalRole.Generic,
+                AnatomicalRole = SkeletonBoneRole.Generic,
                 ColliderShape = RagdollController.RagdollColliderShape.Capsule,
                 BoxHalfExtents = new Vector3(radius, segLen * 0.45f, radius),
             });
@@ -6901,18 +6901,18 @@ public unsafe partial class DismembermentController : IDisposable
             CapsuleRadius = 0.08f,
             CapsuleHalfLength = 0.04f,
             Mass = 3.5f,
-            AnatomicalRole = RagdollController.AnatomicalRole.Head,
+            AnatomicalRole = SkeletonBoneRole.Head,
         };
     }
 
-    private static bool IsLimbRigRole(RagdollController.AnatomicalRole role)
-        => role is RagdollController.AnatomicalRole.Shoulder
-            or RagdollController.AnatomicalRole.Elbow
-            or RagdollController.AnatomicalRole.Hand
-            or RagdollController.AnatomicalRole.Hip
-            or RagdollController.AnatomicalRole.Knee
-            or RagdollController.AnatomicalRole.Ankle
-            or RagdollController.AnatomicalRole.Foot;
+    private static bool IsLimbRigRole(SkeletonBoneRole role)
+        => role is SkeletonBoneRole.Shoulder
+            or SkeletonBoneRole.Elbow
+            or SkeletonBoneRole.Hand
+            or SkeletonBoneRole.Hip
+            or SkeletonBoneRole.Knee
+            or SkeletonBoneRole.Ankle
+            or SkeletonBoneRole.Foot;
 
     private static string? FindSelectedChild(string parentName, List<RagdollController.RagdollBoneDef> defs)
     {
@@ -6964,17 +6964,17 @@ public unsafe partial class DismembermentController : IDisposable
         return simulation!.Shapes.Add(capsule);
     }
 
-    private static float RigVolumeScale(RagdollController.AnatomicalRole role)
-        => role is RagdollController.AnatomicalRole.Shoulder
-            or RagdollController.AnatomicalRole.Elbow
-            or RagdollController.AnatomicalRole.Hand
+    private static float RigVolumeScale(SkeletonBoneRole role)
+        => role is SkeletonBoneRole.Shoulder
+            or SkeletonBoneRole.Elbow
+            or SkeletonBoneRole.Hand
             ? 1.55f
             : 1.35f;
 
-    private static float MinRigRadius(RagdollController.AnatomicalRole role)
-        => role is RagdollController.AnatomicalRole.Shoulder
-            or RagdollController.AnatomicalRole.Elbow
-            or RagdollController.AnatomicalRole.Hand
+    private static float MinRigRadius(SkeletonBoneRole role)
+        => role is SkeletonBoneRole.Shoulder
+            or SkeletonBoneRole.Elbow
+            or SkeletonBoneRole.Hand
             ? 0.038f
             : 0.045f;
 

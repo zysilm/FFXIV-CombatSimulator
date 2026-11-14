@@ -9,7 +9,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 
-namespace CombatSimulator.Animation.Recording;
+namespace AdvancedRagdoll.Recording;
 
 /// <summary>What one recording contains, for a quick look.</summary>
 public sealed class RagdollRecordingSummary

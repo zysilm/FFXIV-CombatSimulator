@@ -5,7 +5,7 @@ using BepuPhysics;
 using BepuPhysics.Collidables;
 using BepuUtilities.Memory;
 
-namespace CombatSimulator.Animation;
+namespace AdvancedRagdoll;
 
 /// <summary>Bounded, closed compound fitted to clipped mesh triangles, not a single resource AABB.</summary>
 public sealed class WeaponMeshGeometry

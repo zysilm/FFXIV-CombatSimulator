@@ -1,8 +1,8 @@
 using System;
 using System.Numerics;
-using CombatSimulator.Animation.SkeletonProfiles;
+using AdvancedRagdoll.SkeletonProfiles;
 
-namespace CombatSimulator.Animation.Attachment;
+namespace AdvancedRagdoll.Attachment;
 
 /// <summary>Continuously retain the waistband as the thighs separate. No collision projection.</summary>
 public sealed class WaistRetentionMotion

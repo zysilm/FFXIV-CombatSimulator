@@ -7,7 +7,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Numerics;
 
-namespace CombatSimulator.Animation.SkeletonProfiles;
+namespace AdvancedRagdoll.SkeletonProfiles;
 
 /// <summary>
 /// Everything the ragdoll knows about one kind of skeleton: which bone plays which anatomical part,
@@ -116,7 +116,7 @@ public sealed class SkeletonProfile
 
     /// <summary>
     /// The generated rig: no named bones, the bodies come from the skeleton's own topology
-    /// (<c>RagdollController.BuildGenericSkeletonDefs</c>) with these parameters, and its class tuning.
+    /// (<c>Ragdoll.BuildGenericSkeletonDefs</c>) with these parameters, and its class tuning.
     /// </summary>
     public static SkeletonProfile Auto() => AutoProfile;
 

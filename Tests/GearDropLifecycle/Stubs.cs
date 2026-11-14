@@ -1,3 +1,4 @@
+using AdvancedRagdoll;
 using CombatSimulator.Animation;
 namespace CombatSimulator
 {

@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using System.Threading.Tasks;
 
-namespace CombatSimulator.Animation.MeshVolume;
+namespace AdvancedRagdoll.MeshVolume;
 
 /// <summary>Managed bone-local geometry retained across simulation lifetimes. No native ownership.</summary>
 public sealed class FrozenMeshGeometryCache : IDisposable

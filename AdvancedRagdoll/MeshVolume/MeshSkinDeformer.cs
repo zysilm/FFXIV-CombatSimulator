@@ -2,7 +2,7 @@
 using System;
 using System.Numerics;
 
-namespace CombatSimulator.Animation.MeshVolume;
+namespace AdvancedRagdoll.MeshVolume;
 
 /// <summary>An unweighted skin contribution in its owning physical bone's local frame.</summary>
 public readonly record struct MeshSkinInfluence(int BoneIndex, float Weight, Vector3 BoneLocalPosition);

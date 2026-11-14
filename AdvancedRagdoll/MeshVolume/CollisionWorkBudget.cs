@@ -11,7 +11,7 @@ using BepuPhysics.CollisionDetection.CollisionTasks;
 using BepuUtilities;
 using BepuUtilities.Memory;
 
-namespace CombatSimulator.Animation.MeshVolume;
+namespace AdvancedRagdoll.MeshVolume;
 
 /// <summary>
 /// Limits mesh contact sampling before BEPU allocates continuation storage. The source

@@ -4,7 +4,7 @@
 
 using System;
 
-namespace CombatSimulator.Animation.Recording;
+namespace AdvancedRagdoll.Recording;
 
 /// <summary>
 /// The on-disk format of a ragdoll recording (docs/REFACTOR_PLAN.md, stage A0).

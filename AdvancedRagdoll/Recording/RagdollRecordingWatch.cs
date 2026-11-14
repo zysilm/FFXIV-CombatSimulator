@@ -7,7 +7,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 
-namespace CombatSimulator.Animation.Recording;
+namespace AdvancedRagdoll.Recording;
 
 /// <summary>
 /// Notices when the value of a property changes. The recorder asks once per render frame for every

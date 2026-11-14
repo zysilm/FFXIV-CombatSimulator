@@ -1,9 +1,9 @@
 // This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
 using System;
 using System.Numerics;
-using CombatSimulator.Animation.SkeletonProfiles;
+using AdvancedRagdoll.SkeletonProfiles;
 
-namespace CombatSimulator.Animation;
+namespace AdvancedRagdoll;
 
 /// <summary>
 /// Buoyancy for ragdoll bodies in water. Nothing here poses a body: each rigid body only receives the

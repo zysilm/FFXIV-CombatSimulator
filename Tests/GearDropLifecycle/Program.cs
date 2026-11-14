@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using CombatSimulator;
+using AdvancedRagdoll;
 using CombatSimulator.Animation;
 using CombatSimulator.Core;
 using CombatSimulator.Dev;

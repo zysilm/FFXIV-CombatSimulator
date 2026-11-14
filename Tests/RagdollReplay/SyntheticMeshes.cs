@@ -4,11 +4,12 @@
 
 using System.Numerics;
 using BepuPhysics.Collidables;
-using CombatSimulator;
+using AdvancedRagdoll;
+using AdvancedRagdoll.Bepu;
 using CombatSimulator.Animation;
-using CombatSimulator.Animation.Hair;
-using CombatSimulator.Animation.Hosting;
-using CombatSimulator.Animation.MeshVolume;
+using AdvancedRagdoll.Hair;
+using AdvancedRagdoll.Hosting;
+using AdvancedRagdoll.MeshVolume;
 
 namespace RagdollReplay;
 

@@ -2,7 +2,7 @@
 using System;
 using System.Numerics;
 
-namespace CombatSimulator.Animation.Hair;
+namespace AdvancedRagdoll.Hair;
 
 /// <summary>Bounded, one-way XPBD guide tree. Owns no native objects or body forces.
 /// Parents precede children; negative parents are scalp attachments. Rest offsets

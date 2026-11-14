@@ -4,6 +4,7 @@
 
 using System;
 using System.Collections.Generic;
+using AdvancedRagdoll;
 using CombatSimulator.Animation;
 using CombatSimulator.Integration;
 using Dalamud.Plugin.Services;

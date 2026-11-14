@@ -5,9 +5,9 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
-using CombatSimulator.Animation.MeshVolume;
+using AdvancedRagdoll.MeshVolume;
 
-namespace CombatSimulator.Animation.SurfaceProfiles;
+namespace AdvancedRagdoll.SurfaceProfiles;
 
 public readonly record struct CharacterSurfaceBoneSeed(
     string Name,

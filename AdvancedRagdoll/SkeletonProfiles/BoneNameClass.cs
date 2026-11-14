@@ -5,7 +5,7 @@
 using System;
 using System.Collections.Immutable;
 
-namespace CombatSimulator.Animation.SkeletonProfiles;
+namespace AdvancedRagdoll.SkeletonProfiles;
 
 /// <summary>How a <see cref="BoneNamePattern"/> compares a bone name. Every comparison is ordinal.</summary>
 public enum BoneNameMatch

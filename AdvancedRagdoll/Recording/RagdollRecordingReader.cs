@@ -11,7 +11,7 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace CombatSimulator.Animation.Recording;
+namespace AdvancedRagdoll.Recording;
 
 /// <summary>One decoded value of a record. Scalars live in <see cref="Bits"/> (floats as their raw
 /// bits); strings, byte blocks, vectors and arrays live in <see cref="Data"/> as stored.</summary>

@@ -1173,7 +1173,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         if (bones.Count > 0)
         {
             foreach (var bone in bones)
-                dismembermentController.SpawnFor(address, bone, Animation.RagdollTuning.NpcActivationDelay, null);
+                dismembermentController.SpawnFor(address, bone, AdvancedRagdoll.RagdollTuning.NpcActivationDelay, null);
             log.Info($"NPC death ragdoll: selected {bones.Count} visual parts for 0x{address:X}");
         }
 
@@ -1183,7 +1183,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         // together lands all of those on top of each other. Each activation pushes the next one
         // further out; the budget decays in ProcessPendingNpcRagdolls, so it only bites during a
         // burst and is back to zero by the next fight.
-        controller.Activate(address, Animation.RagdollTuning.NpcActivationDelay + npcRagdollStaggerBudget);
+        controller.Activate(address, AdvancedRagdoll.RagdollTuning.NpcActivationDelay + npcRagdollStaggerBudget);
         npcRagdollStaggerBudget = MathF.Min(
             npcRagdollStaggerBudget + NpcRagdollActivationStagger, NpcRagdollMaxStagger);
         npcRagdolls[address] = controller;
@@ -1307,11 +1307,11 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             if (companion.Address == address)
                 executed = companion.State.Executed;
         if (executed)
-            controller.Activate(address, 0f, Animation.RagdollTriggerMode.FixedDelay);
+            controller.Activate(address, 0f, AdvancedRagdoll.RagdollTriggerMode.FixedDelay);
         else
         {
             controller.Activate(address, config.RagdollActivationDelay,
-                Animation.RagdollTrigger.ClampMode(config.RagdollTriggerMode), npcRagdollStaggerBudget);
+                AdvancedRagdoll.RagdollTrigger.ClampMode(config.RagdollTriggerMode), npcRagdollStaggerBudget);
             npcRagdollStaggerBudget = MathF.Min(
                 npcRagdollStaggerBudget + NpcRagdollActivationStagger, NpcRagdollMaxStagger);
         }

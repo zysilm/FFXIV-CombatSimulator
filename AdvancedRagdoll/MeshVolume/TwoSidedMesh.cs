@@ -3,7 +3,7 @@ using System.Numerics;
 using BepuPhysics.Collidables;
 using BepuUtilities.Memory;
 
-namespace CombatSimulator.Animation.MeshVolume;
+namespace AdvancedRagdoll.MeshVolume;
 
 internal static class TwoSidedMesh
 {

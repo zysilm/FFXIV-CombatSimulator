@@ -5,11 +5,11 @@
 using System;
 using System.Collections.Immutable;
 
-namespace CombatSimulator.Animation.SkeletonProfiles;
+namespace AdvancedRagdoll.SkeletonProfiles;
 
 /// <summary>
-/// The anatomical role of a bone. Same members, in the same order (so the same values), as
-/// <c>RagdollController.AnatomicalRole</c>, which converts to and from it by value.
+/// The anatomical role of a bone (the ragdoll's bone definitions use it too: stage A4 merged the controller's
+/// identical AnatomicalRole into it, same members and values).
 /// </summary>
 public enum SkeletonBoneRole { Auto, Generic, Pelvis, Spine, Head, Shoulder, Elbow, Hand, Hip, Knee, Ankle, Foot, Cloth, SoftBody, Weapon }
 
