@@ -5,10 +5,11 @@ at the first different line. `dotnet run -c Release -- --write` rewrites them (o
 change the user approved). "Identical" means byte for byte on the same machine and runtime
 (docs/PLUGIN_ARCHITECTURE.md §8.1); `golden/` is marked `-text` so git does not change its line endings.
 
-Built at refactor stage B1, so it covers what the extracted pure code (`CombatSimulator/Combat/CombatantMath.cs`,
-`AggroModel.cs`, linked) decides. The two controllers (`NpcAiController`, `CombatCompanionManager`) still read and
-write game objects and cannot run offline before stage B4a; the round-level golden of §8.1 (the old loops in a fake
-world) comes then.
+Two levels. The function level and the three `<scenario>.txt` files were built at refactor stage B1 and cover
+what the extracted pure code (`CombatSimulator/Combat/CombatantMath.cs`, `AggroModel.cs`, linked) decides, in a
+loop of this harness's own. The round level (`golden/loop-*.txt`, stage B4a) runs the two REAL combat loops,
+`NpcAiController` and `CombatCompanionManager` (production sources linked), over their seams
+(`CombatSimulator/Combat/CombatLoopSeams.cs`) in a flat fake world (`LoopReplay.cs`); see the end of this file.
 
 - `golden/functions.txt` — the function level of §8.1: every `CombatantMath` / `AggroModel` function on a fixed
   input table (gaps, stand points, standing gap, reach hysteresis, the settings' reach scale, auto/skill/current
@@ -43,3 +44,54 @@ enemies, allies act, a straight-line "crowd" step, time advances, enemies act), 
 controllers' rules: random ready skill with a shared token bucket for enemies, highest priority for allies, lock
 0.6 s), skills dealt as a bare potency, no casts or telegraphs, no tactics (flee, strafe, charge, melee slots), no
 navigation or body blocking, no rescue, prayer or seizure progress (rules come with B5), the player stands still.
+
+## The round level (`golden/loop-*.txt`, stage B4a)
+
+The same three scenarios (`loop-field-8v8-melee`, `loop-mixed-ranged-magic`, `loop-guard-body`), seeds 1–3, time steps
+1/60 s, 1/30 s and the jittered sequence, 30 s at most, now played by the plugin's own loops. Frame order as
+`Plugin.OnFrameworkUpdate`: `CombatCompanionManager.Tick`, telegraphs land, the crowd steps, the engine's clock,
+the war (seizers), `NpcAiController.Tick`. Seeds: `NpcAiController.RandomSource` Random(s),
+`CombatCompanionManager.RandomSource` Random(s+1), `AggroSeedSource` Random(s+2), the `DamageCalculator` Random(s+3).
+Allies join through the real `CombatCompanionManager.AdoptNpc` (HP = the player's 60000 × level factor 0.5).
+Since stage B4b both loops attack through the shared step `Combat/CombatStep.cs` (each side's `ActPolicy` and its
+own sink); the loop golden files were recorded by B4a from the old loops and were not re-recorded.
+
+Lines: `C` a fighter's target, AI state, in-reach or life changed (with the distance to its target); `A` an attack
+committed (enemy: auto or skill and target, MP before; ally: damage, HP left, MP before); `H` an enemy telegraph
+landing (damage, HP left) or lapsing; `L` a combat-log entry or an engine call (victory check, captive, revive);
+`V` a death animation or an emote; `S` every living fighter every 2 s (AI state, HP, MP, position, facing, in reach,
+target, auto timer, lock, cooldowns, look); `F` one line a frame: a hash of every fighter's position, facing, target
+id, HP, MP, lock, cast, auto timer, engage delay, in reach, look, cooldowns, AI state, targets, crowd agent (position,
+velocity, speed, radius, goal) and of how many effectful seam calls of each kind (visual states, approach writes,
+facing, target id, emotes, animations, crowd) the frame made; `end`.
+
+What is faked (everything else is the production code):
+
+- The game objects: `FlatWorld` holds a body per address (position, facing, hitbox radius, entity id, target id). The
+  combatants' `BattleChara` pointers are distinct dummy values that are never dereferenced (every read and write goes
+  through `ICombatWorld`). The player stands still, attacks nobody and has nothing selected.
+- The crowd (`ICrowdAgents`): every agent is always on the mesh and walks straight at its goal at its speed (step
+  ≤ 0.1 s), no avoidance, no floor; position and velocity are read the frame after the goal is set, as with the real
+  crowd. No corpses to stand on (foot solver: 0).
+- Visual states, battle stance, animations, emotes: counted; the visual state keeps only its `Kind`; an emote always
+  plays, its loop is 1000 + the emote id.
+- The engine (`ICombatLoopEngine`, `FakeEngine`): the real `SimulationState` and `BattleRules`; the enemies' target is
+  `CombatCompanionManager.SelectEnemyTarget` (as `Plugin.cs` wires `ResolveNpcTarget`); positions as
+  `CombatEngine.GetEntityPosition` reads them; action data only for the kits' MP prices; the clock advances by dt.
+  No death queue, no `EngageIdleTarget` when an ally hits, no victory, captives or revives (those calls are logged).
+- Attacks (`IAttackSink`, `FakeAttacks`): an enemy's attack is a telegraph that lands 0.8 s (+ its cast time) later,
+  single target, `DamageCalculator.CalculateNpcAutoAttack` with its potency, threat through the real
+  `RegisterHit`; the enemy counts as busy (`isTelegraphBusy`) until then; it lapses if either side died. An ally's
+  action lands at once (`CalculateNpcAutoAttack`, no splash, no arrow delay). No snapshotted cast areas (only the
+  Fighting Mode cast path asks for one, and these runs are in action combat).
+- The war: while the lord's body is guarded, the scripted seizers go for it, held while a retainer is within 3.5 m;
+  no seizure progress, capture or result banner (`Battle/CorpseSeizure` is not run).
+- `IPluginLog` drops everything (the loops' summary lines are timed by the wall clock and decide nothing).
+- Compile only, never run: the managers' spawning and appearance code, and with it `Core/Services.cs`,
+  `Core/ClientActorSlotAllocator.cs`, `Npcs/NpcWeaponClassifier.cs`, `Resources/Sheets/HairMakeTypeSheet.cs` and the
+  game's assemblies (Dalamud, FFXIVClientStructs, Lumina, from the dev hooks folder). `LoopStubs.cs` only declares two
+  namespaces the controllers import; the plain types they use from the engine (`SimulatedActionResult`,
+  `CombatLogType`) are linked from their own files in `Simulation/`.
+
+Not reached by these scenarios: the engine cast and snapshotted-area path (Fighting Mode), sentries and patrols,
+the charge, rescues (Spring and Autumn), captives and executions.

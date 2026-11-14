@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><AllowUnsafeBlocks>true</AllowUnsafeBlocks></PropertyGroup>
   <ItemGroup>
     <Compile Include="../../CombatSimulator/Combat/CombatantMath.cs" Link="Production/CombatantMath.cs" />
     <Compile Include="../../CombatSimulator/Combat/AggroModel.cs" Link="Production/AggroModel.cs" />
@@ -12,6 +12,46 @@
     <Compile Include="../../CombatSimulator/Simulation/CastTypeMapping.cs" Link="Production/CastTypeMapping.cs" />
     <Compile Include="../../CombatSimulator/Simulation/VirtualActionModel.cs" Link="Production/VirtualActionModel.cs" />
     <Compile Include="../../CombatSimulator/Npcs/NpcBehavior.cs" Link="Production/NpcBehavior.cs" />
+  </ItemGroup>
+  <!-- The round level (stage B4a): the two real combat loops over their seams, driven by a flat fake
+       world (LoopReplay.cs). The rest of the controllers' partial classes (spawning, appearance) is
+       compiled but never run; it needs the game's assemblies only to compile. -->
+  <ItemGroup>
+    <Compile Include="../../CombatSimulator/Ai/NpcAiController.cs" Link="Production/Loop/NpcAiController.cs" />
+    <Compile Include="../../CombatSimulator/Ai/NpcAiController.Tactics.cs" Link="Production/Loop/NpcAiController.Tactics.cs" />
+    <Compile Include="../../CombatSimulator/Ai/NpcAiState.cs" Link="Production/Loop/NpcAiState.cs" />
+    <Compile Include="../../CombatSimulator/Companions/CombatCompanion.cs" Link="Production/Loop/CombatCompanion.cs" />
+    <Compile Include="../../CombatSimulator/Companions/CombatCompanionManager.cs" Link="Production/Loop/CombatCompanionManager.cs" />
+    <Compile Include="../../CombatSimulator/Companions/CombatCompanionManager.Aggro.cs" Link="Production/Loop/CombatCompanionManager.Aggro.cs" />
+    <Compile Include="../../CombatSimulator/Companions/CombatCompanionManager.Crowd.cs" Link="Production/Loop/CombatCompanionManager.Crowd.cs" />
+    <Compile Include="../../CombatSimulator/Companions/CombatCompanionManager.Lord.cs" Link="Production/Loop/CombatCompanionManager.Lord.cs" />
+    <Compile Include="../../CombatSimulator/Companions/CombatCompanionManager.Rescue.cs" Link="Production/Loop/CombatCompanionManager.Rescue.cs" />
+    <Compile Include="../../CombatSimulator/Companions/CompanionAiState.cs" Link="Production/Loop/CompanionAiState.cs" />
+    <Compile Include="../../CombatSimulator/Combat/Combatant.cs" Link="Production/Loop/Combatant.cs" />
+    <Compile Include="../../CombatSimulator/Combat/CombatLoopSeams.cs" Link="Production/Loop/CombatLoopSeams.cs" />
+    <Compile Include="../../CombatSimulator/Combat/CombatStep.cs" Link="Production/Loop/CombatStep.cs" />
+    <Compile Include="../../CombatSimulator/Combat/TargetingService.cs" Link="Production/Loop/TargetingService.cs" />
+    <Compile Include="../../CombatSimulator/Npcs/SimulatedNpc.cs" Link="Production/Loop/SimulatedNpc.cs" />
+    <Compile Include="../../CombatSimulator/Npcs/NpcSpawnRequest.cs" Link="Production/Loop/NpcSpawnRequest.cs" />
+    <Compile Include="../../CombatSimulator/Npcs/NpcWeaponClassifier.cs" Link="Production/Loop/NpcWeaponClassifier.cs" />
+    <Compile Include="../../CombatSimulator/Simulation/SimulationState.cs" Link="Production/Loop/SimulationState.cs" />
+    <Compile Include="../../CombatSimulator/Simulation/SimulatedActionResult.cs" Link="Production/Loop/SimulatedActionResult.cs" />
+    <Compile Include="../../CombatSimulator/Simulation/CombatLogType.cs" Link="Production/Loop/CombatLogType.cs" />
+    <Compile Include="../../CombatSimulator/Simulation/TelegraphShape.cs" Link="Production/Loop/TelegraphShape.cs" />
+    <Compile Include="../../CombatSimulator/Simulation/WarFallenRule.cs" Link="Production/Loop/WarFallenRule.cs" />
+    <Compile Include="../../CombatSimulator/Battle/BattleRules.cs" Link="Production/Loop/BattleRules.cs" />
+    <Compile Include="../../CombatSimulator/Battle/IBattleRuleSettings.cs" Link="Production/Loop/IBattleRuleSettings.cs" />
+    <Compile Include="../../CombatSimulator/Action/IAttackExecutor.cs" Link="Production/Loop/IAttackExecutor.cs" />
+    <Compile Include="../../CombatSimulator/Animation/ActorVisualStateController.cs" Link="Production/Loop/ActorVisualStateController.cs" />
+    <Compile Include="../../CombatSimulator/Core/Services.cs" Link="Production/Loop/Services.cs" />
+    <Compile Include="../../CombatSimulator/Core/ClientActorSlotAllocator.cs" Link="Production/Loop/ClientActorSlotAllocator.cs" />
+    <Compile Include="../../CombatSimulator/Resources/Sheets/HairMakeTypeSheet.cs" Link="Production/Loop/HairMakeTypeSheet.cs" />
+    <Reference Include="Dalamud"><HintPath>$(APPDATA)/XIVLauncher/addon/Hooks/dev/Dalamud.dll</HintPath></Reference>
+    <Reference Include="FFXIVClientStructs"><HintPath>$(APPDATA)/XIVLauncher/addon/Hooks/dev/FFXIVClientStructs.dll</HintPath></Reference>
+    <Reference Include="InteropGenerator.Runtime"><HintPath>$(APPDATA)/XIVLauncher/addon/Hooks/dev/InteropGenerator.Runtime.dll</HintPath></Reference>
+    <Reference Include="Lumina"><HintPath>$(APPDATA)/XIVLauncher/addon/Hooks/dev/Lumina.dll</HintPath></Reference>
+    <Reference Include="Lumina.Excel"><HintPath>$(APPDATA)/XIVLauncher/addon/Hooks/dev/Lumina.Excel.dll</HintPath></Reference>
+    <Reference Include="Serilog"><HintPath>$(APPDATA)/XIVLauncher/addon/Hooks/dev/Serilog.dll</HintPath></Reference>
   </ItemGroup>
   <ItemGroup>
     <None Remove="golden/**" />

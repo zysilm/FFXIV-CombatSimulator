@@ -12,6 +12,7 @@ namespace CombatSimulator.Npcs;
 public unsafe class SimulatedNpc : Combatant
 {
     public override CombatSide Side => CombatSide.Enemy;
+    public override CombatPolicy Policy => CombatPolicy.Enemy;
 
     // Identity
     public uint BNpcBaseId { get; set; }

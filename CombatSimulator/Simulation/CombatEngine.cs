@@ -17,21 +17,6 @@ using GamePlayerState = FFXIVClientStructs.FFXIV.Client.Game.UI.PlayerState;
 
 namespace CombatSimulator.Simulation;
 
-public class SimulatedActionResult
-{
-    public bool Success { get; set; }
-    public string? FailReason { get; set; }
-    public int Damage { get; set; }
-    public int Healing { get; set; }
-    public bool IsCritical { get; set; }
-    public bool IsDirectHit { get; set; }
-    public bool IsCombo { get; set; }
-    public uint ActionId { get; set; }
-    public uint SourceId { get; set; }
-    public ulong TargetId { get; set; }
-    public bool TargetKilled { get; set; }
-}
-
 internal readonly record struct AppliedActionDamage(
     SimulatedEntityState Target,
     DamageResult DamageResult);
@@ -43,17 +28,7 @@ public class CombatLogEntry
     public CombatLogType Type { get; set; }
 }
 
-public enum CombatLogType
-{
-    DamageDealt,
-    DamageTaken,
-    Healing,
-    Miss,
-    Death,
-    Info,
-}
-
-public partial class CombatEngine : IDisposable
+public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
 {
     private readonly ActionDataProvider actionDataProvider;
     private readonly DamageCalculator damageCalculator;

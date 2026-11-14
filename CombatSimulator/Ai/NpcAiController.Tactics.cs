@@ -266,7 +266,7 @@ public unsafe partial class NpcAiController
         var justAttacked = tactics.WasBusy;
         tactics.WasBusy = false;
         var maxR = centres;
-        var minR = MathF.Max(npc.HitboxRadius + 0.6f, centres * 0.75f);
+        var minR = MathF.Max(world.HitboxRadiusOf(npc) + 0.6f, centres * 0.75f);
 
         if (!tactics.Strafing && justAttacked && !IsMeleeFighter(npc) && tactics.RepositionCooldown <= 0f &&
             RandomSource.NextSingle() < RepositionChance)
@@ -445,7 +445,7 @@ public unsafe partial class NpcAiController
     /// <summary>True when no other living body (or the player) stands within <paramref name="clearance"/>.</summary>
     private bool IsSpotClear(uint selfId, Vector3 spot, float clearance)
     {
-        var player = Core.Services.ObjectTable.LocalPlayer;
+        var player = world.LocalPlayer;
         if (player != null && combatEngine.State.PlayerState.IsAlive && FlatDistance(player.Position, spot) < clearance)
             return false;
 
@@ -477,7 +477,7 @@ public unsafe partial class NpcAiController
 
     /// <summary>Facing turn rate (rad/s): slower for big bodies with heavy turning enabled.</summary>
     private float NpcTurnRate(SimulatedNpc npc)
-        => CombatantMath.TurnRate(MovePolicy.Enemy, config.EnhancedEnemyTactics, npc.HitboxRadius);
+        => CombatantMath.TurnRate(MovePolicy.Enemy, config.EnhancedEnemyTactics, world.HitboxRadiusOf(npc));
 
     private EnemyTacticsState Tactics(SimulatedNpc npc)
     {

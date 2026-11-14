@@ -11,6 +11,7 @@ namespace CombatSimulator.Companions;
 public unsafe class CombatCompanion : Combatant
 {
     public override CombatSide Side => CombatSide.Ally;
+    public override CombatPolicy Policy => CombatPolicy.Ally;
 
     public uint SourceEntityId { get; set; }
     public CompanionAiState AiState { get; set; }

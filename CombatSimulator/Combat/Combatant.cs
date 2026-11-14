@@ -76,4 +76,7 @@ public abstract unsafe class Combatant
 
     /// <summary>The side it fights on. Read-only; nothing branches on it yet.</summary>
     public abstract CombatSide Side { get; }
+
+    /// <summary>How its side reaches, acts and moves (docs/PLUGIN_ARCHITECTURE.md §2.3); read by <see cref="CombatStep"/>.</summary>
+    public abstract CombatPolicy Policy { get; }
 }

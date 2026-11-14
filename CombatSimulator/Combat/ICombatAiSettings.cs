@@ -35,6 +35,8 @@ public interface ICombatAiSettings
     int EnemyTacticsMeleeAttackers { get; }
     bool NpcCollisionActive { get; }
     float DefaultNpcHeightOffset { get; }
+    /// <summary>The emote a captive holds (the companions' captive loop).</summary>
+    uint WarCaptiveEmoteId { get; }
 }
 
 /// <summary>What target selection reads from the settings: the weights themselves are code constants (<see cref="AggroModel"/>).</summary>

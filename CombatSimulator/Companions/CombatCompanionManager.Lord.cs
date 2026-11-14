@@ -79,7 +79,7 @@ public unsafe partial class CombatCompanionManager
     private bool TryGetLordBody(out Vector3 body, out Vector3 post)
     {
         body = post = default;
-        var player = objectTable.LocalPlayer;
+        var player = world.LocalPlayer;
         if (player == null)
             return false;
         body = LordBodyAt(player.Position);
@@ -131,7 +131,7 @@ public unsafe partial class CombatCompanionManager
         {
             if (!CanRescue(companion))
                 continue;
-            var d = FlatDistance((Vector3)((GameObject*)companion.BattleChara)->Position, post);
+            var d = FlatDistance(world.PositionOf(companion), post);
             if (d < best)
             {
                 best = d;
@@ -159,7 +159,7 @@ public unsafe partial class CombatCompanionManager
         if (prayerId == 0 || companion.SimulatedEntityId != prayerId || !TryGetLordBody(out var body, out var post))
             return false;
 
-        var self = (Vector3)((GameObject*)companion.BattleChara)->Position;
+        var self = world.PositionOf(companion);
 
         // Pushed off where it knelt: up, and back to the post.
         if (prayerAtPost && FlatDistance(self, prayerSpot) > PrayerPushedOff)
@@ -168,7 +168,7 @@ public unsafe partial class CombatCompanionManager
             prayerBest = float.MaxValue;
             prayerStall = 0f;
             companion.State.IncomingDamageScale = 1f;
-            animationController.EmotePlayer.ResetEmote((Character*)companion.BattleChara);
+            world.ResetEmote(companion);
         }
 
         if (!prayerAtPost)
@@ -197,12 +197,12 @@ public unsafe partial class CombatCompanionManager
             prayerAtPost = true;
             prayerSpot = self;
             companion.State.IncomingDamageScale = PrayerDamageScale;
-            prayerLoop = animationController.PlayEmoteOn((Character*)companion.BattleChara, PrayEmoteId)
-                ? animationController.EmoteLoopTimeline(PrayEmoteId)
+            prayerLoop = world.PlayEmoteOn(companion, PrayEmoteId)
+                ? world.EmoteLoopTimeline(PrayEmoteId)
                 : (ushort)0;
             combatEngine.AddLogEntry($"{companion.Name} kneels to pray over the lord.", CombatLogType.Info);
         }
-        AnimationController.HoldEmoteLoop((Character*)companion.BattleChara, prayerLoop);
+        world.HoldEmoteLoop(companion, prayerLoop);
         return true;
     }
 
@@ -223,7 +223,7 @@ public unsafe partial class CombatCompanionManager
         {
             if (!CanRescue(companion))
                 continue;
-            var d = FlatDistance((Vector3)((GameObject*)companion.BattleChara)->Position, body);
+            var d = FlatDistance(world.PositionOf(companion), body);
             if (d < nearestDistance)
             {
                 nearestDistance = d;
@@ -249,7 +249,7 @@ public unsafe partial class CombatCompanionManager
         // choice (or a ranged seizer would stop to shoot it while the body lay open).
         const float atBody = LordContestRadius + 2f;
         if (prayerId != 0 && GetCompanion(prayerId) is { } prayer && CanRescue(prayer) &&
-            FlatDistance((Vector3)((GameObject*)prayer.BattleChara)->Position, body) <= atBody)
+            FlatDistance(world.PositionOf(prayer), body) <= atBody)
             return prayer;
         CombatCompanion? nearest = null;
         var best = atBody;
@@ -257,7 +257,7 @@ public unsafe partial class CombatCompanionManager
         {
             if (!CanRescue(companion))
                 continue;
-            var d = FlatDistance((Vector3)((GameObject*)companion.BattleChara)->Position, body);
+            var d = FlatDistance(world.PositionOf(companion), body);
             if (d < best)
             {
                 best = d;
@@ -321,7 +321,7 @@ public unsafe partial class CombatCompanionManager
         {
             prayer.State.IncomingDamageScale = 1f;
             if (prayerAtPost && prayer.BattleChara != null && prayer.State.IsAlive && !prayer.State.IsCaptive)
-                animationController.EmotePlayer.ResetEmote((Character*)prayer.BattleChara);
+                world.ResetEmote(prayer);
         }
         prayerId = 0;
         prayerAtPost = false;

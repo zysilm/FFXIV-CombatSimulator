@@ -20,7 +20,7 @@ namespace CombatSimulator.Navigation;
 /// (<see cref="Drive"/>), steps the crowd once (<see cref="Update"/>), then writes the positions back
 /// to the game (<see cref="TryGetMotion"/>). Framework thread only.
 /// </summary>
-public sealed class CrowdMover
+public sealed class CrowdMover : Combat.ICrowdAgents
 {
     // A goal that has moved less than this is not sent again: re-planning every frame for a target
     // that shuffles would keep the agent turning.

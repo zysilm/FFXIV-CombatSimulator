@@ -30,6 +30,15 @@ foreach (var scenario in Scenarios.All)
         sb.Append(new Replay(scenario, seed: 1 + i, steps: Steps.ForSeedIndex(i)).Run());
     outputs.Add((scenario.Name + ".txt", sb.ToString()));
 }
+// The round level (stage B4a): the real combat loops in the flat fake world (LoopReplay.cs).
+foreach (var scenario in LoopScenarios.All)
+{
+    var sb = new StringBuilder();
+    sb.Append("# loop-").Append(scenario.Name).Append(": ").Append(scenario.Description).Append('\n');
+    for (var i = 0; i < 3; i++)
+        sb.Append(new LoopReplay(scenario, seed: 1 + i, steps: Steps.ForSeedIndex(i)).Run());
+    outputs.Add(("loop-" + scenario.Name + ".txt", sb.ToString()));
+}
 
 var failed = false;
 foreach (var (file, text) in outputs)
@@ -102,6 +111,7 @@ sealed record Settings : ICombatAiSettings
     public int EnemyTacticsMeleeAttackers { get; init; } = 8;
     public bool NpcCollisionActive { get; init; } = true;
     public float DefaultNpcHeightOffset { get; init; }
+    public uint WarCaptiveEmoteId { get; init; } = 19;
 }
 
 static class Steps
