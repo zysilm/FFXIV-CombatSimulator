@@ -16,3 +16,4 @@ global using AdvancedRagdoll.SkeletonProfiles;
 global using AdvancedRagdoll.SurfaceProfiles;
 global using AdvancedRagdoll.Hosting;
 global using AdvancedRagdoll.Bepu;
+global using AdvancedRagdoll.WeaponDrop;

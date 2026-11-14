@@ -1,6 +1,7 @@
 // Fails when a string literal starting with an FFXIV bone prefix ("j_" or "n_", also $"..." and @"...")
 // appears in the ragdoll library (AdvancedRagdoll/, which holds the ragdoll core Ragdoll*.cs since stage A4) or in
-// the plugin's thin shell over it (CombatSimulator/Animation/RagdollController*.cs). Comments count too: quote a
+// the plugin's thin shells over it (CombatSimulator/Animation/RagdollController*.cs, and WeaponDropController*.cs since
+// stage A5). Comments count too: quote a
 // bone name in a comment without the quotes.
 using System.Text.RegularExpressions;
 
@@ -20,8 +21,9 @@ foreach (var file in Directory.EnumerateFiles(Path.Combine(root, "AdvancedRagdol
     if (relative.Contains("/bin/") || relative.Contains("/obj/")) continue;
     scanned.Add(relative);
 }
-foreach (var file in Directory.EnumerateFiles(Path.Combine(root, "CombatSimulator", "Animation"), "RagdollController*.cs"))
-    scanned.Add(Path.GetRelativePath(root, file).Replace('\\', '/'));
+foreach (var shell in new[] { "RagdollController*.cs", "WeaponDropController*.cs" })
+    foreach (var file in Directory.EnumerateFiles(Path.Combine(root, "CombatSimulator", "Animation"), shell))
+        scanned.Add(Path.GetRelativePath(root, file).Replace('\\', '/'));
 scanned.Sort(StringComparer.Ordinal);
 
 var failures = 0;

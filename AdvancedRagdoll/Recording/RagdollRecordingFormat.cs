@@ -366,6 +366,9 @@ public enum RaycastSite
     SkeletonMoved = 3,
     /// <summary>The live (animated) hair's ground samples. Not part of a ragdoll activation: never recorded.</summary>
     AnimatedHair = 4,
+    /// <summary>The terrain patch under a dropped weapon (AdvancedRagdoll.WeaponDrop, its own simulation). Not part of a
+    /// ragdoll activation: never recorded.</summary>
+    WeaponDrop = 5,
 }
 
 public enum ActorSite

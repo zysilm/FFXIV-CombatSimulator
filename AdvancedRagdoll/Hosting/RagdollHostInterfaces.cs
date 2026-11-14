@@ -238,6 +238,8 @@ public enum ClockSite
     AnimatedHair,
     /// <summary>Retry pause of a body-surface capture that found no model (Environment.TickCount64, milliseconds).</summary>
     MeshCacheRetry,
+    /// <summary>The dropped-weapon simulation's frame time (AdvancedRagdoll.WeaponDrop, its own simulation): never recorded.</summary>
+    WeaponDrop,
 }
 
 public interface IRagdollClock

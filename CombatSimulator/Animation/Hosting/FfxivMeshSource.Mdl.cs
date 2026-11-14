@@ -130,8 +130,8 @@ internal sealed unsafe partial class FfxivMeshSource
     }
 
     /// <summary>
-    /// The scale a character is drawn with, read straight from the game: for the model readers here and for the
-    /// weapon-drop simulation (stage A5). RagdollController.GetCharacterScale reads the same through the host.
+    /// The scale a character is drawn with, read straight from the game, for the model readers here. The ragdoll's
+    /// GetCharacterScale and the dropped-weapon simulation (stage A5) read the same through their hosts.
     /// </summary>
     internal static Vector3 GetCharacterScale(nint address, SkeletonAccess ns)
     {

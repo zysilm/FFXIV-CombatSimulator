@@ -20,6 +20,17 @@
 // of each, with -o into a temporary directory, never into CombatSimulator/bin/Release):
 //   dotnet run -c Release -- members <oldDir> ../../CombatSimulator/Animation
 //   dotnet run -c Release -- il <old>/CombatSimulator.dll <new>/CombatSimulator.dll
+//
+// Stage A5 (the dropped-weapon simulation moved from the plugin's WeaponDropController into the library's
+// AdvancedRagdoll.WeaponDrop.WeaponDropSimulation):
+//   a5members <old WeaponDropController.cs> <new WeaponDropSimulation.cs>
+//                                             every member of the top-level types, matched by type and signature
+//                                             shape, old type names mapped to the new ones: verbatim (full text),
+//                                             same tokens (comments differ), or changed; members only on one side
+//   a5il <old CombatSimulator.dll> <new AdvancedRagdoll.dll>
+//                                             the same members in IL: the old plugin's weapon-drop types against the
+//                                             library's (type names mapped), every method body, field and type
+//                                             identical or not, with the first differing IL line
 using System.Collections.Immutable;
 using System.Reflection;
 using System.Reflection.Emit;
@@ -42,6 +53,8 @@ switch (args[0])
     case "members": return Members(args[1], args[2]);
     case "usings": return Usings(args[1], args[2], args.Skip(3).ToArray());
     case "il": return IlCompare(args[1], args[2]);
+    case "a5members": return A5Members(args[1], args[2]);
+    case "a5il": return A5Il(args[1], args[2]);
     default: Console.Error.WriteLine("unknown mode " + args[0]); return 2;
 }
 
@@ -344,6 +357,84 @@ static List<(string Kind, string Key, string Body)> Dump(string dll)
         }
     }
     return result;
+}
+
+// --- A5: the weapon-drop simulation, old plugin file/types against the new library file/types ---
+
+static string A5Describe(MemberDeclarationSyntax m) => m switch
+{
+    // Parameter names, not types: a moved member whose parameter changed type (a game pointer to a host id) still
+    // pairs with its old self; the two overloads of each Bepu callback differ in their names.
+    MethodDeclarationSyntax x => "method " + x.Identifier.Text + "(" + string.Join(",", x.ParameterList.Parameters.Select(p => p.Identifier.Text)) + ")",
+    ConstructorDeclarationSyntax x => "ctor(" + string.Join(",", x.ParameterList.Parameters.Select(p => p.Identifier.Text)) + ")",
+    _ => Describe(m),
+};
+
+static int A5Members(string oldFile, string newFile)
+{
+    static List<(string Key, MemberDeclarationSyntax M)> Load(string file) =>
+        TopMembers(CSharpSyntaxTree.ParseText(File.ReadAllText(file), ParseOptions()))
+            .Select(x => ((x.Type == "WeaponDropController" ? "WeaponDropSimulation" : x.Type) + "::" + A5Describe(x.Member), x.Member))
+            .ToList();
+    var oldM = Load(oldFile);
+    var newM = Load(newFile);
+    int verbatim = 0, tokens = 0, changed = 0;
+    foreach (var (key, m) in oldM)
+    {
+        var match = newM.Where(n => n.Key == key).ToList();
+        if (match.Count != 1) { Console.WriteLine($"  only old ({match.Count} new): {key}"); changed++; continue; }
+        var n = match[0].M;
+        if (Strict(m) == Strict(n)) { verbatim++; Console.WriteLine($"  verbatim          {key}"); continue; }
+        if (Code(m) == Code(n)) { tokens++; Console.WriteLine($"  same tokens       {key} (comments or layout differ)"); continue; }
+        changed++;
+        var o = m.DescendantTokens().Select(t => t.Text).ToList();
+        var w = n.DescendantTokens().Select(t => t.Text).ToList();
+        int d = 0; while (d < o.Count && d < w.Count && o[d] == w[d]) d++;
+        string Ctx(List<string> t) => string.Join(" ", t.Skip(Math.Max(0, d - 3)).Take(10));
+        Console.WriteLine($"  CHANGED           {key}: old {o.Count} tokens, new {w.Count}; first difference at token {d}");
+        Console.WriteLine($"      old: {Ctx(o)}");
+        Console.WriteLine($"      new: {Ctx(w)}");
+    }
+    foreach (var (key, _) in newM.Where(n => oldM.All(o => o.Key != n.Key)))
+        Console.WriteLine($"  only new:         {key}");
+    Console.WriteLine($"A5 MEMBERS: old {oldM.Count}, new {newM.Count}: {verbatim} verbatim, {tokens} same tokens, {changed} changed or unmatched, " +
+                      $"{newM.Count(n => oldM.All(o => o.Key != n.Key))} new only");
+    return 0;
+}
+
+static int A5Il(string oldDll, string newDll)
+{
+    var map = new (string Old, string New)[]
+    {
+        ("CombatSimulator.Animation.WeaponDropController", "AdvancedRagdoll.WeaponDrop.WeaponDropSimulation"),
+        ("CombatSimulator.Animation.WeaponDropNarrowPhaseCallbacks", "AdvancedRagdoll.WeaponDrop.WeaponDropNarrowPhaseCallbacks"),
+        ("CombatSimulator.Animation.WeaponDropPoseIntegratorCallbacks", "AdvancedRagdoll.WeaponDrop.WeaponDropPoseIntegratorCallbacks"),
+    };
+    static bool Under(string key, string type) => key == type || key.StartsWith(type + "::") || key.StartsWith(type + "/");
+    string Map(string s) { foreach (var (o, n) in map) s = s.Replace(o, n); return s; }
+    var a = Dump(oldDll).Where(e => e.Kind != "fieldorder" && map.Any(m => Under(e.Key, m.Old)))
+        .Select(e => (e.Kind, Key: Map(e.Key), Body: Map(e.Body))).ToList();
+    var b = Dump(newDll).Where(e => e.Kind != "fieldorder" && map.Any(m => Under(e.Key, m.New))).ToList();
+    int same = 0, differ = 0, onlyOld = 0, onlyNew = 0;
+    foreach (var section in new[] { "type", "field", "method" })
+    {
+        var x = a.Where(e => e.Kind == section).GroupBy(e => e.Key).ToDictionary(g => g.Key, g => g.Select(e => e.Body).OrderBy(s => s, StringComparer.Ordinal).ToList());
+        var y = b.Where(e => e.Kind == section).GroupBy(e => e.Key).ToDictionary(g => g.Key, g => g.Select(e => e.Body).OrderBy(s => s, StringComparer.Ordinal).ToList());
+        foreach (var k in x.Keys.Union(y.Keys).OrderBy(s => s, StringComparer.Ordinal))
+        {
+            x.TryGetValue(k, out var l1); y.TryGetValue(k, out var l2);
+            if (l1 == null) { onlyNew++; Console.WriteLine($"  only new  {section,-6} {k}"); continue; }
+            if (l2 == null) { onlyOld++; Console.WriteLine($"  only old  {section,-6} {k}"); continue; }
+            if (l1.SequenceEqual(l2)) { same++; Console.WriteLine($"  IDENTICAL {section,-6} {k}"); continue; }
+            differ++;
+            Console.WriteLine($"  DIFFERENT {section,-6} {k}");
+            var o = l1[0].Split('\n'); var n = l2[0].Split('\n');
+            int d = 0; while (d < o.Length && d < n.Length && o[d] == n[d]) d++;
+            Console.WriteLine($"      first difference at line {d}: old '{(d < o.Length ? o[d] : "<end>")}' new '{(d < n.Length ? n[d] : "<end>")}'");
+        }
+    }
+    Console.WriteLine($"A5 IL: {same} identical, {differ} different, {onlyOld} only old, {onlyNew} only new");
+    return 0;
 }
 
 sealed class Names : ISignatureTypeProvider<string, object?>

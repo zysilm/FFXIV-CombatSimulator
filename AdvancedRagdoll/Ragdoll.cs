@@ -298,7 +298,7 @@ public unsafe partial class Ragdoll : IDisposable
     private float savedOverallSpeed = 1.0f;
     private readonly HashSet<int> ragdollBoneIndices = new();
 
-    // Weapon drop physics moved to WeaponDropController (separate, plugin-scoped simulation).
+    // Weapon drop physics is WeaponDrop.WeaponDropSimulation (a separate simulation; the plugin's WeaponDropController).
 
     // Ancestor bone index — n_hara must follow j_kosi to prevent mesh tearing
     private int nHaraIndex = -1;
