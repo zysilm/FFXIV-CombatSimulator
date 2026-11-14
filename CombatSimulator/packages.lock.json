@@ -103,6 +103,12 @@
         "type": "Transitive",
         "resolved": "2.21.0",
         "contentHash": "1Hv05KJmKXzzlp3+nFHl2A8yaugGkAj0gCSOaSsLFNFnwuLUIKLBGaC6y23JgGYnK+1t1DS40oPOquHQPI06rg=="
+      },
+      "ragdolllib": {
+        "type": "Project",
+        "dependencies": {
+          "BepuPhysics": "[2.5.0-beta.22, )"
+        }
       }
     }
   }

@@ -8,10 +8,10 @@
     <Compile Include="../../CombatSimulator/Animation/ModelGeometryData.cs" Link="Production/ModelGeometryData.cs" />
     <Compile Include="../../CombatSimulator/Animation/RenderedGeometryDecoder.cs" Link="Production/RenderedGeometryDecoder.cs" />
     <Compile Include="../../CombatSimulator/Animation/RenderedRaceDeformation.cs" Link="Production/RenderedRaceDeformation.cs" />
-    <Compile Include="../../CombatSimulator/Animation/StructuralMeshFitter.cs" Link="Production/StructuralMeshFitter.cs" />
+    <Compile Include="../../RagdollLib/StructuralMeshFitter.cs" Link="Production/StructuralMeshFitter.cs" />
     <Compile Include="../../CombatSimulator/Animation/StructuralMeshSampler.cs" Link="Production/StructuralMeshSampler.cs" />
-    <Compile Include="../../CombatSimulator/Animation/RagdollTuning.cs" Link="Production/RagdollTuning.cs" />
-    <Compile Include="../../CombatSimulator/Animation/StructuralHullShape.cs" Link="Production/StructuralHullShape.cs" />
-    <Compile Include="../../CombatSimulator/Animation/StartOverlapAllowance.cs" Link="Production/StartOverlapAllowance.cs" />
+    <Compile Include="../../RagdollLib/RagdollTuning.cs" Link="Production/RagdollTuning.cs" />
+    <Compile Include="../../RagdollLib/StructuralHullShape.cs" Link="Production/StructuralHullShape.cs" />
+    <Compile Include="../../RagdollLib/StartOverlapAllowance.cs" Link="Production/StartOverlapAllowance.cs" />
   </ItemGroup>
 </Project>
