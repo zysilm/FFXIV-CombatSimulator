@@ -68,9 +68,6 @@ public unsafe partial class CombatCompanionManager
         return CombatantMath.BodyGap(world.PositionOf(companion), world.PositionOf(target), HitboxOf(companion), world.HitboxRadiusOf(target));
     }
 
-    private static float SkillReach(CombatCompanion companion, NpcSkill skill)
-        => CombatantMath.SkillReach(skill, companion.Behavior.AutoAttackStyle, ReachPolicy.Ally, default);
-
     /// <summary>
     /// How far this ally can attack from right now: its auto-attack (a caster's is a melee swing), or the
     /// longest skill it could use this moment (off cooldown, affordable).

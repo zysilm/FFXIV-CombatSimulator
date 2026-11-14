@@ -43,7 +43,6 @@ public unsafe partial class NpcAiController : IDisposable
     // makes them lead with skills while they have MP, then fall back to auto-attacks to recover.
     // The numbers live in CombatBudgetModel, which also predicts what a kit sustains from them.
     private const int EnemyMpRegenPerSecond = CombatBudgetModel.EnemyMpRegenPerSecond;       // 2× the player's ~67/s natural regen
-    private const int EnemyAutoAttackMpRestore = CombatBudgetModel.EnemyAutoAttackMpRestore; // 2× the player's 300 basic-attack restore
 
     // Auto-engage countdown: when >= 0, every Tick decrements; on reaching
     // 0 we call EngageNpc on each selected NPC. Negative = inactive.
@@ -66,6 +65,8 @@ public unsafe partial class NpcAiController : IDisposable
         this.attackSink = attackSink;
         this.isExternallyControlled = isExternallyControlled ?? (_ => false);
         this.isTelegraphBusy = isTelegraphBusy ?? (_ => false);
+        skillTokens = new SkillTokenBucket(config);
+        stepSink = new EnemyStepSink(this);
 
         combatEngine.OnSimulationStarted += ScheduleAutoEngage;
         combatEngine.OnSimulationReset += OnSimulationResetOrStop;
@@ -175,20 +176,7 @@ public unsafe partial class NpcAiController : IDisposable
     /// controller only ever ticks enemies — companions are driven by CombatCompanionManager — so
     /// gating here throttles the hostile side alone, which is the intent.
     /// </summary>
-    private float skillTokens;
-    /// <summary>How many starts may go back-to-back after a lull, so a fight still opens with a
-    /// volley instead of a metronome.</summary>
-    private const float SkillTokenBurst = 3f;
-
-    /// <summary>Take a skill-start slot if one is free. Only the COMMIT points call this: a cast
-    /// that already paid on the way in must not pay again when it lands.</summary>
-    private bool TryTakeSkillToken()
-    {
-        if (config.NpcSkillRateLimit <= 0f) return true; // uncapped
-        if (skillTokens < 1f) return false;
-        skillTokens -= 1f;
-        return true;
-    }
+    private readonly SkillTokenBucket skillTokens;
 
     public void Tick(float deltaTime, IReadOnlyList<SimulatedNpc> npcs)
     {
@@ -198,7 +186,7 @@ public unsafe partial class NpcAiController : IDisposable
 
         tickNpcs = npcs;
 
-        skillTokens = MathF.Min(SkillTokenBurst, skillTokens + MathF.Max(0f, config.NpcSkillRateLimit) * deltaTime);
+        skillTokens.Refill(deltaTime);
 
         if (combatEngine.IsEnemyInitiationSuppressed)
         {
@@ -768,58 +756,48 @@ public unsafe partial class NpcAiController : IDisposable
             return;
         }
 
-        // Check animation lock
-        if (npc.State.AnimationLock > 0)
+        // Lock, telegraph still running, skills (a random ready one after a token), auto-attack:
+        // the step both sides share (Combat/CombatStep.cs).
+        CombatStep.Run(npc, simulatedTarget, distToTarget, deltaTime, stepSink, new CombatStepContext
+        {
+            Settings = config,
+            Rng = RandomSource,
+            Tokens = skillTokens,
+            IsTelegraphBusy = isTelegraphBusy,
+            MpPriceOf = mpPriceOf ??= MpPriceOf,
+            Pace = ActionPace(),
+        });
+    }
+
+    private readonly EnemyStepSink stepSink;
+
+    /// <summary>
+    /// The enemies' half of the shared step: an attack goes to the attack router (an instant one, or
+    /// a telegraph); with the engine's cast bar (Fighting Mode only, ActionMode false) a skill with a
+    /// cast time starts a cast instead, paid for at once, its area snapshotted.
+    /// </summary>
+    private sealed class EnemyStepSink(NpcAiController owner) : ICombatStepSink<SimulatedNpc, SimulatedEntityState>
+    {
+        public void ShowLocked(SimulatedNpc npc)
         {
             if (npc.BattleChara != null)
-                world.ApplyActionLocked(npc);
-            return;
+                owner.world.ApplyActionLocked(npc);
         }
 
-        // Already mid-attack (telegraph windup / late-guard grace / recovery) — do not commit a new
-        // attack, or the next swing overlaps the current one. No-op outside telegraphed modes.
-        if (isTelegraphBusy(npc.SimulatedEntityId))
+        public void ShowReady(SimulatedNpc npc)
         {
             if (npc.BattleChara != null)
-                world.ApplyActionLocked(npc);
-            return;
+                owner.world.ApplyCombatIdle(npc);
         }
 
-        if (npc.BattleChara != null)
-            world.ApplyCombatIdle(npc);
-
-        // Try skills — collect everything ready (off cooldown, in range, hp-gated) and fire one at
-        // RANDOM, so a humanoid enemy varies its real rotation instead of always leading with the
-        // same top skill. Cooldowns still gate reuse. (Allocates only when a skill is actually ready.)
-        float hpPercent = (float)npc.State.CurrentHp / npc.State.MaxHp;
-        List<NpcSkill>? readySkills = null;
-        foreach (var skill in npc.Behavior.Skills)
+        public AttackCommit CommitSkill(SimulatedNpc npc, SimulatedEntityState simulatedTarget, NpcSkill skill, int mpCost)
         {
-            if (skill.CooldownRemaining > 0)
-                continue;
-            if (distToTarget > SkillReach(npc, skill))
-                continue;
-            if (hpPercent > skill.HpThreshold)
-                continue;
-            // Only consider skills the enemy can currently afford — otherwise it auto-attacks to
-            // recover MP. Enemies prioritise skills whenever they have the MP for one.
-            if (npc.State.CurrentMp < SkillMpCost(npc, skill.ActionId))
-                continue;
-
-            (readySkills ??= new List<NpcSkill>()).Add(skill);
-        }
-        // A ready skill still needs a slot from the shared budget. Falling through instead of
-        // returning is deliberate: the enemy auto-attacks rather than standing still, and the
-        // skill's cooldown is left unspent so it goes as soon as the budget allows.
-        if (readySkills != null && TryTakeSkillToken())
-        {
-            var skill = readySkills[RandomSource.Next(readySkills.Count)];
-            var mpCost = SkillMpCost(npc, skill.ActionId);
-            var castTime = EffectiveCastTime(skill);
+            var targetEntityId = simulatedTarget.EntityId;
+            var castTime = owner.EffectiveCastTime(skill);
 
             // Action Mode skips the engine cast bar — the telegraph executor owns the
             // windup uniformly (cast time feeds the telegraph duration).
-            if (!config.ActionMode && castTime > 0)
+            if (!owner.config.ActionMode && castTime > 0)
             {
                 npc.State.IsCasting = true;
                 npc.State.CastActionId = skill.ActionId;
@@ -829,60 +807,24 @@ public unsafe partial class NpcAiController : IDisposable
                 npc.State.CastInterruptible = skill.Interruptible;
                 npc.CurrentCastSkill = skill;
                 npc.State.CurrentMp = Math.Max(0, npc.State.CurrentMp - mpCost);
-                BeginSnapshotCast(npc, skill, simulatedTarget, castTime);
+                owner.BeginSnapshotCast(npc, skill, simulatedTarget, castTime);
 
-                combatEngine.AddLogEntry(
+                owner.combatEngine.AddLogEntry(
                     $"{npc.Name} begins casting {skill.Name}...",
                     CombatLogType.Info);
+                return AttackCommit.CastStarted;
             }
-            else
-            {
-                var ok = attackSink.ExecuteEnemyAttack(npc, new CombatSimulator.ActionCombat.NpcAttackRequest(
-                    skill.ActionId, targetEntityId, skill.Potency, skill.AttackStyle, skill.Radius, castTime));
-                if (ok)
-                {
-                    npc.State.CurrentMp = Math.Max(0, npc.State.CurrentMp - mpCost);
-                    skill.CooldownRemaining = skill.Cooldown / ActionPace();
-                    npc.State.AnimationLock = MathF.Max(npc.State.AnimationLock, 0.6f);
-                }
-            }
-            return;
+
+            var ok = owner.attackSink.ExecuteEnemyAttack(npc, new CombatSimulator.ActionCombat.NpcAttackRequest(
+                skill.ActionId, targetEntityId, skill.Potency, skill.AttackStyle, skill.Radius, castTime));
+            return ok ? AttackCommit.Landed : AttackCommit.Failed;
         }
 
-        // Auto-attack
-        npc.AutoAttackTimer -= deltaTime;
-        if (npc.AutoAttackTimer <= 0)
-        {
-            // FFXIV: caster/magic auto-attacks are MELEE (only physical ranged — bow/gun — auto at
-            // range). Their spells stay ranged via the skill loop above; the basic swing only lands
-            // up close. Hold the swing (don't reset the timer) until the target is in melee.
-            if (npc.Behavior.AutoAttackStyle == NpcAttackStyle.Magic &&
-                distToTarget > CombatantMath.MagicAutoReach(ReachPolicy.Enemy, ReachScale.From(config)))
-                return;
-
-            npc.AutoAttackTimer = npc.Behavior.AutoAttackDelay / ActionPace();
-            var ok = attackSink.ExecuteEnemyAttack(npc, new CombatSimulator.ActionCombat.NpcAttackRequest(
-                npc.Behavior.AutoAttackActionId, targetEntityId, npc.Behavior.AutoAttackPotency,
+        public bool CommitAutoAttack(SimulatedNpc npc, SimulatedEntityState simulatedTarget)
+            => owner.attackSink.ExecuteEnemyAttack(npc, new CombatSimulator.ActionCombat.NpcAttackRequest(
+                npc.Behavior.AutoAttackActionId, simulatedTarget.EntityId, npc.Behavior.AutoAttackPotency,
                 npc.Behavior.AutoAttackStyle, 0f, 0f, IsAutoAttack: true));
-            if (ok)
-            {
-                // Auto-attacks recover MP (double the player's basic-attack restore) so a depleted
-                // enemy earns its way back into skill range.
-                npc.State.CurrentMp = Math.Min(npc.State.MaxMp, npc.State.CurrentMp + EnemyAutoAttackMpRestore);
-                npc.State.AnimationLock = MathF.Max(npc.State.AnimationLock, 0.6f);
-            }
-        }
     }
-
-    /// <summary>
-    /// What an enemy pays for a skill, as a fraction of its OWN pool: the same fraction the player pays
-    /// of theirs (prices are authored for the player's 10000 pool; a cast-time spell is 5096–8500).
-    /// Charging the raw price against an enemy's half-size pool made caster spells unaffordable; the
-    /// same share keeps them affordable and as dear as the player's: a big nuke, then auto-attacks to
-    /// earn MP back.
-    /// </summary>
-    private int SkillMpCost(SimulatedNpc npc, uint actionId)
-        => CombatantMath.SkillMpCost(MpPriceOf(actionId), npc.State.MaxMp);
 
     /// <summary>
     /// Cast time actually used. Generated kits keep <see cref="NpcSkill.CastTime"/> at 0 (a cast
@@ -1047,16 +989,6 @@ public unsafe partial class NpcAiController : IDisposable
     }
 
     private static float FlatDistance(Vector3 a, Vector3 b) => CombatantMath.FlatDistance(a, b);
-
-    /// <summary>
-    /// A skill's authored range (measured between the bodies), times the range scale. The NPC Scale
-    /// effect is written directly to DrawObject, so the game object's authored combat radius does not
-    /// follow it: every AI-authored melee distance is kept proportional to the visual model, and the
-    /// explicit gameplay range multiplier applies to both hit eligibility and movement planning so a
-    /// longer-range enemy actually stops chasing at that longer range (ReachScale.From).
-    /// </summary>
-    private float SkillReach(SimulatedNpc npc, NpcSkill skill)
-        => CombatantMath.SkillReach(skill, npc.Behavior.AutoAttackStyle, ReachPolicy.Enemy, ReachScale.From(config));
 
     private float EntityHitboxRadius(SimulatedEntityState entity)
     {

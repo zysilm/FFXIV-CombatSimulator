@@ -53,7 +53,14 @@ public sealed unsafe class GameCombatWorld : ICombatWorld
     }
 
     public IGameObjectView? LocalPlayer => objectTable.LocalPlayer is { } player ? new ObjectView(player) : null;
-    public IGameObjectView? PlayerTarget => targetManager!.Target is { } target ? new ObjectView(target) : null;
+    /// <summary>Ally adapter only (the enemies' is built without a target manager).</summary>
+    public IGameObjectView? PlayerTarget => TargetManager.Target is { } target ? new ObjectView(target) : null;
+
+    private ITargetManager TargetManager => targetManager ?? throw new NotSupportedException(
+        "ICombatWorld.PlayerTarget: this GameCombatWorld was built without a target manager (the enemies' adapter); only the allies' supports it.");
+
+    private NpcCorpseFootIkSolver FootIk => footIkSolver ?? throw new NotSupportedException(
+        "ICombatWorld foot IK (TrackFootIk / FootIkPelvisOffset / ReportFootIkRootLift): this GameCombatWorld was built without a corpse foot solver (the allies' adapter); only the enemies' supports it.");
 
     public Vector3 PositionOf(Combatant c) => ((GameObject*)c.BattleChara)->Position;
     public Vector3 ReferencePositionOf(Combatant c) => c.GameObjectRef!.Position;
@@ -102,9 +109,10 @@ public sealed unsafe class GameCombatWorld : ICombatWorld
     public void HoldEmoteLoop(Combatant c, ushort loop) => AnimationController.HoldEmoteLoop((Character*)c.BattleChara, loop);
     public void ResetEmote(Combatant c) => animationController.EmotePlayer.ResetEmote((Character*)c.BattleChara);
 
-    public void TrackFootIk(nint address, float deltaTime) => footIkSolver!.Track(address, deltaTime);
-    public float FootIkPelvisOffset(nint address) => footIkSolver!.GetPelvisOffset(address);
-    public void ReportFootIkRootLift(nint address, float lift) => footIkSolver!.ReportRootLift(address, lift);
+    // Enemy adapter only (the allies' is built without a corpse foot solver).
+    public void TrackFootIk(nint address, float deltaTime) => FootIk.Track(address, deltaTime);
+    public float FootIkPelvisOffset(nint address) => FootIk.GetPelvisOffset(address);
+    public void ReportFootIkRootLift(nint address, float lift) => FootIk.ReportRootLift(address, lift);
 }
 
 /// <summary>
@@ -122,8 +130,11 @@ public sealed class GameAttackSink : IAttackSink
         this.combatModeRouter = combatModeRouter;
     }
 
+    /// <summary>Enemy adapter only (the allies' is built without an attack router).</summary>
     public bool ExecuteEnemyAttack(SimulatedNpc npc, NpcAttackRequest request)
-        => combatModeRouter!.AttackExecutor.Execute(npc, request);
+        => (combatModeRouter ?? throw new NotSupportedException(
+                "IAttackSink.ExecuteEnemyAttack: this GameAttackSink was built without an attack router (the allies' adapter); only the enemies' supports it."))
+            .AttackExecutor.Execute(npc, request);
 
     public TelegraphShape SnapshotShape(SimulatedNpc npc, NpcAttackRequest request, SimulatedEntityState target)
         => TelegraphSystem.SnapshotShape(combatEngine, npc, request, target);

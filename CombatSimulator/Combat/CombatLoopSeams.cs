@@ -28,12 +28,19 @@ public interface IGameObjectView
     float Rotation { get; }
 }
 
-/// <summary>Every read and write of a game object the two combat loops make.</summary>
+/// <summary>
+/// Every read and write of a game object the two combat loops make.
+/// <para>Which side's game adapter supports what (<c>GameCombatWorld</c>): the allies'
+/// (CombatCompanionManager) has no corpse foot solver, so <see cref="TrackFootIk"/>,
+/// <see cref="FootIkPelvisOffset"/> and <see cref="ReportFootIkRootLift"/> are enemy-only; the enemies'
+/// (NpcAiController) has no target manager, so <see cref="PlayerTarget"/> is ally-only. Every other member
+/// works on both. An unsupported member throws <see cref="NotSupportedException"/> naming the member.</para>
+/// </summary>
 public interface ICombatWorld
 {
     /// <summary>The local player (<c>ObjectTable.LocalPlayer</c>), or null.</summary>
     IGameObjectView? LocalPlayer { get; }
-    /// <summary>What the player has selected (<c>TargetManager.Target</c>), or null.</summary>
+    /// <summary>What the player has selected (<c>TargetManager.Target</c>), or null. Ally adapter only.</summary>
     IGameObjectView? PlayerTarget { get; }
 
     // Reads of a combatant's game object.
@@ -97,16 +104,22 @@ public interface ICombatWorld
     /// <summary><c>EmotePlayer.ResetEmote((Character*)c.BattleChara)</c>.</summary>
     void ResetEmote(Combatant c);
 
-    // NpcCorpseFootIkSolver (enemies standing on corpses).
+    // NpcCorpseFootIkSolver (enemies standing on corpses). Enemy adapter only.
     void TrackFootIk(nint address, float deltaTime);
     float FootIkPelvisOffset(nint address);
     void ReportFootIkRootLift(nint address, float lift);
 }
 
-/// <summary>Where an attack the loops commit is resolved (today the enemies' attack router and the engine's companion action).</summary>
+/// <summary>
+/// Where an attack the loops commit is resolved (today the enemies' attack router and the engine's companion action).
+/// <para>Which side's game adapter supports what (<c>GameAttackSink</c>): the allies' has no attack
+/// router, so <see cref="ExecuteEnemyAttack"/> is enemy-only and throws <see cref="NotSupportedException"/>
+/// there. <see cref="SnapshotShape"/> (used by the enemies) and <see cref="ProcessCompanionAction"/> (used by
+/// the allies) only need the engine and work on both.</para>
+/// </summary>
 public interface IAttackSink
 {
-    /// <summary><c>combatModeRouter.AttackExecutor.Execute(npc, request)</c>.</summary>
+    /// <summary><c>combatModeRouter.AttackExecutor.Execute(npc, request)</c>. Enemy adapter only.</summary>
     bool ExecuteEnemyAttack(SimulatedNpc npc, NpcAttackRequest request);
     /// <summary><c>TelegraphSystem.SnapshotShape(combatEngine, npc, request, target)</c>.</summary>
     TelegraphShape SnapshotShape(SimulatedNpc npc, NpcAttackRequest request, SimulatedEntityState target);

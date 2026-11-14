@@ -138,6 +138,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         this.world = world;
         this.attackSink = attackSink;
         this.log = log;
+        stepSink = new AllyStepSink(this);
     }
 
     /// <summary>
@@ -916,62 +917,64 @@ public unsafe partial class CombatCompanionManager : IDisposable
         }
         NoteActivity(ActivityFighting);
 
-        if (companion.State.AnimationLock > 0)
+        // Lock, skills (the first ready one by priority), auto-attack: the step both sides share
+        // (Combat/CombatStep.cs).
+        CombatStep.Run(companion, target, dist, deltaTime, stepSink, new CombatStepContext
         {
-            EnterCompanionState(companion, CompanionAiState.ActionLocked);
-            return;
-        }
-
-        foreach (var skill in companion.Behavior.Skills.OrderByDescending(s => s.Priority))
-        {
-            if (skill.CooldownRemaining > 0)
-                continue;
-            if (dist > SkillReach(companion, skill))
-                continue;
-            // A skill costs MP as it does an enemy: a share of the companion's own pool. Out of MP,
-            // it auto-attacks until it has earned enough back.
-            var mpCost = CombatantMath.SkillMpCost(MpPriceOf(skill.ActionId), companion.State.MaxMp);
-            if (companion.State.CurrentMp < mpCost)
-                continue;
-
-            var result = attackSink.ProcessCompanionAction(companion, target,
-                skill.ActionId, skill.Potency, skill.AttackStyle, skill.Radius);
-            if (result.Success)
-            {
-                companion.State.CurrentMp = Math.Max(0, companion.State.CurrentMp - mpCost);
-                RegisterDamage(companion.SimulatedEntityId, result.Damage);
-                targeting.AddThreat(target.SimulatedEntityId, companion.SimulatedEntityId, result.Damage, companion.State.IsTank);
-                skill.CooldownRemaining = skill.Cooldown / ActionPace();
-                companion.State.AnimationLock = 0.6f;
-            }
-            return;
-        }
-
-        companion.AutoAttackTimer -= deltaTime;
-        if (companion.AutoAttackTimer <= 0)
-        {
-            // A caster's auto-attack is a melee swing, as an enemy's: held until it is in melee.
-            if (companion.Behavior.AutoAttackStyle == NpcAttackStyle.Magic && dist > CombatantMath.MagicAutoReach(ReachPolicy.Ally, default))
-                return;
-            companion.AutoAttackTimer = companion.Behavior.AutoAttackDelay / ActionPace();
-            var result = attackSink.ProcessCompanionAction(
-                companion, target,
-                companion.Behavior.AutoAttackActionId,
-                companion.Behavior.AutoAttackPotency,
-                companion.Behavior.AutoAttackStyle);
-            if (result.Success)
-            {
-                companion.State.CurrentMp = Math.Min(companion.State.MaxMp,
-                    companion.State.CurrentMp + CombatBudgetModel.EnemyAutoAttackMpRestore);
-                RegisterDamage(companion.SimulatedEntityId, result.Damage);
-                targeting.AddThreat(target.SimulatedEntityId, companion.SimulatedEntityId, result.Damage, companion.State.IsTank);
-                companion.State.AnimationLock = 0.6f;
-            }
-        }
+            Settings = config,
+            MpPriceOf = mpPriceOf ??= MpPriceOf,
+            Pace = ActionPace(),
+        });
     }
 
     // Companions keep pace with Action Mode's faster combat (same multiplier as enemies).
     private float ActionPace() => CombatantMath.ActionPace(config.ActionMode, config.ActionEnemyAttackSpeed);
+
+    private readonly AllyStepSink stepSink;
+
+    /// <summary>
+    /// The allies' half of the shared step: an attack is resolved at once by the engine's companion
+    /// action; one that lands counts toward the ally's DPS and adds threat on its target.
+    /// </summary>
+    private sealed class AllyStepSink(CombatCompanionManager owner) : ICombatStepSink<CombatCompanion, SimulatedNpc>
+    {
+        public void ShowLocked(CombatCompanion companion)
+            => owner.EnterCompanionState(companion, CompanionAiState.ActionLocked);
+
+        // Its stance was set before the step (CombatReady when standing, the crowd's when walking).
+        public void ShowReady(CombatCompanion companion)
+        {
+        }
+
+        public AttackCommit CommitSkill(CombatCompanion companion, SimulatedNpc target, NpcSkill skill, int mpCost)
+        {
+            var result = owner.attackSink.ProcessCompanionAction(companion, target,
+                skill.ActionId, skill.Potency, skill.AttackStyle, skill.Radius);
+            if (!result.Success)
+                return AttackCommit.Failed;
+            owner.Landed(companion, target, result);
+            return AttackCommit.Landed;
+        }
+
+        public bool CommitAutoAttack(CombatCompanion companion, SimulatedNpc target)
+        {
+            var result = owner.attackSink.ProcessCompanionAction(
+                companion, target,
+                companion.Behavior.AutoAttackActionId,
+                companion.Behavior.AutoAttackPotency,
+                companion.Behavior.AutoAttackStyle);
+            if (!result.Success)
+                return false;
+            owner.Landed(companion, target, result);
+            return true;
+        }
+    }
+
+    private void Landed(CombatCompanion companion, SimulatedNpc target, SimulatedActionResult result)
+    {
+        RegisterDamage(companion.SimulatedEntityId, result.Damage);
+        targeting.AddThreat(target.SimulatedEntityId, companion.SimulatedEntityId, result.Damage, companion.State.IsTank);
+    }
 
     private static void TickCompanionActionTimers(CombatCompanion companion, float deltaTime)
     {

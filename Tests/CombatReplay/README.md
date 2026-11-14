@@ -53,6 +53,8 @@ The same three scenarios (`loop-field-8v8-melee`, `loop-mixed-ranged-magic`, `lo
 the war (seizers), `NpcAiController.Tick`. Seeds: `NpcAiController.RandomSource` Random(s),
 `CombatCompanionManager.RandomSource` Random(s+1), `AggroSeedSource` Random(s+2), the `DamageCalculator` Random(s+3).
 Allies join through the real `CombatCompanionManager.AdoptNpc` (HP = the player's 60000 × level factor 0.5).
+Since stage B4b both loops attack through the shared step `Combat/CombatStep.cs` (each side's `ActPolicy` and its
+own sink); the loop golden files were recorded by B4a from the old loops and were not re-recorded.
 
 Lines: `C` a fighter's target, AI state, in-reach or life changed (with the distance to its target); `A` an attack
 committed (enemy: auto or skill and target, MP before; ally: damage, HP left, MP before); `H` an enemy telegraph
@@ -87,8 +89,9 @@ What is faked (everything else is the production code):
 - `IPluginLog` drops everything (the loops' summary lines are timed by the wall clock and decide nothing).
 - Compile only, never run: the managers' spawning and appearance code, and with it `Core/Services.cs`,
   `Core/ClientActorSlotAllocator.cs`, `Npcs/NpcWeaponClassifier.cs`, `Resources/Sheets/HairMakeTypeSheet.cs` and the
-  game's assemblies (Dalamud, FFXIVClientStructs, Lumina, from the dev hooks folder). `LoopStubs.cs` copies the two
-  plain types the loops use from `Simulation/CombatEngine.cs` (`SimulatedActionResult`, `CombatLogType`).
+  game's assemblies (Dalamud, FFXIVClientStructs, Lumina, from the dev hooks folder). `LoopStubs.cs` only declares two
+  namespaces the controllers import; the plain types they use from the engine (`SimulatedActionResult`,
+  `CombatLogType`) are linked from their own files in `Simulation/`.
 
 Not reached by these scenarios: the engine cast and snapshotted-area path (Fighting Mode), sentries and patrols,
 the charge, rescues (Spring and Autumn), captives and executions.
