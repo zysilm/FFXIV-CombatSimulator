@@ -250,6 +250,9 @@
 - 库先只面向 .NET；虚幻引擎等非 .NET 环境怎么用，以后再定。
 - 库公开。
 - 库名 **AdvancedRagdoll**（NuGet 包名、程序集名、命名空间根；2026-11-14 查过 NuGet 与 GitHub 均未被占用）。现在的工作名 `RagdollLib` / `CombatSimulator.RagdollLib` 在开工后改过来。
+- 设置可改为每帧开头读一次（只有战斗中改设置的那一帧可能差一帧）；设计稿 §11 / §10 的建议全部采纳（2026-11-14，用户裁决“按你说的定”）。
+- GitHub 仓库 `zysilm/AdvancedRagdoll` 已由用户建好（空），A4 之后才往里搬。
+- **开工**（2026-11-14，用户明确指令）。
 - 两份架构设计稿（[RAGDOLL_LIBRARY_ARCHITECTURE.md](RAGDOLL_LIBRARY_ARCHITECTURE.md)、[PLUGIN_ARCHITECTURE.md](PLUGIN_ARCHITECTURE.md)）用户已审阅，“没有问题”（2026-11-14）。
 
 ### 发出的简报
@@ -260,6 +263,8 @@
 | 研究者（只读） | 插件侧架构 | 战斗单位统一、规则模块、`Plugin.cs` 拆分、配置分组、行为一致的验证办法、分阶段计划 | 已报告（2026-11-14） |
 | 实现者 | A1 搬纯净文件 | `RagdollLib/`、插件 csproj、sln、16 个测试 csproj | 已合入（`fa89b5a`） |
 | 实现者（worktree） | B0 基线日志与可注入随机源 | `Ai/NpcAiController*.cs`、`Companions/CombatCompanionManager.cs`、`.Aggro.cs` | 已合入（`3e72047`） |
+| 实现者 | A2a 库改名 AdvancedRagdoll、宿主接口与适配器、录制改装饰器、回放器、对 55 份标准答案回放 | 主检出：`RagdollLib/`→`AdvancedRagdoll/`、`Animation/RagdollController*.cs`、`Plugin.cs`、`Tests/`、文档 | 进行中（2026-11-14） |
+| 实现者（worktree `refactor/b1-shared-math`） | B8a 设置接口 + B1 共享纯函数、`AggroModel`、TargetingSim 改链生产代码、`Tests/CombatReplay` | `Configuration.cs`、`Ai/`、`Companions/`、新 `Combat/`、`Tests/` | 进行中（2026-11-14） |
 
 ### 子代理报告要点
 
