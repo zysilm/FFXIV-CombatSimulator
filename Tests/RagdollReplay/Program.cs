@@ -123,6 +123,9 @@ internal static class ReplayDriver
                 return r[1].AsBool;
             };
         var carried = CarriedState(source, meshes);
+        carried.LiveHairRunning = LiveHairRunning(source);
+        carried.LiveHairDraw = skeletons.Known(actor)?.DrawIdentity ?? actor;
+        carried.LiveHairObject = actors.GetGameObjectId(actor);
         if (carried.HasBodySurfaces)
         {
             // The target reads as its Activate entity; the others as the carried surfaces name them.
@@ -136,6 +139,10 @@ internal static class ReplayDriver
         Directory.CreateDirectory(folder);
         RagdollRecordingSession.SecondsLimit = double.PositiveInfinity;
         RagdollRecordingSession.Configure(folder, log);
+        // The synthetic hair check starts the way the player's controller does in the game: the live hair rig is
+        // already running when the player dies (one render frame of the inactive controller builds it). The
+        // recording then starts with that rig carried over, and the second run has to see that from the recording.
+        if (synthetic && SyntheticSettings.Hair && controller.RunAnimatedHair) controller.ReplayRenderFrame();
         RagdollRecordingSession.Start();
         string? replayed = null;
         try
@@ -182,8 +189,9 @@ internal static class ReplayDriver
 
         var difference = source.HasMeshProducts
             ? RagdollRecordingAnalysis.Compare(path, replayed,
-                type => type is not (RecordType.Header or RecordType.End or RecordType.Note or RecordType.MeshCache))
-            : RagdollRecordingAnalysis.Compare(path, replayed, IsComparableWithVersion2, EqualToVersion2);
+                record => record.Type is not (RecordType.Header or RecordType.End or RecordType.Note or RecordType.MeshCache),
+                EqualInputs)
+            :RagdollRecordingAnalysis.Compare(path, replayed, IsComparableWithVersion2, EqualToVersion2);
         var leftovers = Leftovers(source);
         var text = (difference.Identical ? "IDENTICAL (" : "DIFFERENT: ") + difference.Description + (difference.Identical ? ")" : string.Empty);
         if (difference.InputDifference != null) text += "\n    first input difference: " + difference.InputDifference;
@@ -227,6 +235,45 @@ internal static class ReplayDriver
         if (replayed.Type != RecordType.Activate || replayed.Values.Length != original.Values.Length + 1) return false;
         for (var i = 0; i < original.Values.Length; i++)
             if (!original.Values[i].Equals(replayed.Values[i])) return false;
+        return true;
+    }
+
+    // Version 3: every value, except the label of another character's triangle soup. The label is the character's
+    // name as the collider provider listed it; the controller only puts it into log lines, and the provider's names
+    // are not recorded (ActorList holds addresses), so the replay cannot hand the same one back. It stays in the
+    // record to show whose mesh it is.
+    private static bool EqualInputs(RagdollRecord original, RagdollRecord replayed)
+    {
+        if (original.Type != RecordType.MeshProduct || original[0].AsString != MeshProductKind.ActorTriangles)
+            return original.ContentEquals(replayed);
+        if (replayed.Type != RecordType.MeshProduct || replayed[0].AsString != MeshProductKind.ActorTriangles ||
+            replayed.Values.Length != original.Values.Length) return false;
+        for (var i = 0; i < original.Values.Length; i++)
+            if (i != ActorTrianglesLabel && !original.Values[i].Equals(replayed.Values[i])) return false;
+        return true;
+    }
+
+    private const int ActorTrianglesLabel = 2;
+
+    /// <summary>
+    /// Whether the local player's live hair rig was running, and current, when the recording started. It is state
+    /// from before the activation (the player's controller runs it the whole time the player is alive) that the
+    /// Activate record does not list, but the recording shows it: every build of a hair rig writes a HairMesh
+    /// record, and the live hair reads the clock ("AnimatedHair") after it has decided whether to rebuild and before
+    /// it builds. So the frame of the first such reading has a HairMesh record exactly when the game did not find a
+    /// current rig; without one, the rig was running and current.
+    /// </summary>
+    private static bool LiveHairRunning(ReplaySource source)
+    {
+        if (!source.HasMeshProducts || !source.Activate[11].AsBool) return false;
+        var (clock, at) = source.Peek(RecordType.Clock, r => r[0].AsString == nameof(ClockSite.AnimatedHair));
+        if (clock == null) return false;
+        for (var i = at + 1; i < source.Records.Count; i++)
+        {
+            var type = source.Records[i].Type;
+            if (type is RecordType.RenderFrame or RecordType.End) return true;
+            if (type == RecordType.HairMesh) return false;
+        }
         return true;
     }
 

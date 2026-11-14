@@ -15,7 +15,9 @@ controller is built with its internal host constructor, so nothing is hooked and
 Dalamud and FFXIVClientStructs assemblies are referenced only so the plugin's types load.
 
 The driver (`Program.cs`) restores the state the controller carried over from earlier activations (Activate record,
-and the body surfaces of the MeshProduct "carried" record after it), calls `Activate` with the recorded arguments,
+and the body surfaces of the MeshProduct "carried" record after it; for the local player also whether the live hair
+rig was already running, which the recording shows: every hair rig build writes a HairMesh record, so the first live
+hair frame has none exactly when the game found its rig running and current), calls `Activate` with the recorded arguments,
 then walks the recording: each `RenderFrame` record runs one render frame (the clock hands out the recorded dt), each
 call from outside (depth 0 `ApiCall`) is made again, and an `End` record stops it. While it runs the controller
 records again, exactly as in the game; at the end the two recordings are compared with
@@ -32,7 +34,8 @@ the replay references a public build of the plugin.
   body surfaces, the reduced surfaces taken from them, weapon-contact surfaces, soft-tissue fits, other characters'
   triangle soups, the hair rebuild flag, and the body surfaces carried into the activation), every wall-clock reading
   but the frame's dt is a Clock record, and the Activate record ends with `followWasActive`. Everything is replayed and
-  compared, mesh paths included.
+  compared, mesh paths included, except the label of another character's triangle soup (its name as the collider
+  provider lists it: only used in log lines and not recorded anywhere the replay could hand it back from).
 - **Version 2** (the 55 gold recordings): read as before. The replay answers the hull fits (StructuralFits), the
   soft-tissue fits (from the bone definitions they became) and nothing else of the models; it refuses files that used
   mesh volumes, reduced surfaces, mesh colliders or hair samples. The comparison leaves out what version 3 added (the
@@ -71,8 +74,10 @@ a first run replays the recording with made-up models (`SyntheticMeshes.cs`: a b
 box as its reduced surface, a box as every other character's mesh collider) and the mesh settings forced on; a second
 run replays the recording the first one wrote and must reproduce it bit for bit, inputs included. The line
 "synthetic mesh products" says which products were exercised. `--synthetic-colliders`: mesh colliders of other
-characters; `--synthetic-hair`: the same plus hair physics resting on the body surface (live hair before the ragdoll
-starts, and the ragdoll's hair; the local player's recordings); `--synthetic-meshes`: the same plus mesh volumes and
+characters; `--synthetic-hair`: the same plus hair physics resting on the body surface (the local player's
+recordings): as in the game, the live hair rig is already running when the activation starts (one render frame of the
+inactive controller builds it before the recording opens), the hair model "changes" once on the third frame so the
+live hair rebuilds inside the recording, and the ragdoll's hair is built when physics starts; `--synthetic-meshes`: the same plus mesh volumes and
 reduced surfaces (not repeatable, see above). It says nothing about the game's real models.
 
 ## What is still not replayed

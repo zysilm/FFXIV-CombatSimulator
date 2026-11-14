@@ -120,7 +120,10 @@ internal sealed class SyntheticMeshSource : IMeshSource
 
     public void PollHairMesh() { }
     public HairMeshBinding? HairMesh => inner.HairMesh;
-    public bool TakeHairMeshRebuild() => false;
+    // The hair model "changes" once, on the third frame of the recording (the first call is the frame that starts
+    // the live hair before the activation), so the live hair also rebuilds inside the recording.
+    private int hairRebuildQuestions;
+    public bool TakeHairMeshRebuild() => SyntheticSettings.Hair && ++hairRebuildQuestions == 4;
     public WeaponMeshGeometry? BuildWeaponMesh(nint weaponDrawObject, bool verboseLog) => null;
 
     private static BodyMeshGeometry Box(Vector3 half)

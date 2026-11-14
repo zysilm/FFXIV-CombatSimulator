@@ -196,7 +196,9 @@ internal static class MeshProductKind
     /// <summary>actor:u64, count:i32, then per fit: bone:i32 (skeleton index), radius:f32, halfLength:f32,
     /// centerModelOffset:Vector3, axisModel:Vector3, samples:i32.</summary>
     public const string SoftTissueFits = "softTissueFits";
-    /// <summary>actor:u64, label:str, ok:bool, loadedModels:i32, processedMeshes:i32, triangles:Vector3Array (3 per triangle).</summary>
+    /// <summary>actor:u64, label:str, ok:bool, loadedModels:i32, processedMeshes:i32, triangles:Vector3Array (3 per triangle).
+    /// The label (the character's name, as the collider provider lists it) only goes into log lines; it is kept to
+    /// show whose mesh it is, and a replay does not compare it.</summary>
     public const string ActorTriangles = "actorTriangles";
     /// <summary>rebuild:bool.</summary>
     public const string HairMeshRebuild = "hairMeshRebuild";

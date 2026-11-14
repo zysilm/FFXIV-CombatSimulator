@@ -194,14 +194,15 @@ internal sealed class ReplayMeshSource : IMeshSource
     }
 
     // The hair model is followed on the framework tick, which a replay does not run: the samples come from the
-    // HairMesh record of the rig build that used them, and the rebuild flag from its MeshProduct record.
+    // HairMesh record of the rig build that used them (in the frame being replayed: a build the game did not make
+    // must not take the record of a later one), and the rebuild flag from its MeshProduct record.
     public void PollHairMesh() { }
 
     public HairMeshBinding? HairMesh
     {
         get
         {
-            var r = source.Take(RecordType.HairMesh);
+            var r = source.Take(RecordType.HairMesh, null, true);
             if (r == null) { source.Diverged("hair samples asked, no HairMesh record"); return null; }
             if (!r[0].AsBool) return null;
             var regions = r[3].AsInt;

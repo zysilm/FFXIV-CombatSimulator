@@ -10,7 +10,9 @@ namespace CombatSimulator.Animation;
 // Entry points for the offline replay (Tests/RagdollReplay, stages A2a and A2b). A recording starts in the middle of
 // a controller's life: what earlier activations left behind is in the Activate record and, since format version 3,
 // in the MeshProduct "carried" record after it (the body surfaces); a version 2 recording does not list
-// followWasActive, which its first FrameBegin record shows. The replay puts it back before it calls Activate.
+// followWasActive, which its first FrameBegin record shows. Whether the local player's live hair rig was running is
+// shown by its first live hair frame (a rig build always writes a HairMesh record). The replay puts it back before
+// it calls Activate.
 // Nothing here runs in the game.
 public unsafe partial class RagdollController
 {
@@ -49,6 +51,12 @@ public unsafe partial class RagdollController
         public long NextMeshCacheAttempt;
         public MeshVolume.FrozenMeshGeometryCache? FrozenMeshCache;
         public List<(nint Actor, uint Entity, nint Draw, MeshVolume.FrozenMeshGeometryCache? Cache)> WeaponContactMeshes = new();
+        /// <summary>Whether the local player's live hair rig was already running, and current, when the activation
+        /// started (the main controller runs it all the time the player is alive). The game did not rebuild it on the
+        /// first live hair frame of the recording; the identities are what the replay host reports for that frame.</summary>
+        public bool LiveHairRunning;
+        public nint LiveHairDraw;
+        public ulong LiveHairObject;
     }
 
     internal void RestoreCarriedState(ReplayCarriedState s)
@@ -87,6 +95,14 @@ public unsafe partial class RagdollController
                 };
         }
         followWasActive = s.FollowWasActive;
+        // Only what decides whether the first live hair frame rebuilds the rig (and so reads the hair model); the
+        // solver state of the game's live rig is not recorded, and its poses before the ragdoll are not outputs.
+        lock (animatedHairGate)
+        {
+            animatedHair = s.LiveHairRunning;
+            animatedHairDraw = s.LiveHairRunning ? s.LiveHairDraw : 0;
+            animatedHairObject = s.LiveHairRunning ? s.LiveHairObject : 0;
+        }
         if (s.HasBodySurfaces)
         {
             frozenMeshActor = s.FrozenMeshActor;
