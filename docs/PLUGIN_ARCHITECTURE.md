@@ -435,6 +435,8 @@ public static class BattleRuleFactory
 
 ## 6. 组合根
 
+> **B7 之后（`c90980d`）**：模块在 `CombatSimulator/Composition/`（World、Actors、Corpse、Camera、Combat、Fighting、Battle、Presentation、SafetyDev），由插件构造函数按原顺序逐个建造；每帧清单仍是 `OnFrameworkUpdate` 一处；引擎通知在 `Simulation/CombatEvents.cs`（可赋值委托属性而非 `event`，保留旧的 `=` 语义）；订阅留在原位置并在注释里按 §6.3 编号，没有集中。私有模块用到的插件成员保留为同名转发。下面是设计时的文字。
+
 ### 6.1 模块与字段
 
 | 模块 | 从 `Plugin.cs:50-137` 拿走的字段 | 对外提供 |
