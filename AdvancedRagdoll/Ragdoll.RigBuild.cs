@@ -91,7 +91,7 @@ public unsafe partial class Ragdoll
                 defByName[def.Name] = def;
         }
 
-        // Mod-skeleton soft tissue (Rue/YAS/IVCS): humanoid rigs only — the generic path
+        // Mod-skeleton soft tissue (extra jiggle bones some skeletons add): humanoid rigs only — the generic path
         // renames bones (gen_N) and auto-sizes everything itself.
         //
         // And the LOCAL PLAYER only. Soft tissue is by far the most expensive thing a rig can carry:

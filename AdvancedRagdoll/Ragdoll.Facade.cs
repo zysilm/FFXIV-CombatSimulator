@@ -33,7 +33,7 @@ public enum RagdollPhase
 }
 
 // The public face of Ragdoll (docs/RAGDOLL_LIBRARY_ARCHITECTURE.md §2.3, stage A7): a constructor on the public host
-// API and the Activate / Step / WritePose / Deactivate cycle. It drives the same ragdoll the FFXIV plugin drives,
+// API and the Activate / Step / WritePose / Deactivate cycle. It drives the same ragdoll the plugin drives,
 // through adapters onto the internal host services (FacadeHost below): an ActorId is mapped to an opaque id, the
 // skeleton is read into a buffer once per step and written back from it in WritePose, the frame time is the dt
 // passed to Step, and the settings are taken per activation and per step.

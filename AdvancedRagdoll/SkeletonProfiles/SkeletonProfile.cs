@@ -16,7 +16,7 @@ namespace AdvancedRagdoll.SkeletonProfiles;
 /// "the pelvis", "the hand bones", "the left thigh" instead of naming bones itself
 /// (docs/RAGDOLL_LIBRARY_ARCHITECTURE.md §5).
 ///
-/// A host provides a profile for the skeletons it knows (the plugin's is <c>FfxivHumanoidProfile</c>).
+/// A host provides a profile for the skeletons it knows (the plugin ships its own humanoid profile).
 /// <see cref="Auto"/> stands for the rig generated from a skeleton's own topology, used when the
 /// profile's <see cref="SignatureBones"/> are not all present.
 /// </summary>

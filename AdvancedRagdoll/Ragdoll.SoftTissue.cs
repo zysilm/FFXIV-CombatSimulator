@@ -13,7 +13,7 @@ namespace AdvancedRagdoll;
 // The SoftBody jiggle bodies move the flesh, but bone rotation/translation alone cannot show
 // COMPRESSION — flesh flattening under a hard landing or under the corpse's own weight at rest.
 // This pass fakes that through the one channel skinning still gives us: per-bone scale in the
-// hkaPose model pose. (The plugin has never written Scale before; Customize+ demonstrates the
+// hkaPose model pose. (The plugin has never written Scale before; third-party body-scaling tools show the
 // game's skinning consumes runtime pose scale, including non-uniform.)
 //
 // Model: each SoftBody rig bone carries a scalar compression c driven as a damped spring
@@ -27,7 +27,7 @@ namespace AdvancedRagdoll;
 // closest to the outward direction — constant per bone, so nothing pops frame to frame.
 //
 // The base scale is snapshotted before our first write and multiplied, never overwritten:
-// racial / Customize+ scaling survives. Deactivate restores every touched bone exactly.
+// per-character / tool-applied scaling survives. Deactivate restores every touched bone exactly.
 public unsafe partial class Ragdoll
 {
     // A mesh-less helper bone must still have a body so its spring/servo can drive the pose, but

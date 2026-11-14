@@ -18,10 +18,10 @@ namespace AdvancedRagdoll.Hosting;
 //
 // These are the internal host services the ragdoll core is written against (stage A2a made them in the plugin
 // assembly; stage A4 moved them into the library unchanged). They keep every memory access and every float operation
-// exactly as it was: characters are identified by an opaque native-sized id (the FFXIV host passes the game object
+// exactly as it was: characters are identified by an opaque native-sized id (the plugin host passes the game object
 // address), and a skeleton hands out its model pose as a writable span over the live pose. The public host API of
 // docs/RAGDOLL_LIBRARY_ARCHITECTURE.md §2.3 (ActorId, batch pose read and write) is the facade in RagdollHost.cs,
-// which adapts onto these (stage A7). Hosts inside the trusted assemblies (the FFXIV plugin, the replay) use these
+// which adapts onto these (stage A7). Hosts inside the trusted assemblies (the plugin, the replay) use these
 // directly.
 
 /// <summary>One bone transform with the exact layout of the game's hkQsTransformf (48 bytes):
@@ -377,7 +377,7 @@ internal sealed class RagdollHostServices
 
 /// <summary>The host's build, as the recorder writes it into a recording's header, and the follow handling that differs
 /// with it. <see cref="RestoresFollowPosition"/>: each activation resets the follow flag and deactivation moves the
-/// local player's render position back (the FFXIV plugin sets it exactly in its build with the optional module, and
+/// local player's render position back (the plugin host sets it exactly in its build with the optional module, and
 /// the header's "optional module" flag is this value); <see cref="PublicBuild"/>: a public build;
 /// <see cref="HostVersion"/>: the host's version (the header's version string; "?" when null).</summary>
 internal readonly record struct RagdollBuildInfo(bool RestoresFollowPosition, bool PublicBuild, string? HostVersion = null);

@@ -217,7 +217,7 @@ public unsafe partial class Ragdoll
         if (!animatedHair)
         {
             // Fixed cap, using the existing BEPU static terrain. No native game
-            // raycasts, MDL reads or new colliders in the update path. Animated
+            // raycasts, model file reads or new colliders in the update path. Animated
             // terrain sampling is supplied by the framework callback instead.
             Span<(int Chain, int Point)> picks = stackalloc (int, int)[16];
             int picked = PickHairGroundPoints(picks, 16, ref hairGroundCursor);

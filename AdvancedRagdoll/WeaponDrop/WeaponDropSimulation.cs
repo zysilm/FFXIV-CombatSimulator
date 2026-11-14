@@ -747,7 +747,7 @@ public class WeaponDropSimulation : IDisposable
     }
 
     /// <summary>The scale a character is drawn with: the draw object's, else the skeleton root's (what the plugin's
-    /// FfxivMeshSource.GetCharacterScale read from the game before stage A5, and what the ragdoll's
+    /// mesh source read from the game before stage A5, and what the ragdoll's
     /// GetCharacterScale reads through its own host).</summary>
     private Vector3 GetCharacterScale(nint address, IHostSkeleton ns)
     {

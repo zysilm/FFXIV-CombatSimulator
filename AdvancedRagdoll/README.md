@@ -7,7 +7,7 @@ humanoid table from a skeleton profile, or a rig generated from the skeleton's o
 physics should take over from the death animation, carries the animation's velocity into the bodies, lands on the
 game's ground (and floats in water), and writes the simulated pose back to the skeleton every frame.
 
-It started as the ragdoll of a Final Fantasy XIV plugin and is used there; nothing in the library depends on that game.
+It started as the ragdoll of a game plugin and is used there; nothing in the library depends on that game.
 
 > **Status: 0.1, pre-release.** The public API is small and may still change. The library depends on a beta of
 > BepuPhysics (2.5.0-beta.22), which only targets .NET 8, so the library needs .NET 8 or later.

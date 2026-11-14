@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- AdvancedRagdoll: the ragdoll physics library. Holds the ragdoll core (the Ragdoll class, stage A4) and the
-       parts of the old CombatSimulator/Animation that do not depend on the game: no Dalamud SDK, FFXIVClientStructs,
-       Lumina or ImGui here, and nothing from the plugin; it references BepuPhysics only. The plugin references this
+       parts of the old CombatSimulator/Animation that do not depend on the game: no game SDK, game-structure bindings,
+       game-data reader or UI library here, and nothing from the plugin; it references BepuPhysics only. The plugin references this
        project (its RagdollController is a thin shell over Ragdoll); the offline tests under Tests/ link these sources
        directly. See docs/REFACTOR_PLAN.md (track A) and docs/RAGDOLL_LIBRARY_ARCHITECTURE.md. Namespaces:
        AdvancedRagdoll.* (stage A4). The public API (stage A7) is the Ragdoll constructor on AdvancedRagdoll.Hosting.RagdollHost,
@@ -18,13 +18,13 @@
     <RootNamespace>AdvancedRagdoll</RootNamespace>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <!-- Same as the plugin (its SDK embeds symbols): stack traces in dalamud.log keep line numbers
+    <!-- Same as the plugin (its SDK embeds symbols): stack traces in the host's log keep line numbers
          and no separate .pdb is copied next to the plugin or into its package. -->
     <DebugType>embedded</DebugType>
     <!-- The game hot-reloads the dev plugin only when CombatSimulator.dll itself is rewritten. With a
          reference assembly, a change inside a method body here would rebuild this DLL but leave the
          plugin DLL untouched, so nothing would reload. Without one, any change here recompiles the
-         plugin as well (the Dalamud SDK sets the same for the plugin). -->
+         plugin as well (the plugin's SDK sets the same for the plugin). -->
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
   </PropertyGroup>
   <!-- The NuGet package (stage A7). `dotnet pack -c Release -o <dir>` builds it; nothing here publishes it (the release

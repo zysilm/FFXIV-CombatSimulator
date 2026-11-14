@@ -189,18 +189,18 @@ public unsafe partial class Ragdoll
         return (defs.ToArray(), nameToIndex);
     }
 
-    // Cap on discovered soft-tissue bodies. Standard (mod bones) needs ~59 on a full IVCS
-    // skeleton; All bones adds every remaining vanilla bone (~60 more on a human body
+    // Cap on discovered soft-tissue bodies. Standard (mod bones) needs ~59 on a fully
+    // modded body skeleton; All bones adds every remaining vanilla bone (~60 more on a human body
     // skeleton), so 128 leaves headroom without letting an exotic rig double past it.
     private const int MaxModSoftTissueBones = 128;
 
     /// <summary>
     /// Discover extra bones and append them as SoftBody jiggle defs. Coverage Standard takes
-    /// mod-skeleton bones (iv_/ya_ prefixes — Rue/YAS/IVCS lineage) except fingers and toes;
+    /// mod-skeleton bones (the extra soft-tissue bones some skeletons add, matched by prefix) except fingers and toes;
     /// coverage All takes EVERY skeleton bone that is not already a rig body, vanilla included.
     /// Body meshes are
     /// weighted to these bones, so driving them restores the secondary motion the game's own
-    /// phyb simulation provides in life (our pose overwrite suppresses it during ragdoll).
+    /// physics simulation provides in life (our pose overwrite suppresses it during ragdoll).
     /// Anchoring: each discovered bone attaches to its nearest ancestor that is (or has just
     /// become) a rig def, so open chains hang link by link while isolated bones anchor
     /// straight to the torso bone that carries them.

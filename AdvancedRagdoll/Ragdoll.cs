@@ -24,7 +24,7 @@ namespace AdvancedRagdoll;
 /// The ragdoll of one character (docs/RAGDOLL_LIBRARY_ARCHITECTURE.md). A game makes it on the public host API
 /// (<see cref="RagdollHost"/>) and drives it with <see cref="Activate(in RagdollActivation)"/>, <see cref="Step"/>,
 /// <see cref="WritePose"/> and <see cref="Deactivate"/> (Ragdoll.Facade.cs). Inside, everything it asks of the game
-/// goes through the internal host services (<see cref="RagdollHostServices"/>); trusted hosts (the FFXIV plugin's
+/// goes through the internal host services (<see cref="RagdollHostServices"/>); trusted hosts (the plugin's
 /// RagdollController, which derives from it, and the offline replay) use those directly and drive it with
 /// <see cref="OnRenderFrame"/> and <see cref="OnFrameworkTick"/>.
 /// </summary>
@@ -198,7 +198,7 @@ public unsafe partial class Ragdoll : IDisposable
     private readonly Dictionary<string, RagdollBoneDef> activeDefByName = new();
     // Lightweight final-collision surface cache shared by traversal, grabbing, debug drawing,
     // and the actual accepted per-bone collision shapes. It follows the
-    // already-existing rigid bodies, so updating it is allocation-free and never touches MDL data.
+    // already-existing rigid bodies, so updating it is allocation-free and never touches model file data.
     private CharacterSurfaceRuntime? characterSurfaceRuntime;
 
     // True while the active ragdoll was built by the generic (non-humanoid) path.
@@ -215,7 +215,7 @@ public unsafe partial class Ragdoll : IDisposable
     // is active; only the per-class tuning switches to SkeletonProfile.Auto() for a generated rig.
     //
     // Each ragdoll has its own profile (a constructor argument) and its own bone tables built from it. A host may also
-    // register a default humanoid profile once per process (UseHumanoidProfile; the FFXIV plugin does it when its
+    // register a default humanoid profile once per process (UseHumanoidProfile; the plugin does it when its
     // assembly loads, and its own code reads the default bone tables below). A ragdoll on the default profile uses
     // the default tables (the same arrays), as every ragdoll did when the profile was process-wide.
     private static SkeletonProfile? humanoidProfile;
