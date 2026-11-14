@@ -66,12 +66,41 @@ public unsafe partial class CombatCompanionManager
     private readonly Dictionary<uint, (int Melee, int Ranged)> aggroCounts = new();
     private readonly List<(uint Id, float Weight)> aggroDraw = new();
     private IReadOnlyList<SimulatedNpc> aggroEnemies = Array.Empty<SimulatedNpc>();
-    private readonly Random aggroSeeds = new();
+
+    /// <summary>
+    /// Where each fighter's own generator (the one its targets are drawn with) gets its seed, the first
+    /// time that fighter is seen. Unseeded, unless a caller wants a repeatable run and gives a seeded
+    /// one; fighters already seen keep the generator they have until the next reset.
+    /// </summary>
+    public Random AggroSeedSource { private get; set; } = new();
+
+    // How often each side drew a target, and how often the draw took a fighter off a target it could
+    // have kept (a voluntary switch, the measure behind sw/min in Tests/TargetingSim), written to the
+    // log every few seconds in which anyone drew.
+    private int enemyDraws, enemySwitches, allyDraws, allySwitches;
+    private readonly System.Diagnostics.Stopwatch targetReportClock = System.Diagnostics.Stopwatch.StartNew();
+
+    private void ReportTargetSwitches(IReadOnlyList<SimulatedNpc> enemies)
+    {
+        if (targetReportClock.Elapsed.TotalSeconds < 5)
+            return;
+        targetReportClock.Restart();
+        if (enemyDraws + allyDraws == 0)
+            return;
+        var fightingEnemies = 0;
+        foreach (var e in enemies)
+            if (e.IsSpawned && e.State.IsAlive && !(e.IsSentry && e.AiState == Ai.NpcAiState.Idle)) fightingEnemies++;
+        var fightingAllies = 0;
+        foreach (var c in companions)
+            if (c.IsSpawned && c.State.IsAlive) fightingAllies++;
+        log.Info($"Targets: enemies {enemySwitches} switches / {enemyDraws} draws, allies {allySwitches} / {allyDraws} over 5 s ({fightingEnemies} enemies, {fightingAllies} allies fighting).");
+        enemyDraws = enemySwitches = allyDraws = allySwitches = 0;
+    }
 
     private AggroState AggroOf(uint id)
     {
         if (!aggro.TryGetValue(id, out var state))
-            aggro[id] = state = new AggroState { Rng = new Random(aggroSeeds.Next()) };
+            aggro[id] = state = new AggroState { Rng = new Random(AggroSeedSource.Next()) };
         return state;
     }
 
@@ -230,6 +259,9 @@ public unsafe partial class CombatCompanionManager
             aggroDraw.Add((id, w));
         }
         var drawn = DrawAggro(state);
+        enemyDraws++;
+        if (currentLive && drawn != current)
+            enemySwitches++;
         HoldAggro(state, drawn);
         enemyTargetByEnemyId[enemy.SimulatedEntityId] = drawn;
         return candidates.Find(c => c.EntityId == drawn).State;
@@ -284,6 +316,9 @@ public unsafe partial class CombatCompanionManager
             aggroDraw.Add((enemy.SimulatedEntityId, w));
         }
         var drawn = DrawAggro(state);
+        allyDraws++;
+        if (currentEnemy != null && drawn != current)
+            allySwitches++;
         HoldAggro(state, drawn);
         return enemies.Find(e => e.SimulatedEntityId == drawn);
     }

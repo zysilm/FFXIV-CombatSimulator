@@ -82,8 +82,75 @@ public unsafe partial class NpcAiController : IDisposable
     /// <summary>Where telegraphed casts register their snapshotted area (null = none drawn).</summary>
     public CombatSimulator.ActionCombat.EnemyAreaMarkers? AreaMarkers { private get; set; }
 
+    /// <summary>
+    /// The random numbers behind the enemies' decisions (timer stagger, engage jitter, patrol legs,
+    /// which ready skill, sidesteps). The shared generator, unless a caller wants a repeatable run and
+    /// gives a seeded one.
+    /// </summary>
+    public Random RandomSource { private get; set; } = Random.Shared;
+
+    // What the enemies did, counted per frame and written to the log every few seconds of a fight
+    // (the mirror of the allies' line in CombatCompanionManager.Crowd.cs). Counting reads what the
+    // movement pass has just decided; it decides nothing.
+    private const int EnemyInReach = 0, EnemyWalkingIn = 1, EnemyWaiting = 2, EnemyGoingForBody = 3, EnemyFleeing = 4,
+        EnemyCasting = 5, EnemyUnaware = 6, EnemyIdle = 7, EnemyOffMesh = 8;
+    private static readonly string[] EnemyActivityNames =
+    {
+        "in reach", "walking in", "waiting a turn", "going for the body", "fleeing", "casting", "unaware", "idle", "off the mesh",
+    };
+    private readonly long[] enemyActivityFrames = new long[9];
+    private readonly System.Diagnostics.Stopwatch enemyActivityClock = System.Diagnostics.Stopwatch.StartNew();
+
+    private void NoteEnemyActivity(int activity) => enemyActivityFrames[activity]++;
+
+    /// <summary>
+    /// What an enemy on the mesh did this frame, read from what TryCrowdMove left behind, in the order
+    /// it decides: a caster stands; going for the body (or fighting its guard); an unaware sentry; no
+    /// living target; running from the fight; waiting for a melee place; in reach or walking in.
+    /// </summary>
+    private int EnemyActivityOf(SimulatedNpc npc, bool fightingLiveTarget)
+    {
+        if (npc.State.IsCasting)
+            return EnemyCasting;
+        if (npc.SeizeGoal != null)
+            return npc.InReach ? EnemyInReach : EnemyGoingForBody;
+        if (IsUnawareSentry(npc))
+            return EnemyUnaware;
+        if (!fightingLiveTarget)
+            return EnemyIdle;
+        if (npc.AiState == NpcAiState.Combat && IsTacticsFleeing(npc))
+            return EnemyFleeing;
+        if (config.EnhancedEnemyTactics && IsMeleeFighter(npc) &&
+            tacticsStates.TryGetValue(npc.SimulatedEntityId, out var tactics) && !tactics.Admitted)
+            return EnemyWaiting;
+        return npc.InReach ? EnemyInReach : EnemyWalkingIn;
+    }
+
+    private void ReportEnemyActivity()
+    {
+        if (enemyActivityClock.Elapsed.TotalSeconds < 5)
+            return;
+        enemyActivityClock.Restart();
+        long total = 0;
+        foreach (var n in enemyActivityFrames) total += n;
+        if (total == 0)
+            return;
+        var parts = new List<string>();
+        for (var i = 0; i < enemyActivityFrames.Length; i++)
+            parts.Add($"{EnemyActivityNames[i]} {100.0 * enemyActivityFrames[i] / total:0}%");
+        var allies = 0;
+        foreach (var entity in combatEngine.State.Entities.Values)
+            if (entity.IsCompanion && entity.IsAlive) allies++;
+        log.Info($"Enemies (share of enemy-frames over 5 s, {allies} allies alive): {string.Join(", ", parts)}.");
+        Array.Clear(enemyActivityFrames);
+    }
+
     private void ScheduleAutoEngage()
     {
+        // (A fight starts or is reset: the enemies' summary starts a new 5 s window with it.)
+        Array.Clear(enemyActivityFrames);
+        enemyActivityClock.Restart();
+
         if (!config.EnableNpcAutoEngage || combatEngine.IsEnemyInitiationSuppressed)
         {
             pendingAutoEngageDelay = -1f;
@@ -254,9 +321,11 @@ public unsafe partial class NpcAiController : IDisposable
                 crowdDriven.Add(npc);
                 continue;
             }
+            NoteEnemyActivity(EnemyOffMesh);
             StopApproachMoveAnim(npc);
         }
         ApplyCrowdMotion(deltaTime);
+        ReportEnemyActivity();
     }
 
     /// <summary>
@@ -382,12 +451,12 @@ public unsafe partial class NpcAiController : IDisposable
         if (npc.HasPatrolGoal && (FlatDistance(npcPos, npc.PatrolGoal) <= PatrolReach || npc.PatrolTimer <= 0f))
         {
             npc.HasPatrolGoal = false;
-            npc.PatrolTimer = 2f + 4f * Random.Shared.NextSingle();
+            npc.PatrolTimer = 2f + 4f * RandomSource.NextSingle();
         }
         if (!npc.HasPatrolGoal && npc.PatrolTimer <= 0f)
         {
-            var angle = Random.Shared.NextSingle() * MathF.Tau;
-            var reach = PatrolNearest + (PatrolFurthest - PatrolNearest) * Random.Shared.NextSingle();
+            var angle = RandomSource.NextSingle() * MathF.Tau;
+            var reach = PatrolNearest + (PatrolFurthest - PatrolNearest) * RandomSource.NextSingle();
             npc.PatrolGoal = npc.SpawnPosition + new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle)) * reach;
             npc.HasPatrolGoal = true;
             npc.PatrolTimer = PatrolLegSeconds;
@@ -503,6 +572,7 @@ public unsafe partial class NpcAiController : IDisposable
 
         if (!crowd.Drive(npc.Address, npcPos, npc.HitboxRadius, speed, goal))
             return false;
+        NoteEnemyActivity(EnemyActivityOf(npc, fighting && target is { IsAlive: true }));
         npc.CrowdDriven = true;
         return true;
     }
@@ -553,7 +623,7 @@ public unsafe partial class NpcAiController : IDisposable
         if (npc.AiState == NpcAiState.Idle)
         {
             npc.AiState = NpcAiState.Engaging;
-            StaggerTimers(npc);
+            StaggerTimers(npc, RandomSource);
             ApplyEngageJitter(npc);
             log.Verbose($"NPC '{npc.Name}' engaging (auto-attack in {npc.AutoAttackTimer:F1}s).");
         }
@@ -563,11 +633,14 @@ public unsafe partial class NpcAiController : IDisposable
     /// Randomize initial auto-attack and skill timers so NPCs don't all attack on the same frame.
     /// Call this whenever an NPC first enters combat.
     /// </summary>
-    public static void StaggerTimers(SimulatedNpc npc)
+    public static void StaggerTimers(SimulatedNpc npc) => StaggerTimers(npc, Random.Shared);
+
+    /// <summary>The same, drawing from the given generator (the controller passes its own <see cref="RandomSource"/>).</summary>
+    public static void StaggerTimers(SimulatedNpc npc, Random random)
     {
-        npc.AutoAttackTimer = Random.Shared.NextSingle() * npc.Behavior.AutoAttackDelay;
+        npc.AutoAttackTimer = random.NextSingle() * npc.Behavior.AutoAttackDelay;
         foreach (var skill in npc.Behavior.Skills)
-            skill.CooldownRemaining = Random.Shared.NextSingle() * skill.Cooldown;
+            skill.CooldownRemaining = random.NextSingle() * skill.Cooldown;
     }
 
     private void TickNpc(SimulatedNpc npc, float deltaTime, Vector3 playerPos, uint playerEntityId)
@@ -767,7 +840,7 @@ public unsafe partial class NpcAiController : IDisposable
         // skill's cooldown is left unspent so it goes as soon as the budget allows.
         if (readySkills != null && TryTakeSkillToken())
         {
-            var skill = readySkills[Random.Shared.Next(readySkills.Count)];
+            var skill = readySkills[RandomSource.Next(readySkills.Count)];
             var mpCost = SkillMpCost(npc, skill.ActionId);
             var castTime = EffectiveCastTime(skill);
 

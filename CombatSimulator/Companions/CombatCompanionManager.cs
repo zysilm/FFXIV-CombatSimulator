@@ -112,6 +112,12 @@ public unsafe partial class CombatCompanionManager : IDisposable
     public Func<uint, bool>? IsSourceEnemy { get; set; }
     /// <summary>Optional world-space surface height for walking over active corpses.</summary>
     public Func<nint, Vector3, float?>? CorpseSupportHeightProvider { private get; set; }
+    /// <summary>
+    /// The random numbers behind the allies' combat timers (the stagger of a new ally's first attack and
+    /// skills). The shared generator, unless a caller wants a repeatable run and gives a seeded one.
+    /// Who fights whom is drawn separately: see AggroSeedSource.
+    /// </summary>
+    public Random RandomSource { private get; set; } = Random.Shared;
 
     public CombatCompanionManager(
         IObjectTable objectTable,
@@ -185,13 +191,13 @@ public unsafe partial class CombatCompanionManager : IDisposable
             Behavior = npc.Behavior,
             IsRanged = npc.IsRanged,
             IsSpawned = true,
-            AutoAttackTimer = Random.Shared.NextSingle() * MathF.Max(0.1f, npc.Behavior.AutoAttackDelay),
+            AutoAttackTimer = RandomSource.NextSingle() * MathF.Max(0.1f, npc.Behavior.AutoAttackDelay),
             State = state,
             IsCatalogNpc = true,
             CatalogRequest = request,
         };
         foreach (var skill in companion.Behavior.Skills)
-            skill.CooldownRemaining = Random.Shared.NextSingle() * skill.Cooldown;
+            skill.CooldownRemaining = RandomSource.NextSingle() * skill.Cooldown;
 
         companions.Add(companion);
         combatEngine.RegisterCompanionEntity(companion);
@@ -343,6 +349,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
 
         TickPlayerRecentDps(deltaTime);
         ReportActivity(enemies);
+        ReportTargetSwitches(enemies);
     }
 
     public void RegisterDamage(uint companionEntityId, int damage)
@@ -731,7 +738,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
                 IsRanged = weaponStyle == NpcAttackStyle.Ranged,
                 RandomizedLook = sourceInfo.RandomizeAppearance,
                 IsSpawned = false,
-                AutoAttackTimer = Random.Shared.NextSingle() * behavior.AutoAttackDelay,
+                AutoAttackTimer = RandomSource.NextSingle() * behavior.AutoAttackDelay,
                 State = new SimulatedEntityState
                 {
                     EntityId = entityId,
