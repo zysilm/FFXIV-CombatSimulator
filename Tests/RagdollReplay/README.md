@@ -80,6 +80,20 @@ inactive controller builds it before the recording opens), the hair model "chang
 live hair rebuilds inside the recording, and the ragdoll's hair is built when physics starts; `--synthetic-meshes`: the same plus mesh volumes and
 reduced surfaces (not repeatable, see above). It says nothing about the game's real models.
 
+### Extension points (stage A3b)
+
+```
+... RagdollReplay.dll <file | folder> --extensions
+```
+
+Replays the first six recordings with physics steps four more times with dummy extensions registered
+(`ExtensionCheck.cs`): passive step and contact extensions (before activation and after the simulation exists) leave
+the replay bit-identical, the step extension runs once per fixed step before its Timestep, contacts arrive only inside
+a Timestep of the context's simulation; a step extension that handles the step by calling
+`ctx.StepPhysicsSimulation` reproduces every output except the "stepped externally" flag; one that handles it and
+does nothing stops every Timestep; a contact extension that handles the manifold skips the controller's own
+configuration; in every case an extension registered after the one that handled it is never called.
+
 ## What is still not replayed
 
 Recordings made with the private module (DEV_EXPERIMENTAL) need a build with it. The live hair's ground samples are

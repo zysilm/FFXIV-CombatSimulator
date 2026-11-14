@@ -22,7 +22,6 @@ namespace CombatSimulator.Animation;
 
 public unsafe partial class RagdollController : IDisposable
 {
-    partial void StepAdditionalPhysics(float dt, ref bool handled);
     // Everything the controller asks of the game goes through these host services (Hosting/, stages A2a and A2b
     // of docs/REFACTOR_PLAN.md). boneService is null offline; only the render-hook subscription uses it.
     private readonly RagdollHost host;
@@ -535,11 +534,11 @@ partial struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     public HashSet<int>? WeaponContactBodies;
     public HashSet<int>? WeaponContactProxyBodies;
     public HashSet<int>? WeaponContactProxiedBodies;
+    // The extensions registered on the controller that built this simulation (null for other simulations). An
+    // object reference, so extensions registered after the simulation exists are seen.
+    public RagdollExtensionSet? Extensions;
 
-    private BepuSimulation? ExtensionSimulation { get; set; }
-    public void Initialize(BepuSimulation simulation) { ExtensionSimulation = simulation; }
-    partial void ConfigureAdditionalContact<TManifold>(CollidablePair pair, ref TManifold manifold,
-        ref PairMaterialProperties material, ref bool handled) where TManifold : unmanaged, IContactManifold<TManifold>;
+    public void Initialize(BepuSimulation simulation) { }
 
     public bool AllowContactGeneration(int workerIndex, CollidableReference a, CollidableReference b, ref float speculativeMargin)
     {
@@ -694,7 +693,7 @@ partial struct RagdollNarrowPhaseCallbacks : INarrowPhaseCallbacks
     {
         pairMaterial = default;
         var handled = false;
-        ConfigureAdditionalContact(pair, ref manifold, ref pairMaterial, ref handled);
+        if (Extensions is { HasContact: true } extensions) extensions.ConfigureContact(pair, ref manifold, ref pairMaterial, ref handled);
         if (handled) return true;
         pairMaterial.FrictionCoefficient = Friction;
 

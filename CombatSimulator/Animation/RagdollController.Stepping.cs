@@ -710,7 +710,7 @@ public unsafe partial class RagdollController
                 ApplyFallGravity(FixedTimestep); // a descent that bites, on top of the integrator's honest g
                 ApplyWaterForces(FixedTimestep);
                 var steppedExternally = false;
-                StepAdditionalPhysics(FixedTimestep, ref steppedExternally);
+                if (extensionSet.Step.Length != 0) extensionSet.OnSubstep(FixedTimestep, ref steppedExternally);
                 if (!steppedExternally) StepPhysicsSimulation(FixedTimestep);
                 ClampVelocities(maxLinear, maxAngular);
                 ApplyStandingAnchorCorrection();

@@ -11,6 +11,7 @@ using RagdollReplay;
 
 // Usage:
 //   RagdollReplay <file.rgdrec | folder> [--keep] [--synthetic-meshes | --synthetic-colliders | --synthetic-hair]
+//   RagdollReplay <file.rgdrec | folder> --extensions   (stage A3b: the extension points, see ExtensionCheck.cs)
 // Replays each recording through the plugin's RagdollController and reports, per file, "identical" or the
 // first difference. Exit code 0 when every file replayed identically.
 
@@ -19,6 +20,7 @@ if (args.Length < 1)
     Console.Error.WriteLine("usage: RagdollReplay <file.rgdrec | folder> [--keep] [--synthetic-meshes | --synthetic-colliders | --synthetic-hair]");
     return 2;
 }
+if (args.Contains("--extensions")) return ExtensionCheck.Run(args[0]);
 var keep = args.Contains("--keep");
 var synthetic = args.Contains("--synthetic-meshes") || args.Contains("--synthetic-colliders") || args.Contains("--synthetic-hair");
 SyntheticSettings.MeshVolumes = args.Contains("--synthetic-meshes");
@@ -66,7 +68,7 @@ return identical == files.Length ? 0 : 1;
 
 internal static class ReplayDriver
 {
-    public static string Run(string path, bool keep, bool synthetic, out string? produced)
+    public static string Run(string path, bool keep, bool synthetic, out string? produced, ReplayHooks? hooks = null)
     {
         var source = new ReplaySource(path);
         var header = source.Header;
@@ -147,6 +149,7 @@ internal static class ReplayDriver
         string? replayed = null;
         try
         {
+            hooks?.BeforeActivate?.Invoke(controller);
             controller.Activate(actor, a[1].AsFloat, (RagdollTriggerMode)a[2].AsInt, a[3].AsFloat);
             var frames = source.IndicesOf(RecordType.RenderFrame);
             var nextFrame = 0;
@@ -160,6 +163,7 @@ internal static class ReplayDriver
                     source.FrameEnd = nextFrame < frames.Count ? frames[nextFrame] : source.Records.Count;
                     source.RenderFrame = record[0].AsInt;
                     clock.AdvanceFrame(record[1].AsFloat);
+                    hooks?.BeforeFrame?.Invoke(controller);
                     controller.ReplayRenderFrame();
                 }
                 else if (record.Type == RecordType.ApiCall && record[0].AsInt == 0)
@@ -180,6 +184,7 @@ internal static class ReplayDriver
             replayed = Directory.GetFiles(folder, "*" + RagdollRecordingFormat.FileExtension).SingleOrDefault();
         }
         produced = null;
+        if (hooks != null) hooks.Replayed = replayed;
         if (replayed == null) return "REPLAY ERROR: the replay wrote no recording";
         if (synthetic)
         {

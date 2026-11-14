@@ -198,6 +198,7 @@ public unsafe partial class RagdollController
                 SoftBodyStaticCollision = settings.RagdollSoftTissueCollision,
                 Friction = RagdollTuning.Friction,
                 Config = settings,
+                Extensions = extensionSet,
             },
             new RagdollPoseIntegratorCallbacks(
                 new Vector3(0, -RagdollTuning.Gravity, 0),
