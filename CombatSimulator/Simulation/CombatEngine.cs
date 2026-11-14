@@ -55,7 +55,9 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
     /// <summary>The war-rule switches as named queries, read live (docs/PLUGIN_ARCHITECTURE.md §5.3).</summary>
     public Battle.BattleRules Rules { get; }
     public List<CombatLogEntry> CombatLog { get; } = new();
-    public Action? OnSimulationStarted { get; set; }
+    /// <summary>The engine's notifications, subscribed by the composition root (docs/PLUGIN_ARCHITECTURE.md §6.3).</summary>
+    public CombatEvents Events { get; } = new();
+    public Action? OnSimulationStarted { get => Events.SimulationStarted; set => Events.SimulationStarted = value; }
     public Func<SimulatedNpc, SimulatedEntityState?>? ResolveNpcTarget { get; set; }
     /// <summary>Optional party-target routing override for one enemy.</summary>
     public Action<uint, uint>? ForceNpcTarget { private get; set; }
@@ -84,9 +86,9 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
     public Action? OnPlayerAttackLanded { get; set; }
     // Fired when an NPC's attack lands on the (still-alive) player; argument is the
     // attacker's simulated entity id. Drives auto-counter target acquisition.
-    public Action<uint>? OnPlayerHitByNpc { get; set; }
+    public Action<uint>? OnPlayerHitByNpc { get => Events.PlayerHitBy; set => Events.PlayerHitBy = value; }
     /// <summary>Fired whenever an enemy hit deals damage to the player, including the killing blow.</summary>
-    public Action? OnPlayerDamagedByNpc { get; set; }
+    public Action? OnPlayerDamagedByNpc { get => Events.PlayerDamaged; set => Events.PlayerDamaged = value; }
     public string LastPlayerDefeatedBy { get; private set; } = string.Empty;
     /// <summary>Address of the NPC that landed the killing blow on the player (0 if none).</summary>
     public nint LastPlayerKillerAddress { get; private set; }
@@ -101,26 +103,26 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
     /// gets broken by the cinema cleanup path and the only reliable fix is
     /// a fresh CopyFromCharacter on the next spawn.
     /// </summary>
-    public Action? OnSimulationReset { get; set; }
+    public Action? OnSimulationReset { get => Events.SimulationReset; set => Events.SimulationReset = value; }
 
     /// <summary>
     /// Fired when a simulated NPC dies, passing the NPC's character address.
     /// Subscribers handle ragdoll physics and weapon drop (both with the ragdoll-activation delay).
     /// </summary>
-    public Action<nint>? OnNpcDeathRagdoll { get; set; }
+    public Action<nint>? OnNpcDeathRagdoll { get => Events.EnemyDied; set => Events.EnemyDied = value; }
 
     /// <summary>
     /// Fired when the local player dies in the simulation, passing the player's address.
     /// Subscribers handle ragdoll physics and weapon drop (both with the ragdoll-activation delay).
     /// </summary>
-    public Action<nint>? OnPlayerDeath { get; set; }
+    public Action<nint>? OnPlayerDeath { get => Events.PlayerDied; set => Events.PlayerDied = value; }
 
     /// <summary>
     /// Fired immediately before the local player death animation starts.
     /// Experimental modules use this for source objects that must be sampled before
     /// the death pipeline changes the player's visual state.
     /// </summary>
-    public Action? BeforePlayerDeath { get; set; }
+    public Action? BeforePlayerDeath { get => Events.BeforePlayerDeath; set => Events.BeforePlayerDeath = value; }
 
     // Configuration (set from plugin config)
     private float DamageMultiplier => config.DamageMultiplier;
@@ -797,7 +799,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
     public Action<SimulatedEntityState, SimulatedEntityState, int>? OnHit { get; set; }
 
     /// <summary>A hit has landed and taken HP: (target, the hit, who struck it if known). Damage numbers are drawn from it.</summary>
-    public Action<SimulatedEntityState, DamageResult, SimulatedEntityState?>? OnDamageLanded { get; set; }
+    public Action<SimulatedEntityState, DamageResult, SimulatedEntityState?>? OnDamageLanded { get => Events.DamageLanded; set => Events.DamageLanded = value; }
 
     /// <summary>Take a landed hit off the target's HP; every hit goes through here.</summary>
     private void LandDamage(SimulatedEntityState target, DamageResult damage, SimulatedEntityState? source = null)
@@ -1345,7 +1347,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
 
     /// <summary>Raised once per outcome at the victory trigger points (true = the player's side
     /// won). Presentation-only listeners such as crowd reactions; voice can hook here too.</summary>
-    public Action<bool>? OnOutcomeDecided { get; set; }
+    public Action<bool>? OnOutcomeDecided { get => Events.OutcomeDecided; set => Events.OutcomeDecided = value; }
 
     private void OnEntityDeath(SimulatedEntityState entity)
     {

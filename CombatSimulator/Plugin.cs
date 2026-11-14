@@ -4,12 +4,12 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Numerics;
 using CombatSimulator.Ai;
 using CombatSimulator.Animation;
 using CombatSimulator.Camera;
 using CombatSimulator.Companions;
+using CombatSimulator.Composition;
 using CombatSimulator.Core;
 using CombatSimulator.Fighting;
 using CombatSimulator.Gui;
@@ -19,26 +19,31 @@ using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
 using CombatSimulator.Spectators;
 using CombatSimulator.Targeting;
-using CombatSimulator.UpdateLog;
-using Dalamud.Game.ClientState.Objects.Enums;
+using CombatSimulator.Voice;
 using Dalamud.Game.Command;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
-using GameObject = FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject;
-using GameCameraManager = FFXIVClientStructs.FFXIV.Client.Game.Control.CameraManager;
 
 namespace CombatSimulator;
 
+/// <summary>
+/// The composition root (docs/PLUGIN_ARCHITECTURE.md §6). The plugin's objects live in feature modules
+/// (<see cref="Composition.PluginModules"/>: World, Actors, Corpse, Camera, Combat, Fighting, Battle,
+/// Presentation, Safety/Dev); this class keeps what only it can do:
+/// <list type="bullet">
+/// <item>the build list (the constructor): every module build step in the one order the game objects and
+/// hooks have always been created, and between them the subscriptions to the engine's notifications
+/// (<see cref="CombatEvents"/>) at the points they were always made;</item>
+/// <item>the host's events (draw, the two UI openers, framework update, territory change) and the slash command;</item>
+/// <item>the per-frame list (<see cref="OnFrameworkUpdate"/>, §6.4), written out in one place;</item>
+/// <item>Dispose, in the order it always ran;</item>
+/// <item>the private module's partial-method extension points, and the members it reads by name
+/// (forwarding properties to the module that now owns each object; §6.6).</item>
+/// </list>
+/// </summary>
 public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
 {
     private const string CommandName = "/combatsim";
-    private const int NpcRagdollActivationsPerFrame = 1;
-    // Extra activation delay handed to each NPC ragdoll in a burst, and the ceiling on it, so the
-    // last body of a big wave still hits the floor while the fight reads as over. See
-    // ActivateNpcDeathRagdoll.
-    private const float NpcRagdollActivationStagger = 0.2f;
-    private const float NpcRagdollMaxStagger = 1.2f;
-    private float npcRagdollStaggerBudget;
 
     private readonly IDalamudPluginInterface pluginInterface;
     private readonly ICommandManager commandManager;
@@ -48,34 +53,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     private readonly IPluginLog log;
 
     private readonly Configuration config;
-    private readonly NpcSelector npcSelector;
-    private readonly NpcSpawner npcSpawner;
-    private readonly ActionDataProvider actionDataProvider;
-    private readonly NpcActionProfileProvider npcActionProfileProvider;
-    private readonly DamageCalculator damageCalculator;
-    private readonly GlamourerIpc glamourerIpc;
-    private readonly VNavmeshIpc vnavmeshIpc;
-    private readonly AnimationController animationController;
-    private readonly BoneTransformService boneTransformService;
-    private readonly RagdollController ragdollController;
-    private readonly WeaponDropController weaponDropController;
-    private readonly DismembermentController dismembermentController;
-    private readonly Dev.KoStripController armorDetachmentController;
-    private readonly CombatEngine combatEngine;
-    private readonly CombatCompanionManager companionManager;
-    private readonly NpcAiController npcAiController;
-    private readonly NpcCorpseFootIkSolver npcCorpseFootIkSolver;
-    private readonly VirtualEnemyLookAtController virtualEnemyLookAt;
-    private readonly PlayerTargetController playerTargetController;
-    private readonly MapEnemyController mapEnemyController;
-    private readonly MovementBlockHook movementBlockHook;
-    private readonly UseActionHook useActionHook;
-    private readonly CameraModeCoordinator cameraModeCoordinator;
-    private readonly GameCameraUpdateHook gameCameraUpdateHook;
-    private readonly ActiveCameraController activeCameraController;
-    private readonly DynamicCameraController dynamicCameraController;
-    private readonly FightingModeController fightingModeController;
-    private readonly SpectatorController spectatorController;
+    private readonly PluginModules modules;
     private readonly Dev.IDevExperimental devExperimental;
     partial void InitPrivateDirectors();
     partial void TickPrivateDirectors(float deltaTime);
@@ -95,49 +73,91 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     partial void DisposePrivateEffects();
     partial void TryPrivateCommand(string[] parts, ref bool handled);
 
-    private readonly Effects.NpcScaleController npcScaleController;
-    private readonly Effects.PlayerWeaponVisibilityController playerWeaponVisibilityController;
-    private readonly Rendering.WorldGeometry.WorldGeometryRenderer worldGeometryRenderer;
-    private readonly Effects.ArrowImpactController arrowImpactController;
-    private readonly Rendering.WorldGeometry.WorldGeometryPreview worldGeometryPreview;
-    private readonly Navigation.NavMeshService navMesh;
-    private readonly Navigation.CrowdMover crowdMover;
-    public Rendering.WorldGeometry.WorldGeometryRenderer WorldGeometry => worldGeometryRenderer;
-    private readonly EnemyControlController enemyControlController;
-    private readonly HookSafetyChecker hookSafetyChecker;
-    private readonly UpdateLogPopupController updateLogPopupController;
-
-    // Action Mode: real-time combat layer wired through narrow seams.
-    private readonly CombatSimulator.ActionCombat.ActionComboSink actionComboSink;
-    private readonly CombatSimulator.ActionCombat.CombatModeRouter combatModeRouter;
-    private readonly CombatSimulator.ActionCombat.TelegraphSystem telegraphSystem;
-    private readonly CombatSimulator.ActionCombat.EnemyAreaMarkers enemyAreaMarkers = new();
-    private readonly CombatSimulator.ActionCombat.PlayerGuardController playerGuardController;
-    private readonly CombatSimulator.ActionCombat.ActionModeController actionModeController;
-    private readonly CombatSimulator.ActionCombat.HitFeedbackController hitFeedbackController;
-    private readonly FightingCombatController fightingCombatController;
-
-    // NPC ragdoll controllers (multiple concurrent, persist until sim stop/reset/zone change)
-    private readonly Dictionary<nint, RagdollController> npcRagdolls = new();
-    private Gui.DamageNumberOverlay? damageNumbers;
-    private readonly Queue<nint> pendingNpcRagdolls = new();
-    private readonly HashSet<nint> pendingNpcRagdollAddresses = new();
-
-    private readonly MainWindow mainWindow;
-    private readonly HpBarOverlay hpBarOverlay;
-    private readonly CombatLogWindow combatLogWindow;
-    private readonly RagdollDebugOverlay ragdollDebugOverlay;
-    private readonly CombatLinkOverlay combatLinkOverlay;
-    private readonly TelegraphOverlay telegraphOverlay;
-    private readonly EnemyAreaOverlay enemyAreaOverlay;
-    private readonly CombatSimulator.ActionCombat.EnemyOmenVfx enemyOmenVfx;
-    private readonly OsuParryOverlay osuParryOverlay;
-    private readonly ReticleOverlay reticleOverlay;
-    private readonly FightingDebugOverlay fightingDebugOverlay;
-    private readonly DynamicCameraDebugOverlay dynamicCameraDebugOverlay;
     private bool hookSafetyScanned;
     private bool wasLoggedIn;
     private bool wasDevExperimentalUnlocked;
+
+    // ---- The feature modules (docs/PLUGIN_ARCHITECTURE.md §6.1) ----
+    private WorldModule worldModule => modules.World;
+    private ActorsModule actorsModule => modules.Actors;
+    private CorpseModule corpseModule => modules.Corpse;
+    // Kept by name for the optional module's partial code (it lists the active corpse ragdolls).
+    private IReadOnlyList<RagdollController> GetActiveCorpseRagdolls() => corpseModule.GetActiveCorpseRagdolls();
+    private CameraModule cameraModule => modules.Camera;
+    private CombatModule combatModule => modules.Combat;
+    private FightingModule fightingModule => modules.Fighting;
+    private BattleModule battleModule => modules.Battle;
+    private PresentationModule presentationModule => modules.Presentation;
+    private SafetyDevModule safetyDevModule => modules.SafetyDev;
+    /// <summary>The engine's notifications; subscribed only in the constructor below (§6.3).</summary>
+    private CombatEvents combatEvents => combatModule.Events;
+
+    // ---- The plugin's objects, under the names the plugin class (and the private module's partial code)
+    // has always used for them. Each forwards to the module that owns the object now (§6.6), and reads
+    // null before that module has built it, as the field did before it was assigned. ----
+    // World
+    private GlamourerIpc glamourerIpc => worldModule.Glamourer;
+    private VNavmeshIpc vnavmeshIpc => worldModule.VNavmesh;
+    private MovementBlockHook movementBlockHook => worldModule.MovementBlock;
+    private AnimationController animationController => worldModule.Animation;
+    private BoneTransformService boneTransformService => worldModule.BoneTransforms;
+    private Rendering.WorldGeometry.WorldGeometryRenderer worldGeometryRenderer => worldModule.GeometryRenderer;
+    private Rendering.WorldGeometry.WorldGeometryPreview worldGeometryPreview => worldModule.GeometryPreview;
+    private Navigation.NavMeshService navMesh => worldModule.NavMesh;
+    private Navigation.CrowdMover crowdMover => worldModule.Crowd;
+    public Rendering.WorldGeometry.WorldGeometryRenderer WorldGeometry => worldGeometryRenderer;
+    // Actors
+    private ActionDataProvider actionDataProvider => actorsModule.ActionData;
+    private NpcSelector npcSelector => actorsModule.Selector;
+    private NpcSpawner npcSpawner => actorsModule.Spawner;
+    private Effects.NpcScaleController npcScaleController => actorsModule.Scale;
+    private CombatCompanionManager companionManager => actorsModule.Companions;
+    private SpectatorController spectatorController => actorsModule.Spectators;
+    private MapEnemyController mapEnemyController => actorsModule.MapEnemies;
+    // Corpse
+    private RagdollController ragdollController => corpseModule.PlayerRagdoll;
+    private WeaponDropController weaponDropController => corpseModule.WeaponDrop;
+    private DismembermentController dismembermentController => corpseModule.Dismemberment;
+    private Dev.KoStripController armorDetachmentController => corpseModule.ArmorDetachment;
+    private Effects.ArrowImpactController arrowImpactController => corpseModule.ArrowImpacts;
+    private Effects.PlayerWeaponVisibilityController playerWeaponVisibilityController => corpseModule.PlayerWeaponVisibility;
+    private IReadOnlyDictionary<nint, RagdollController> npcRagdolls => corpseModule.NpcRagdolls;
+    // Camera
+    private CameraModeCoordinator cameraModeCoordinator => cameraModule.Coordinator;
+    private GameCameraUpdateHook gameCameraUpdateHook => cameraModule.UpdateHook;
+    private ActiveCameraController activeCameraController => cameraModule.Active;
+    private DynamicCameraController dynamicCameraController => cameraModule.Dynamic;
+    // Combat
+    private CombatEngine combatEngine => combatModule.Engine;
+    private CombatSimulator.ActionCombat.ActionComboSink actionComboSink => combatModule.ComboSink;
+    private CombatSimulator.ActionCombat.CombatModeRouter combatModeRouter => combatModule.Router;
+    private CombatSimulator.ActionCombat.TelegraphSystem telegraphSystem => combatModule.Telegraphs;
+    private CombatSimulator.ActionCombat.EnemyAreaMarkers enemyAreaMarkers => combatModule.AreaMarkers;
+    private CombatSimulator.ActionCombat.PlayerGuardController playerGuardController => combatModule.Guard;
+    private CombatSimulator.ActionCombat.ActionModeController actionModeController => combatModule.ActionMode;
+    private CombatSimulator.ActionCombat.HitFeedbackController hitFeedbackController => combatModule.HitFeedback;
+    private NpcAiController npcAiController => combatModule.EnemyAi;
+    private NpcCorpseFootIkSolver npcCorpseFootIkSolver => combatModule.CorpseFootIk;
+    private VirtualEnemyLookAtController virtualEnemyLookAt => combatModule.EnemyLookAt;
+    private PlayerTargetController playerTargetController => combatModule.PlayerTarget;
+    private UseActionHook useActionHook => combatModule.UseAction;
+    // Fighting / Enemy Control
+    private EnemyControlController enemyControlController => fightingModule.EnemyControl;
+    private FightingModeController fightingModeController => fightingModule.Mode;
+    private FightingCombatController fightingCombatController => fightingModule.Combat;
+    // Battle
+    private VictoryCelebrationDirector? victoryCelebration => battleModule.VictoryCelebration;
+    /// <summary>Exposed for private directors (stories) that hand actors in and out of it.</summary>
+    internal VictoryCelebrationDirector? VictoryCelebration => victoryCelebration;
+    // Presentation
+    private MainWindow mainWindow => presentationModule.MainWindow;
+    private HpBarOverlay hpBarOverlay => presentationModule.HpBars;
+    private Gui.DamageNumberOverlay damageNumbers => presentationModule.DamageNumbers;
+    private CombatLogWindow combatLogWindow => presentationModule.CombatLog;
+    private CombatSimulator.ActionCombat.EnemyOmenVfx enemyOmenVfx => presentationModule.EnemyOmens;
+    private VoiceDirector voiceDirector => presentationModule.Voices;
+    // Safety / Dev
+    private HookSafetyChecker hookSafetyChecker => safetyDevModule.HookSafety;
 
     public CombatSimulatorPlugin(
         IDalamudPluginInterface pluginInterface,
@@ -200,120 +220,35 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
 #endif
         config.SeedEnemyControlGrabProfiles();
 
-        // Simulation
-        actionDataProvider = new ActionDataProvider(dataManager, log, config);
-        NpcWeaponClassifier.Initialize(dataManager, log);
-        Animation.BodyTypeAnimationFallback.Initialize(pluginInterface, dataManager, log);
-        var jobActionKitProvider = new JobActionKitProvider(actionDataProvider, dataManager, log);
-        npcActionProfileProvider = new NpcActionProfileProvider(jobActionKitProvider, config, log);
-        damageCalculator = new DamageCalculator
-        {
-            IsActionMode = () => config.ActionMode,
-            // Everyone's damage is sized by the player's HP (see CombatBudgetModel.DamagePerPotency).
-            PlayerMaxHp = () => combatEngine?.State.PlayerState.MaxHp ?? 0f,
-        };
-        glamourerIpc = new GlamourerIpc(pluginInterface, log);
-        vnavmeshIpc = new VNavmeshIpc(pluginInterface, log);
-        movementBlockHook = new MovementBlockHook(gameInterop, clientState, log);
-        animationController = new AnimationController(log, clientState, dataManager, gameInterop, sigScanner, config);
-        npcActionProfileProvider.MonsterKits = new MonsterActionKitProvider(
-            animationController.NpcModelActions, actionDataProvider, dataManager, log);
-        boneTransformService = new BoneTransformService(gameInterop, sigScanner, log);
-        npcSelector = new NpcSelector(objectTable, targetManager, config, npcActionProfileProvider, log);
-        npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, config, npcActionProfileProvider, movementBlockHook, log);
-        npcScaleController = new Effects.NpcScaleController(config, npcSelector, objectTable);
-        ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses);
-        ragdollController.RunAnimatedHair = true;
-        weaponDropController = new WeaponDropController(boneTransformService, config, log, ragdollController);
-        playerWeaponVisibilityController = new Effects.PlayerWeaponVisibilityController(config, objectTable, boneTransformService);
-        worldGeometryRenderer = new Rendering.WorldGeometry.WorldGeometryRenderer(gameInterop, sigScanner, log);
-        arrowImpactController = new Effects.ArrowImpactController(config, boneTransformService, worldGeometryRenderer, log);
-        animationController.ArrowImpacts = arrowImpactController;
+        // ---- The build list. The order below is the order the game objects, hooks and subscriptions
+        // have always been made in (docs/PLUGIN_ARCHITECTURE.md §6, docs/REFACTOR_PLAN.md §4 "must
+        // preserve"); Tests/PluginOrder checks it against the code before the modules. Creating the
+        // modules builds nothing. ----
+        modules = new PluginModules(config, log);
+
+        actorsModule.CreateActionData(pluginInterface, dataManager);
+        combatModule.CreateDamageCalculator();
+        worldModule.CreateGameAccess(pluginInterface, gameInterop, clientState, dataManager, sigScanner, config, log);
+        actorsModule.AttachMonsterKits(dataManager);
+        worldModule.CreateBoneTransforms(gameInterop, sigScanner, log);
+        actorsModule.CreateRoster(objectTable, targetManager, dataManager, clientState);
+        corpseModule.CreatePlayerBody(objectTable);
+        worldModule.CreateGeometryRenderer(gameInterop, sigScanner, log);
+        corpseModule.CreateArrowImpacts();
         InitPrivateEffects();
-        worldGeometryPreview = new Rendering.WorldGeometry.WorldGeometryPreview(worldGeometryRenderer);
-        navMesh = new Navigation.NavMeshService(worldGeometryRenderer, log);
-        crowdMover = new Navigation.CrowdMover(navMesh, log);
-        navMesh.DumpPath = System.IO.Path.Combine(pluginInterface.GetPluginConfigDirectory(), "navmesh-last-input.bin");
-        RagdollRecordingSession.Configure(System.IO.Path.Combine(pluginInterface.GetPluginConfigDirectory(), "ragdoll-rec"), new Animation.Hosting.DalamudRagdollLog(log));
-        dismembermentController = new DismembermentController(boneTransformService, glamourerIpc, animationController, objectTable, config, log);
-        dismembermentController.PlayerRagdollController = ragdollController;
-        // Clothes still on the corpse ride along when it is picked up; the dismemberment side owns the
-        // question of which garments are still being worn.
-        ragdollController.CarryExternalRigOnAnchor = dismembermentController.ShouldCarryExternalRig;
-        dismembermentController.EnemyNpcIdentityResolver = address =>
-        {
-            var npc = FindNpcByAddress(address);
-            if (npc != null) return (npc.BNpcBaseId, npc.BNpcNameId);
-            // Untracked live enemy: read its real BNpc ids straight off the actor so the severed
-            // piece is rebuilt via SetupBNpc (full appearance, incl. equipment) instead of a bare
-            // ModelCharaId — the latter omits the configured equipment.
-            if (objectTable.CreateObjectReference(address) is Dalamud.Game.ClientState.Objects.Types.IBattleNpc bnpc)
-                return (bnpc.BaseId, bnpc.NameId);
-            return (0u, 0u);
-        };
-        // Spin the body-side stump at the cut so a kicked-off piece makes the stump visibly flick.
-        // The body is whichever ragdoll drives that address (an NPC's own, else the player/default).
-        dismembermentController.ReactionRecoilSink = (addr, bone, angularVel) =>
-        {
-            var body = npcRagdolls.TryGetValue(addr, out var found) ? found : ragdollController;
-            body?.ApplyAngularVelocity(bone, angularVel);
-        };
-        armorDetachmentController = new Dev.KoStripController(config, glamourerIpc, dismembermentController, log);
-        cameraModeCoordinator = new CameraModeCoordinator(config, log);
-        gameCameraUpdateHook = new GameCameraUpdateHook(gameInterop, log);
-        activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
-        // Single camera write authority: modes submit requests, the coordinator applies
-        // the winner each frame; the orbit hook consumes its resolution.
-        activeCameraController.CoordinatorOrbitCenter = () => cameraModeCoordinator.CurrentOrbitCenter;
-        activeCameraController.GetCurrentOwner = () => cameraModeCoordinator.CurrentOwner;
-        combatEngine = new CombatEngine(
-            actionDataProvider, damageCalculator, animationController,
-            movementBlockHook, ragdollController,
-            config, npcSelector, clientState, log);
-        // Action Mode wiring. Seams: ActionComboSink (player input), CombatModeRouter
-        // (enemy attack executor), TelegraphSystem (windup→hitbox). All gate on
-        // config.ActionMode; off ⇒ behavior-equivalent simulation paths.
-        actionComboSink = new CombatSimulator.ActionCombat.ActionComboSink(config);
-        playerGuardController = new CombatSimulator.ActionCombat.PlayerGuardController(
-            animationController,
-            config,
-            () => combatEngine.State.PlayerState.IsAlive,
-            log);
-        playerGuardController.OnChainGuardResolved += combatEngine.RestorePlayerGuardMp;
-        telegraphSystem = new CombatSimulator.ActionCombat.TelegraphSystem(
-            combatEngine, animationController, config, () => playerGuardController.IsGuardActive, playerGuardController.NotifyPerfectGuard, log,
-            enemyAreaMarkers);
-        var playerHitboxResolver = new CombatSimulator.ActionCombat.PlayerHitboxResolver(combatEngine, npcSelector, config);
-        hitFeedbackController = new CombatSimulator.ActionCombat.HitFeedbackController(
-            config, npcSelector.GetSelectedNpc, animationController, log);
-        gameCameraUpdateHook.HitShakeProvider = () => hitFeedbackController.CurrentShakeOffset;
-        // A corpse landing hard shakes the view like any other impact.
-        ragdollController.HardLanding += hitFeedbackController.ShakeForHardLanding;
-        actionModeController = new CombatSimulator.ActionCombat.ActionModeController(
-            config, actionComboSink, playerHitboxResolver, playerGuardController,
-            telegraphSystem, combatEngine, animationController, hitFeedbackController, gamepadState, log);
-        combatModeRouter = new CombatSimulator.ActionCombat.CombatModeRouter(
-            config,
-            new CombatSimulator.ActionCombat.InstantAttackExecutor(combatEngine, config,
-                (npc, actionId) => animationController.PlayNpcWindupPose(npc, actionId)),
-            new CombatSimulator.ActionCombat.TelegraphedAttackExecutor(telegraphSystem, config),
-            // Deferred: fightingModeController is constructed later in this ctor; the
-            // router only queries at attack time.
-            () => fightingModeController?.IsEngaged == true);
-        // Clear any live telegraphs when a combat session ends.
-        combatEngine.OnSimulationReset += telegraphSystem.Clear;
-        combatEngine.OnSimulationReset += enemyAreaMarkers.Clear;
-        // Release any outstanding hitstop freezes when combat ends so no enemy is left frozen.
-        combatEngine.OnSimulationReset += hitFeedbackController.Clear;
+        worldModule.CreateNavigation(pluginInterface, log);
+        corpseModule.CreateLimbsAndArmor(pluginInterface, objectTable);
+        cameraModule.CreateCoordinator(gameInterop, clientState, sigScanner);
+        combatModule.CreateEngineAndActionCombat(clientState, gamepadState);
+        // Clear any live telegraphs when a combat session ends.                 (SimulationReset #1)
+        combatEvents.SimulationReset += telegraphSystem.Clear;
+        combatEvents.SimulationReset += enemyAreaMarkers.Clear;                 // (#2)
+        // Release any outstanding hitstop freezes when combat ends so no enemy is left frozen. (#3)
+        combatEvents.SimulationReset += hitFeedbackController.Clear;
         // Super-armor enemies during their telegraph windup (no flinch from player hits).
         combatEngine.IsTargetSuperArmored = telegraphSystem.IsWindingUp;
 
-        // Enemy Control (post-defeat creature possession) is a normal production controller now —
-        // owned and driven directly here, not through the dev-experimental seam.
-        enemyControlController = new EnemyControlController(
-            keyState, gamepadState, framework, ragdollController, animationController, boneTransformService,
-            movementBlockHook, activeCameraController, vnavmeshIpc, npcSelector, GetActiveCorpseRagdolls,
-            config, log);
+        fightingModule.CreateEnemyControl(keyState, gamepadState, framework);
 
         // The remaining experimental ("easter-egg") dev features live in one module (Victory/Hold +
         // dev-only per-frame tweaks). The engine drives the cinematic victory through the
@@ -327,117 +262,24 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
 #else
         devExperimental = new Dev.DevExperimentalStub();
 #endif
-        combatEngine.VictorySequence = devExperimental.VictorySequence;
-        combatEngine.ShouldSuppressEnemyInitiation = () => devExperimental.SuppressEnemyInitiation;
-        combatEngine.OnPlayerAttackLanded = devExperimental.OnPlayerAttackLanded;
-        combatEngine.PlayerAttackReplacement = devExperimental.TryReplacePlayerAttack;
-        npcActionProfileProvider.ForceAutoAttackOnly = () => devExperimental.NpcAutoAttackOnly;
-        npcSpawner.StripBodyLegs = () => devExperimental.VirtualEnemyStripBodyLegs;
-        npcSpawner.StripAccessories = () => devExperimental.VirtualEnemyStripAccessories;
-        companionManager = new CombatCompanionManager(
-            objectTable, clientState, config, combatEngine, animationController,
-            movementBlockHook, targetManager, log);
-        combatEngine.ResolveNpcTarget = companionManager.SelectEnemyTarget;
-        combatEngine.ResolveExternalEntityAddress = companionManager.ResolveAddress;
-        combatEngine.HasLivingCompanions = () => companionManager.HasLivingCompanions;
-        combatEngine.OnPlayerDamageDealt = companionManager.RegisterPlayerDamage;
-        combatEngine.OnPlayerDamageDealtToTarget = companionManager.RegisterPlayerDamage;
-        combatEngine.ForceNpcTarget = companionManager.ForceEnemyTarget;
-        combatEngine.OnHit = companionManager.RegisterHit;
-        combatEngine.RuleParts = companionManager.RuleParts;
-        WireVictoryCelebration();
-        spectatorController = new SpectatorController(
-            npcSelector, movementBlockHook, animationController.EmotePlayer,
-            vnavmeshIpc, clientState, config,
-            () => combatEngine.State.PlayerState.IsAlive || companionManager.HasLivingCompanions,
-            log);
-        npcCorpseFootIkSolver = new NpcCorpseFootIkSolver(boneTransformService, log);
-        npcAiController = new NpcAiController(
-            combatEngine, animationController, movementBlockHook, config, log,
-            combatModeRouter, npcCorpseFootIkSolver,
-            // Deferred: fightingModeController is constructed later in this ctor; the
-            // AI only queries during framework ticks.
-            addr => devExperimental.ControlsNpc(addr) || enemyControlController.ControlsNpc(addr) ||
-                    fightingModeController?.ControlsEnemy(addr) == true,
-            // Don't commit a new attack while this enemy already has a live telegraph (fixes the
-            // double-swing where the old 0.6s animation lock expired mid-animation).
-            telegraphSystem.IsBusy);
-        npcAiController.AreaMarkers = enemyAreaMarkers;
-        npcAiController.Crowd = crowdMover;
-        companionManager.Crowd = crowdMover;
-        npcAiController.CollectPartyPositions = companionManager.CollectPartyPositions;
-        npcSpawner.Navmesh = vnavmeshIpc;
-        npcSpawner.OnAllySpawnComplete = (npc, request) =>
-        {
-            // An ally counts as a companion, so the party features have to be on for it to fight.
-            config.EnableCombatCompanions = true;
-            companionManager.AdoptNpc(npc, request);
-        };
-        combatEngine.InterruptTelegraphCast = telegraphSystem.TryInterrupt;
-        npcCorpseFootIkSolver.CorpseSupportHeightProvider = ResolveCorpseTraversalHeight;
-        enemyControlController.FootIkSolver = npcCorpseFootIkSolver;
-        companionManager.CorpseSupportHeightProvider = ResolveCorpseTraversalHeight;
-        companionManager.LordBodyPosition = LordBodyPosition;
-        companionManager.BodyPositionOf = BodyPositionOf;
-        virtualEnemyLookAt = new VirtualEnemyLookAtController(boneTransformService, config, npcSpawner, combatEngine,
-            addr => devExperimental.ControlsNpc(addr) || enemyControlController.ControlsNpc(addr) ||
-                    fightingModeController?.ControlsEnemy(addr) == true,
-            log);
-
-        // Custom in-simulation target lock system. Takes over the game's target
-        // keybinds during simulation; the engine reads the locked target for
-        // auto-attack and UseActionHook routes manual actions to it.
-        playerTargetController = new PlayerTargetController(
-            gameInterop, combatEngine, npcSelector, config, objectTable, gameGui, log);
-        combatEngine.GetLockedTargetId = () => playerTargetController.LockedTargetEntityId;
-        combatEngine.OnPlayerHitByNpc = playerTargetController.NotifyPlayerHitBy;
-
-        // Dynamic Camera: over-the-shoulder combat framing, and a two-subject composition
-        // (corpse + killer) on death. Submits through the coordinator like every other mode
-        // and never clears player input — see DynamicCameraController.
-        dynamicCameraController = new DynamicCameraController(
-            config, cameraModeCoordinator, combatEngine, npcSelector, playerTargetController,
-            boneTransformService, ragdollController, sigScanner, log);
-        dynamicCameraController.GetCurrentOwner = () => cameraModeCoordinator.CurrentOwner;
-        // The death shot forces its locked pitch/zoom inside the game's camera update.
-        // Framework-time writes are otherwise overwritten by controller, keyboard and wheel input.
-        gameCameraUpdateHook.PreCameraUpdate = camera =>
-        {
-            activeCameraController.UpdateCollisionPolicy();
-            dynamicCameraController.OnPreCameraUpdate(camera);
-        };
-        activeCameraController.ModeLookAtOverride = dynamicCameraController.OverrideDeathLookAt;
-
-        mapEnemyController = new MapEnemyController(
-            objectTable,
-            config,
-            npcSelector,
-            combatEngine,
-            () => companionManager.Companions,
-            companionManager.HasSourceEntity,
-            companionManager.ForceEnemyTarget,
-            () => npcSpawner.SpawnModeActive,
-            log);
-        fightingModeController = new FightingModeController(
-            config, combatEngine, npcSelector, mapEnemyController, movementBlockHook,
-            cameraModeCoordinator, boneTransformService,
-            addr => devExperimental.ControlsNpc(addr) || enemyControlController.ControlsNpc(addr), log);
-        // Post-defeat camera modes must track the corpse through the ragdoll bodies — the skeleton
-        // pose read at framework time stays at the death spot even after kicks.
-        fightingModeController.GetRagdollBonePosition = bone => ragdollController.GetBodyWorldPosition(bone);
-        enemyControlController.FightingLane = fightingModeController;
-        enemyControlController.SetCameraCoordinator(cameraModeCoordinator);
-        var weaponHitboxService = new WeaponHitboxService(config, boneTransformService, log);
-        fightingCombatController = new FightingCombatController(
-            config, playerGuardController, fightingModeController, combatEngine,
-            animationController, weaponHitboxService, hitFeedbackController, gamepadState, log);
-        fightingModeController.AttackSink = fightingCombatController.OnAttackInput;
-        var fightingAiController = new FightingAiController(
-            config, combatModeRouter, telegraphSystem, animationController, log);
-        fightingModeController.FightingAi = fightingAiController;
-        fightingCombatController.OnPlayerHitLanded = _ => fightingAiController.NotifyPlayerHitLanded();
-        fightingModeController.GetEnemyControlFollowCenter = () => enemyControlController.FollowCenter;
-        combatEngine.BeforePlayerDeath = () =>
+        safetyDevModule.WireDevExperimental(devExperimental);
+        actorsModule.CreateCompanions(objectTable, clientState, targetManager);
+        combatModule.WireCompanions();
+        battleModule.CreateVictoryCelebration();
+        // Crowd reactions to the result; React() is a no-op unless SpectatorReactionEmotes.
+        // spectatorController is constructed after this runs, hence the late lookup.
+        // ('=' as always: the first handler of the outcome replaces anything set before it.) (OutcomeDecided #1)
+        combatEvents.OutcomeDecided = playerWon => spectatorController?.React(
+            playerWon ? Spectators.SpectatorReaction.PlayerVictory : Spectators.SpectatorReaction.PlayerDefeat);
+        actorsModule.CreateSpectators(clientState);
+        // NpcAiController's constructor subscribes its own SimulationStarted #1 and SimulationReset #4.
+        combatModule.CreateEnemyAi();
+        combatModule.CreatePlayerTargeting(gameInterop, objectTable, gameGui);
+        combatEvents.PlayerHitBy = playerTargetController.NotifyPlayerHitBy;
+        cameraModule.CreateDynamic(sigScanner);
+        actorsModule.CreateMapEnemies(objectTable);
+        fightingModule.CreateFighting(gamepadState);
+        combatEvents.BeforePlayerDeath = () =>
         {
             fightingModeController.HandlePlayerDeath();
             // The killing blow was recorded when it landed; deaths resolve on a delay, so by
@@ -446,49 +288,20 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
                 combatEngine.LastPlayerKillerAddress, combatEngine.LastPlayerKillerEntityId);
             devExperimental.BeforePlayerDeath();
         };
-        companionManager.IsSourceEnemy = entityId => npcSelector.GetSelectedNpc(entityId) != null;
-
-        companionManager.OnCompanionSpawnComplete = companion =>
-        {
-            combatEngine.RegisterCompanionEntity(companion);
-            ApplyCompanionGlamourer(companion);
-            log.Info($"Spawned companion '{companion.Name}' registered as friendly combatant.");
-        };
-        companionManager.OnCompanionDeathRagdoll = OnCompanionDeathRagdoll;
-        companionManager.OnCompanionRevived = address =>
-        {
-            RemoveNpcRagdoll(address);
-            weaponDropController.RemoveFor(address);
-        };
-        companionManager.OnSpawnError = msg =>
-        {
-            chatGui.PrintError($"[CombatSim] Party error: {msg}");
-        };
-
-        // Wire NpcSpawner callbacks
-        npcSpawner.OnNpcSpawnComplete = (npc) =>
-        {
-            npcSelector.RegisterSpawnedNpc(npc, ignoreMaxTargets: npcSpawner.SpawnModeActive);
-            combatEngine.RegisterNpcEntity(npc);
-            log.Info($"Spawned NPC '{npc.Name}' registered as combat target.");
-        };
-        npcSpawner.OnSpawnError = (msg) =>
-        {
-            chatGui.PrintError($"[CombatSim] Spawn error: {msg}");
-        };
+        actorsModule.WireActorCallbacks(chatGui);
 
         // Re-register alive spawned NPCs on sim start (they're removed from
         // npcSelector by DeselectAll during StopSimulation). For real
         // first-time starts this just re-populates the selector so
         // NpcAiController can tick the existing spawns.
-        combatEngine.OnSimulationStarted += SwitchToDirectedCameraForBattle;
-        // (Reset also fires on Stop, when the simulation is no longer active: only a reset mid-battle counts.)
-        combatEngine.OnSimulationReset += () =>
+        combatEvents.SimulationStarted += cameraModule.SwitchToDirectedCameraForBattle;   // (SimulationStarted #2)
+        // (Reset also fires on Stop, when the simulation is no longer active: only a reset mid-battle counts.) (SimulationReset #5)
+        combatEvents.SimulationReset += () =>
         {
             if (combatEngine.State.IsActive)
-                SwitchToDirectedCameraForBattle();
+                cameraModule.SwitchToDirectedCameraForBattle();
         };
-        combatEngine.OnSimulationStarted += () =>
+        combatEvents.SimulationStarted += () =>                                            // (SimulationStarted #3)
         {
             foreach (var npc in npcSpawner.SpawnedNpcs)
             {
@@ -506,11 +319,11 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         //
         // ResetState doesn't call DeselectAll so the selector still holds
         // references to NPCs we're about to despawn. Explicitly unregister
-        // them first to avoid dangling pointers.
-        combatEngine.OnSimulationReset += () =>
+        // them first to avoid dangling pointers.                                 (SimulationReset #6)
+        combatEvents.SimulationReset += () =>
         {
             ResetPrivateDirectors();
-            DeactivateAllNpcRagdolls();
+            corpseModule.DeactivateAllNpcRagdolls();
             weaponDropController.RemoveAll();
             dismembermentController.RemoveAll();
             armorDetachmentController.Reset();
@@ -537,14 +350,14 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             npcSpawner.RegenerateAll();
         };
 
-        combatEngine.OnNpcDeathRagdoll = OnNpcDeathRagdoll;
-        combatEngine.OnPlayerDamagedByNpc = () =>
+        combatEvents.EnemyDied = corpseModule.OnNpcDeathRagdoll;
+        combatEvents.PlayerDamaged = () =>
         {
             var player = objectTable.LocalPlayer;
             if (player != null && player.Address != nint.Zero)
                 armorDetachmentController.TryStripNextOnHit(player.Address);
         };
-        combatEngine.OnPlayerDeath = addr =>
+        combatEvents.PlayerDied = addr =>
         {
             OnPrivateEffectsKo();
             weaponDropController.SpawnFor(addr); // at the moment of death, not after the ragdoll delay
@@ -568,7 +381,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
                 log.Info("EnemyControl: the lord's body is fought over; nobody takes it yet.");
             else if (config.EnemyControlControlKiller)
             {
-                var killer = FindNpcByAddress(combatEngine.LastPlayerKillerAddress);
+                var killer = actorsModule.FindNpcByAddress(combatEngine.LastPlayerKillerAddress);
                 if (killer != null) enemyControlController.ControlKiller(killer);
                 else log.Info("EnemyControl: no valid killer to control.");
             }
@@ -578,64 +391,49 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             }
         };
 
-        // Hook safety checker — register native functions we CALL (not hook) that other plugins may hook.
-        // We check for JMP detours at each address to detect third-party hooks.
-        hookSafetyChecker = new HookSafetyChecker(pluginInterface, log);
-        // expectedFirstByte from each function's signature pattern (fallback if JMP pattern is unrecognized)
-        hookSafetyChecker.Register("ActorVfxCreate",
-            "Spawns VFX on actors. Hooked by VFXEditor, RotationSolver.",
-            animationController.ActorVfxCreateAddress, expectedFirstByte: 0x40); // sig: "40 53 55 56 57..."
-        hookSafetyChecker.Register("ActorVfxRemove",
-            "Removes VFX from actors. Hooked by VFX-related plugins.",
-            animationController.ActorVfxRemoveAddress); // resolved via pointer chase — no expected byte
-        hookSafetyChecker.Register("ActionEffectHandler.Receive",
-            "Processes combat effects (damage, flytext, animations). Hooked by ACT, combat log plugins.",
-            (nint)FFXIVClientStructs.FFXIV.Client.Game.Character.ActionEffectHandler.MemberFunctionPointers.Receive);
+        safetyDevModule.CreateHookSafetyChecker(pluginInterface);
 
         // Safety — enable hooks immediately; they gate on internal state
-        useActionHook = new UseActionHook(gameInterop, combatEngine, npcSelector, npcSpawner, config, clientState, log,
-            playerTargetController, mapEnemyController, actionComboSink, fightingModeController);
+        combatModule.CreateUseActionHook(gameInterop, clientState);
         useActionHook.Enable();
         movementBlockHook.Enable();
 
         activeCameraController.SetActive(config.EnableActiveCamera);
 
         // GUI
-        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, spectatorController, devExperimental, clientState, dataManager, chatGui, log);
-        mainWindow.ArrowImpacts = arrowImpactController;
-        mainWindow.HideResultBanner = warBanner.Hide;
-        mainWindow.ArmorDetachment = armorDetachmentController;
-        InitVoice(dataManager);
+        presentationModule.CreateMainWindow(clientState, dataManager, chatGui);
+        // Enemy voices. Subscriptions are additive (+=) and registered after the constructor's own
+        // assignments, so they never replace another listener.
+        presentationModule.CreateVoice(dataManager);
+        combatModeRouter.AttackCommitted += (npc, request) => voiceDirector.NotifyAttackCommitted(npc, request);
+        combatEvents.SimulationReset += voiceDirector.Reset;                     // (SimulationReset #7)
+        // Stories speak through the same bubbles; enemy lines wait until the scene is over.
+        voiceDirector.LinesSuppressed = () => PrivateDirectorActive;
+        // Only a story's performer is held back, and only while the story runs, so it never talks
+        // over its own lines. Enemy Control possesses the killer on every defeat; that actor is
+        // often the last enemy standing and must still gloat. (ControlsNpc would also cover the
+        // pack following it, which silenced the taunts entirely.)
+        voiceDirector.IsActorReserved = addr => PrivateDirectorActive && enemyControlController.PossessesNpc(addr);
+        mainWindow.VoiceDirector = voiceDirector;
         InitPrivateDirectors();
         AttachPrivateEffects();
-        hpBarOverlay = new HpBarOverlay(npcSelector, companionManager, combatEngine, boneTransformService, gameGui, clientState, config);
-        damageNumbers = new Gui.DamageNumberOverlay(gameGui, config, combatEngine.ResolveEntityAddress);
-        combatEngine.OnDamageLanded += damageNumbers.Add;
-        combatEngine.OnDamageLanded += hpBarOverlay.NoteDamage;
+        presentationModule.CreateHpBarsAndDamageNumbers(gameGui, clientState);
+        combatEvents.DamageLanded += damageNumbers.Add;
+        combatEvents.DamageLanded += hpBarOverlay.NoteDamage;
         hpBarOverlay.PlayerTarget = () => targetManager.Target?.Address ?? nint.Zero;
-        combatEngine.OnSimulationReset += damageNumbers.Clear;
-        WireWar();
-        combatLogWindow = new CombatLogWindow(combatEngine);
-        ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, dismembermentController, mainWindow, config, gameGui, clientState);
-        combatLinkOverlay = new CombatLinkOverlay(npcSelector, playerTargetController, combatEngine, boneTransformService, gameGui, config);
-        telegraphOverlay = new TelegraphOverlay(telegraphSystem, gameGui, config);
-        hpBarOverlay.ExternalCast = npc =>
-            telegraphSystem.TryGetCast(npc.SimulatedEntityId, out var castActionId, out var castProgress)
-                ? (actionDataProvider.GetActionData(castActionId)?.Name ?? "Casting", castProgress)
-                : null;
-        enemyAreaOverlay = new EnemyAreaOverlay(enemyAreaMarkers, gameGui, config);
-        enemyOmenVfx = new CombatSimulator.ActionCombat.EnemyOmenVfx(
-            enemyAreaMarkers, animationController, actionDataProvider.GetActionData, dataManager, config, log);
-        enemyAreaOverlay.HasNativeOmen = enemyOmenVfx.HasOmen;
-        osuParryOverlay = new OsuParryOverlay(telegraphSystem, gameGui, config, playerGuardController)
+        combatEvents.SimulationReset += damageNumbers.Clear;                     // (SimulationReset #8)
+        // The battle's end: the fight over the lord's body, then the banner after the crowd's reaction.
+        battleModule.CreateCorpseSeizure();
+        // (OutcomeDecided #2: after whatever is there now, as it always was — written as a wrapper of the
+        // previous handler rather than +=, exactly as before the split.)
+        var previous = combatEvents.OutcomeDecided;
+        combatEvents.OutcomeDecided = playerWon =>
         {
-            AlsoEnabled = () => fightingModeController.IsEngaged,
+            previous?.Invoke(playerWon);
+            battleModule.ShowOutcome(playerWon);
         };
-        reticleOverlay = new ReticleOverlay(playerHitboxResolver, combatEngine, gameGui, config);
-        fightingDebugOverlay = new FightingDebugOverlay(
-            fightingModeController, fightingCombatController, weaponHitboxService, gameGui, config);
-        dynamicCameraDebugOverlay = new DynamicCameraDebugOverlay(dynamicCameraController, gameGui, config);
-        updateLogPopupController = new UpdateLogPopupController(config, log, hadExistingConfig);
+        combatEvents.SimulationReset += battleModule.ResetWar;                   // (SimulationReset #9)
+        presentationModule.CreateOverlays(gameGui, clientState, dataManager, hadExistingConfig);
 
         // Register
         commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
@@ -676,7 +474,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         if (Core.Services.ObjectTable.LocalPlayer != null)
         {
             devExperimental.RestoreOcclusion();
-            DeactivateAllNpcRagdolls();
+            corpseModule.DeactivateAllNpcRagdolls();
             npcSpawner.SpawnModeActive = false;
             companionManager.DespawnAll();
             spectatorController.DespawnAll();
@@ -857,79 +655,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         }
     }
 
-    private void OnDraw()
-    {
-        // No plugin UI off-world (title / character select) — prevents acting on
-        // a preview character (e.g. clicking Reset there crashes the game).
-        if (!clientState.IsLoggedIn)
-            return;
-
-        // Raw mouse wheel for the dynamic camera's death shot: its zoom is pinned shut at
-        // the game camera, so the wheel's INTENT has to be read here — the camera struct
-        // has no pending-zoom field to intercept. Skipped while ImGui wants the mouse
-        // (scrolling one of our own windows must not retune the shot).
-        var imguiIo = Dalamud.Bindings.ImGui.ImGui.GetIO();
-        if (!imguiIo.WantCaptureMouse && imguiIo.MouseWheel != 0f)
-            dynamicCameraController.NotifyMouseWheel(imguiIo.MouseWheel);
-
-        if (config.ShowShortcuts)
-            mainWindow.DrawShortcutsBar();
-
-        if (config.ShowFastCombatToolbar)
-            mainWindow.DrawFastCombatToolbar();
-
-        if (config.ShowDynamicCamToolbar)
-            mainWindow.DrawDynamicCamToolbar();
-
-        if (config.ShowActiveCamToolbar)
-            mainWindow.DrawActiveCamToolbar();
-
-        if (config.ShowEnemyControlGui)
-            mainWindow.DrawEnemyControlWindow(enemyControlController);
-
-        devExperimental.DrawToolbars(mainWindow);
-
-        if (config.ShowMainWindow)
-            mainWindow.Draw();
-
-        if (config.ShowProfessionalWindow)
-            mainWindow.DrawProfessional();
-
-        mainWindow.DrawDefeatRevivePopup();
-        updateLogPopupController.Draw();
-
-        if (combatEngine.IsActive)
-        {
-            if (config.ShowEnemyHpBar || config.ShowPlayerHpBar || config.ShowHudPlayerHpBar)
-                hpBarOverlay.Draw();
-            damageNumbers?.Draw();
-            DrawWar();
-
-            if (config.ShowCombatLog)
-                combatLogWindow.Draw();
-
-            if (config.ShowCombatLinkArcs || config.ShowLockMarker)
-                combatLinkOverlay.Draw();
-
-            if ((config.ActionMode || fightingModeController.IsEngaged) && config.ShowTelegraphs)
-                telegraphOverlay.Draw();
-            // Real-shape enemy areas (any mode); empty unless an enemy-skill option registered one.
-            enemyAreaOverlay.Draw();
-
-            osuParryOverlay.Draw();
-            reticleOverlay.Draw();
-            fightingDebugOverlay.Draw();
-        }
-
-        ragdollDebugOverlay.Draw();
-        dynamicCameraDebugOverlay.Draw();
-
-        if (!combatEngine.IsActive)
-        {
-            // Restore native HP bar when sim is not active
-            hpBarOverlay.RestoreNativeHpBar();
-        }
-    }
+    /// <summary>The windows and overlays (<see cref="PresentationModule.OnDraw"/>).</summary>
+    private void OnDraw() => presentationModule.OnDraw(clientState);
 
     private void OnOpenMainUi()
     {
@@ -943,6 +670,12 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         config.Save();
     }
 
+    /// <summary>
+    /// The per-frame list (docs/PLUGIN_ARCHITECTURE.md §6.4; docs/REFACTOR_PLAN.md §4 "must preserve",
+    /// item 1): every module's tick, in the one order they run. Allies (in the companion manager's tick)
+    /// act before the crowd steps and run outside a battle too; enemies act after it, only in a battle;
+    /// the war rules write the seizers before the enemy AI reads them in the same frame.
+    /// </summary>
     private void OnFrameworkUpdate(IFramework fw)
     {
         try
@@ -991,7 +724,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             // Process queued spawns and pending draw enables (works outside combat)
             npcSpawner.Tick();
             companionManager.Tick(deltaTime, npcSelector.SelectedNpcs);
-            ProcessPendingGlamourerApplies();
+            actorsModule.ProcessPendingGlamourerApplies();
 
             animationController.Tick(deltaTime);
             victoryCelebration?.Tick(deltaTime);
@@ -1048,7 +781,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             worldGeometryPreview.Tick(deltaTime);
             TickPrivateEffects(deltaTime);
             // Before the active gate: the director clears its state when the fight ends. Inert when voices are off.
-            TickVoice(deltaTime);
+            presentationModule.TickVoice(deltaTime);
 
             // One step of the crowd for everyone it moves: allies (who set their goals above, and move
             // outside a battle too) and enemies (who set theirs after the previous step).
@@ -1070,8 +803,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             if (PrivateDirectorActive) return;
             mapEnemyController.Tick(deltaTime);
             combatEngine.Tick(deltaTime);
-            ProcessPendingNpcRagdolls(deltaTime);
-            TickWar(deltaTime);
+            corpseModule.ProcessPendingNpcRagdolls(deltaTime);
+            battleModule.TickWar(deltaTime);
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
             // After AI: its movement cleanup would otherwise erase celebration loops every frame.
             victoryCelebration?.Reassert();
@@ -1089,355 +822,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         }
     }
 
-    private SimulatedNpc? FindNpcByAddress(nint address)
-    {
-        if (address == nint.Zero) return null;
-        foreach (var npc in npcSelector.SelectedNpcs)
-            if (npc.Address == address && npc.BattleChara != null) return npc;
-        foreach (var npc in npcSpawner.SpawnedNpcs)
-            if (npc.Address == address && npc.BattleChara != null) return npc;
-        return null;
-    }
-
-    private void OnNpcDeathRagdoll(nint address)
-    {
-        // Fighting camera death transition must run regardless of ragdoll settings.
-        // Note: KO strip is intentionally player-only — NPC draw objects vary too much
-        // (non-humanoid, partial gear) to strip reliably, so it's not applied here.
-
-        if (address == nint.Zero)
-            return;
-
-        // Ahead of the ragdoll gates below: dev death reactions are independent of them.
-        devExperimental.OnNpcDeath(address);
-
-        if (!config.EnableRagdoll || !config.EnableNpcDeathRagdoll)
-            return;
-
-        if (HasLiveNpcRagdoll(address) || pendingNpcRagdollAddresses.Contains(address))
-            return;
-
-        pendingNpcRagdolls.Enqueue(address);
-        pendingNpcRagdollAddresses.Add(address);
-    }
-
-    private void ProcessPendingNpcRagdolls(float deltaTime)
-    {
-        // The stagger budget bleeds off in real time whether or not anything is queued, so a burst
-        // fans out and a quiet stretch returns it to zero.
-        npcRagdollStaggerBudget = Math.Max(0f, npcRagdollStaggerBudget - deltaTime);
-
-        if (pendingNpcRagdolls.Count == 0)
-            return;
-
-        if (!config.EnableRagdoll || !config.EnableNpcDeathRagdoll || !combatEngine.IsActive)
-        {
-            ClearPendingNpcRagdolls();
-            return;
-        }
-
-        for (var i = 0; i < NpcRagdollActivationsPerFrame && pendingNpcRagdolls.Count > 0; i++)
-        {
-            var address = pendingNpcRagdolls.Dequeue();
-            pendingNpcRagdollAddresses.Remove(address);
-            ActivateNpcDeathRagdoll(address);
-        }
-    }
-
-    private void ActivateNpcDeathRagdoll(nint address)
-    {
-        if (address == nint.Zero || !config.EnableRagdoll || !config.EnableNpcDeathRagdoll)
-            return;
-
-        // The weapon is released at once; only the body waits for the ragdoll activation delay.
-        weaponDropController.SpawnFor(address);
-
-        if (HasLiveNpcRagdoll(address)) return;
-
-        log.Info($"NPC death ragdoll: activating for 0x{address:X}");
-
-        var partyMode = config.EnableCombatCompanions;
-        var controller = partyMode
-            ? new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses)
-            : new RagdollController(boneTransformService, config, log);
-
-        IReadOnlyList<string> bones = Array.Empty<string>();
-        if (config.EnableEnemyDismemberment)
-        {
-            bones = dismembermentController.SelectRandomEnemyBones(
-                address,
-                config.EnemyHumanoidDismembermentCount,
-                config.EnemyMonsterDismembermentBonePercent);
-        }
-
-        controller.SetDismemberedBones(bones);
-        if (bones.Count > 0)
-        {
-            foreach (var bone in bones)
-                dismembermentController.SpawnFor(address, bone, AdvancedRagdoll.RagdollTuning.NpcActivationDelay, null);
-            log.Info($"NPC death ragdoll: selected {bones.Count} visual parts for 0x{address:X}");
-        }
-
-        // Fan the settle windows apart. Construction is already spread one-per-frame
-        // (NpcRagdollActivationsPerFrame), but that is the cheap half — what costs is the second or
-        // two each rig spends awake before it reaches the resting fast path, and a wave that wipes
-        // together lands all of those on top of each other. Each activation pushes the next one
-        // further out; the budget decays in ProcessPendingNpcRagdolls, so it only bites during a
-        // burst and is back to zero by the next fight.
-        controller.Activate(address, AdvancedRagdoll.RagdollTuning.NpcActivationDelay + npcRagdollStaggerBudget);
-        npcRagdollStaggerBudget = MathF.Min(
-            npcRagdollStaggerBudget + NpcRagdollActivationStagger, NpcRagdollMaxStagger);
-        npcRagdolls[address] = controller;
-    }
-
-    private void ClearPendingNpcRagdolls()
-    {
-        pendingNpcRagdolls.Clear();
-        pendingNpcRagdollAddresses.Clear();
-    }
-
-    private bool HasLiveNpcRagdoll(nint address)
-    {
-        if (!npcRagdolls.TryGetValue(address, out var controller))
-            return false;
-
-        var stale = !controller.IsActive || controller.TargetCharacterAddress != address;
-        if (!stale)
-        {
-            var obj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)address;
-            stale = obj == null ||
-                    (controller.TargetEntityId != 0 && obj->EntityId != 0 && obj->EntityId != controller.TargetEntityId);
-        }
-
-        if (!stale)
-            return true;
-
-        controller.Dispose();
-        npcRagdolls.Remove(address);
-        log.Info($"NPC death ragdoll: removed stale entry for 0x{address:X}");
-        return false;
-    }
-
-    private sealed class GlamourerApplyJob
-    {
-        public Companions.CombatCompanion Companion = null!;
-        public Guid DesignId;
-        public int FramesUntilNext;
-        public int AttemptsLeft;
-    }
-
-    private readonly List<GlamourerApplyJob> pendingGlamourerApplies = new();
-
-    // Queue the configured Glamourer equipment design for a freshly spawned companion
-    // clone. Equipment-only, so the clone keeps its own/randomized customize. A blank
-    // setting (None) or a missing/uninstalled Glamourer is a no-op — the clone then
-    // just wears its inherited equipment. We defer + retry (rather than apply inline)
-    // because the companion is still building its draw object at spawn-complete.
-    private void ApplyCompanionGlamourer(Companions.CombatCompanion companion)
-    {
-        if (string.IsNullOrEmpty(config.PartyCompanionGlamourerDesignId))
-            return;
-        if (!Guid.TryParse(config.PartyCompanionGlamourerDesignId, out var designId))
-            return;
-
-        pendingGlamourerApplies.Add(new GlamourerApplyJob
-        {
-            Companion = companion,
-            DesignId = designId,
-            FramesUntilNext = 1,
-            AttemptsLeft = 8,
-        });
-    }
-
-    private void ProcessPendingGlamourerApplies()
-    {
-        for (var i = pendingGlamourerApplies.Count - 1; i >= 0; i--)
-        {
-            var job = pendingGlamourerApplies[i];
-
-            // Drop if the companion despawned before we could apply.
-            if (!job.Companion.IsSpawned || job.Companion.BattleChara == null)
-            {
-                pendingGlamourerApplies.RemoveAt(i);
-                continue;
-            }
-
-            if (--job.FramesUntilNext > 0)
-                continue;
-
-            // Glamourer addresses actors by their GLOBAL object-table index, not the
-            // ClientObjectManager index we spawned with (companion.ObjectIndex), so use
-            // the live game object's index — otherwise Glamourer reports ActorNotFound.
-            var tableIndex = job.Companion.GameObjectRef?.ObjectIndex ?? ushort.MaxValue;
-            if (tableIndex == ushort.MaxValue)
-            {
-                if (--job.AttemptsLeft <= 0)
-                    pendingGlamourerApplies.RemoveAt(i);
-                else
-                    job.FramesUntilNext = 5;
-                continue;
-            }
-
-            var ok = glamourerIpc.ApplyDesignToObject(job.DesignId, tableIndex, equipmentOnly: true);
-            job.AttemptsLeft--;
-            if (ok || job.AttemptsLeft <= 0)
-                pendingGlamourerApplies.RemoveAt(i);
-            else
-                job.FramesUntilNext = 5; // retry in ~5 frames until the draw object resolves
-        }
-    }
-
-    private void OnCompanionDeathRagdoll(nint address)
-    {
-        if (!config.EnableRagdoll || !config.PartyCompanionDeathRagdoll) return;
-
-        // The weapon is released at once; only the body waits for the ragdoll activation delay.
-        weaponDropController.SpawnFor(address);
-
-        if (npcRagdolls.ContainsKey(address)) return;
-
-        log.Info($"Companion death ragdoll: activating for 0x{address:X}");
-
-        var controller = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses);
-        controller.SetDismemberedBones(Array.Empty<string>());
-        // Shares the enemy stagger budget — a wipe drops companions alongside enemies, and they are
-        // the same kind of load. See ActivateNpcDeathRagdoll.
-        // An executed captive drops at once, from the kneel.
-        var executed = false;
-        foreach (var companion in companionManager.Companions)
-            if (companion.Address == address)
-                executed = companion.State.Executed;
-        if (executed)
-            controller.Activate(address, 0f, AdvancedRagdoll.RagdollTriggerMode.FixedDelay);
-        else
-        {
-            controller.Activate(address, config.RagdollActivationDelay,
-                AdvancedRagdoll.RagdollTrigger.ClampMode(config.RagdollTriggerMode), npcRagdollStaggerBudget);
-            npcRagdollStaggerBudget = MathF.Min(
-                npcRagdollStaggerBudget + NpcRagdollActivationStagger, NpcRagdollMaxStagger);
-        }
-        npcRagdolls[address] = controller;
-    }
-
-    /// <summary>
-    /// Collision actors for a party-mode ragdoll: the local player plus every spawned
-    /// companion. Enemies are supplied separately via the NpcSelector, and each ragdoll
-    /// skips its own body, so this makes every ragdoll collide with every living
-    /// character (party↔party, party↔enemy, enemy↔party, and the player).
-    /// </summary>
-    private IReadOnlyList<nint> GetPartyCollisionAddresses()
-    {
-        var list = new List<nint>();
-
-        var player = Services.ObjectTable.LocalPlayer;
-        if (player != null && player.Address != nint.Zero)
-        {
-            list.Add(player.Address);
-            if (config.NpcCollisionActive)
-            {
-                AddMountCollisionAddresses(list);
-            }
-        }
-
-        foreach (var companion in companionManager.Companions)
-        {
-            if (companion.IsSpawned && companion.Address != nint.Zero)
-                list.Add(companion.Address);
-        }
-
-        return list;
-    }
-
-    /// <summary>
-    /// Return the highest low corpse surface under an NPC's next foot position. High/flying body
-    /// parts are deliberately rejected: this is a small step-over aid, not arbitrary climbing.
-    /// </summary>
-    /// <summary>Put the camera in Directed mode for a battle, when that is asked for.</summary>
-    private void SwitchToDirectedCameraForBattle()
-    {
-        if (!config.DirectedCameraOnBattle || (config.EnableDynamicCamera && !config.EnableActiveCamera))
-            return;
-        config.EnableActiveCamera = false;
-        config.EnableDynamicCamera = true;
-        activeCameraController.SetActive(false);
-        config.Save();
-    }
-
-    private float? ResolveCorpseTraversalHeight(nint actorAddress, Vector3 position)
-    {
-        if (!config.NpcCollisionActive)
-            return null;
-
-        var footProbeRadius = 0.24f;
-        if (actorAddress != nint.Zero)
-        {
-            var gameObject = (GameObject*)actorAddress;
-            if (gameObject->DrawObject != null)
-            {
-                var scale = gameObject->DrawObject->Scale;
-                var maxScale = MathF.Max(scale.X, MathF.Max(scale.Y, scale.Z));
-                if (float.IsFinite(maxScale) && maxScale > 0f)
-                    footProbeRadius *= MathF.Max(1f, maxScale);
-            }
-        }
-        float? best = null;
-
-        void Consider(RagdollController controller)
-        {
-            if (!controller.TryGetWalkableSurfaceHeight(position, footProbeRadius, out var surfaceY))
-                return;
-            if (!best.HasValue || surfaceY > best.Value)
-                best = surfaceY;
-        }
-
-        Consider(ragdollController);
-        foreach (var controller in npcRagdolls.Values)
-            Consider(controller);
-
-        return best;
-    }
-
-    private IReadOnlyList<RagdollController> GetActiveCorpseRagdolls()
-    {
-        var result = new List<RagdollController>(npcRagdolls.Count + 1);
-        if (ragdollController.IsActive)
-            result.Add(ragdollController);
-        foreach (var controller in npcRagdolls.Values)
-            if (controller.IsActive)
-                result.Add(controller);
-        return result;
-    }
-
-    private void AddMountCollisionAddresses(List<nint> list)
-    {
-        foreach (var obj in Services.ObjectTable)
-        {
-            if (obj == null || obj.Address == nint.Zero)
-                continue;
-            if (obj.ObjectKind != ObjectKind.Mount)
-                continue;
-
-            list.Add(obj.Address);
-        }
-    }
-
-    private void RemoveNpcRagdoll(nint address)
-    {
-        if (npcRagdolls.TryGetValue(address, out var controller))
-        {
-            controller.Dispose();
-            npcRagdolls.Remove(address);
-        }
-    }
-
-    private void DeactivateAllNpcRagdolls()
-    {
-        ClearPendingNpcRagdolls();
-        foreach (var controller in npcRagdolls.Values)
-            controller.Dispose();
-        npcRagdolls.Clear();
-    }
-
     private void OnTerritoryChanged(uint territoryId)
     {
         ResetPrivateDirectors();
@@ -1453,7 +837,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             log.Info("Despawned all client NPCs on zone change.");
         }
 
-        DeactivateAllNpcRagdolls();
+        corpseModule.DeactivateAllNpcRagdolls();
         weaponDropController.RemoveAll();
         dismembermentController.RemoveAll();
         armorDetachmentController.Reset();
@@ -1485,7 +869,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         try
         {
             npcSpawner.SpawnModeActive = false;
-            DeactivateAllNpcRagdolls();
+            corpseModule.DeactivateAllNpcRagdolls();
             weaponDropController.RemoveAll();
             dismembermentController.RemoveAll();
             armorDetachmentController.Reset();
