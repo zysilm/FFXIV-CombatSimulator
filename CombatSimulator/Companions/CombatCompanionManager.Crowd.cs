@@ -21,7 +21,7 @@ namespace CombatSimulator.Companions;
 public unsafe partial class CombatCompanionManager
 {
     /// <summary>The crowd on the navigation mesh; null or not ready: allies stand.</summary>
-    public Navigation.CrowdMover? Crowd { private get; set; }
+    public ICrowdAgents? Crowd { private get; set; }
 
     private bool CrowdReady => Crowd is { Ready: true };
 
@@ -59,15 +59,13 @@ public unsafe partial class CombatCompanionManager
         System.Array.Clear(activityFrames);
     }
 
-    private static float HitboxOf(GameObject* obj)
-        => obj != null && obj->HitboxRadius > 0.01f ? obj->HitboxRadius : EnemyMovementMath.BaselineHitboxRadius;
+    private float HitboxOf(Combatant self)
+        => self.BattleChara != null && world.HitboxRadiusAt(self.Address) > 0.01f ? world.HitboxRadiusAt(self.Address) : EnemyMovementMath.BaselineHitboxRadius;
 
     /// <summary>Horizontal space between the two bodies: how ranges are measured in the game.</summary>
-    private static float CrowdGap(CombatCompanion companion, SimulatedNpc target)
+    private float CrowdGap(CombatCompanion companion, SimulatedNpc target)
     {
-        var self = (GameObject*)companion.BattleChara;
-        var other = (GameObject*)target.BattleChara;
-        return CombatantMath.BodyGap((Vector3)self->Position, (Vector3)other->Position, HitboxOf(self), target.HitboxRadius);
+        return CombatantMath.BodyGap(world.PositionOf(companion), world.PositionOf(target), HitboxOf(companion), world.HitboxRadiusOf(target));
     }
 
     private static float SkillReach(CombatCompanion companion, NpcSkill skill)
@@ -99,9 +97,9 @@ public unsafe partial class CombatCompanionManager
         if (companion.InReach)
             return false;
 
-        var self = (Vector3)((GameObject*)companion.BattleChara)->Position;
-        var targetPos = (Vector3)((GameObject*)target.BattleChara)->Position;
-        var goal = CombatantMath.StandPoint(self, targetPos, stand + HitboxOf((GameObject*)companion.BattleChara) + target.HitboxRadius);
+        var self = world.PositionOf(companion);
+        var targetPos = world.PositionOf(target);
+        var goal = CombatantMath.StandPoint(self, targetPos, stand + HitboxOf(companion) + world.HitboxRadiusOf(target));
         MoveToward(companion, goal, deltaTime);
         return true;
     }
@@ -116,9 +114,8 @@ public unsafe partial class CombatCompanionManager
         if (crowd == null || companion.BattleChara == null || !companion.State.IsAlive)
             return false;
 
-        var obj = (GameObject*)companion.BattleChara;
         var speed = CombatantMath.MoveSpeed(companion.Behavior.MoveSpeed, MovePolicy.Ally);
-        if (!crowd.Drive(companion.Address, (Vector3)obj->Position, HitboxOf(obj), speed, goal))
+        if (!crowd.Drive(companion.Address, world.PositionOf(companion), HitboxOf(companion), speed, goal))
             return false;
         if (!crowd.TryGetMotion(companion.Address, out var position, out var velocity))
             return true;
@@ -129,8 +126,8 @@ public unsafe partial class CombatCompanionManager
             support > position.Y && support - position.Y <= CorpseStepLimit)
             position.Y = support;
 
-        movementBlockHook.AddApproachNpc(companion.Address);
-        movementBlockHook.SetApproachPosition(obj, position.X, position.Y, position.Z);
+        world.AddApproachNpc(companion.Address);
+        world.SetApproachPosition(companion, position.X, position.Y, position.Z);
         var flat = new Vector3(velocity.X, 0f, velocity.Z);
         if (flat.LengthSquared() > 0.3f * 0.3f)
         {

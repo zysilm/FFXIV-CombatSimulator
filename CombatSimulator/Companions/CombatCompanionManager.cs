@@ -28,11 +28,13 @@ public unsafe partial class CombatCompanionManager : IDisposable
 {
     private readonly IObjectTable objectTable;
     private readonly IClientState clientState;
-    private readonly Configuration config;
-    private readonly CombatEngine combatEngine;
-    private readonly AnimationController animationController;
-    private readonly MovementBlockHook movementBlockHook;
-    private readonly ITargetManager targetManager;
+    private readonly ICombatAiSettings config;
+    private readonly ICombatLoopEngine combatEngine;
+    // The game objects, the movement block hook, the visual states and the animations (stage B4a:
+    // GameCombatWorld in the plugin, a flat fake world in Tests/CombatReplay).
+    private readonly ICombatWorld world;
+    // Where the companions' attacks go: the engine's companion action (GameAttackSink in the plugin).
+    private readonly IAttackSink attackSink;
     private readonly IPluginLog log;
 
     private readonly List<CombatCompanion> companions = new();
@@ -91,14 +93,14 @@ public unsafe partial class CombatCompanionManager : IDisposable
     /// <summary>Where the living party stands: the player and every living companion.</summary>
     public void CollectPartyPositions(List<Vector3> into)
     {
-        var player = objectTable.LocalPlayer;
+        var player = world.LocalPlayer;
         if (player != null && combatEngine.State.PlayerState.IsAlive)
             into.Add(player.Position);
         if (!config.EnableCombatCompanions)
             return;
         foreach (var companion in companions)
             if (companion.IsSpawned && companion.State.IsAlive && companion.BattleChara != null)
-                into.Add((Vector3)((GameObject*)companion.BattleChara)->Position);
+                into.Add(world.PositionOf(companion));
     }
     public Func<bool>? SuspendCombat { get; set; }
     public int PendingCount => pendingSpawns.Count + spawnQueue.Count;
@@ -118,14 +120,14 @@ public unsafe partial class CombatCompanionManager : IDisposable
     /// </summary>
     public Random RandomSource { private get; set; } = Random.Shared;
 
+    /// <summary>The manager over its seams (the plugin's constructor is in CombatCompanionManager.Game.cs).</summary>
     public CombatCompanionManager(
         IObjectTable objectTable,
         IClientState clientState,
-        Configuration config,
-        CombatEngine combatEngine,
-        AnimationController animationController,
-        MovementBlockHook movementBlockHook,
-        ITargetManager targetManager,
+        ICombatAiSettings config,
+        ICombatLoopEngine combatEngine,
+        ICombatWorld world,
+        IAttackSink attackSink,
         IPluginLog log)
     {
         this.objectTable = objectTable;
@@ -133,9 +135,8 @@ public unsafe partial class CombatCompanionManager : IDisposable
         this.config = config;
         this.combatEngine = combatEngine;
         targeting = new TargetingService(() => this.combatEngine.State.SimulationTime);
-        this.animationController = animationController;
-        this.movementBlockHook = movementBlockHook;
-        this.targetManager = targetManager;
+        this.world = world;
+        this.attackSink = attackSink;
         this.log = log;
     }
 
@@ -163,7 +164,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         }
 
         var entityId = nextEntityId++;
-        obj->EntityId = entityId;
+        world.SetEntityId(npc, entityId);
         allocatedIndices.Add(npc.ObjectIndex);
 
         // A Normal ally at the player's level is about as tough as the player; its strength scales its
@@ -480,11 +481,9 @@ public unsafe partial class CombatCompanionManager : IDisposable
 
             try
             {
-                animationController.ResetDeathAnimation(companion.BattleChara);
+                world.ResetDeathAnimation(companion);
                 RestoreCompanionEquipment(companion);
-                var character = (Character*)companion.BattleChara;
-                character->Mode = CharacterModes.Normal;
-                character->ModeParam = 0;
+                world.SetNormalMode(companion);
             }
             catch (Exception ex)
             {
@@ -858,7 +857,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
                 ApplyCompanionDefeatAppearance(companion);
                 // (An executed captive drops from its kneel straight into the ragdoll.)
                 if (!companion.State.Executed)
-                    animationController.PlayDeathAnimation(ToSimulatedNpcView(companion));
+                    world.PlayDeathAnimation(ToSimulatedNpcView(companion));
                 if (config.PartyCompanionDeathRagdoll && companion.Address != nint.Zero)
                     OnCompanionDeathRagdoll?.Invoke(companion.Address);
                 companion.DeathAnimationPlayed = true;
@@ -910,7 +909,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
         }
         if (!walking)
         {
-            var targetPos = (Vector3)((GameObject*)target.BattleChara)->Position;
+            var targetPos = world.PositionOf(target);
             StopMove(companion);
             EnterCompanionState(companion, CompanionAiState.CombatReady);
             RotateToward(companion, targetPos, deltaTime);
@@ -935,7 +934,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
             if (companion.State.CurrentMp < mpCost)
                 continue;
 
-            var result = combatEngine.ProcessCompanionAction(companion, target,
+            var result = attackSink.ProcessCompanionAction(companion, target,
                 skill.ActionId, skill.Potency, skill.AttackStyle, skill.Radius);
             if (result.Success)
             {
@@ -955,7 +954,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
             if (companion.Behavior.AutoAttackStyle == NpcAttackStyle.Magic && dist > CombatantMath.MagicAutoReach(ReachPolicy.Ally, default))
                 return;
             companion.AutoAttackTimer = companion.Behavior.AutoAttackDelay / ActionPace();
-            var result = combatEngine.ProcessCompanionAction(
+            var result = attackSink.ProcessCompanionAction(
                 companion, target,
                 companion.Behavior.AutoAttackActionId,
                 companion.Behavior.AutoAttackPotency,
@@ -1027,12 +1026,11 @@ public unsafe partial class CombatCompanionManager : IDisposable
 
     private bool IsWithinCommandRange(CombatCompanion companion)
     {
-        var player = objectTable.LocalPlayer;
+        var player = world.LocalPlayer;
         if (player == null || companion.BattleChara == null)
             return false;
 
-        var obj = (GameObject*)companion.BattleChara;
-        var current = (Vector3)obj->Position;
+        var current = world.PositionOf(companion);
         var delta = current - CommandAnchor(player.Position);
         delta.Y = 0;
         if (!Rules.LordBodyIsGuarded)
@@ -1077,14 +1075,13 @@ public unsafe partial class CombatCompanionManager : IDisposable
         int companionIndex,
         int companionCount)
     {
-        var player = objectTable.LocalPlayer;
+        var player = world.LocalPlayer;
         if (player == null || companion.BattleChara == null)
             return;
 
         // Its place in the formation behind the anchor (the player, or where the fight began); guarding
         // the lord, its place in the ring round the body.
-        var obj = (GameObject*)companion.BattleChara;
-        var current = (Vector3)obj->Position;
+        var current = world.PositionOf(companion);
         var anchor = CommandAnchor(player.Position);
         var anchorRotation = combatAnchorActive && !Rules.LordBodyIsGuarded ? combatAnchorRotation : player.Rotation;
         var goal = Rules.LordBodyIsGuarded
@@ -1134,13 +1131,13 @@ public unsafe partial class CombatCompanionManager : IDisposable
         CombatCompanion companion,
         SimulatedNpc enemy)
     {
-        var player = objectTable.LocalPlayer;
+        var player = world.LocalPlayer;
         if (!Rules.LordBodyIsGuarded || player == null || companion.BattleChara == null || enemy.BattleChara == null)
             return (true, 0f);
 
-        var enemyPos = (Vector3)((GameObject*)enemy.BattleChara)->Position;
+        var enemyPos = world.PositionOf(enemy);
         var anchor = CommandAnchor(player.Position);
-        var standOff = CrowdReachNow(companion) + HitboxOf((GameObject*)companion.BattleChara) + enemy.HitboxRadius;
+        var standOff = CrowdReachNow(companion) + HitboxOf(companion) + world.HitboxRadiusOf(enemy);
         var overflow = FlatDistance(enemyPos, anchor) - standOff - CommandLimit(companion.SimulatedEntityId);
         return (overflow <= ReachabilityRecoveryDistance, MathF.Max(0f, overflow));
     }
@@ -1157,7 +1154,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
 
     private uint ResolveSelectedEnemyTargetId(IReadOnlyList<SimulatedNpc> enemies)
     {
-        var selected = targetManager.Target;
+        var selected = world.PlayerTarget;
         if (selected == null)
             return 0;
 
@@ -1166,8 +1163,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
             if (!enemy.IsSpawned || !enemy.State.IsAlive || enemy.BattleChara == null)
                 continue;
 
-            var obj = (GameObject*)enemy.BattleChara;
-            if (selected.EntityId == enemy.SimulatedEntityId || selected.EntityId == obj->EntityId || selected.Address == (nint)obj)
+            if (selected.EntityId == enemy.SimulatedEntityId || selected.EntityId == world.EntityIdOf(enemy) || selected.Address == enemy.Address)
                 return enemy.SimulatedEntityId;
         }
 
@@ -1196,7 +1192,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
 
     private void TickCombatAnchor(IReadOnlyList<SimulatedNpc> enemies)
     {
-        var player = objectTable.LocalPlayer;
+        var player = world.LocalPlayer;
         var hasCombat = player != null &&
                         companions.Any(c => c.IsSpawned && c.State.IsAlive) &&
                         enemies.Any(e => e.IsSpawned && e.State.IsAlive);
@@ -1269,7 +1265,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
     private void StopMoveAnim(CombatCompanion companion)
     {
         if (companion.BattleChara != null)
-            ActorVisualStateController.ClearMovement((Character*)companion.BattleChara, companion.VisualState);
+            world.ClearMovement(companion.Address, companion.VisualState);
     }
 
     private void CaptureCompanionEquipment(CombatCompanion companion)
@@ -1327,32 +1323,30 @@ public unsafe partial class CombatCompanionManager : IDisposable
         if (companion.BattleChara == null)
             return;
 
-        var character = (Character*)companion.BattleChara;
         switch (state)
         {
             case CompanionAiState.ReturningToCommandRange:
             case CompanionAiState.MovingToTarget:
-                ActorVisualStateController.ApplyMoving(character, companion.VisualState, deltaTime);
+                world.ApplyMoving(companion, deltaTime);
                 break;
             case CompanionAiState.ActionLocked:
-                ActorVisualStateController.ApplyActionLocked(character, companion.VisualState);
+                world.ApplyActionLocked(companion);
                 break;
             case CompanionAiState.Dead:
-                ActorVisualStateController.ApplyDead(character, companion.VisualState);
+                world.ApplyDead(companion);
                 break;
             default:
-                ActorVisualStateController.ApplyCombatIdle(character, companion.VisualState);
+                world.ApplyCombatIdle(companion);
                 break;
         }
     }
 
     private void RotateToward(CombatCompanion companion, Vector3 targetPos, float deltaTime)
     {
-        var obj = (GameObject*)companion.BattleChara;
-        if (!CombatantMath.TurnToward((Vector3)obj->Position, obj->Rotation, targetPos,
+        if (!CombatantMath.TurnToward(world.PositionOf(companion), world.RotationOf(companion), targetPos,
                 CombatantMath.TurnRate(MovePolicy.Ally, false, 0f), deltaTime, out var nextRot))
             return;
-        movementBlockHook.SetApproachRotation(obj, nextRot);
+        world.SetApproachRotation(companion, nextRot);
     }
 
     private void TickRecentDps(CombatCompanion companion, float deltaTime)
@@ -1385,7 +1379,7 @@ public unsafe partial class CombatCompanionManager : IDisposable
     {
         try
         {
-            movementBlockHook.RemoveApproachNpc(companion.Address);
+            world.RemoveApproachNpc(companion.Address);
             // Only touch game memory while the session is alive — on game close Dispose runs after
             // the game freed these objects, so DisableDraw/DeleteObjectByIndex would crash.
             var clientObjMgr = ClientObjectManager.Instance();

@@ -53,7 +53,7 @@ public enum CombatLogType
     Info,
 }
 
-public partial class CombatEngine : IDisposable
+public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
 {
     private readonly ActionDataProvider actionDataProvider;
     private readonly DamageCalculator damageCalculator;

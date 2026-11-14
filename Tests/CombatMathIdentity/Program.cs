@@ -283,6 +283,7 @@ sealed class FakeSettings(OrigConfig c) : ICombatAiSettings
     public int EnemyTacticsMeleeAttackers => 8;
     public bool NpcCollisionActive => true;
     public float DefaultNpcHeightOffset => 0f;
+    public uint WarCaptiveEmoteId => 19;
 }
 
 /// <summary>

@@ -108,7 +108,7 @@ public unsafe partial class CombatCompanionManager
 
         CountAggro();
         targeting.BeginDraw();
-        var selfPos = enemy.BattleChara != null ? (Vector3)((GameObject*)enemy.BattleChara)->Position : enemy.SpawnPosition;
+        var selfPos = enemy.BattleChara != null ? world.PositionOf(enemy) : enemy.SpawnPosition;
         var selfRanged = IsRangedStyle(enemy.Behavior.AutoAttackStyle);
         var reach = EnemyReach(enemy);
         foreach (var (id, candidate, _) in candidates)
@@ -147,14 +147,14 @@ public unsafe partial class CombatCompanionManager
 
         CountAggro();
         targeting.BeginDraw();
-        var self = (Vector3)((GameObject*)companion.BattleChara)->Position;
+        var self = world.PositionOf(companion);
         var selfRanged = IsRangedStyle(companion.Behavior.AutoAttackStyle);
         var reach = CrowdReachNow(companion);
         var playerId = combatEngine.State.PlayerState.EntityId;
         var hasBody = TryGetLordBody(out var body, out _) && Rules.LordBodyIsGuarded;
         foreach (var enemy in enemies)
         {
-            var enemyPos = (Vector3)((GameObject*)enemy.BattleChara)->Position;
+            var enemyPos = world.PositionOf(enemy);
             var enemyTarget = targeting.EnemyTargetOf(enemy.SimulatedEntityId);
             var w = AggroWeight(companion.SimulatedEntityId, self, reach, selfRanged, currentEnemy != null ? current : 0,
                 enemy.SimulatedEntityId, enemyPos, HpShare(enemy.State), enemyTarget);

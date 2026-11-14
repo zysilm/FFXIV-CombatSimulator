@@ -115,7 +115,7 @@ public unsafe partial class CombatCompanionManager
 
         rescueQueue.Clear();
         var player = combatEngine.State.PlayerState;
-        var lord = objectTable.LocalPlayer;
+        var lord = world.LocalPlayer;
         if (NeedsRescue(player) && lord != null)
             rescueQueue.Add((player, BodyPositionOf?.Invoke(lord.Address) ?? lord.Position, 0, 0f));
         var anchor = lord?.Position ?? Vector3.Zero;
@@ -154,7 +154,7 @@ public unsafe partial class CombatCompanionManager
 
     /// <summary>Where a fallen companion lies: its ragdoll, else its game position.</summary>
     private Vector3 PatientPosition(CombatCompanion companion)
-        => BodyPositionOf?.Invoke(companion.Address) ?? (Vector3)((GameObject*)companion.BattleChara)->Position;
+        => BodyPositionOf?.Invoke(companion.Address) ?? world.PositionOf(companion);
 
     /// <summary>More living enemies than friends within the danger radius of a point.</summary>
     private bool Outnumbered(Vector3 at, IReadOnlyList<Npcs.SimulatedNpc> enemies)
@@ -166,14 +166,14 @@ public unsafe partial class CombatCompanionManager
                 continue;
             if (enemy.IsSentry && enemy.AiState == Ai.NpcAiState.Idle)
                 continue;
-            if (FlatDistance((Vector3)((GameObject*)enemy.BattleChara)->Position, at) <= RescueDangerRadius)
+            if (FlatDistance(world.PositionOf(enemy), at) <= RescueDangerRadius)
                 foes++;
         }
         if (foes == 0)
             return false;
         var friends = 0;
         foreach (var companion in companions)
-            if (CanRescue(companion) && FlatDistance((Vector3)((GameObject*)companion.BattleChara)->Position, at) <= RescueDangerRadius)
+            if (CanRescue(companion) && FlatDistance(world.PositionOf(companion), at) <= RescueDangerRadius)
                 friends++;
         return foes > friends;
     }
@@ -188,7 +188,7 @@ public unsafe partial class CombatCompanionManager
         => companion.IsSpawned && companion.BattleChara != null && companion.State.IsAlive && !companion.State.IsCaptive;
 
     private Vector3? PlayerPosition()
-        => objectTable.LocalPlayer?.Position;
+        => world.LocalPlayer?.Position;
 
     private void TryAssignRescue(SimulatedEntityState patient, Vector3? where)
     {
@@ -212,7 +212,7 @@ public unsafe partial class CombatCompanionManager
                 continue;
             if (AttackersOn(companion.SimulatedEntityId) >= RescuerMaxAttackers)
                 continue;
-            var d = FlatDistance((Vector3)((GameObject*)companion.BattleChara)->Position, at);
+            var d = FlatDistance(world.PositionOf(companion), at);
             if (d < best)
             {
                 best = d;
@@ -248,7 +248,7 @@ public unsafe partial class CombatCompanionManager
 
         var patient = combatEngine.State.GetEntity(rescue.PatientId);
         Vector3? where = patient == null ? null
-            : patient.IsPlayer ? (objectTable.LocalPlayer is { } lord ? BodyPositionOf?.Invoke(lord.Address) ?? lord.Position : (Vector3?)null)
+            : patient.IsPlayer ? (world.LocalPlayer is { } lord ? BodyPositionOf?.Invoke(lord.Address) ?? lord.Position : (Vector3?)null)
             : GetCompanion(rescue.PatientId) is { BattleChara: not null } friend
                 ? PatientPosition(friend)
                 : null;
@@ -258,7 +258,7 @@ public unsafe partial class CombatCompanionManager
             return false;
         }
 
-        var self = (Vector3)((GameObject*)companion.BattleChara)->Position;
+        var self = world.PositionOf(companion);
         if (FlatDistance(self, at) > RaiseReach)
         {
             // Pushed off mid-raise: it waits and runs down slowly, it does not start over.
@@ -285,8 +285,8 @@ public unsafe partial class CombatCompanionManager
         {
             rescue.Channelling = true;
             companion.State.IncomingDamageScale = RaiserDamageScale;
-            rescue.Loop = animationController.PlayEmoteOn((Character*)companion.BattleChara, RaiseEmoteId)
-                ? animationController.EmoteLoopTimeline(RaiseEmoteId)
+            rescue.Loop = world.PlayEmoteOn(companion, RaiseEmoteId)
+                ? world.EmoteLoopTimeline(RaiseEmoteId)
                 : (ushort)0;
             combatEngine.AddLogEntry(patient.IsCaptive
                     ? $"{companion.Name} is freeing {patient.Name}..."
@@ -294,7 +294,7 @@ public unsafe partial class CombatCompanionManager
                 CombatLogType.Info);
         }
 
-        AnimationController.HoldEmoteLoop((Character*)companion.BattleChara, rescue.Loop);
+        world.HoldEmoteLoop(companion, rescue.Loop);
         rescue.Progress += deltaTime;
         if (rescue.Progress < RaiseSeconds)
             return true;
@@ -318,7 +318,7 @@ public unsafe partial class CombatCompanionManager
             rescue.Progress = 0f;
         companion.State.IncomingDamageScale = 1f;
         if (companion.BattleChara != null && companion.State.IsAlive)
-            animationController.EmotePlayer.ResetEmote((Character*)companion.BattleChara);
+            world.ResetEmote(companion);
     }
 
     private void EndRescue(uint patientId)
@@ -344,7 +344,7 @@ public unsafe partial class CombatCompanionManager
         {
             freed.CaptiveEmotePlayed = false;
             if (freed.BattleChara != null)
-                animationController.EmotePlayer.ResetEmote((Character*)freed.BattleChara);
+                world.ResetEmote(freed);
         }
         combatEngine.AddLogEntry($"{by.Name} freed {patient.Name}.", CombatLogType.Info);
     }
@@ -379,12 +379,10 @@ public unsafe partial class CombatCompanionManager
         OnCompanionRevived?.Invoke(companion.Address);
         try
         {
-            animationController.ResetDeathAnimation(companion.BattleChara);
+            world.ResetDeathAnimation(companion);
             RestoreCompanionEquipment(companion);
             companion.EquipmentVariantApplied = false;
-            var character = (Character*)companion.BattleChara;
-            character->Mode = CharacterModes.Normal;
-            character->ModeParam = 0;
+            world.SetNormalMode(companion);
         }
         catch (Exception ex)
         {
@@ -406,7 +404,7 @@ public unsafe partial class CombatCompanionManager
             {
                 companion.CaptiveEmotePlayed = false;
                 if (companion.BattleChara != null)
-                    animationController.EmotePlayer.ResetEmote((Character*)companion.BattleChara);
+                    world.ResetEmote(companion);
             }
             return false;
         }
@@ -417,13 +415,13 @@ public unsafe partial class CombatCompanionManager
         companion.AiState = CompanionAiState.Captive;
         if (!companion.CaptiveEmotePlayed && companion.BattleChara != null)
         {
-            companion.CaptiveLoop = animationController.PlayEmoteOn((Character*)companion.BattleChara, config.WarCaptiveEmoteId)
-                ? animationController.EmoteLoopTimeline(config.WarCaptiveEmoteId)
+            companion.CaptiveLoop = world.PlayEmoteOn(companion, config.WarCaptiveEmoteId)
+                ? world.EmoteLoopTimeline(config.WarCaptiveEmoteId)
                 : (ushort)0;
             companion.CaptiveEmotePlayed = true;
         }
         if (companion.BattleChara != null)
-            AnimationController.HoldEmoteLoop((Character*)companion.BattleChara, companion.CaptiveLoop);
+            world.HoldEmoteLoop(companion, companion.CaptiveLoop);
         return true;
     }
 
@@ -436,7 +434,7 @@ public unsafe partial class CombatCompanionManager
     {
         StopMove(companion);
         if (companion.BattleChara != null)
-            ActorVisualStateController.ApplyCombatIdle((Character*)companion.BattleChara, companion.VisualState);
+            world.ApplyCombatIdle(companion);
     }
 
     private void ClearRescues()

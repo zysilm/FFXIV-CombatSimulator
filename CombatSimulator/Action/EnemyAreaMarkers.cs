@@ -29,7 +29,7 @@ public sealed class EnemyAreaMarker
 /// this one list. Every marker has a hard lifetime (duration plus a grace) so a missed removal
 /// can never leave a danger zone on the floor.
 /// </summary>
-public sealed class EnemyAreaMarkers
+public sealed class EnemyAreaMarkers : Combat.ICastAreaMarkers
 {
     private const float ExpiryGrace = 1.0f;
 
