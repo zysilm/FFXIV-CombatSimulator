@@ -147,6 +147,9 @@ public partial class Configuration : IPluginConfiguration
     public bool ShowResultBanner { get; set; } = true;
     // Starting or resetting a battle switches the camera to the Directed camera.
     public bool DirectedCameraOnBattle { get; set; } = false;
+    // Skill effects of everyone but the player: 0 all, 1 limited (those near the camera, those on the
+    // player, and only a few a second), 2 none (only those on the player). The player's own always show.
+    public int OthersSkillEffects { get; set; } = 1;
 
     // Simulation
     public float DamageMultiplier { get; set; } = 1.0f;

@@ -939,10 +939,47 @@ public unsafe class AnimationController : IDisposable
         return Vector3.DistanceSquared(view.Position, request.SourcePosition) > limit * limit;
     }
 
+    // "Limited" skill effects of others: those whose caster is within this of the camera, at most this
+    // many actions' effects a second (the player's own and those that strike the player always show).
+    private const float OthersVfxNearMeters = 20f;
+    private const int OthersVfxPerSecond = 4;
+    private readonly Queue<double> othersVfxTimes = new();
+    private readonly System.Diagnostics.Stopwatch othersVfxClock = System.Diagnostics.Stopwatch.StartNew();
+
+    /// <summary>
+    /// Whether an action's effects are shown, by the "Others' skill effects" choice. The player's own
+    /// always are, and so are those that strike the player; the rest by the choice: all, a few of the
+    /// nearest, or none. In a melee of forty a screen of overlapping flashes hides the fight.
+    /// </summary>
+    private bool OthersVfxAllowed(ActionEffectRequest request)
+    {
+        if (request.IsSourcePlayer || config.OthersSkillEffects <= 0)
+            return true;
+        var me = Core.Services.ObjectTable.LocalPlayer;
+        if (me != null)
+            foreach (var target in request.Targets)
+                if ((uint)target.TargetId == me.EntityId)
+                    return true;
+        if (config.OthersSkillEffects >= 2)
+            return false;
+
+        if (Camera.GameCameraView.TryRead(out var view) &&
+            Vector3.DistanceSquared(view.Position, request.SourcePosition) > OthersVfxNearMeters * OthersVfxNearMeters)
+            return false;
+        var now = othersVfxClock.Elapsed.TotalSeconds;
+        while (othersVfxTimes.Count > 0 && now - othersVfxTimes.Peek() > 1.0)
+            othersVfxTimes.Dequeue();
+        if (othersVfxTimes.Count >= OthersVfxPerSecond)
+            return false;
+        othersVfxTimes.Enqueue(now);
+        return true;
+    }
+
     private void SpawnActionVfx(ActionEffectRequest request)
     {
         if (actorVfxCreate == null) return;
         if (IsBeyondVfxCull(request)) return;
+        if (!OthersVfxAllowed(request)) return;
 
         try
         {

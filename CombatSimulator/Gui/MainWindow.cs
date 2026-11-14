@@ -2725,6 +2725,8 @@ public partial class MainWindow : IDisposable
         (120f, 0.18f, 0.3f),
     };
 
+    private static readonly string[] OthersSkillEffectLabels = { "All", "Limited", "None" };
+
     private void DrawHitVfxSection()
     {
         if (ImGui.CollapsingHeader("VFX"))
@@ -2736,6 +2738,20 @@ public partial class MainWindow : IDisposable
                 config.Save();
             }
             HelpMarker("Spawn action effects: cast circles and caster effects, and impact effects on the target.");
+
+            if (actionVfx)
+            {
+                var others = Math.Clamp(config.OthersSkillEffects, 0, OthersSkillEffectLabels.Length - 1);
+                ImGui.SetNextItemWidth(220);
+                if (ImGui.Combo("Others' skill effects##vfx", ref others, OthersSkillEffectLabels, OthersSkillEffectLabels.Length))
+                {
+                    config.OthersSkillEffects = others;
+                    config.Save();
+                }
+                HelpMarker("Skill effects of allies and enemies. Your own, and anything that hits you, always show.\n" +
+                           "Limited: only those near the camera, and a few a second, so a big battle does not flash white.\n" +
+                           "None: only your own and those that hit you.");
+            }
 
             if (actionVfx && hookSafetyChecker.HasConflicts)
             {
