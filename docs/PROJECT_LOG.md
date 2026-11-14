@@ -263,8 +263,9 @@
 | 研究者（只读） | 插件侧架构 | 战斗单位统一、规则模块、`Plugin.cs` 拆分、配置分组、行为一致的验证办法、分阶段计划 | 已报告（2026-11-14） |
 | 实现者 | A1 搬纯净文件 | `RagdollLib/`、插件 csproj、sln、16 个测试 csproj | 已合入（`fa89b5a`） |
 | 实现者（worktree） | B0 基线日志与可注入随机源 | `Ai/NpcAiController*.cs`、`Companions/CombatCompanionManager.cs`、`.Aggro.cs` | 已合入（`3e72047`） |
-| 实现者 | A2a 库改名 AdvancedRagdoll、宿主接口与适配器、录制改装饰器、回放器、对 55 份标准答案回放 | 主检出：`RagdollLib/`→`AdvancedRagdoll/`、`Animation/RagdollController*.cs`、`Plugin.cs`、`Tests/`、文档 | 进行中（2026-11-14） |
-| 实现者（worktree `refactor/b1-shared-math`） | B8a 设置接口 + B1 共享纯函数、`AggroModel`、TargetingSim 改链生产代码、`Tests/CombatReplay` | `Configuration.cs`、`Ai/`、`Companions/`、新 `Combat/`、`Tests/` | 进行中（2026-11-14） |
+| 实现者 | A2a 库改名 AdvancedRagdoll、宿主接口与适配器、录制改装饰器、回放器、对 55 份标准答案回放 | 主检出 | 已合入（`0b8d23f`），独立审查：可合并 |
+| 实现者（worktree `refactor/b1-shared-math`） | B8a、B1、B2、B2b、B3 | `Configuration*.cs`、`Ai/`、`Companions/`、新 `Combat/`、`Battle/`、`Plugin.War.cs`、`Tests/` | 已合入（`25b380f`）；B2/B2b 独立审查：可合并 |
+| 实现者（同一 worktree） | B4a 两条旧出手循环接窄接口、录逐帧战斗金样 | `Ai/`、`Companions/`、`Tests/CombatReplay` | 进行中（2026-11-14） |
 
 ### 子代理报告要点
 
@@ -289,6 +290,10 @@
 - 2026-11-14 · A1 实现者 · 完成。35 个文件 4,954 行原样搬进 `RagdollLib/`（git 显示 35 个 100% 相似的改名）；库用 net8.0 不改源码即可编译；15 份离线测试输出搬移前后相同（4 份只差耗时数字）；公开配置和含子模块的配置都编译通过；库 DLL 在 `bin/Release` 和发布包里都有。未在游戏内加载验证。
 - 2026-11-14 · B0 实现者 · 完成。新日志行 `Enemies (…)`（9 类固定顺序）和 `Targets:`；随机源 `NpcAiController.RandomSource`（13 处）、`CombatCompanionManager.RandomSource`（3 处）、`AggroSeedSource`，默认行为不变。遗留：`StaggerTimers` 的两个外部调用（`CombatEngine`、`MapEnemyController`）和“感知到的玩家随机分边”仍用共享随机源；`casting` 一项在动作战斗下恒为 0%（读条归预警系统）。
 
+- 2026-11-14 · A2a 实现者 · 完成。55 份标准答案全部逐位回放（135,173 条输出记录、49,771 个固定步）；协调者在合并后的代码上复跑仍是 55/55。回放器加载公开版编译产物，用录制回答全部宿主查询。遗留：录制格式缺 `followWasActive`（回放从首个 FrameBegin 取，不影响行为）；读模型的代码仍直接读游戏（A2b）；两处时钟用法要在 A2b 统一。
+- 2026-11-14 · B1 实现者 · 43 个函数在约 1035 万组输入上与原表达式逐位相同；`Tests/TargetingSim` 改链生产 `AggroModel` 后，400 种子：野战 98% / 84 s，守尸胜率 47%（副本是 42%），抢尸者盯祈祷者 0.88（副本 0.72）；差距来自副本没实现的四件事（跪地者 ×3 等），关掉后回到副本数字。
+- 2026-11-14 · B3 实现者 · 规则开关的 9 处判断改为 `BattleRules` 具名查询（现读设置）；夺尸状态机搬到 `Battle/CorpseSeizure.cs`；`Tests/CorpseSeizure` 85 项，期望值从旧代码推出，9 处变异全部能被抓到。
+
 ### 待用户裁决
 
 - 库用什么许可证（插件现在是 MPL-2.0）。
@@ -296,6 +301,7 @@
 
 ### 日志（新的在上）
 
+- 2026-11-14 · A2a 与 B8a–B3 合入 `refactor/architecture`（`25b380f`）；完整版编译通过，`bin/Release` 是完整版；合并后战斗回放、夺尸测试、函数对照、55 份布娃娃回放全部一致。
 - 2026-11-14 · 协调者建议的仓库时机：用户现在建空的公开仓库占名（如 `zysilm/AdvancedRagdoll`）；A2–A4 期间代码留在本仓库 `RagdollLib/`（库和插件同提交改动、按标准答案逐位比对）；A4 完成后用 git 拆分连同历史搬到新仓库并发布 NuGet，插件改为引用包，开发时保留引用本地源码的开关。
 - 2026-11-14 · 用户用公开版（`PUBLIC_BUILD`，`DEV_EXPERIMENTAL=false`）录了金标准：两个会话 `20261114-124754`（45 个文件）和 `20261114-125323`（10 个文件），共 55 个文件、3.9 GB，在 `%APPDATA%/XIVLauncher/pluginConfigs/CombatSimulator/ragdoll-rec/`，**不进仓库，要保留到 A4 完成**。其中玩家 7 份、NPC 48 份；第二份起含水中死亡。55 份全部能读、格式版本 2、没有录制器故障；45 份正常停用收尾，第二会话 10 份由“停止录制”收尾。两份 NPC 文件（`124754-013`、`-014`）在物理开始前就被停用，0 步。单文件 0–138 MB，一个 NPC 尸体约 2–5 MB/秒。录制期间帧数 33–62，个别 5 秒窗口掉到 14。
 - 2026-11-14 · 同场录了战斗基线日志：春秋 `dddd` 三场、战国 `ddddWS` 两场、Imperial Decisive Battle、Defense of the Imperial Palace；日志里有 `Enemies (…)` 98 行、`Allies (…)` 77 行、`Targets:` 59 行、`War:` 7 行、`Rescue:` 11 行。之后插件已换回完整版。
