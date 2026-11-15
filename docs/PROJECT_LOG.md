@@ -28,7 +28,7 @@
 - 重构期间行为必须完全一致，定义为同一份录制输入下前后输出逐位相同（2026-11-14，用户裁决）。守护：布娃娃回放 `Tests/RagdollReplay`（97 份：55 份公开版金标准 + 42 份 3 版录制，在 `%APPDATA%/XIVLauncher/pluginConfigs/CombatSimulator/ragdoll-rec/`，**不进仓库、不要删**）、`Tests/CombatReplay` 逐帧战斗金样、`Tests/PluginOrder` 构造/每帧/释放顺序。
 - 设置可改为每帧开头读一次；网格体积不开确定性模式（2026-11-14，用户裁决）。
 - 插件侧：敌我一种战斗单位与一个控制器基类（`CombatantController<TSelf>`）、一条伤害结算（`HitSettlement`）、规则部件（`BattleRules`/`IBattleRule`）、`Plugin.cs` 拆成 `Composition/` 模块（2026-11-14，`ff70c68`、`a30642b`、`c90980d`）→ [PLUGIN_ARCHITECTURE.md](PLUGIN_ARCHITECTURE.md)。
-- 部件分离（肢解）的物理暂不进公开库（协调者暂定，待用户确认）。
+- 部件分离（肢解）的物理先不进公开库（2026-11-15，用户裁决）。
 
 ### 战斗数值
 
@@ -277,9 +277,9 @@
 
 ### 待用户裁决
 
-- 部件分离（肢解）的物理是否进公开库（协调者暂定不进）。
 - 哪些功能的物理部分进公开的库。
 
 ### 日志（新的在上）
 
+- 2026-11-15 · 用户裁决：部件分离（肢解）的物理先不进公开库。
 - 2026-11-15 · 重构 II 开工（用户指令“两个 repo 都开工”）；R2-L1、R2-P1 并行派出。
