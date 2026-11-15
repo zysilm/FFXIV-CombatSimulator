@@ -89,6 +89,7 @@ internal sealed class PresentationModule
         mainWindow.HideResultBanner = warBanner.Hide;
         mainWindow.ArmorDetachment = armorDetachmentController;
         mainWindow.CutsceneShots = m.Camera.CutsceneShots;
+        enemyControlController.GrabStarted += mainWindow.HideEnemyControlAnchorMarkers;
     }
 
     /// <summary>The enemies' voices. (What it listens to and when it keeps quiet are wired by the

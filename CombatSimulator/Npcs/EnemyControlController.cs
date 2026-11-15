@@ -467,6 +467,10 @@ public unsafe partial class EnemyControlController : IDisposable
     /// <summary>Whether the controlled enemy's grab holds the body now.</summary>
     public bool IsHoldingGrab => grabAttackActive;
 
+    /// <summary>Raised once each time a grab takes hold (every pair armed). The Enemy Control window hides its
+    /// grab-point markers on it (docs/ENEMY_CONTROL_GRAB.md §3.2).</summary>
+    public event Action? GrabStarted;
+
     /// <summary>Attack input starts/releases the configured grab pairs.</summary>
     public void OnAttackInput()
     {
@@ -682,6 +686,7 @@ public unsafe partial class EnemyControlController : IDisposable
 
         grabAttackActive = true;
         ApplyGrabAttackTimeline();
+        GrabStarted?.Invoke();
     }
 
     private void ReleaseGrabAttack()

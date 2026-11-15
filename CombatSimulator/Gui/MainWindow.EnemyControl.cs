@@ -467,6 +467,14 @@ public partial class MainWindow
     private bool enemyControlAnchorPickEnemy;
     private bool enemyControlAnchorPickFocus;
 
+    // The grab-point markers: shown after a successful Pick, hidden when a grab takes hold
+    // (EnemyControlController.GrabStarted), and not brought back by letting go; only the next Pick shows them again.
+    // Hidden on load. The points themselves stay saved and in use either way.
+    private bool enemyControlAnchorMarkersVisible;
+
+    /// <summary>Hide the grab-point markers (wired to EnemyControlController.GrabStarted).</summary>
+    public void HideEnemyControlAnchorMarkers() => enemyControlAnchorMarkersVisible = false;
+
     /// <summary>One end of a pair: its bone picker and a Pick button, or, once a point is picked, the point's bone
     /// and a Clear button.</summary>
     private void DrawEnemyControlGrabSide(EnemyControlController ctrl, EnemyControlGrabPairConfig pair, int index, bool enemySide)
@@ -527,7 +535,7 @@ public partial class MainWindow
     /// <summary>
     /// While a Pick is armed: a transparent window over the whole screen takes the mouse (so the click never reaches
     /// the game's targeting or camera); a left click on the model sets the point, Esc cancels. Otherwise: a marker on
-    /// each picked point while the Enemy Control window is open.
+    /// each picked point while the Enemy Control window is open, from a successful Pick until the next grab starts.
     /// </summary>
     private void DrawEnemyControlAnchorOverlay(EnemyControlController ctrl)
     {
@@ -538,7 +546,8 @@ public partial class MainWindow
 
         if (enemyControlAnchorPickPair < 0)
         {
-            DrawEnemyControlAnchorMarkers(ctrl, pairs, enemy, player);
+            if (enemyControlAnchorMarkersVisible)
+                DrawEnemyControlAnchorMarkers(ctrl, pairs, enemy, player);
             return;
         }
 
@@ -582,6 +591,7 @@ public partial class MainWindow
                     else { pair.PlayerAnchor = anchor; pair.PlayerBone = anchor.Bone; }
                     config.Save();
                     enemyControlAnchorPickPair = -1;
+                    enemyControlAnchorMarkersVisible = true;
                     chatGui.Print($"[CombatSim] Grab point set on {anchor.Bone}.");
                 }
                 else

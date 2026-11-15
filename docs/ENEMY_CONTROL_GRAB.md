@@ -43,6 +43,7 @@
 - 左键点在模型上：取该角色**这一帧**的渲染几何快照（LOD0、装备槽 0–4 和 11 / 怪物全部，与网格体积布娃娃同一份采集），从镜头过鼠标的射线（`Camera/ScreenRay.cs`：以游戏自己的 `WorldToScreen` 为准，近、远两点各自迭代到投影落在鼠标上，残差写进日志）求最近的三角形；拥有骨骼 = 三个顶点的蒙皮权重按重心坐标加权求和后最大的骨骼；法线 = 三角形法线，朝向镜头；换算成该骨骼的局部坐标存下。
 - 没点中就在聊天栏提示，保持拾取模式。
 - 设好后该端显示 “`<骨骼>` · anchor set” 和 Clear；Enemy Control 窗口开着时，每个点在模型上画一个小圆点和对的序号（敌人端橙色、玩家端青色）。
+- 标记的显示规则（用户裁决 2026-11-15）：一次成功的 Pick 后显示；抓取一开始（`EnemyControlController.GrabStarted`，在 `PresentationModule.CreateMainWindow` 接到 `MainWindow.HideEnemyControlAnchorMarkers`）全部隐藏；放开抓取不会恢复，只有再成功 Pick 一次才重新显示。插件载入时隐藏。只影响绘制，点本身照常保存、照常用于抓取。状态只在界面侧（`enemyControlAnchorMarkersVisible`），控制器不依赖界面。
 
 没有调参控件（界面极简）。
 
