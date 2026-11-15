@@ -51,6 +51,9 @@ foreach (var file in files)
             outcome = produced == null
                 ? "SYNTHETIC RUN FAILED: " + first
                 : ReplayDriver.Run(produced, keep, false, out _) + "\n    synthetic mesh products: " + ReplayDriver.MeshProducts(produced);
+            // The first run's recording is only an input to the second; without this every synthetic run left a
+            // folder behind (37 GB in %TEMP% by 2026-11-15, which filled the disk and truncated later recordings).
+            if (produced != null && !keep) Directory.Delete(Path.GetDirectoryName(produced)!, true);
         }
     }
     catch (ReplayUnsupportedException ex)
