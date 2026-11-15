@@ -25,9 +25,9 @@ public sealed class ReticleOverlay
     private readonly PlayerHitboxResolver hitbox;
     private readonly CombatEngine combatEngine;
     private readonly IGameGui gameGui;
-    private readonly Configuration config;
+    private readonly IActionOverlaySettings config;
 
-    public ReticleOverlay(PlayerHitboxResolver hitbox, CombatEngine combatEngine, IGameGui gameGui, Configuration config)
+    public ReticleOverlay(PlayerHitboxResolver hitbox, CombatEngine combatEngine, IGameGui gameGui, IActionOverlaySettings config)
     {
         this.hitbox = hitbox;
         this.combatEngine = combatEngine;

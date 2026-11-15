@@ -24,7 +24,7 @@ public sealed class ActionModeController
     private const float GuardCancelLockRatio = 0.70f;
     private const float PhysicalRangedBasicPotencyRatio = 0.75f;
 
-    private readonly Configuration config;
+    private readonly IActionInputSettings config;
     private readonly ActionComboSink comboSink;
     private readonly PlayerHitboxResolver hitbox;
     private readonly PlayerGuardController guard;
@@ -47,7 +47,7 @@ public sealed class ActionModeController
     private int basicAttackGamepadSuppressFrames;
 
     public ActionModeController(
-        Configuration config,
+        IActionInputSettings config,
         ActionComboSink comboSink,
         PlayerHitboxResolver hitbox,
         PlayerGuardController guard,

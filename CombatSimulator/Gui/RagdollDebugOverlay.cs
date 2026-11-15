@@ -22,12 +22,12 @@ public class RagdollDebugOverlay
     private readonly RagdollController ragdollController;
     private readonly DismembermentController dismemberment;
     private readonly MainWindow mainWindow;
-    private readonly Configuration config;
+    private readonly IRagdollDebugSettings config;
     private readonly IGameGui gameGui;
     private readonly IClientState clientState;
 
     public RagdollDebugOverlay(RagdollController ragdollController, DismembermentController dismemberment,
-        MainWindow mainWindow, Configuration config, IGameGui gameGui, IClientState clientState)
+        MainWindow mainWindow, IRagdollDebugSettings config, IGameGui gameGui, IClientState clientState)
     {
         this.ragdollController = ragdollController;
         this.dismemberment = dismemberment;

@@ -19,7 +19,7 @@ public unsafe class UseActionHook : IDisposable
     private readonly CombatEngine combatEngine;
     private readonly NpcSelector npcSelector;
     private readonly NpcSpawner npcSpawner;
-    private readonly Configuration config;
+    private readonly Targeting.IPlayerInputSettings config;
     private readonly IClientState clientState;
     private readonly IPluginLog log;
     private readonly PlayerTargetController targetController;
@@ -58,7 +58,7 @@ public unsafe class UseActionHook : IDisposable
         CombatEngine combatEngine,
         NpcSelector npcSelector,
         NpcSpawner npcSpawner,
-        Configuration config,
+        Targeting.IPlayerInputSettings config,
         IClientState clientState,
         IPluginLog log,
         PlayerTargetController targetController,

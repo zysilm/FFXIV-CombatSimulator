@@ -20,7 +20,7 @@ public unsafe partial class NpcAiController
         CombatEngine combatEngine,
         AnimationController animationController,
         MovementBlockHook movementBlockHook,
-        Configuration config,
+        ICombatAiSettings config,
         IPluginLog log,
         CombatSimulator.ActionCombat.CombatModeRouter combatModeRouter,
         NpcCorpseFootIkSolver footIkSolver,

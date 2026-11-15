@@ -31,11 +31,11 @@ public interface IPlayerActionSink
 
 public sealed class ActionComboSink : IPlayerActionSink
 {
-    private readonly Configuration config;
+    private readonly IActionComboSettings config;
     private readonly Queue<PlayerActionInput> queue = new();
     private readonly object gate = new();
 
-    public ActionComboSink(Configuration config) => this.config = config;
+    public ActionComboSink(IActionComboSettings config) => this.config = config;
 
     public void OnAction(uint actionType, uint actionId, ulong targetId, uint extraParam)
     {

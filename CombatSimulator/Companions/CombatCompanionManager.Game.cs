@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 using CombatSimulator.Animation;
+using CombatSimulator.Battle.Rules;
 using CombatSimulator.Combat;
 using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
@@ -17,8 +18,11 @@ public unsafe partial class CombatCompanionManager
     public CombatCompanionManager(
         IObjectTable objectTable,
         IClientState clientState,
-        Configuration config,
+        ICombatAiSettings config,
         CombatEngine combatEngine,
+        CombatRoster roster,
+        TargetingService targeting,
+        BattleRuleSet ruleParts,
         AnimationController animationController,
         MovementBlockHook movementBlockHook,
         ITargetManager targetManager,
@@ -28,6 +32,9 @@ public unsafe partial class CombatCompanionManager
             clientState,
             config,
             combatEngine,
+            roster,
+            targeting,
+            ruleParts,
             new GameCombatWorld(objectTable, targetManager, animationController, movementBlockHook, null),
             new GameAttackSink(combatEngine, null),
             log)

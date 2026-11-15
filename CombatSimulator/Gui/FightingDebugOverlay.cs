@@ -23,14 +23,14 @@ public sealed class FightingDebugOverlay
     private readonly FightingCombatController fightingCombat;
     private readonly WeaponHitboxService weaponHitbox;
     private readonly IGameGui gameGui;
-    private readonly Configuration config;
+    private readonly IFightingDebugSettings config;
 
     public FightingDebugOverlay(
         FightingModeController fighting,
         FightingCombatController fightingCombat,
         WeaponHitboxService weaponHitbox,
         IGameGui gameGui,
-        Configuration config)
+        IFightingDebugSettings config)
     {
         this.fighting = fighting;
         this.fightingCombat = fightingCombat;

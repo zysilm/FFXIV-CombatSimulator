@@ -29,7 +29,7 @@ public sealed unsafe class CombatLinkOverlay
     private readonly CombatEngine combatEngine;
     private readonly BoneTransformService boneService;
     private readonly IGameGui gameGui;
-    private readonly Configuration config;
+    private readonly ICombatLinkSettings config;
 
     // Player attacking → cool blue. Enemy attacking player → hot red.
     private static readonly Vector3 BlueColor = new(0.30f, 0.62f, 1.00f);
@@ -47,7 +47,7 @@ public sealed unsafe class CombatLinkOverlay
         CombatEngine combatEngine,
         BoneTransformService boneService,
         IGameGui gameGui,
-        Configuration config)
+        ICombatLinkSettings config)
     {
         this.npcSelector = npcSelector;
         this.targetController = targetController;

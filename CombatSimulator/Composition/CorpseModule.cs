@@ -59,7 +59,7 @@ internal sealed unsafe class CorpseModule : ICorpseQuery
     /// <summary>The NPC ragdolls kept, by character address (the FrameCost line counts them).</summary>
     public IReadOnlyDictionary<nint, RagdollController> NpcRagdolls => npcRagdolls;
 
-    private Configuration config => m.Config;
+    private ICorpseModuleSettings config => m.Config;
     private IPluginLog log => m.Log;
     private BoneTransformService boneTransformService => m.World.BoneTransforms;
     private MovementBlockHook movementBlockHook => m.World.MovementBlock;
@@ -75,15 +75,15 @@ internal sealed unsafe class CorpseModule : ICorpseQuery
     /// <summary>The player's ragdoll, the weapon drop and the player's weapon visibility.</summary>
     public void CreatePlayerBody(IObjectTable objectTable)
     {
-        ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses);
+        ragdollController = new RagdollController(boneTransformService, npcSelector, movementBlockHook, m.Config, log, GetPartyCollisionAddresses);
         ragdollController.RunAnimatedHair = true;
-        weaponDropController = new WeaponDropController(boneTransformService, config, log, ragdollController);
-        playerWeaponVisibilityController = new Effects.PlayerWeaponVisibilityController(config, objectTable, boneTransformService);
+        weaponDropController = new WeaponDropController(boneTransformService, m.Config, log, ragdollController);
+        playerWeaponVisibilityController = new Effects.PlayerWeaponVisibilityController(m.Config, objectTable, boneTransformService);
     }
 
     public void CreateArrowImpacts()
     {
-        arrowImpactController = new Effects.ArrowImpactController(config, boneTransformService, worldGeometryRenderer, log);
+        arrowImpactController = new Effects.ArrowImpactController(m.Config, boneTransformService, worldGeometryRenderer, log);
         animationController.ArrowImpacts = arrowImpactController;
     }
 
@@ -91,7 +91,7 @@ internal sealed unsafe class CorpseModule : ICorpseQuery
     public void CreateLimbsAndArmor(IDalamudPluginInterface pluginInterface, IObjectTable objectTable)
     {
         RagdollRecordingSession.Configure(System.IO.Path.Combine(pluginInterface.GetPluginConfigDirectory(), "ragdoll-rec"), new Animation.Hosting.DalamudRagdollLog(log));
-        dismembermentController = new DismembermentController(boneTransformService, glamourerIpc, animationController, objectTable, config, log);
+        dismembermentController = new DismembermentController(boneTransformService, glamourerIpc, animationController, objectTable, m.Config, log);
         dismembermentController.PlayerRagdollController = ragdollController;
         // Clothes still on the corpse ride along when it is picked up; the dismemberment side owns the
         // question of which garments are still being worn.
@@ -114,7 +114,7 @@ internal sealed unsafe class CorpseModule : ICorpseQuery
             var body = npcRagdolls.TryGetValue(addr, out var found) ? found : ragdollController;
             body?.ApplyAngularVelocity(bone, angularVel);
         };
-        armorDetachmentController = new Dev.KoStripController(config, glamourerIpc, dismembermentController, log);
+        armorDetachmentController = new Dev.KoStripController(m.Config, glamourerIpc, dismembermentController, log);
     }
 
     public void OnNpcDeathRagdoll(nint address)
@@ -178,8 +178,8 @@ internal sealed unsafe class CorpseModule : ICorpseQuery
 
         var partyMode = config.EnableCombatCompanions;
         var controller = partyMode
-            ? new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses)
-            : new RagdollController(boneTransformService, config, log);
+            ? new RagdollController(boneTransformService, npcSelector, movementBlockHook, m.Config, log, GetPartyCollisionAddresses)
+            : new RagdollController(boneTransformService, m.Config, log);
 
         IReadOnlyList<string> bones = Array.Empty<string>();
         if (config.EnableEnemyDismemberment)
@@ -252,7 +252,7 @@ internal sealed unsafe class CorpseModule : ICorpseQuery
 
         log.Info($"Companion death ragdoll: activating for 0x{address:X}");
 
-        var controller = new RagdollController(boneTransformService, npcSelector, movementBlockHook, config, log, GetPartyCollisionAddresses);
+        var controller = new RagdollController(boneTransformService, npcSelector, movementBlockHook, m.Config, log, GetPartyCollisionAddresses);
         controller.SetDismemberedBones(Array.Empty<string>());
         // Shares the enemy stagger budget — a wipe drops companions alongside enemies, and they are
         // the same kind of load. See ActivateNpcDeathRagdoll.

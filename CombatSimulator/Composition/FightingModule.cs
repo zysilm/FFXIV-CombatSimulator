@@ -36,7 +36,6 @@ internal sealed class FightingModule
     public FightingCombatController Combat => fightingCombatController;
     public FightingAiController Ai => fightingAiController;
 
-    private Configuration config => m.Config;
     private IPluginLog log => m.Log;
     private RagdollController ragdollController => m.Corpse.PlayerRagdoll;
     private AnimationController animationController => m.World.Animation;
@@ -64,14 +63,14 @@ internal sealed class FightingModule
         enemyControlController = new EnemyControlController(
             keyState, gamepadState, framework, ragdollController, animationController, boneTransformService,
             movementBlockHook, activeCameraController, vnavmeshIpc, npcSelector, GetActiveCorpseRagdolls,
-            config, log);
+            m.Config, log);
     }
 
     /// <summary>The Fighting Mode lane, its weapon hitboxes, combat input and AI.</summary>
     public void CreateFighting(IGamepadState gamepadState)
     {
         fightingModeController = new FightingModeController(
-            config, combatEngine, npcSelector, mapEnemyController, movementBlockHook,
+            m.Config, combatEngine, npcSelector, mapEnemyController, movementBlockHook,
             cameraModeCoordinator, boneTransformService,
             addr => devExperimental.ControlsNpc(addr) || enemyControlController.ControlsNpc(addr), log);
         // Post-defeat camera modes must track the corpse through the ragdoll bodies — the skeleton
@@ -79,13 +78,13 @@ internal sealed class FightingModule
         fightingModeController.GetRagdollBonePosition = bone => ragdollController.GetBodyWorldPosition(bone);
         enemyControlController.FightingLane = fightingModeController;
         enemyControlController.SetCameraCoordinator(cameraModeCoordinator);
-        weaponHitboxService = new WeaponHitboxService(config, boneTransformService, log);
+        weaponHitboxService = new WeaponHitboxService(m.Config, boneTransformService, log);
         fightingCombatController = new FightingCombatController(
-            config, playerGuardController, fightingModeController, combatEngine,
+            m.Config, playerGuardController, fightingModeController, combatEngine,
             animationController, weaponHitboxService, hitFeedbackController, gamepadState, log);
         fightingModeController.AttackSink = fightingCombatController.OnAttackInput;
         fightingAiController = new FightingAiController(
-            config, combatModeRouter, telegraphSystem, animationController, log);
+            m.Config, combatModeRouter, telegraphSystem, animationController, log);
         fightingModeController.FightingAi = fightingAiController;
         fightingCombatController.OnPlayerHitLanded = _ => fightingAiController.NotifyPlayerHitLanded();
         fightingModeController.GetEnemyControlFollowCenter = () => enemyControlController.FollowCenter;

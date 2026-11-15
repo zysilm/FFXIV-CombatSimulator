@@ -30,8 +30,11 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
     private readonly DamageCalculator damageCalculator;
     private readonly AnimationController animationController;
     private readonly MovementBlockHook movementBlockHook;
-    private readonly Configuration config;
+    private readonly ICombatEngineSettings config;
     private readonly NpcSelector npcSelector;
+    // Who is on the player's side, and who fights whom (built before the engine; Refactoring II).
+    private readonly Combat.CombatRoster roster;
+    private readonly Combat.TargetingService targeting;
     private readonly IClientState clientState;
     private readonly IPluginLog log;
     private readonly RagdollController ragdollController;
@@ -58,11 +61,17 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
     /// <summary>The engine's notifications, subscribed by the composition root (docs/PLUGIN_ARCHITECTURE.md §6.3).</summary>
     public CombatEvents Events { get; } = new();
     public Action? OnSimulationStarted { get => Events.SimulationStarted; set => Events.SimulationStarted = value; }
+    /// <summary>
+    /// An enemy's current target, as the allies' controller draws it (CombatCompanionManager.SelectEnemyTarget).
+    /// The one query still handed over after construction: the draw reads the allies' controller (the player's
+    /// focus, the allies' damage, the rule parts' holders and weights, the positions through its world), and
+    /// that controller is built on this engine.
+    /// </summary>
     public Func<SimulatedNpc, SimulatedEntityState?>? ResolveNpcTarget { get; set; }
-    /// <summary>Optional party-target routing override for one enemy.</summary>
-    public Action<uint, uint>? ForceNpcTarget { private get; set; }
-    public Func<uint, nint?>? ResolveExternalEntityAddress { get; set; }
-    public Func<bool>? HasLivingCompanions { get; set; }
+    /// <summary>An ally's character address (the roster's).</summary>
+    public Func<uint, nint?>? ResolveExternalEntityAddress { get; }
+    /// <summary>The allies take part and one of them is alive (the roster's).</summary>
+    public Func<bool>? HasLivingCompanions { get; }
     /// <summary>
     /// Returns the simulated entity id of the player's currently locked target, or
     /// 0 when none. Wired to PlayerTargetController. When custom targeting is on,
@@ -75,8 +84,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
     /// rapid player hits don't visually stunlock it. Wired to TelegraphSystem.
     /// </summary>
     public Func<uint, bool>? IsTargetSuperArmored { get; set; }
-    public Action<int>? OnPlayerDamageDealt { get; set; }
-    public Action<uint, int>? OnPlayerDamageDealtToTarget { get; set; }
     /// <summary>Dev seam: suppress every non-player route that would put an idle enemy into combat.</summary>
     public Func<bool>? ShouldSuppressEnemyInitiation { private get; set; }
     public bool IsEnemyInitiationSuppressed => ShouldSuppressEnemyInitiation?.Invoke() == true;
@@ -155,8 +162,11 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         AnimationController animationController,
         MovementBlockHook movementBlockHook,
         RagdollController ragdollController,
-        Configuration config,
+        ICombatEngineSettings config,
         NpcSelector npcSelector,
+        Combat.CombatRoster roster,
+        Combat.TargetingService targeting,
+        Battle.Rules.BattleRuleSet ruleParts,
         IClientState clientState,
         IPluginLog log)
     {
@@ -168,6 +178,11 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         this.config = config;
         Rules = new Battle.BattleRules(config, () => IsActive, () => State.PlayerState.IsAlive);
         this.npcSelector = npcSelector;
+        this.roster = roster;
+        this.targeting = targeting;
+        RuleParts = ruleParts;
+        ResolveExternalEntityAddress = roster.AddressOf;
+        HasLivingCompanions = () => roster.HasLivingAllies;
         this.clientState = clientState;
         this.log = log;
         settlement = new HitSettlement(new SettlementHost(this), damageCalculator);
@@ -541,7 +556,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
             if (!npc.IsSpawned || !npc.State.IsAlive)
                 continue;
 
-            ForceNpcTarget?.Invoke(npc.SimulatedEntityId, playerId);
+            targeting.ForceEnemyTarget(npc.SimulatedEntityId, playerId);
             npc.AiState = CombatSimulator.Combat.CombatantAiState.Combat;
             npc.EngageDelayTimer = 0f;
             npc.AutoAttackTimer = 0f;
@@ -682,9 +697,9 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         {
             totalDamage += hit.DamageResult.Damage;
             State.TotalDamageDealt += hit.DamageResult.Damage;
-            OnPlayerDamageDealtToTarget?.Invoke(hit.Target.EntityId, hit.DamageResult.Damage);
+            targeting.RegisterPlayerDamage(State.PlayerState, hit.Target.EntityId, hit.DamageResult.Damage);
         }
-        OnPlayerDamageDealt?.Invoke(totalDamage);
+        targeting.RegisterPlayerDamage(totalDamage);
         if (totalDamage > 0)
             OnPlayerAttackLanded?.Invoke();
 
@@ -795,9 +810,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         float radius = 0)
         => settlement.ProcessCompanionAction(companion, targetNpc, actionId, potency, attackStyle, radius);
 
-    /// <summary>A hit by someone on someone: (source, target, damage). Who fights whom is drawn from these.</summary>
-    public Action<SimulatedEntityState, SimulatedEntityState, int>? OnHit { get; set; }
-
     /// <summary>A hit has landed and taken HP: (target, the hit, who struck it if known). Damage numbers are drawn from it.</summary>
     public Action<SimulatedEntityState, DamageResult, SimulatedEntityState?>? OnDamageLanded { get => Events.DamageLanded; set => Events.DamageLanded = value; }
 
@@ -828,7 +840,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
 
             var damage = calculateDamage(target);
             LandDamage(target, damage, source);
-            OnHit?.Invoke(source, target, damage.Damage);
+            targeting.RegisterHit(source, target, damage.Damage);
             hits.Add(new AppliedActionDamage(target, damage));
         }
 
@@ -1606,8 +1618,8 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
     {
         LandDamage(npc.State, dmg, ps);
         State.TotalDamageDealt += dmg.Damage;
-        OnPlayerDamageDealt?.Invoke(dmg.Damage);
-        OnPlayerDamageDealtToTarget?.Invoke(npc.State.EntityId, dmg.Damage);
+        targeting.RegisterPlayerDamage(dmg.Damage);
+        targeting.RegisterPlayerDamage(State.PlayerState, npc.State.EntityId, dmg.Damage);
         if (dmg.Damage > 0)
             OnPlayerAttackLanded?.Invoke();
         EngageIdleTarget(npc.State.EntityId);
@@ -1713,7 +1725,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
             hits.Add(new AppliedActionDamage(target, dmg));
             total += dmg.Damage;
             State.TotalDamageDealt += dmg.Damage;
-            OnPlayerDamageDealtToTarget?.Invoke(target.EntityId, dmg.Damage);
+            targeting.RegisterPlayerDamage(State.PlayerState, target.EntityId, dmg.Damage);
         }
 
         if (hits.Count == 0)
@@ -1730,7 +1742,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         if (actionId == 7 && potencyOverride > 0)
             RestoreMp(ps, BasicAttackMpRestore);
 
-        OnPlayerDamageDealt?.Invoke(total);
+        targeting.RegisterPlayerDamage(total);
         if (suppressCasterActionEffect)
             // Weapon-contact hit (Fighting Mode): the swing animation is already playing;
             // fire impact-only feedback instead of restarting the caster's action effect.

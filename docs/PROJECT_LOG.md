@@ -272,9 +272,12 @@
 | --- | --- | --- | --- |
 | 实现者 | R2-L1 库目录、失效链接、掉落武器金样 | 库仓库；插件只建临时 worktree 跑回放 | 已提交（库 `0918f6b`） |
 | 实现者 | R2-A6-1 组件模式与共享上下文；先拆水、头发、武器接触网格 | 库仓库；插件只建临时 worktree | 进行中（2026-11-15） |
-| 实现者 | R2-P1 插件 B8 窄设置接口 + B7 构造注入 | 插件主检出 `CombatSimulator/`、`Tests/` | 进行中（2026-11-15） |
+| 实现者 | R2-P1 插件 B8 窄设置接口 + B7 构造注入 | 插件主检出 `CombatSimulator/`、`Tests/` | 已提交 |
+| 审查者 | R2-P1 独立复查 | 只读 | 可合并（低级意见 4 条，均非行为变化） |
 
 ### 子代理报告要点
+
+- 2026-11-15 · R2-P1 · 完成，审查可合并。新 `Combat/CombatRoster.cs`；选目标服务、规则组在引擎之前创建并构造注入，`CombatEngine.RuleParts` 只读；引擎 7 个后赋值委托删 6 个，保留 `ResolveNpcTarget`（敌人选目标读队友管理器自身状态，搬走只换环）；窄设置接口在 `Configuration.SettingsViews.cs`、`Action/ActionCombatSettings.cs`、`Gui/OverlaySettings.cs`、`Composition/ModuleSettings.cs`，读写设置的系统与 Camera/Presentation/Combat 模块里的写设置步骤仍拿整个配置。检查：两种构建 0 错误；PluginOrder 对 `9d089c4` ALL EQUAL（新增 10 项构造顺序改动清单，每项须恰好命中一次）；CombatReplay 19/19；CorpseSeizure 95；其余全过。审查低级意见：规则组在队友管理器 `Bind` 前已交给引擎（`HitSettlement` 的判空不再兜底，目前没有这种路径）；`RecentDpsWindowSeconds` 两份；CombatReplay 用假引擎，不覆盖生产引擎直调选目标那几行；PluginOrder 默认基线 9ea6cba 因 e50250f 已不相等。仍是后赋值的：`LordBodyPosition`、`BodyPositionOf`、`CorpseSupportHeightProvider`（设计打算由 `ICorpseQuery` 注入）、`IsSourceEnemy`、`NpcAiController.CollectPartyPositions`。
 
 - 2026-11-15 · R2-L1 · 完成。库源码移到 `src/AdvancedRagdoll/`（34 个 partial 进 `Ragdoll/`），库代码只改注释；19 处外链改指库自己的 `docs/ARCHITECTURE.md`；新增 `tests/WeaponDropGolden`（4 个合成场景，逐帧逐字节对金样，金样在搬迁前生成，跨 6 个进程一致；改一个常数 0.0001 在第 22 帧被抓到）；回放 97/97。遗留：金样可能只在 Windows 上逐位一致（CI 放 windows-latest，待看 runner 结果）；库里仍有几处注释提插件类名、插件路径和命令；`WeaponMeshGeometry.Fit` 用 `HashSet<Vector3>` 收顶点，实测稳定。
 

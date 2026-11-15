@@ -35,7 +35,7 @@ public sealed class EnemyOmenVfx : IDisposable
     private readonly AnimationController animation;
     private readonly Func<uint, ActionData?> getActionData;
     private readonly IDataManager dataManager;
-    private readonly Configuration config;
+    private readonly IEnemyAreaDisplaySettings config;
     private readonly IPluginLog log;
     private readonly Dictionary<int, nint> live = new();
     private readonly Dictionary<string, bool> existsCache = new(StringComparer.OrdinalIgnoreCase);
@@ -45,7 +45,7 @@ public sealed class EnemyOmenVfx : IDisposable
         AnimationController animation,
         Func<uint, ActionData?> getActionData,
         IDataManager dataManager,
-        Configuration config,
+        IEnemyAreaDisplaySettings config,
         IPluginLog log)
     {
         this.markers = markers;

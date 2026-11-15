@@ -54,7 +54,7 @@ internal sealed class PresentationModule
     public CombatSimulator.ActionCombat.EnemyOmenVfx EnemyOmens => enemyOmenVfx;
     public VoiceDirector Voices => voiceDirector;
 
-    private Configuration config => m.Config;
+    private IPresentationModuleSettings config => m.Config;
     private IPluginLog log => m.Log;
     private NpcSelector npcSelector => m.Actors.Selector;
     private NpcSpawner npcSpawner => m.Actors.Spawner;
@@ -90,7 +90,7 @@ internal sealed class PresentationModule
 
     public void CreateMainWindow(IClientState clientState, IDataManager dataManager, IChatGui chatGui)
     {
-        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, spectatorController, devExperimental, clientState, dataManager, chatGui, log);
+        mainWindow = new MainWindow(m.Config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, spectatorController, devExperimental, clientState, dataManager, chatGui, log);
         mainWindow.ArrowImpacts = arrowImpactController;
         mainWindow.HideResultBanner = warBanner.Hide;
         mainWindow.ArmorDetachment = armorDetachmentController;
@@ -101,7 +101,7 @@ internal sealed class PresentationModule
     public void CreateVoice(IDataManager dataManager)
     {
         MigrateVoiceDefaults();
-        voiceDirector = new VoiceDirector(config, npcSelector, combatEngine,
+        voiceDirector = new VoiceDirector(m.Config, npcSelector, combatEngine,
             () => companionManager.HasLivingCompanions, dataManager, log);
         voiceDirector.DeadCompanionCount = () =>
             config.EnableCombatCompanions ? companionManager.Companions.Count(c => c.IsSpawned && !c.State.IsAlive) : 0;
@@ -113,12 +113,12 @@ internal sealed class PresentationModule
     /// </summary>
     private void MigrateVoiceDefaults()
     {
-        if (config.EnemyVoiceDefaultsMigrated20261024)
+        if (m.Config.EnemyVoiceDefaultsMigrated20261024)
             return;
-        config.EnableEnemyVoices = true;
-        config.EnemyVoiceBubbles = true;
-        config.EnemyVoiceDefaultsMigrated20261024 = true;
-        config.Save();
+        m.Config.EnableEnemyVoices = true;
+        m.Config.EnemyVoiceBubbles = true;
+        m.Config.EnemyVoiceDefaultsMigrated20261024 = true;
+        m.Config.Save();
     }
 
     public void TickVoice(float deltaTime) => voiceDirector.Tick(deltaTime);
@@ -154,7 +154,7 @@ internal sealed class PresentationModule
         fightingDebugOverlay = new FightingDebugOverlay(
             fightingModeController, fightingCombatController, weaponHitboxService, gameGui, config);
         dynamicCameraDebugOverlay = new DynamicCameraDebugOverlay(dynamicCameraController, gameGui, config);
-        updateLogPopupController = new UpdateLogPopupController(config, log, hadExistingConfig);
+        updateLogPopupController = new UpdateLogPopupController(m.Config, log, hadExistingConfig);
     }
 
     public void OnDraw(IClientState clientState)

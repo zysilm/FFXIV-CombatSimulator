@@ -31,7 +31,6 @@ internal sealed unsafe class CameraModule
     public ActiveCameraController Active => activeCameraController;
     public DynamicCameraController Dynamic => dynamicCameraController;
 
-    private Configuration config => m.Config;
     private IPluginLog log => m.Log;
     private CombatEngine combatEngine => m.Combat.Engine;
     private NpcSelector npcSelector => m.Actors.Selector;
@@ -42,9 +41,9 @@ internal sealed unsafe class CameraModule
     /// <summary>The coordinator, the game camera hook and the active camera.</summary>
     public void CreateCoordinator(IGameInteropProvider gameInterop, IClientState clientState, ISigScanner sigScanner)
     {
-        cameraModeCoordinator = new CameraModeCoordinator(config, log);
+        cameraModeCoordinator = new CameraModeCoordinator(m.Config, log);
         gameCameraUpdateHook = new GameCameraUpdateHook(gameInterop, log);
-        activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, config, log);
+        activeCameraController = new ActiveCameraController(gameInterop, clientState, sigScanner, m.Config, log);
         // Single camera write authority: modes submit requests, the coordinator applies
         // the winner each frame; the orbit hook consumes its resolution.
         activeCameraController.CoordinatorOrbitCenter = () => cameraModeCoordinator.CurrentOrbitCenter;
@@ -59,7 +58,7 @@ internal sealed unsafe class CameraModule
     public void CreateDynamic(ISigScanner sigScanner)
     {
         dynamicCameraController = new DynamicCameraController(
-            config, cameraModeCoordinator, combatEngine, npcSelector, playerTargetController,
+            m.Config, cameraModeCoordinator, combatEngine, npcSelector, playerTargetController,
             boneTransformService, ragdollController, sigScanner, log);
         dynamicCameraController.GetCurrentOwner = () => cameraModeCoordinator.CurrentOwner;
         // The death shot forces its locked pitch/zoom inside the game's camera update.
@@ -75,11 +74,11 @@ internal sealed unsafe class CameraModule
     /// <summary>Put the camera in Directed mode for a battle, when that is asked for.</summary>
     public void SwitchToDirectedCameraForBattle()
     {
-        if (!config.DirectedCameraOnBattle || (config.EnableDynamicCamera && !config.EnableActiveCamera))
+        if (!m.Config.DirectedCameraOnBattle || (m.Config.EnableDynamicCamera && !m.Config.EnableActiveCamera))
             return;
-        config.EnableActiveCamera = false;
-        config.EnableDynamicCamera = true;
+        m.Config.EnableActiveCamera = false;
+        m.Config.EnableDynamicCamera = true;
         activeCameraController.SetActive(false);
-        config.Save();
+        m.Config.Save();
     }
 }

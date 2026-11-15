@@ -40,7 +40,7 @@ internal sealed unsafe class BattleModule
     public VictoryCelebrationDirector? VictoryCelebration => victoryCelebration;
     public WarBanner Banner => warBanner;
 
-    private Configuration config => m.Config;
+    private IBattleModuleSettings config => m.Config;
     private IPluginLog log => m.Log;
     private AnimationController animationController => m.World.Animation;
     private CombatEngine combatEngine => m.Combat.Engine;

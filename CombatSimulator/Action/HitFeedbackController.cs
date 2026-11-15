@@ -18,7 +18,7 @@ namespace CombatSimulator.ActionCombat;
 /// </summary>
 public sealed class HitFeedbackController
 {
-    private readonly Configuration config;
+    private readonly IHitFeedbackSettings config;
     private readonly Func<uint, SimulatedNpc?> resolveNpc;
     private readonly AnimationController anim;
     private readonly IPluginLog log;
@@ -42,7 +42,7 @@ public sealed class HitFeedbackController
     public Vector3 CurrentShakeOffset { get; private set; }
 
     public HitFeedbackController(
-        Configuration config,
+        IHitFeedbackSettings config,
         Func<uint, SimulatedNpc?> resolveNpc,
         AnimationController anim,
         IPluginLog log)

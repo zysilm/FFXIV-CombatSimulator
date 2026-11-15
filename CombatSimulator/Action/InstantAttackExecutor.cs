@@ -15,10 +15,10 @@ namespace CombatSimulator.ActionCombat;
 public sealed class InstantAttackExecutor : IAttackExecutor
 {
     private readonly CombatEngine engine;
-    private readonly Configuration? config;
+    private readonly IEnemyAttackSettings? config;
     private readonly System.Action<SimulatedNpc, uint>? playWhiff;
 
-    public InstantAttackExecutor(CombatEngine engine, Configuration? config = null,
+    public InstantAttackExecutor(CombatEngine engine, IEnemyAttackSettings? config = null,
         System.Action<SimulatedNpc, uint>? playWhiff = null)
     {
         this.engine = engine;

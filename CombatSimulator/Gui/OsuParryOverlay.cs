@@ -37,7 +37,7 @@ public sealed class OsuParryOverlay
 
     private readonly TelegraphSystem telegraphs;
     private readonly IGameGui gameGui;
-    private readonly Configuration config;
+    private readonly IActionOverlaySettings config;
     private readonly PlayerGuardController guard;
 
     // Chain-guard display state.
@@ -48,7 +48,7 @@ public sealed class OsuParryOverlay
     /// <summary>Extra enable gate beyond Action Mode (Fighting Mode engagement).</summary>
     public Func<bool>? AlsoEnabled { get; set; }
 
-    public OsuParryOverlay(TelegraphSystem telegraphs, IGameGui gameGui, Configuration config, PlayerGuardController guard)
+    public OsuParryOverlay(TelegraphSystem telegraphs, IGameGui gameGui, IActionOverlaySettings config, PlayerGuardController guard)
     {
         this.telegraphs = telegraphs;
         this.gameGui = gameGui;

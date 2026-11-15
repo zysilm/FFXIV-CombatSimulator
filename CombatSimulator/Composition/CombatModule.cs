@@ -4,6 +4,8 @@
 
 using CombatSimulator.Ai;
 using CombatSimulator.Animation;
+using CombatSimulator.Battle.Rules;
+using CombatSimulator.Combat;
 using CombatSimulator.Companions;
 using CombatSimulator.Fighting;
 using CombatSimulator.Navigation;
@@ -40,6 +42,8 @@ internal sealed class CombatModule
     private VirtualEnemyLookAtController virtualEnemyLookAt = null!;
     private PlayerTargetController playerTargetController = null!;
     private UseActionHook useActionHook = null!;
+    private TargetingService targeting = null!;
+    private BattleRuleSet ruleParts = null!;
 
     public CombatModule(PluginModules modules) => m = modules;
 
@@ -60,8 +64,12 @@ internal sealed class CombatModule
     public VirtualEnemyLookAtController EnemyLookAt => virtualEnemyLookAt;
     public PlayerTargetController PlayerTarget => playerTargetController;
     public UseActionHook UseAction => useActionHook;
+    /// <summary>Who fights whom (both sides' threat, draw states and the enemies' targets).</summary>
+    public TargetingService Targeting => targeting;
+    /// <summary>The battle's rule parts (bound to their context by the allies' controller).</summary>
+    public BattleRuleSet RuleParts => ruleParts;
 
-    private Configuration config => m.Config;
+    private ICombatModuleSettings config => m.Config;
     private IPluginLog log => m.Log;
     private ActionDataProvider actionDataProvider => m.Actors.ActionData;
     private AnimationController animationController => m.World.Animation;
@@ -72,6 +80,7 @@ internal sealed class CombatModule
     private RagdollController ragdollController => m.Corpse.PlayerRagdoll;
     private ICorpseQuery corpses => m.Corpse;
     private NpcSelector npcSelector => m.Actors.Selector;
+    private CombatRoster combatRoster => m.Actors.Roster;
     private NpcSpawner npcSpawner => m.Actors.Spawner;
     private CombatCompanionManager companionManager => m.Actors.Companions;
     private MapEnemyController mapEnemyController => m.Actors.MapEnemies;
@@ -96,10 +105,14 @@ internal sealed class CombatModule
     /// </summary>
     public void CreateEngineAndActionCombat(IClientState clientState, IGamepadState gamepadState)
     {
+        // Who fights whom, and the battle's rule parts, are the engine's by constructor (the allies'
+        // controller, built later on the engine, is given the same two and binds the parts' context).
+        targeting = new TargetingService(() => combatEngine.State.SimulationTime);
+        ruleParts = new BattleRuleSet(BattleRuleFactory.CreateAll());
         combatEngine = new CombatEngine(
             actionDataProvider, damageCalculator, animationController,
             movementBlockHook, ragdollController,
-            config, npcSelector, clientState, log);
+            config, npcSelector, combatRoster, targeting, ruleParts, clientState, log);
         // Action Mode wiring. Seams: ActionComboSink (player input), CombatModeRouter
         // (enemy attack executor), TelegraphSystem (windup→hitbox). All gate on
         // config.ActionMode; off ⇒ behavior-equivalent simulation paths.
@@ -133,19 +146,13 @@ internal sealed class CombatModule
     }
 
     /// <summary>
-    /// The engine and the allies' manager need each other; the manager is built after the engine, so
-    /// the engine is given the manager's side here.
+    /// The engine and the allies' manager need each other; the manager is built after the engine, so the
+    /// engine is given the manager's one remaining side here: an enemy's target, which the manager draws.
+    /// (The roster, who fights whom and the rule parts the engine has by constructor.)
     /// </summary>
     public void WireCompanions()
     {
         combatEngine.ResolveNpcTarget = companionManager.SelectEnemyTarget;
-        combatEngine.ResolveExternalEntityAddress = companionManager.ResolveAddress;
-        combatEngine.HasLivingCompanions = () => companionManager.HasLivingCompanions;
-        combatEngine.OnPlayerDamageDealt = companionManager.RegisterPlayerDamage;
-        combatEngine.OnPlayerDamageDealtToTarget = companionManager.RegisterPlayerDamage;
-        combatEngine.ForceNpcTarget = companionManager.ForceEnemyTarget;
-        combatEngine.OnHit = companionManager.RegisterHit;
-        combatEngine.RuleParts = companionManager.RuleParts;
     }
 
     /// <summary>
@@ -173,7 +180,7 @@ internal sealed class CombatModule
         npcSpawner.OnAllySpawnComplete = (npc, request) =>
         {
             // An ally counts as a companion, so the party features have to be on for it to fight.
-            config.EnableCombatCompanions = true;
+            m.Config.EnableCombatCompanions = true;
             companionManager.AdoptNpc(npc, request);
         };
         combatEngine.InterruptTelegraphCast = telegraphSystem.TryInterrupt;

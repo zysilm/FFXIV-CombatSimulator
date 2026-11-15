@@ -5,6 +5,8 @@
 using System;
 using System.Collections.Generic;
 using CombatSimulator.Animation;
+using CombatSimulator.Battle.Rules;
+using CombatSimulator.Combat;
 using CombatSimulator.Companions;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
@@ -33,6 +35,7 @@ internal sealed unsafe class ActorsModule
     private CombatCompanionManager companionManager = null!;
     private SpectatorController spectatorController = null!;
     private MapEnemyController mapEnemyController = null!;
+    private CombatRoster combatRoster = null!;
 
     public ActorsModule(PluginModules modules) => m = modules;
 
@@ -44,8 +47,11 @@ internal sealed unsafe class ActorsModule
     public CombatCompanionManager Companions => companionManager;
     public SpectatorController Spectators => spectatorController;
     public MapEnemyController MapEnemies => mapEnemyController;
+    public CombatRoster Roster => combatRoster;
 
-    private Configuration config => m.Config;
+    private IActorsModuleSettings config => m.Config;
+    private TargetingService targeting => m.Combat.Targeting;
+    private BattleRuleSet ruleParts => m.Combat.RuleParts;
     private IPluginLog log => m.Log;
     private AnimationController animationController => m.World.Animation;
     private MovementBlockHook movementBlockHook => m.World.MovementBlock;
@@ -58,11 +64,11 @@ internal sealed unsafe class ActorsModule
     /// <summary>Action data, the weapon classifier, the body-type animation fallback and the enemies' kits.</summary>
     public void CreateActionData(IDalamudPluginInterface pluginInterface, IDataManager dataManager)
     {
-        actionDataProvider = new ActionDataProvider(dataManager, log, config);
+        actionDataProvider = new ActionDataProvider(dataManager, log, m.Config);
         NpcWeaponClassifier.Initialize(dataManager, log);
         Animation.BodyTypeAnimationFallback.Initialize(pluginInterface, dataManager, log);
         var jobActionKitProvider = new JobActionKitProvider(actionDataProvider, dataManager, log);
-        npcActionProfileProvider = new NpcActionProfileProvider(jobActionKitProvider, config, log);
+        npcActionProfileProvider = new NpcActionProfileProvider(jobActionKitProvider, m.Config, log);
     }
 
     /// <summary>Monsters' kits come from their model's actions, which animation knows.</summary>
@@ -72,18 +78,22 @@ internal sealed unsafe class ActorsModule
             animationController.NpcModelActions, actionDataProvider, dataManager, log);
     }
 
-    /// <summary>The selected enemies, the spawner and enemy scaling.</summary>
+    /// <summary>
+    /// The selected enemies, the spawner and enemy scaling; and the roster of the player's side (the allies'
+    /// list, which the engine is given by constructor and the allies' controller keeps).
+    /// </summary>
     public void CreateRoster(IObjectTable objectTable, ITargetManager targetManager, IDataManager dataManager, IClientState clientState)
     {
-        npcSelector = new NpcSelector(objectTable, targetManager, config, npcActionProfileProvider, log);
-        npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, config, npcActionProfileProvider, movementBlockHook, log);
-        npcScaleController = new Effects.NpcScaleController(config, npcSelector, objectTable);
+        npcSelector = new NpcSelector(objectTable, targetManager, m.Config, npcActionProfileProvider, log);
+        npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, m.Config, npcActionProfileProvider, movementBlockHook, log);
+        npcScaleController = new Effects.NpcScaleController(m.Config, npcSelector, objectTable);
+        combatRoster = new CombatRoster(config);
     }
 
     public void CreateCompanions(IObjectTable objectTable, IClientState clientState, ITargetManager targetManager)
     {
         companionManager = new CombatCompanionManager(
-            objectTable, clientState, config, combatEngine, animationController,
+            objectTable, clientState, config, combatEngine, combatRoster, targeting, ruleParts, animationController,
             movementBlockHook, targetManager, log);
     }
 
@@ -91,7 +101,7 @@ internal sealed unsafe class ActorsModule
     {
         spectatorController = new SpectatorController(
             npcSelector, movementBlockHook, animationController.EmotePlayer,
-            vnavmeshIpc, clientState, config,
+            vnavmeshIpc, clientState, m.Config,
             () => combatEngine.State.PlayerState.IsAlive || companionManager.HasLivingCompanions,
             log);
     }
@@ -100,7 +110,7 @@ internal sealed unsafe class ActorsModule
     {
         mapEnemyController = new MapEnemyController(
             objectTable,
-            config,
+            m.Config,
             npcSelector,
             combatEngine,
             () => companionManager.Companions,

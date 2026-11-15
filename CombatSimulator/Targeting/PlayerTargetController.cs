@@ -39,7 +39,7 @@ public sealed unsafe class PlayerTargetController : IDisposable
 {
     private readonly CombatEngine combatEngine;
     private readonly NpcSelector npcSelector;
-    private readonly Configuration config;
+    private readonly IPlayerInputSettings config;
     private readonly IObjectTable objectTable;
     private readonly IGameGui gameGui;
     private readonly IPluginLog log;
@@ -75,7 +75,7 @@ public sealed unsafe class PlayerTargetController : IDisposable
         IGameInteropProvider gameInterop,
         CombatEngine combatEngine,
         NpcSelector npcSelector,
-        Configuration config,
+        IPlayerInputSettings config,
         IObjectTable objectTable,
         IGameGui gameGui,
         IPluginLog log)

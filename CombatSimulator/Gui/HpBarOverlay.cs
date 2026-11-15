@@ -26,7 +26,7 @@ public class HpBarOverlay : IDisposable
     private readonly BoneTransformService boneService;
     private readonly IGameGui gameGui;
     private readonly IClientState clientState;
-    private readonly Configuration config;
+    private readonly IHpBarSettings config;
 
     /// <summary>A cast that is not an engine cast (Action-Mode telegraph lead-in): name + 0..1 progress.</summary>
     public Func<SimulatedNpc, (string Name, float Progress)?>? ExternalCast { get; set; }
@@ -261,7 +261,7 @@ public class HpBarOverlay : IDisposable
         BoneTransformService boneService,
         IGameGui gameGui,
         IClientState clientState,
-        Configuration config)
+        IHpBarSettings config)
     {
         this.npcSelector = npcSelector;
         this.companionManager = companionManager;

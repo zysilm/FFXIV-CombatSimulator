@@ -24,9 +24,9 @@ public sealed class TelegraphOverlay
 
     private readonly TelegraphSystem telegraphs;
     private readonly IGameGui gameGui;
-    private readonly Configuration config;
+    private readonly ActionCombat.IEnemyAreaDisplaySettings config;
 
-    public TelegraphOverlay(TelegraphSystem telegraphs, IGameGui gameGui, Configuration config)
+    public TelegraphOverlay(TelegraphSystem telegraphs, IGameGui gameGui, ActionCombat.IEnemyAreaDisplaySettings config)
     {
         this.telegraphs = telegraphs;
         this.gameGui = gameGui;

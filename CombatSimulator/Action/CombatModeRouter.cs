@@ -14,12 +14,12 @@ namespace CombatSimulator.ActionCombat;
 /// </summary>
 public sealed class CombatModeRouter
 {
-    private readonly Configuration config;
+    private readonly IEnemyAttackSettings config;
     private readonly IAttackExecutor instant;
     private readonly IAttackExecutor telegraphed;
     private readonly Func<bool>? forceTelegraphed;
 
-    public CombatModeRouter(Configuration config, IAttackExecutor instant, IAttackExecutor telegraphed,
+    public CombatModeRouter(IEnemyAttackSettings config, IAttackExecutor instant, IAttackExecutor telegraphed,
         Func<bool>? forceTelegraphed = null)
     {
         this.config = config;

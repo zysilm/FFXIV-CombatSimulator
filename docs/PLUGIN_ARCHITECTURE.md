@@ -255,7 +255,7 @@ public static class AggroModel                     // 纯函数，Tests 直接�
 
 public sealed class TargetingService               // 有状态：威胁表、每人的 AggroState、敌人当前目标、换目标计数
 {
-    public TargetingService(CombatRoster roster, ITargetingSettings settings, Func<float> now, BattleRuleSet rules);
+    public TargetingService(Func<float> now);   // 2026-11-15 实际实现：名册与规则不进构造，玩家近期伤害/DPS 也在这里
     public Random SeedSource { private get; set; }                      // 即今天的 AggroSeedSource
     public SimulatedEntityState? EnemyTarget(SimulatedNpc enemy);       // 今天的 SelectEnemyTarget（CombatCompanionManager.cs:406）
     public uint TargetIdOf(uint fighterId);                             // 双方通用的读取
@@ -613,10 +613,10 @@ public interface IBattleRuleSettings             // 属性名与 Configuration �
     uint CaptiveEmoteId { get; }                 // WarCaptiveEmoteId
     bool ShowResultBanner { get; }  bool EnableRagdoll { get; }
 }
-public interface ITargetingSettings { bool EnableCombatCompanions { get; } }   // 选目标的权重都是代码常量，不是设置
+public interface ICombatRosterSettings { bool EnableCombatCompanions { get; } }   // 名册读它；选目标的权重都是代码常量，不是设置（2026-11-15 由 ITargetingSettings 改名，见 Configuration.SettingsViews.cs）
 ```
 
-`Configuration : IPluginConfiguration, ICombatAiSettings, IBattleRuleSettings, ITargetingSettings`。接口只读；`EnableCombatCompanions` 由生成队友时写（`Plugin.cs:372`），那一处继续直接写 `Configuration`。
+`Configuration : IPluginConfiguration, ICombatAiSettings, IBattleRuleSettings, ICombatRosterSettings`（另有各系统、各模块的窄接口，见 `Configuration.SettingsViews.cs`、`Composition/ModuleSettings.cs`）。接口只读；`EnableCombatCompanions` 由生成队友时写（`Plugin.cs:372`），那一处继续直接写 `Configuration`。
 
 存储结构不动（JSON 保持平铺）的理由：
 

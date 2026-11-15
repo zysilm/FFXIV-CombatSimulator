@@ -31,7 +31,7 @@ internal readonly record struct AppliedActionDamage(
 /// A skill without a potency override goes through the full formula (critical and direct hits, the damage
 /// multiplier); otherwise it is the bare-potency formula at the skill's potency.
 /// </param>
-/// <param name="RaisesOnHit">Each landed hit raises the engine's <c>OnHit</c> (the enemies' threat); the allies' is registered by their controller.</param>
+/// <param name="RaisesOnHit">Each landed hit is reported as threat (<c>TargetingService.RegisterHit</c>, the enemies' threat); the allies' is registered by their controller.</param>
 /// <param name="CountsDamageDealt">Each landed hit counts towards the damage dealt.</param>
 /// <param name="EngagesWhoItHits">Each target it hits is woken if idle (the primary as soon as the attack is made).</param>
 /// <param name="DeferredNeedsAttacker">An arrow still in the air is dropped if its shooter is gone when it would land.</param>
@@ -90,7 +90,7 @@ internal interface IHitSettlementHost
 
     /// <summary>Takes a landed hit off the target's HP (<c>CombatEngine.LandDamage</c>).</summary>
     void LandDamage(SimulatedEntityState target, DamageResult damage, SimulatedEntityState? source);
-    /// <summary><c>OnHit</c>.</summary>
+    /// <summary>The hit's threat (<c>TargetingService.RegisterHit</c>; the engine's <c>OnHit</c> before Refactoring II).</summary>
     void RaiseHit(SimulatedEntityState source, SimulatedEntityState target, int damage);
     /// <summary><c>OnDamageLanded</c>.</summary>
     void RaiseDamageLanded(SimulatedEntityState target, DamageResult damage, SimulatedEntityState? source);

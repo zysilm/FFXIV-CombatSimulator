@@ -9,8 +9,16 @@
 //       with the same tokens, wherever it lives now.
 //
 // Usage (from this folder):  dotnet run -c Release [-- <old-rev> [<dump-dir>]]
-//   old = CombatSimulator/Plugin*.cs at <old-rev> (default 9ea6cba, the commit before the split), read with git show;
+//   old = CombatSimulator/Plugin*.cs at <old-rev> (default 9ea6cba, the commit before the split), read with git show,
+//         and CombatSimulator/Composition/*.cs when that revision has them (a revision after the split, e.g. 9d089c4,
+//         to check a later stage against it);
 //   new = CombatSimulator/Plugin*.cs and CombatSimulator/Composition/*.cs in the working tree.
+//   Refactoring II (stage R2-P1) changed the build list on purpose; the changes are listed one by one in
+//   RefactoringII at the end of this file and applied to the old sequence before (b) compares. A module's
+//   "m.Config" (the whole Configuration, handed on explicitly) reads as "config" (its narrow settings view).
+//   Note: against the default revision, (b) and (d) also show the armor detachment for allies and enemies
+//   (e50250f, a feature after the split): OnNpcDeathRagdoll and OnCompanionDeathRagdoll strip armour on a KO,
+//   and the AllyRevived handler forgets it.
 //   Each comparison is made twice: parsed without defines and with DEV_EXPERIMENTAL (the private module's #if blocks).
 //   <dump-dir> receives the extracted sequences (old-*.txt, new-*.txt) for reading. Exit code 0 = everything equal.
 //
@@ -59,7 +67,7 @@ foreach (var defines in new[] { Array.Empty<string>(), new[] { "DEV_EXPERIMENTAL
     var oldModel = new Model(oldFiles, defines);
     var newModel = new Model(newFiles, defines);
 
-    failures += CompareSequence("(b) constructor", oldModel, newModel, m => m.Constructor(), label);
+    failures += CompareSequence("(b) constructor", oldModel, newModel, m => m.Constructor(), label, RefactoringII.Apply);
     failures += CompareSequence("(a) per-frame update (OnFrameworkUpdate)", oldModel, newModel,
         m => m.MethodSequence(Model.PluginClass, "OnFrameworkUpdate"), label);
     failures += CompareSequence("(c) Dispose", oldModel, newModel, m => m.MethodSequence(Model.PluginClass, "Dispose"), label);
@@ -71,10 +79,17 @@ Console.WriteLine();
 Console.WriteLine(failures == 0 ? "ALL EQUAL" : $"{failures} DIFFERENCE(S)");
 return failures == 0 ? 0 : 1;
 
-int CompareSequence(string what, Model oldModel, Model newModel, Func<Model, List<string>> extract, string label)
+int CompareSequence(string what, Model oldModel, Model newModel, Func<Model, List<string>> extract, string label,
+    Func<List<string>, List<string>, int>? edit = null)
 {
     var a = extract(oldModel);
     var b = extract(newModel);
+    if (edit != null)
+    {
+        var failed = edit(a, b);
+        if (failed > 0)
+            return failed;
+    }
     if (dumpDir != null)
     {
         Directory.CreateDirectory(dumpDir);
@@ -109,7 +124,8 @@ int CompareBodies(Model oldModel, Model newModel)
     {
         var name = key[(key.LastIndexOf('.') + 1)..];
         // Split on purpose: the constructor's build steps are compared as a sequence in (b).
-        if (name is "WireVictoryCelebration" or "InitVoice" or "WireWar" || key == "CombatSimulatorPlugin..ctor")
+        if (name is "WireVictoryCelebration" or "InitVoice" or "WireWar" || key == "CombatSimulatorPlugin..ctor" ||
+            RefactoringII.Bodies.Contains(key))
         {
             skipped.Add(key);
             continue;
@@ -153,7 +169,16 @@ static List<(string Name, string Text)> GitShowPluginFiles(string repo, string r
         .Where(p => Path.GetFileName(p).StartsWith("Plugin") && p.EndsWith(".cs"))
         .OrderBy(p => p, StringComparer.Ordinal)
         .ToList();
-    return names.Select(p => (Name: Path.GetFileName(p), Text: Git(repo, $"show {rev}:{p}"))).ToList();
+    var files = names.Select(p => (Name: Path.GetFileName(p), Text: Git(repo, $"show {rev}:{p}"))).ToList();
+    // A revision after the split (stage B7) has the modules too: read them as the working tree's are read
+    // ("Composition/<file>"), so a later stage can be checked against it.
+    var modules = Git(repo, $"ls-tree --name-only {rev} CombatSimulator/Composition/")
+        .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Where(p => p.EndsWith(".cs"))
+        .OrderBy(p => p, StringComparer.Ordinal);
+    foreach (var p in modules)
+        files.Add((Name: "Composition" + Path.DirectorySeparatorChar + Path.GetFileName(p), Text: Git(repo, $"show {rev}:{p}")));
+    return files;
 }
 
 static string Git(string repo, string arguments)
@@ -503,6 +528,11 @@ sealed class Model
             var name = node.Name.Identifier.Text;
             if (node.Expression is ThisExpressionSyntax)
                 return Visit(node.Name);
+            // Refactoring II (settings views): a module reads its own settings through a narrow view still named
+            // "config", and hands the whole Configuration (PluginModules.Config) explicitly to what still takes it
+            // or writes it. Both are the plugin's one Configuration object.
+            if (receiver is "m" or "modules" && name == "Config")
+                return SyntaxFactory.IdentifierName("config");
             if (ModuleReceivers.Contains(receiver))
                 return SyntaxFactory.IdentifierName(model.accessors.TryGetValue(name, out var field) ? field : name);
             if (EventReceivers.Contains(receiver) && EventSlots.TryGetValue(name, out var slot))
@@ -511,5 +541,72 @@ sealed class Model
                 return SyntaxFactory.ParseExpression("CombatantAiState." + name);
             return base.VisitMemberAccessExpression(node);
         }
+    }
+}
+
+/// <summary>
+/// Refactoring II, stage R2-P1 (docs/REFACTOR_PLAN.md §4.9 items 5 and 6): the engine is given the roster of the
+/// player's side, who fights whom and the battle's rule parts by constructor instead of the seven queries and the
+/// rule parts it was handed after the allies' manager was built; the manager is given the same three. These are the
+/// only changes to the build list, each listed here and each required to apply exactly once to the old sequence (so
+/// nothing else can hide behind them): the three objects are created before the engine (the roster with the
+/// enemies' selector and spawner, the other two right before the engine), the engine and the manager are created
+/// with them, and the seven assignments are gone (CombatModule.WireCompanions keeps ResolveNpcTarget). Applied only
+/// when the new side has that shape and the old side has not.
+/// </summary>
+static class RefactoringII
+{
+    const string Marker = "new CombatRoster ( config )";
+
+    static readonly (string Old, string[] New)[] Edits =
+    {
+        ("new Effects . NpcScaleController ( config , npcSelector , objectTable )",
+            new[] { "new Effects . NpcScaleController ( config , npcSelector , objectTable )", Marker }),
+        ("new CombatEngine ( actionDataProvider , damageCalculator , animationController , movementBlockHook , ragdollController , config , npcSelector , clientState , log )",
+            new[]
+            {
+                "new TargetingService ( ( ) => combatEngine . State . SimulationTime )",
+                "new BattleRuleSet ( BattleRuleFactory . CreateAll ( ) )",
+                "new CombatEngine ( actionDataProvider , damageCalculator , animationController , movementBlockHook , ragdollController , config , npcSelector , combatRoster , targeting , ruleParts , clientState , log )",
+            }),
+        ("new CombatCompanionManager ( objectTable , clientState , config , combatEngine , animationController , movementBlockHook , targetManager , log )",
+            new[] { "new CombatCompanionManager ( objectTable , clientState , config , combatEngine , combatRoster , targeting , ruleParts , animationController , movementBlockHook , targetManager , log )" }),
+        ("assign combatEngine . ResolveExternalEntityAddress = companionManager . ResolveAddress", Array.Empty<string>()),
+        ("assign combatEngine . HasLivingCompanions = ( ) => companionManager . HasLivingCompanions", Array.Empty<string>()),
+        ("assign combatEngine . OnPlayerDamageDealt = companionManager . RegisterPlayerDamage", Array.Empty<string>()),
+        ("assign combatEngine . OnPlayerDamageDealtToTarget = companionManager . RegisterPlayerDamage", Array.Empty<string>()),
+        ("assign combatEngine . ForceNpcTarget = companionManager . ForceEnemyTarget", Array.Empty<string>()),
+        ("assign combatEngine . OnHit = companionManager . RegisterHit", Array.Empty<string>()),
+        ("assign combatEngine . RuleParts = companionManager . RuleParts", Array.Empty<string>()),
+    };
+
+    /// <summary>The module build steps whose bodies Refactoring II changed on purpose (their effect on the build list is (b)'s).</summary>
+    public static readonly HashSet<string> Bodies = new(StringComparer.Ordinal)
+    {
+        "ActorsModule.CreateRoster", "ActorsModule.CreateCompanions",
+        "CombatModule.CreateEngineAndActionCombat", "CombatModule.WireCompanions",
+    };
+
+    /// <summary>Applies the listed edits to the old sequence; returns how many did not apply exactly once.</summary>
+    public static int Apply(List<string> oldSteps, List<string> newSteps)
+    {
+        if (!newSteps.Contains(Marker) || oldSteps.Contains(Marker))
+            return 0;
+        var failures = 0;
+        foreach (var (old, replacement) in Edits)
+        {
+            var at = oldSteps.IndexOf(old);
+            if (at < 0 || oldSteps.LastIndexOf(old) != at)
+            {
+                Console.WriteLine($"  (b) Refactoring II edit does not apply exactly once to the old sequence: {old}");
+                failures++;
+                continue;
+            }
+            oldSteps.RemoveAt(at);
+            oldSteps.InsertRange(at, replacement);
+        }
+        Console.WriteLine($"  (b) Refactoring II: {Edits.Length - failures}/{Edits.Length} listed edits applied to the old sequence " +
+                          "(3 objects created before the engine, the engine and the allies' manager created with them, 7 assignments gone)");
+        return failures;
     }
 }

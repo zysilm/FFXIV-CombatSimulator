@@ -76,7 +76,7 @@ public sealed class TelegraphSystem
 
     private readonly CombatEngine combatEngine;
     private readonly AnimationController animationController;
-    private readonly Configuration config;
+    private readonly IEnemyAttackSettings config;
     private readonly Func<bool> playerGuardActive;
     private readonly Action playerPerfectGuard;
     private readonly IPluginLog log;
@@ -88,7 +88,7 @@ public sealed class TelegraphSystem
     public TelegraphSystem(
         CombatEngine combatEngine,
         AnimationController animationController,
-        Configuration config,
+        IEnemyAttackSettings config,
         Func<bool> playerGuardActive,
         Action playerPerfectGuard,
         IPluginLog log,

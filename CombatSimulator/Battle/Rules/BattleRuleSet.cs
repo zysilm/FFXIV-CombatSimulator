@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+using System;
 using System.Collections.Generic;
 using CombatSimulator.Combat;
 using CombatSimulator.Companions;
@@ -39,18 +40,36 @@ public sealed class BattleRuleSet
 {
     private readonly IBattleRule[] parts;
     private readonly bool[] ticked;
-    private readonly IBattleRuleSettings settings;
+    private IBattleRuleSettings settings = null!;
 
     public BattleRuleSet(BattleContext context, IBattleRule[] parts)
+        : this(parts)
     {
-        Context = context;
-        settings = context.Rules.Settings;
+        Bind(context);
+    }
+
+    /// <summary>
+    /// The parts before their context exists: the plugin builds the set before the engine (which is given it
+    /// by constructor) and the allies' controller binds the context (<see cref="Bind"/>) when it is built.
+    /// Nothing asks the set before that.
+    /// </summary>
+    public BattleRuleSet(IBattleRule[] parts)
+    {
         this.parts = parts;
         ticked = new bool[parts.Length];
+    }
+
+    /// <summary>Gives the parts their context (once).</summary>
+    public void Bind(BattleContext context)
+    {
+        if (Context != null)
+            throw new InvalidOperationException("The battle rule set is already bound.");
+        Context = context;
+        settings = context.Rules.Settings;
         context.RuleSet = this;
     }
 
-    public BattleContext Context { get; }
+    public BattleContext Context { get; private set; } = null!;
 
     /// <summary>Every part, in order.</summary>
     public IReadOnlyList<IBattleRule> Parts => parts;

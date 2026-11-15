@@ -480,7 +480,7 @@ sealed class FakeEngine : ICombatLoopEngine
 /// Where attacks land (IAttackSink). An enemy's attack is a telegraph that lands its full time later
 /// (TelegraphedAttackExecutor's windup, here a fixed <see cref="Windup"/>; the enemy is busy until then);
 /// a companion's lands at once, as CombatEngine.ProcessCompanionAction lands it. Damage is the production
-/// DamageCalculator's, threat the production TargetingService's (CombatEngine.OnHit -> RegisterHit).
+/// DamageCalculator's, threat the production TargetingService's (RegisterHit, which CombatEngine calls).
 /// </summary>
 sealed class FakeAttacks : IAttackSink
 {
@@ -740,11 +740,15 @@ sealed unsafe class LoopReplay
         };
         names[playerId] = "P";
 
-        // As Plugin.cs builds and wires them (the manager first, then the enemy AI).
-        companions = new CombatCompanionManager(null!, null!, settings, engine, world, attacks, pluginLog);
+        // As Plugin.cs builds and wires them (the roster, who fights whom and the rule parts before the engine, which
+        // has the first two by constructor; the manager on them; then the enemy AI).
+        var roster = new CombatRoster(settings);
+        targeting = new TargetingService(() => engine.State.SimulationTime);
+        var ruleParts = new CombatSimulator.Battle.Rules.BattleRuleSet(CombatSimulator.Battle.Rules.BattleRuleFactory.CreateAll());
+        engine.ResolveExternalEntityAddress = roster.AddressOf;
+        engine.HasLivingCompanions = () => roster.HasLivingAllies;
+        companions = new CombatCompanionManager(null!, null!, settings, engine, roster, targeting, ruleParts, world, attacks, pluginLog);
         engine.ResolveNpcTarget = companions.SelectEnemyTarget;
-        engine.ResolveExternalEntityAddress = companions.ResolveAddress;
-        engine.HasLivingCompanions = () => companions.HasLivingCompanions;
         attacks.Companions = companions;
         enemiesAi = new NpcAiController(engine, world, attacks, settings, pluginLog, null, attacks.IsBusy);
         enemiesAi.Crowd = world;
@@ -753,8 +757,6 @@ sealed unsafe class LoopReplay
         enemiesAi.RandomSource = new Random(seed);
         companions.RandomSource = new Random(seed + 1);
         companions.AggroSeedSource = new Random(seed + 2);
-        targeting = (TargetingService)typeof(CombatCompanionManager)
-            .GetField("targeting", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(companions)!;
         world.Spy = new DrawSpy(targeting, log, Name);
 
         // Enemies as the NPC spawner leaves them (client-controlled, spawned, idle), registered with the engine.

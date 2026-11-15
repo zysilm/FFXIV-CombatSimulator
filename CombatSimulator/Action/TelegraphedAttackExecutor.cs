@@ -15,9 +15,9 @@ namespace CombatSimulator.ActionCombat;
 public sealed class TelegraphedAttackExecutor : IAttackExecutor
 {
     private readonly TelegraphSystem telegraphs;
-    private readonly Configuration config;
+    private readonly IEnemyAttackSettings config;
 
-    public TelegraphedAttackExecutor(TelegraphSystem telegraphs, Configuration config)
+    public TelegraphedAttackExecutor(TelegraphSystem telegraphs, IEnemyAttackSettings config)
     {
         this.telegraphs = telegraphs;
         this.config = config;

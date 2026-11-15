@@ -15,9 +15,10 @@ public partial class CombatEngine
 {
     /// <summary>
     /// The battle's rule parts (the allies' controller holds them), asked when an enemy's blow would fell one of
-    /// the player's side (<see cref="IBattleRule.OnLethalBlow"/>). Set by the plugin after construction.
+    /// the player's side (<see cref="IBattleRule.OnLethalBlow"/>). Given by constructor (built before the engine,
+    /// bound to its context by the allies' controller).
     /// </summary>
-    public BattleRuleSet? RuleParts { get; set; }
+    public BattleRuleSet RuleParts { get; }
 
     private sealed class SettlementHost(CombatEngine engine) : IHitSettlementHost
     {
@@ -36,7 +37,7 @@ public partial class CombatEngine
         public void DeferHit(float delay, Action resolve) => engine.DeferHit(delay, resolve);
 
         public void LandDamage(SimulatedEntityState target, DamageResult damage, SimulatedEntityState? source) => engine.LandDamage(target, damage, source);
-        public void RaiseHit(SimulatedEntityState source, SimulatedEntityState target, int damage) => engine.OnHit?.Invoke(source, target, damage);
+        public void RaiseHit(SimulatedEntityState source, SimulatedEntityState target, int damage) => engine.targeting.RegisterHit(source, target, damage);
         public void RaiseDamageLanded(SimulatedEntityState target, DamageResult damage, SimulatedEntityState? source) => engine.OnDamageLanded?.Invoke(target, damage, source);
         public void RaisePlayerDamagedByNpc() => engine.OnPlayerDamagedByNpc?.Invoke();
         public void RaisePlayerHitByNpc(uint npcId) => engine.OnPlayerHitByNpc?.Invoke(npcId);
