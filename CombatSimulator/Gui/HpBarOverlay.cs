@@ -31,6 +31,9 @@ public class HpBarOverlay : IDisposable
     /// <summary>A cast that is not an engine cast (Action-Mode telegraph lead-in): name + 0..1 progress.</summary>
     public Func<SimulatedNpc, (string Name, float Progress)?>? ExternalCast { get; set; }
 
+    /// <summary>The corpse seizure under way: where the lord's body lies and how far it has gone (0..1), or null.</summary>
+    public Func<(Vector3 Body, float Progress)?>? SeizureBar { get; set; }
+
     private const float BarWidth = 200f;
     private const float BarHeight = 16f;
     private const float MpBarWidth = 184f;
@@ -138,6 +141,39 @@ public class HpBarOverlay : IDisposable
         return alpha;
     }
 
+    /// <summary>A progress bar's words: none in Anonymous Mode (the bar alone).</summary>
+    private string CastLabel(string text) => config.AnonymousMode ? "" : text;
+
+    /// <summary>A plain progress bar (0..1) with its words centred under it (none when empty).</summary>
+    private static void DrawProgressBar(ImDrawListPtr drawList, Vector2 pos, float width, float height, float progress, string label, float alpha)
+    {
+        drawList.AddRectFilled(pos, pos + new Vector2(width, height), Fade(new Vector4(0.1f, 0.1f, 0.1f, 0.85f), alpha));
+        drawList.AddRectFilled(pos, pos + new Vector2(width * Math.Clamp(progress, 0f, 1f), height), Fade(new Vector4(0.9f, 0.55f, 0f, 1f), alpha));
+        drawList.AddRect(pos, pos + new Vector2(width, height), Fade(new Vector4(0f, 0f, 0f, 0.7f), alpha));
+        if (label.Length == 0)
+            return;
+        var size = ImGui.CalcTextSize(label);
+        drawList.AddText(new Vector2(pos.X + (width - size.X) / 2f, pos.Y + height + 1f), Fade(new Vector4(1f, 0.85f, 0.5f, 1f), alpha), label);
+    }
+
+    // The corpse seizure's bar floats this far above the lord's body (its pelvis), seen like an enemy's bar.
+    private const float SeizureBarHeightAbove = 1.2f;
+    private const float SeizureBarWidth = 120f;
+    private const float SeizureBarThickness = 7f;
+    private const uint SeizureSightId = 0xFFFFFFF0u;
+
+    /// <summary>"Seizing": the enemy's hold on the lord's body, above it, while it is under way and in sight.</summary>
+    private void DrawSeizureBar(ImDrawListPtr drawList, Vector3 camPos, float now)
+    {
+        if (SeizureBar?.Invoke() is not { } seizure)
+            return;
+        var at = seizure.Body + new Vector3(0f, SeizureBarHeightAbove, 0f);
+        if (!InSight(SeizureSightId, at, camPos, now) || !gameGui.WorldToScreen(at, out var screen))
+            return;
+        DrawProgressBar(drawList, screen - new Vector2(SeizureBarWidth / 2f, 0f), SeizureBarWidth, SeizureBarThickness,
+            seizure.Progress, CastLabel("Seizing"), 1f);
+    }
+
     private bool HitRecently(uint id, float now)
         => lastHitAt.TryGetValue(id, out var at) && now - at <= RecentHitSeconds;
 
@@ -176,8 +212,10 @@ public class HpBarOverlay : IDisposable
             var castHeight = MathF.Max(2f, SmallCastHeight * scale);
             drawList.AddRectFilled(new Vector2(barPos.X, y), new Vector2(barPos.X + width, y + castHeight), Fade(new Vector4(0.1f, 0.1f, 0.1f, 0.85f), alpha));
             drawList.AddRectFilled(new Vector2(barPos.X, y), new Vector2(barPos.X + width * Math.Clamp(castProgress, 0f, 1f), y + castHeight), Fade(new Vector4(0.9f, 0.55f, 0f, 1f), alpha));
-            var size = ImGui.CalcTextSize(castName);
-            drawList.AddText(new Vector2(screenPos.X - size.X / 2f, y + castHeight + 1f), Fade(new Vector4(1f, 0.85f, 0.5f, 1f), alpha), castName);
+            // An empty name: the bar without words (Anonymous Mode).
+            var size = castName.Length > 0 ? ImGui.CalcTextSize(castName) : Vector2.Zero;
+            if (castName.Length > 0)
+                drawList.AddText(new Vector2(screenPos.X - size.X / 2f, y + castHeight + 1f), Fade(new Vector4(1f, 0.85f, 0.5f, 1f), alpha), castName);
         }
 
         if (tag != null)
@@ -385,6 +423,8 @@ public class HpBarOverlay : IDisposable
 
                 float alpha = 1f, scale = 1f;
                 string? tag = null;
+                // Kneeling at a raise: its progress in the cast slot under the bar.
+                var raise = companionManager.RaiseProgressBy(companion.State.EntityId);
                 if (!full)
                 {
                     var companionObj = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)companion.BattleChara;
@@ -418,17 +458,19 @@ public class HpBarOverlay : IDisposable
                 if (!gameGui.WorldToScreen(worldPos, out var screenPos))
                     continue;
                 if (full)
-                    DrawCompanionHpBar(drawList, companion, screenPos);
+                    DrawCompanionHpBar(drawList, companion, screenPos, raise);
                 else
                 {
                     var state = companion.State;
                     var hp = state.MaxHp > 0 ? (float)state.CurrentHp / state.MaxHp : 0f;
                     DrawSmallBar(drawList, state, screenPos, scale, alpha,
                         state.IsAlive ? HpFill(hp, friend: true) : new Vector4(0.3f, 0f, 0f, 1),
-                        tag, new Vector4(0.4f, 0.7f, 1f, 1), null, 0f);
+                        tag, new Vector4(0.4f, 0.7f, 1f, 1), raise != null ? CastLabel("Raising") : null, raise ?? 0f);
                 }
             }
         }
+
+        DrawSeizureBar(drawList, camPos, now);
 
         // No enemy in sight during a fight: point the way to the nearest one.
         var wantCompass = combatEngine.IsActive && me != null && combatEngine.State.PlayerState.IsAlive &&
@@ -651,7 +693,7 @@ public class HpBarOverlay : IDisposable
         }
     }
 
-    private void DrawCompanionHpBar(ImDrawListPtr drawList, CombatCompanion companion, Vector2 screenPos)
+    private void DrawCompanionHpBar(ImDrawListPtr drawList, CombatCompanion companion, Vector2 screenPos, float? raise)
     {
         var state = companion.State;
         var isDead = !state.IsAlive;
@@ -708,6 +750,13 @@ public class HpBarOverlay : IDisposable
         }
 
         DrawMpBar(drawList, state, barPos + new Vector2((BarWidth - MpBarWidth) / 2, BarHeight + ResourceBarGap), MpBarWidth);
+
+        // Raising a fallen friend: the raise in the cast slot under the bar.
+        if (raise is { } progress)
+        {
+            var castBarY = barPos.Y + BarHeight + ResourceBarGap + MpBarHeight + 2;
+            DrawProgressBar(drawList, new Vector2(barPos.X, castBarY), BarWidth, 12f, progress, CastLabel("Raising"), 1f);
+        }
     }
 
     private void DrawHudPlayerHpBar()

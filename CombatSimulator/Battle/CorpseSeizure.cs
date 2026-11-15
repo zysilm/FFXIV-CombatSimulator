@@ -82,19 +82,30 @@ public interface ICorpseGrab<TNpc> where TNpc : class
 
 /// <summary>
 /// The Warring States corpse seizure (with Retreat): once the lord falls, half the living enemies go
-/// for the body and carry it off unless the retainers standing over it are at least as many. Moved
-/// verbatim from <c>Plugin.War.cs</c> (refactor stage B3); its battle rule (<c>Rules.CorpseSeizureRule</c>) calls
-/// <see cref="Tick"/> in the plugin's war tick (stage B6), and the plugin calls <see cref="Reset"/> where <c>ResetWar</c> reset it.
+/// for the body and carry it off, the faster the more they outnumber the retainers standing over it,
+/// and not at all while those are at least as many. Moved from <c>Plugin.War.cs</c> (refactor stage B3);
+/// its battle rule (<c>Rules.CorpseSeizureRule</c>) calls <see cref="Tick"/> in the plugin's war tick (stage B6),
+/// the plugin calls <see cref="Reset"/> where <c>ResetWar</c> reset it and <see cref="NoteHit"/> for every hit
+/// that lands (<c>CombatEvents.DamageLanded</c>). The rule by numbers and the knock-back on a hit date from
+/// 2026-11-15 (docs/WAR_GENERATOR.md §4.3).
 /// </summary>
 public sealed class CorpseSeizure<TNpc> where TNpc : class
 {
+    // ---- The seizing's numbers (tuned with Tests/TargetingSim, scenario Seize; see its README) ----
     // Half the living enemies (the nearest to the body, at least one) go for the lord's body; the rest
-    // fight on. The seizing fills while any of them is within reach of the body (its own body's edge
-    // within SeizeReach of it) and no retainer stands within the contest radius, and drains at half
-    // that rate otherwise: a shove in the crush does not start it over. Full: the body is carried off.
+    // fight on. Seizers whose edge is within the contest radius are counted against the retainers within
+    // it. While some seizer is within reach of the body (its edge within SeizeReach of it) and the
+    // seizers there outnumber the retainers there, the seizing fills by (seizers - retainers) /
+    // SeizeSecondsPerMargin of the whole per second: one seizer alone takes the whole of it, five against
+    // four likewise, five against two a third of it. Otherwise it drains by SeizeDrainPerSecond of the
+    // whole per second: a shove in the crush does not start it over. Every hit that lands on a seizer
+    // within the contest radius knocks it back by SeizeHitKnockback (not below 0). Until the lord's
+    // ragdoll is up it stops at SeizeCapBeforeBody. Full: the body is carried off.
     private const float SeizeReach = 1.5f;
-    private const float SeizeSeconds = 2f;
-    private const float SeizeDrainRate = 0.5f;
+    private const float SeizeSecondsPerMargin = 4f;
+    private const float SeizeDrainPerSecond = 0.25f;
+    private const float SeizeHitKnockback = 0.1f;
+    private const float SeizeCapBeforeBody = 0.95f;
     private const float SeizerShare = 0.5f;
     private const float SeizeReportSeconds = 2f;
     // Every few seconds a seizer much further from the body than an enemy who is not one goes back to
@@ -113,6 +124,7 @@ public sealed class CorpseSeizure<TNpc> where TNpc : class
 
     private float seizeProgress;
     private float seizeReportTimer;
+    private int hitsSinceReport;
     private readonly List<TNpc> bodySeizers = new();
     private readonly List<(TNpc Npc, float Distance)> seizerCandidates = new();
     private bool bodyContested;
@@ -138,8 +150,32 @@ public sealed class CorpseSeizure<TNpc> where TNpc : class
     /// <summary>The lord's body has been carried off.</summary>
     public bool BodySeized => bodySeized;
 
-    /// <summary>The seizing so far, in seconds (full at 2).</summary>
+    /// <summary>The seizing so far, 0..1 (full: carried off). Shown above the body while above 0.</summary>
     public float Progress => seizeProgress;
+
+    /// <summary>
+    /// A hit landed on someone (<paramref name="targetId"/>): one on a seizer within the contest radius of the body
+    /// knocks the seizing back. Anything else, or with nothing at stake, does nothing.
+    /// </summary>
+    public void NoteHit(uint targetId)
+    {
+        if (!LordBodyAtStake || world.OutcomeDecided || bodySeizers.Count == 0)
+            return;
+        TNpc? seizer = null;
+        foreach (var npc in bodySeizers)
+            if (world.IdOf(npc) == targetId)
+            {
+                seizer = npc;
+                break;
+            }
+        if (seizer == null || world.LordBodyLocation() is not { } body)
+            return;
+        var at = world.PositionOf(seizer);
+        if (new Vector2(at.X - body.X, at.Z - body.Z).Length() - world.HitboxRadiusOf(seizer) > contestRadius)
+            return;
+        hitsSinceReport++;
+        seizeProgress = MathF.Max(0f, seizeProgress - SeizeHitKnockback);
+    }
 
     /// <summary>Whether the lord's body is to be guarded (Warring States with Retreat, the lord down).</summary>
     private bool LordBodyAtStake => rules.LordBodyIsGuarded && !bodySeized;
@@ -148,6 +184,7 @@ public sealed class CorpseSeizure<TNpc> where TNpc : class
     public void Reset()
     {
         seizeProgress = 0f;
+        hitsSinceReport = 0;
         grabRetryLeft = 0f;
         ReleaseSeizers();
         bodySeized = false;
@@ -278,14 +315,17 @@ public sealed class CorpseSeizure<TNpc> where TNpc : class
             }
         }
 
+        // Filling: someone at the body and the seizers there outnumber the retainers there (then not held off,
+        // and the margin is at least one), by the margin.
         var atBody = closest != null && closestGap <= SeizeReach;
-        seizeProgress = atBody && !contested
-            ? seizeProgress + deltaTime
-            : MathF.Max(0f, seizeProgress - deltaTime * SeizeDrainRate);
+        var margin = seizersAtBody - guardsAtBody;
+        seizeProgress = atBody && !contested && margin > 0
+            ? seizeProgress + deltaTime * margin / SeizeSecondsPerMargin
+            : MathF.Max(0f, seizeProgress - deltaTime * SeizeDrainPerSecond);
         // The body is taken in hand: not before the lord's ragdoll is there to be held.
         var bodyReady = world.BodyReady;
         if (!bodyReady)
-            seizeProgress = MathF.Min(seizeProgress, SeizeSeconds * 0.95f);
+            seizeProgress = MathF.Min(seizeProgress, SeizeCapBeforeBody);
 
         seizeReportTimer -= deltaTime;
         if (seizeReportTimer <= 0f)
@@ -295,10 +335,12 @@ public sealed class CorpseSeizure<TNpc> where TNpc : class
                        $"{seizersAtBody} seizers and {guardsAtBody} retainers within {radius:0.#} m; " +
                        (contested ? $"held off, nearest retainer {guardName} {guardDistance:F1} m from it" : guardName == null ? "no retainer left" : $"not held, nearest retainer {guardName} {guardDistance:F1} m away") +
                        (bodyReady ? "" : "; body not yet fallen (ragdoll waiting)") +
-                       $"; seized {seizeProgress / SeizeSeconds:P0}.");
+                       $"; seized {seizeProgress:P0}" +
+                       (hitsSinceReport > 0 ? $", knocked back by {hitsSinceReport} hits" : "") + ".");
+            hitsSinceReport = 0;
         }
 
-        if (closest != null && seizeProgress >= SeizeSeconds)
+        if (closest != null && seizeProgress >= 1f)
             SeizeBody(closest);
     }
 

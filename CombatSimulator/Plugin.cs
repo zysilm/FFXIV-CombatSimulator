@@ -424,6 +424,9 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         combatEvents.SimulationReset += damageNumbers.Clear;                     // (SimulationReset #8)
         // The battle's end: the fight over the lord's body, then the banner after the crowd's reaction.
         battleModule.CreateCorpseSeizure();
+        // A seizer struck at the body knocks the seizing back; its bar above the body.
+        combatEvents.DamageLanded += battleModule.NoteDamage;
+        hpBarOverlay.SeizureBar = battleModule.SeizureBar;
         // (OutcomeDecided #2: after whatever is there now, as it always was — written as a wrapper of the
         // previous handler rather than +=, exactly as before the split.)
         var previous = combatEvents.OutcomeDecided;

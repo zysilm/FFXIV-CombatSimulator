@@ -8,5 +8,10 @@
     <Compile Include="../../CombatSimulator/Simulation/CombatBudgetModel.cs" Link="Production/CombatBudgetModel.cs" />
     <Compile Include="../../CombatSimulator/Simulation/SimulatedEntityState.cs" Link="Production/SimulatedEntityState.cs" />
     <Compile Include="../../CombatSimulator/Npcs/NpcBehavior.cs" Link="Production/NpcBehavior.cs" />
+    <!-- The Seize scenario runs the plugin's own corpse seizure over a fake world (SeizeWorld in Program.cs). -->
+    <Compile Include="../../CombatSimulator/Battle/CorpseSeizure.cs" Link="Production/CorpseSeizure.cs" />
+    <Compile Include="../../CombatSimulator/Battle/BattleRules.cs" Link="Production/BattleRules.cs" />
+    <Compile Include="../../CombatSimulator/Battle/IBattleRuleSettings.cs" Link="Production/IBattleRuleSettings.cs" />
+    <Compile Include="../../CombatSimulator/Simulation/WarFallenRule.cs" Link="Production/WarFallenRule.cs" />
   </ItemGroup>
 </Project>

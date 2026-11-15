@@ -33,6 +33,9 @@ public unsafe partial class CombatCompanionManager
     /// <summary>The progress (0..1) of a raise under way on this friend, or null.</summary>
     public float? RescueProgress(uint patientId) => ruleParts.Get<SpringAutumnRescueRule>().RescueProgress(patientId);
 
+    /// <summary>The progress (0..1) of the raise this companion is kneeling at, or null (for its cast bar).</summary>
+    public float? RaiseProgressBy(uint rescuerId) => ruleParts.Get<SpringAutumnRescueRule>().RaiseProgressBy(rescuerId);
+
     private static bool CanRescue(CombatCompanion companion)
         => companion.IsSpawned && companion.BattleChara != null && companion.State.IsAlive && !companion.State.IsCaptive;
 

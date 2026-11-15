@@ -43,3 +43,36 @@ nearest enemy (to the body when guarding); no rescues.
 
 Not covered: navmesh/DetourCrowd paths, body blocking, skills/AoE, healing, reachability probes, command-range
 oscillation.
+
+## Corpse seizure (`--seize`, 2026-11-15)
+
+`dotnet run -c Release -- --seize 400`: the lord has just fallen (Warring States with Retreat); the plugin's own
+`Battle/CorpseSeizure.cs` (linked, over `SeizeWorld`) picks the seizers, counts them against the retainers within
+3.5 m, fills, drains, takes the hits (`NoteHit` for every allied hit) and carries the body off. Around it: Production
+targeting (seizers x100 on the holder, guards x30 on seizers), seizers moving as `NpcAiController.TryCrowdMove` sends
+them (held off: fight the guard in reach; else straight to the body and no swinging), the one praying x4 and replaced
+by the nearest guard when it falls, the ragdoll up 2 s after the fall, and the outcome decided (ANNIHILATED, the
+seizure stops) when no retainer is left. Hooks: `TS_NO_SEIZE=1` (nobody goes for the body), `TS_SEIZE_GUARD=<x>` (the
+guards' weight on seizers), `TS_TRACE=1` (a line per second per run).
+
+Before (HEAD 36e8744: fill 1/2 s while seizers > retainers) and after (fill (seizers − retainers)/4 s, 10% back per hit
+on a seizer at the body), 400 seeds; seized % / mean seconds from the fall:
+
+| case | before | after | fight alone (nobody seizes): retainers win | body cannot be taken: retainers win |
+| --- | --- | --- | --- | --- |
+| 9 v 9 lord down: 8 v 9 (the log) | 100% / 13.9 s | 100% / 20.0 s | 0% | 0% |
+| equal numbers: 8 v 8 | 100% / 19.1 s | 100% / 23.7 s | 0% | 0% |
+| Palace: 20 v 20 | 100% / 24.0 s | 100% / 46.6 s | 0% | 0% |
+| outnumbered: 8 v 12 | 100% / 9.9 s | 100% / 15.9 s | 0% | 0% |
+| field-even: 20 v 16 | 100% / 33.4 s | 100% / 52.3 s | 57% | 0% |
+| guard-even: 8 v 4 | 10% / 49.1 s | 10% / 51.8 s | 95% | 32% |
+| guard-even: 20 v 12 | 18% / 66.6 s | 15% / 71.7 s | 100% | 53% |
+| outnumbering: 20 v 10 | 0% | 0% | 100% | 100% |
+| undefended: 0 v 4 | 100% / 3.2 s | 100% / 3.2 s | – | – |
+
+What decides whether the body is taken is the guarding fight, not the pace: the one praying fights nobody, takes x4,
+draws the seizers x100 and is replaced by a guard each time it falls, so at equal numbers the retainers lose the fight
+even when the body cannot be taken, and the seizure completes while the last of them fall. The pace (and the hits)
+only change how long it takes. Raising the guards' weight on seizers changes nothing (x30 / x100 / x300: guards already
+spend ~90% of their time on seizers; 8 v 9 stays 100% / 20 s). Open and Protect output is unchanged (100 seeds, byte
+for byte).

@@ -609,7 +609,7 @@ w held E3 False
 w held E5 False
 w held E4 False
 w log Nobody stands over the lord's body!
-f 54 progress 3D088889 seized False
+f 54 progress 3C088889 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -620,7 +620,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 55 progress 3D888889 seized False
+f 55 progress 3C888889 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -631,7 +631,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 56 progress 3DCCCCCE seized False
+f 56 progress 3CCCCCCE seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -642,7 +642,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 57 progress 3E088889 seized False
+f 57 progress 3D088889 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -653,7 +653,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 58 progress 3E2AAAAB seized False
+f 58 progress 3D2AAAAB seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -664,7 +664,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 59 progress 3E4CCCCD seized False
+f 59 progress 3D4CCCCD seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -675,7 +675,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 60 progress 3E6EEEEF seized False
+f 60 progress 3D6EEEEF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -686,8 +686,8 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-w info War: lord's body at <1.0, 0.0, 2.0>; 3 going for it, the closest E3 0.3 m from it; 3 seizers and 2 retainers within 3.5 m; not held, nearest retainer A1 1.2 m away; seized 13%.
-f 61 progress 3E888889 seized False
+w info War: lord's body at <1.0, 0.0, 2.0>; 3 going for it, the closest E3 0.3 m from it; 3 seizers and 2 retainers within 3.5 m; not held, nearest retainer A1 1.2 m away; seized 7%.
+f 61 progress 3D888889 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -698,7 +698,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 62 progress 3E99999A seized False
+f 62 progress 3D99999A seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -709,7 +709,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 63 progress 3EAAAAAB seized False
+f 63 progress 3DAAAAAB seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -720,7 +720,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 64 progress 3EBBBBBC seized False
+f 64 progress 3DBBBBBC seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -731,7 +731,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 65 progress 3ECCCCCD seized False
+f 65 progress 3DCCCCCD seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -742,7 +742,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 66 progress 3EDDDDDE seized False
+f 66 progress 3DDDDDDE seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -753,7 +753,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 67 progress 3EEEEEEF seized False
+f 67 progress 3DEEEEEF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -764,7 +764,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 68 progress 3F000000 seized False
+f 68 progress 3E000000 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -775,7 +775,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 69 progress 3F088889 seized False
+f 69 progress 3E088889 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -786,7 +786,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 70 progress 3F111112 seized False
+f 70 progress 3E111112 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -797,7 +797,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 71 progress 3F19999B seized False
+f 71 progress 3E19999B seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -808,7 +808,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 72 progress 3F222224 seized False
+f 72 progress 3E222224 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -819,7 +819,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 73 progress 3F2AAAAD seized False
+f 73 progress 3E2AAAAD seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -830,7 +830,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 74 progress 3F333336 seized False
+f 74 progress 3E333336 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -841,7 +841,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 75 progress 3F3BBBBF seized False
+f 75 progress 3E3BBBBF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -852,7 +852,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 76 progress 3F444448 seized False
+f 76 progress 3E444448 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -863,7 +863,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 77 progress 3F4CCCD1 seized False
+f 77 progress 3E4CCCD1 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -874,7 +874,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 78 progress 3F55555A seized False
+f 78 progress 3E55555A seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -885,7 +885,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 79 progress 3F5DDDE3 seized False
+f 79 progress 3E5DDDE3 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -896,7 +896,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 80 progress 3F66666C seized False
+f 80 progress 3E66666C seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -907,7 +907,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 81 progress 3F6EEEF5 seized False
+f 81 progress 3E6EEEF5 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -918,7 +918,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 82 progress 3F77777E seized False
+f 82 progress 3E77777E seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -929,7 +929,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 83 progress 3F800003 seized False
+f 83 progress 3E800003 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -940,7 +940,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 84 progress 3F844447 seized False
+f 84 progress 3E844447 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -951,7 +951,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 85 progress 3F88888B seized False
+f 85 progress 3E88888B seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -962,7 +962,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 86 progress 3F8CCCCF seized False
+f 86 progress 3E8CCCCF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -973,7 +973,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 87 progress 3F911113 seized False
+f 87 progress 3E911113 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -984,7 +984,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 88 progress 3F955557 seized False
+f 88 progress 3E955557 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -995,7 +995,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 89 progress 3F99999B seized False
+f 89 progress 3E99999B seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1006,7 +1006,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 90 progress 3F9DDDDF seized False
+f 90 progress 3EA22224 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1017,7 +1017,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 91 progress 3FA22223 seized False
+f 91 progress 3EAAAAAD seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1028,7 +1028,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 92 progress 3FA66667 seized False
+f 92 progress 3EB33336 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1039,7 +1039,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 93 progress 3FAAAAAB seized False
+f 93 progress 3EBBBBBF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1050,7 +1050,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 94 progress 3FAEEEEF seized False
+f 94 progress 3EC44448 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1061,7 +1061,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 95 progress 3FB33333 seized False
+f 95 progress 3ECCCCD1 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1072,7 +1072,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 96 progress 3FB77777 seized False
+f 96 progress 3ED5555A seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1083,7 +1083,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 97 progress 3FBBBBBB seized False
+f 97 progress 3EDDDDE3 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1094,7 +1094,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 98 progress 3FBFFFFF seized False
+f 98 progress 3EE6666C seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1105,7 +1105,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 99 progress 3FC44443 seized False
+f 99 progress 3EEEEEF5 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1116,7 +1116,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 100 progress 3FC88887 seized False
+f 100 progress 3EF7777E seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1127,7 +1127,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 101 progress 3FCCCCCB seized False
+f 101 progress 3F000003 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1138,7 +1138,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 102 progress 3FD1110F seized False
+f 102 progress 3F044447 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1149,7 +1149,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 103 progress 3FD55553 seized False
+f 103 progress 3F08888B seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1160,7 +1160,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 104 progress 3FD99997 seized False
+f 104 progress 3F0CCCCF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1171,7 +1171,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 105 progress 3FDDDDDB seized False
+f 105 progress 3F111113 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1182,7 +1182,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 106 progress 3FE2221F seized False
+f 106 progress 3F155557 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1193,7 +1193,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 107 progress 3FE66663 seized False
+f 107 progress 3F19999B seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1204,7 +1204,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 108 progress 3FEAAAA7 seized False
+f 108 progress 3F1DDDDF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1215,7 +1215,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 109 progress 3FEEEEEB seized False
+f 109 progress 3F222223 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1226,7 +1226,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 110 progress 3FF3332F seized False
+f 110 progress 3F266667 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1237,7 +1237,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 111 progress 3FF77773 seized False
+f 111 progress 3F2AAAAB seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1248,7 +1248,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 112 progress 3FFBBBB7 seized False
+f 112 progress 3F2EEEEF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1259,7 +1259,206 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 113 progress 3FFFFFFB seized False
+f 113 progress 3F333333 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 114 progress 3F377777 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 115 progress 3F3BBBBB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 116 progress 3F3FFFFF seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 117 progress 3F444443 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 118 progress 3F488887 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 119 progress 3F4CCCCB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 120 progress 3F51110F seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 121 progress 3F555553 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+w info War: lord's body at <1.0, 0.0, 2.0>; 3 going for it, the closest E4 0.3 m from it; 3 seizers and 1 retainers within 3.5 m; not held, nearest retainer A1 1.2 m away; seized 85%.
+f 122 progress 3F599997 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 123 progress 3F5DDDDB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 124 progress 3F62221F seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 125 progress 3F666663 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 126 progress 3F6AAAA7 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 127 progress 3F6EEEEB seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 128 progress 3F73332F seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 129 progress 3F777773 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 130 progress 3F7BBBB7 seized False
+w seizers cleared
+w goal E3 3F800000,00000000,40000000
+w seizer F0000003
+w goal E5 3F800000,00000000,40000000
+w seizer F0000005
+w goal E4 3F800000,00000000,40000000
+w seizer F0000004
+w held E3 False
+w held E5 False
+w held E4 False
+f 131 progress 3F7FFFFB seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -1283,26 +1482,7 @@ w surrender
 w enemy victory
 w control E4
 w grab 1 holding False
-f 114 progress 40022220 seized True
-f 115 progress 00000000 seized True
-f 116 progress 00000000 seized True
-f 117 progress 00000000 seized True
-f 118 progress 00000000 seized True
-f 119 progress 00000000 seized True
-f 120 progress 00000000 seized True
-f 121 progress 00000000 seized True
-f 122 progress 00000000 seized True
-f 123 progress 00000000 seized True
-f 124 progress 00000000 seized True
-f 125 progress 00000000 seized True
-f 126 progress 00000000 seized True
-w grab 2 holding False
-f 127 progress 00000000 seized True
-f 128 progress 00000000 seized True
-f 129 progress 00000000 seized True
-f 130 progress 00000000 seized True
-f 131 progress 00000000 seized True
-f 132 progress 00000000 seized True
+f 132 progress 3F822220 seized True
 f 133 progress 00000000 seized True
 f 134 progress 00000000 seized True
 f 135 progress 00000000 seized True
@@ -1310,13 +1490,12 @@ f 136 progress 00000000 seized True
 f 137 progress 00000000 seized True
 f 138 progress 00000000 seized True
 f 139 progress 00000000 seized True
-w grab 3 holding True
 f 140 progress 00000000 seized True
-w info War: the seizer has the lord's body in hand.
 f 141 progress 00000000 seized True
 f 142 progress 00000000 seized True
 f 143 progress 00000000 seized True
 f 144 progress 00000000 seized True
+w grab 2 holding False
 f 145 progress 00000000 seized True
 f 146 progress 00000000 seized True
 f 147 progress 00000000 seized True
@@ -1330,7 +1509,9 @@ f 154 progress 00000000 seized True
 f 155 progress 00000000 seized True
 f 156 progress 00000000 seized True
 f 157 progress 00000000 seized True
+w grab 3 holding True
 f 158 progress 00000000 seized True
+w info War: the seizer has the lord's body in hand.
 f 159 progress 00000000 seized True
 f 160 progress 00000000 seized True
 f 161 progress 00000000 seized True
@@ -2143,7 +2324,7 @@ w held E3 False
 w held E5 False
 w held E4 False
 w log Nobody stands over the lord's body!
-f 54 progress 3D088889 seized False
+f 54 progress 3C088889 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2154,7 +2335,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 55 progress 3D888889 seized False
+f 55 progress 3C888889 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2165,7 +2346,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 56 progress 3DCCCCCE seized False
+f 56 progress 3CCCCCCE seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2176,7 +2357,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 57 progress 3E088889 seized False
+f 57 progress 3D088889 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2187,7 +2368,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 58 progress 3E2AAAAB seized False
+f 58 progress 3D2AAAAB seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2198,7 +2379,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 59 progress 3E4CCCCD seized False
+f 59 progress 3D4CCCCD seized False
 f 60 rules WarringStates hostages False retreat False
 w goal E3 -
 w held E3 False
@@ -2251,7 +2432,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 90 progress 3D088889 seized False
+f 90 progress 3C888889 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2263,7 +2444,7 @@ w held E3 False
 w held E5 False
 w held E4 False
 w info War: lord's body at <1.0, 0.0, 2.0>; 3 going for it, the closest E3 0.3 m from it; 3 seizers and 1 retainers within 3.5 m; not held, nearest retainer A1 1.2 m away; seized 3%.
-f 91 progress 3D888889 seized False
+f 91 progress 3D088889 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2274,7 +2455,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 92 progress 3DCCCCCE seized False
+f 92 progress 3D4CCCCE seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2285,7 +2466,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 93 progress 3E088889 seized False
+f 93 progress 3D888889 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2296,7 +2477,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 94 progress 3E2AAAAB seized False
+f 94 progress 3DAAAAAB seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2307,7 +2488,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 95 progress 3E4CCCCD seized False
+f 95 progress 3DCCCCCD seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2318,7 +2499,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 96 progress 3E6EEEEF seized False
+f 96 progress 3DEEEEEF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2329,7 +2510,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 97 progress 3E888889 seized False
+f 97 progress 3E088889 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2340,7 +2521,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 98 progress 3E99999A seized False
+f 98 progress 3E19999A seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2351,7 +2532,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 99 progress 3EAAAAAB seized False
+f 99 progress 3E2AAAAB seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2362,7 +2543,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 100 progress 3EBBBBBC seized False
+f 100 progress 3E3BBBBC seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2373,7 +2554,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 101 progress 3ECCCCCD seized False
+f 101 progress 3E4CCCCD seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2384,7 +2565,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 102 progress 3EDDDDDE seized False
+f 102 progress 3E5DDDDE seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2395,7 +2576,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 103 progress 3EEEEEEF seized False
+f 103 progress 3E6EEEEF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2406,7 +2587,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 104 progress 3F000000 seized False
+f 104 progress 3E800000 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2417,7 +2598,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 105 progress 3F088889 seized False
+f 105 progress 3E888889 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2428,7 +2609,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 106 progress 3F111112 seized False
+f 106 progress 3E911112 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2439,7 +2620,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 107 progress 3F19999B seized False
+f 107 progress 3E99999B seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2450,7 +2631,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 108 progress 3F222224 seized False
+f 108 progress 3EA22224 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2461,7 +2642,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 109 progress 3F2AAAAD seized False
+f 109 progress 3EAAAAAD seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2472,7 +2653,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 110 progress 3F333336 seized False
+f 110 progress 3EB33336 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2483,7 +2664,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 111 progress 3F3BBBBF seized False
+f 111 progress 3EBBBBBF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2494,7 +2675,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 112 progress 3F444448 seized False
+f 112 progress 3EC44448 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2505,7 +2686,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 113 progress 3F4CCCD1 seized False
+f 113 progress 3ECCCCD1 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2516,7 +2697,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 114 progress 3F55555A seized False
+f 114 progress 3ED5555A seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2527,7 +2708,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 115 progress 3F5DDDE3 seized False
+f 115 progress 3EDDDDE3 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2538,7 +2719,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 116 progress 3F66666C seized False
+f 116 progress 3EE6666C seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2549,7 +2730,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 117 progress 3F6EEEF5 seized False
+f 117 progress 3EEEEEF5 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2560,7 +2741,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 118 progress 3F77777E seized False
+f 118 progress 3EF7777E seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2571,7 +2752,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 119 progress 3F800003 seized False
+f 119 progress 3F000003 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2582,7 +2763,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 120 progress 3F844447 seized False
+f 120 progress 3F044447 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2593,7 +2774,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 121 progress 3F88888B seized False
+f 121 progress 3F08888B seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2604,7 +2785,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 122 progress 3F8CCCCF seized False
+f 122 progress 3F0CCCCF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2615,7 +2796,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 123 progress 3F911113 seized False
+f 123 progress 3F111113 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2626,7 +2807,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 124 progress 3F955557 seized False
+f 124 progress 3F155557 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2637,7 +2818,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 125 progress 3F99999B seized False
+f 125 progress 3F19999B seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2648,7 +2829,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 126 progress 3F9DDDDF seized False
+f 126 progress 3F1DDDDF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2659,7 +2840,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 127 progress 3FA22223 seized False
+f 127 progress 3F222223 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2670,7 +2851,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 128 progress 3FA66667 seized False
+f 128 progress 3F266667 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2681,7 +2862,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 129 progress 3FAAAAAB seized False
+f 129 progress 3F2AAAAB seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2692,7 +2873,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 130 progress 3FAEEEEF seized False
+f 130 progress 3F2EEEEF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2703,7 +2884,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 131 progress 3FB33333 seized False
+f 131 progress 3F333333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2714,7 +2895,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 132 progress 3FB77777 seized False
+f 132 progress 3F377777 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2725,7 +2906,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 133 progress 3FBBBBBB seized False
+f 133 progress 3F3BBBBB seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2736,7 +2917,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 134 progress 3FBFFFFF seized False
+f 134 progress 3F3FFFFF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2747,7 +2928,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 135 progress 3FC44443 seized False
+f 135 progress 3F444443 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2758,7 +2939,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 136 progress 3FC88887 seized False
+f 136 progress 3F488887 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2769,7 +2950,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 137 progress 3FCCCCCB seized False
+f 137 progress 3F4CCCCB seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2780,7 +2961,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 138 progress 3FD1110F seized False
+f 138 progress 3F51110F seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2791,7 +2972,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 139 progress 3FD55553 seized False
+f 139 progress 3F555553 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2802,7 +2983,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 140 progress 3FD99997 seized False
+f 140 progress 3F599997 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2813,7 +2994,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 141 progress 3FDDDDDB seized False
+f 141 progress 3F5DDDDB seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2824,7 +3005,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 142 progress 3FE2221F seized False
+f 142 progress 3F62221F seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2835,7 +3016,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 143 progress 3FE66663 seized False
+f 143 progress 3F666663 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2846,7 +3027,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 144 progress 3FEAAAA7 seized False
+f 144 progress 3F6AAAA7 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2857,7 +3038,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 145 progress 3FEEEEEB seized False
+f 145 progress 3F6EEEEB seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2868,7 +3049,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 146 progress 3FF3332F seized False
+f 146 progress 3F73332F seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2879,7 +3060,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 147 progress 3FF77773 seized False
+f 147 progress 3F777773 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2890,7 +3071,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 148 progress 3FFBBBB7 seized False
+f 148 progress 3F7BBBB7 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2901,7 +3082,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 149 progress 3FFFFFFB seized False
+f 149 progress 3F7FFFFB seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -2925,7 +3106,7 @@ w surrender
 w enemy victory
 w control E4
 w grab 1 holding False
-f 150 progress 40022220 seized True
+f 150 progress 3F833331 seized True
 f 151 progress 00000000 seized True
 f 152 progress 00000000 seized True
 f 153 progress 00000000 seized True
@@ -3749,7 +3930,7 @@ w held E3 False
 w held E5 False
 w held E4 False
 w log Nobody stands over the lord's body!
-f 54 progress 3D088889 seized False
+f 54 progress 3C088889 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3760,7 +3941,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 55 progress 3D888889 seized False
+f 55 progress 3C888889 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3771,7 +3952,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 56 progress 3DCCCCCE seized False
+f 56 progress 3CCCCCCE seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3782,7 +3963,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 57 progress 3E088889 seized False
+f 57 progress 3D088889 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3793,7 +3974,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 58 progress 3E2AAAAB seized False
+f 58 progress 3D2AAAAB seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3804,7 +3985,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 59 progress 3E4CCCCD seized False
+f 59 progress 3D4CCCCD seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3815,7 +3996,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 60 progress 3E6EEEEF seized False
+f 60 progress 3D6EEEEF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3826,8 +4007,8 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-w info War: lord's body at <1.0, 0.0, 2.0>; 3 going for it, the closest E3 0.3 m from it; 3 seizers and 2 retainers within 3.5 m; not held, nearest retainer A1 1.2 m away; body not yet fallen (ragdoll waiting); seized 13%.
-f 61 progress 3E888889 seized False
+w info War: lord's body at <1.0, 0.0, 2.0>; 3 going for it, the closest E3 0.3 m from it; 3 seizers and 2 retainers within 3.5 m; not held, nearest retainer A1 1.2 m away; body not yet fallen (ragdoll waiting); seized 7%.
+f 61 progress 3D888889 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3838,7 +4019,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 62 progress 3E99999A seized False
+f 62 progress 3D99999A seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3849,7 +4030,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 63 progress 3EAAAAAB seized False
+f 63 progress 3DAAAAAB seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3860,7 +4041,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 64 progress 3EBBBBBC seized False
+f 64 progress 3DBBBBBC seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3871,7 +4052,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 65 progress 3ECCCCCD seized False
+f 65 progress 3DCCCCCD seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3882,7 +4063,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 66 progress 3EDDDDDE seized False
+f 66 progress 3DDDDDDE seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3893,7 +4074,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 67 progress 3EEEEEEF seized False
+f 67 progress 3DEEEEEF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3904,7 +4085,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 68 progress 3F000000 seized False
+f 68 progress 3E000000 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3915,7 +4096,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 69 progress 3F088889 seized False
+f 69 progress 3E088889 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3926,7 +4107,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 70 progress 3F111112 seized False
+f 70 progress 3E111112 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3937,7 +4118,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 71 progress 3F19999B seized False
+f 71 progress 3E19999B seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3948,7 +4129,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 72 progress 3F222224 seized False
+f 72 progress 3E222224 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3959,7 +4140,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 73 progress 3F2AAAAD seized False
+f 73 progress 3E2AAAAD seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3970,7 +4151,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 74 progress 3F333336 seized False
+f 74 progress 3E333336 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3981,7 +4162,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 75 progress 3F3BBBBF seized False
+f 75 progress 3E3BBBBF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -3992,7 +4173,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 76 progress 3F444448 seized False
+f 76 progress 3E444448 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4003,7 +4184,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 77 progress 3F4CCCD1 seized False
+f 77 progress 3E4CCCD1 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4014,7 +4195,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 78 progress 3F55555A seized False
+f 78 progress 3E55555A seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4025,7 +4206,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 79 progress 3F5DDDE3 seized False
+f 79 progress 3E5DDDE3 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4036,7 +4217,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 80 progress 3F66666C seized False
+f 80 progress 3E66666C seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4047,7 +4228,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 81 progress 3F6EEEF5 seized False
+f 81 progress 3E6EEEF5 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4058,7 +4239,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 82 progress 3F77777E seized False
+f 82 progress 3E77777E seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4069,7 +4250,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 83 progress 3F800003 seized False
+f 83 progress 3E800003 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4080,7 +4261,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 84 progress 3F844447 seized False
+f 84 progress 3E844447 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4091,7 +4272,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 85 progress 3F88888B seized False
+f 85 progress 3E88888B seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4102,7 +4283,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 86 progress 3F8CCCCF seized False
+f 86 progress 3E8CCCCF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4113,7 +4294,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 87 progress 3F911113 seized False
+f 87 progress 3E911113 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4124,7 +4305,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 88 progress 3F955557 seized False
+f 88 progress 3E955557 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4135,7 +4316,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 89 progress 3F99999B seized False
+f 89 progress 3E99999B seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4146,7 +4327,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 90 progress 3F9DDDDF seized False
+f 90 progress 3EA22224 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4157,7 +4338,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 91 progress 3FA22223 seized False
+f 91 progress 3EAAAAAD seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4168,7 +4349,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 92 progress 3FA66667 seized False
+f 92 progress 3EB33336 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4179,7 +4360,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 93 progress 3FAAAAAB seized False
+f 93 progress 3EBBBBBF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4190,7 +4371,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 94 progress 3FAEEEEF seized False
+f 94 progress 3EC44448 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4201,7 +4382,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 95 progress 3FB33333 seized False
+f 95 progress 3ECCCCD1 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4212,7 +4393,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 96 progress 3FB77777 seized False
+f 96 progress 3ED5555A seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4223,7 +4404,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 97 progress 3FBBBBBB seized False
+f 97 progress 3EDDDDE3 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4234,7 +4415,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 98 progress 3FBFFFFF seized False
+f 98 progress 3EE6666C seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4245,7 +4426,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 99 progress 3FC44443 seized False
+f 99 progress 3EEEEEF5 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4256,7 +4437,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 100 progress 3FC88887 seized False
+f 100 progress 3EF7777E seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4267,7 +4448,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 101 progress 3FCCCCCB seized False
+f 101 progress 3F000003 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4278,7 +4459,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 102 progress 3FD1110F seized False
+f 102 progress 3F044447 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4289,7 +4470,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 103 progress 3FD55553 seized False
+f 103 progress 3F08888B seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4300,7 +4481,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 104 progress 3FD99997 seized False
+f 104 progress 3F0CCCCF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4311,7 +4492,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 105 progress 3FDDDDDB seized False
+f 105 progress 3F111113 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4322,7 +4503,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 106 progress 3FE2221F seized False
+f 106 progress 3F155557 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4333,7 +4514,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 107 progress 3FE66663 seized False
+f 107 progress 3F19999B seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4344,7 +4525,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 108 progress 3FEAAAA7 seized False
+f 108 progress 3F1DDDDF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4355,7 +4536,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 109 progress 3FEEEEEB seized False
+f 109 progress 3F222223 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4366,7 +4547,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 110 progress 3FF3332F seized False
+f 110 progress 3F266667 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4377,7 +4558,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 111 progress 3FF33333 seized False
+f 111 progress 3F2AAAAB seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4388,7 +4569,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 112 progress 3FF33333 seized False
+f 112 progress 3F2EEEEF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4399,7 +4580,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 113 progress 3FF33333 seized False
+f 113 progress 3F333333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4410,7 +4591,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 114 progress 3FF33333 seized False
+f 114 progress 3F377777 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4421,7 +4602,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 115 progress 3FF33333 seized False
+f 115 progress 3F3BBBBB seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4432,7 +4613,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 116 progress 3FF33333 seized False
+f 116 progress 3F3FFFFF seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4443,7 +4624,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 117 progress 3FF33333 seized False
+f 117 progress 3F444443 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4454,7 +4635,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 118 progress 3FF33333 seized False
+f 118 progress 3F488887 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4465,7 +4646,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 119 progress 3FF33333 seized False
+f 119 progress 3F4CCCCB seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4476,7 +4657,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 120 progress 3FF33333 seized False
+f 120 progress 3F51110F seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4487,7 +4668,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 121 progress 3FF33333 seized False
+f 121 progress 3F555553 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4498,8 +4679,8 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-w info War: lord's body at <1.0, 0.0, 2.0>; 3 going for it, the closest E4 0.3 m from it; 3 seizers and 1 retainers within 3.5 m; not held, nearest retainer A1 1.2 m away; body not yet fallen (ragdoll waiting); seized 95%.
-f 122 progress 3FF33333 seized False
+w info War: lord's body at <1.0, 0.0, 2.0>; 3 going for it, the closest E4 0.3 m from it; 3 seizers and 1 retainers within 3.5 m; not held, nearest retainer A1 1.2 m away; body not yet fallen (ragdoll waiting); seized 85%.
+f 122 progress 3F599997 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4510,7 +4691,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 123 progress 3FF33333 seized False
+f 123 progress 3F5DDDDB seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4521,7 +4702,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 124 progress 3FF33333 seized False
+f 124 progress 3F62221F seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4532,7 +4713,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 125 progress 3FF33333 seized False
+f 125 progress 3F666663 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4543,7 +4724,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 126 progress 3FF33333 seized False
+f 126 progress 3F6AAAA7 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4554,7 +4735,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 127 progress 3FF33333 seized False
+f 127 progress 3F6EEEEB seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4565,7 +4746,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 128 progress 3FF33333 seized False
+f 128 progress 3F73332F seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4576,7 +4757,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 129 progress 3FF33333 seized False
+f 129 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4587,7 +4768,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 130 progress 3FF33333 seized False
+f 130 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4598,7 +4779,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 131 progress 3FF33333 seized False
+f 131 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4609,7 +4790,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 132 progress 3FF33333 seized False
+f 132 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4620,7 +4801,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 133 progress 3FF33333 seized False
+f 133 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4631,7 +4812,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 134 progress 3FF33333 seized False
+f 134 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4642,7 +4823,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 135 progress 3FF33333 seized False
+f 135 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4653,7 +4834,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 136 progress 3FF33333 seized False
+f 136 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4664,7 +4845,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 137 progress 3FF33333 seized False
+f 137 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4675,7 +4856,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 138 progress 3FF33333 seized False
+f 138 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4686,7 +4867,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 139 progress 3FF33333 seized False
+f 139 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4697,7 +4878,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 140 progress 3FF33333 seized False
+f 140 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4708,7 +4889,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 141 progress 3FF33333 seized False
+f 141 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4719,7 +4900,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 142 progress 3FF33333 seized False
+f 142 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4730,7 +4911,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 143 progress 3FF33333 seized False
+f 143 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4741,7 +4922,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 144 progress 3FF33333 seized False
+f 144 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4752,7 +4933,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 145 progress 3FF33333 seized False
+f 145 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4763,7 +4944,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 146 progress 3FF33333 seized False
+f 146 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4774,7 +4955,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 147 progress 3FF33333 seized False
+f 147 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4785,7 +4966,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 148 progress 3FF33333 seized False
+f 148 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4796,7 +4977,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 149 progress 3FF33333 seized False
+f 149 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4807,7 +4988,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 150 progress 3FF33333 seized False
+f 150 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4818,7 +4999,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 151 progress 3FF33333 seized False
+f 151 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4829,7 +5010,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 152 progress 3FF33333 seized False
+f 152 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4840,7 +5021,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 153 progress 3FF33333 seized False
+f 153 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4851,7 +5032,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 154 progress 3FF33333 seized False
+f 154 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4862,7 +5043,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 155 progress 3FF33333 seized False
+f 155 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4873,7 +5054,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 156 progress 3FF33333 seized False
+f 156 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4884,7 +5065,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 157 progress 3FF33333 seized False
+f 157 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4895,7 +5076,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 158 progress 3FF33333 seized False
+f 158 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4906,7 +5087,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 159 progress 3FF33333 seized False
+f 159 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4917,7 +5098,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 160 progress 3FF33333 seized False
+f 160 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4928,7 +5109,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 161 progress 3FF33333 seized False
+f 161 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4939,7 +5120,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 162 progress 3FF33333 seized False
+f 162 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4950,7 +5131,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 163 progress 3FF33333 seized False
+f 163 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4961,7 +5142,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 164 progress 3FF33333 seized False
+f 164 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4972,7 +5153,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 165 progress 3FF33333 seized False
+f 165 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4983,7 +5164,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 166 progress 3FF33333 seized False
+f 166 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -4994,7 +5175,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 167 progress 3FF33333 seized False
+f 167 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -5005,7 +5186,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 168 progress 3FF33333 seized False
+f 168 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -5016,7 +5197,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 169 progress 3FF33333 seized False
+f 169 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -5027,7 +5208,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 170 progress 3FF33333 seized False
+f 170 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -5038,7 +5219,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 171 progress 3FF33333 seized False
+f 171 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -5049,7 +5230,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 172 progress 3FF33333 seized False
+f 172 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -5060,7 +5241,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 173 progress 3FF33333 seized False
+f 173 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -5071,7 +5252,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 174 progress 3FF33333 seized False
+f 174 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -5082,7 +5263,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 175 progress 3FF33333 seized False
+f 175 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -5093,7 +5274,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 176 progress 3FF33333 seized False
+f 176 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -5104,7 +5285,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 177 progress 3FF33333 seized False
+f 177 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -5115,7 +5296,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 178 progress 3FF33333 seized False
+f 178 progress 3F733333 seized False
 w seizers cleared
 w goal E3 3F800000,00000000,40000000
 w seizer F0000003
@@ -5126,7 +5307,7 @@ w seizer F0000004
 w held E3 False
 w held E5 False
 w held E4 False
-f 179 progress 3FF33333 seized False
+f 179 progress 3F733333 seized False
 f 180 decided elsewhere
 w goal E3 -
 w held E3 False

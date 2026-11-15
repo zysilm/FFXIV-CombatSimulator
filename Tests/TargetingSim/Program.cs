@@ -1,4 +1,5 @@
 using System.Numerics;
+using CombatSimulator.Battle;
 using CombatSimulator.Combat;
 using CombatSimulator.Simulation;
 
@@ -11,10 +12,12 @@ using CombatSimulator.Simulation;
 // CombatCompanionManager.Aggro.cs applies them. Threat math is the production EnemyMovementMath
 // (linked). See README.md.
 
-var seeds = args.Length > 0 && int.TryParse(args[0], out var s0) ? s0 : 40;
+var seeds = args.FirstOrDefault(x => int.TryParse(x, out _)) is { } s0 ? int.Parse(s0) : 40;
+// --seize: only the corpse seizure table (the plugin's CorpseSeizure, linked).
+var seizeOnly = args.Contains("--seize");
 var models = new[] { Model.Current, Model.CurrentNoOverride, Model.Softmax, Model.Weighted, Model.Production };
 
-foreach (var scenario in new[] { Scenario.Open, Scenario.Protect })
+foreach (var scenario in seizeOnly ? Array.Empty<Scenario>() : new[] { Scenario.Open, Scenario.Protect })
 {
     Console.WriteLine();
     Console.WriteLine($"=== Scenario {scenario}: 20 allies (3 tank / 10 melee / 7 ranged) + player vs 20 enemies (2 tank / 12 melee / 6 ranged)" +
@@ -39,19 +42,70 @@ foreach (var scenario in new[] { Scenario.Open, Scenario.Protect })
         Console.WriteLine(line);
     }
 }
+if (!seizeOnly)
+{
+    Console.WriteLine();
+    Console.WriteLine("maxAtk = most actors targeting one actor during the run; P(>6) = share of 0.5s samples with someone targeted by >6;");
+    Console.WriteLine("meanAtk = mean attackers per targeted actor; sw/min = voluntary switches (old target alive) per actor-minute;");
+    Console.WriteLine("idle = alive time not swinging (no target / walking / blocked); blocked = in reach but no melee slot (6 per target);");
+    Console.WriteLine("tankShr = share of enemy damage landing on ally tanks; starveT = actors alive >=30s never targeted (per run);");
+    Console.WriteLine("starveD = enemies alive >=30s never damaged; prayTTD = time until the praying retainer dies (cap if survives);");
+    Console.WriteLine("seizOnHld = share of seizer alive-time spent targeting the holder; atkOnHld = mean actors targeting the holder.");
+    Console.WriteLine("win = allies' win rate; tWin over allied wins only. Values: mean +- sd over seeds.");
+}
+
+// --- The corpse seizure: the lord has just fallen (Warring States with Retreat), the plugin's CorpseSeizure decides. ---
 Console.WriteLine();
-Console.WriteLine("maxAtk = most actors targeting one actor during the run; P(>6) = share of 0.5s samples with someone targeted by >6;");
-Console.WriteLine("meanAtk = mean attackers per targeted actor; sw/min = voluntary switches (old target alive) per actor-minute;");
-Console.WriteLine("idle = alive time not swinging (no target / walking / blocked); blocked = in reach but no melee slot (6 per target);");
-Console.WriteLine("tankShr = share of enemy damage landing on ally tanks; starveT = actors alive >=30s never targeted (per run);");
-Console.WriteLine("starveD = enemies alive >=30s never damaged; prayTTD = time until the praying retainer dies (cap if survives);");
-Console.WriteLine("seizOnHld = share of seizer alive-time spent targeting the holder; atkOnHld = mean actors targeting the holder.");
-Console.WriteLine("win = allies' win rate; tWin over allied wins only. Values: mean +- sd over seeds.");
+Console.WriteLine($"=== Scenario Seize: the lord has fallen, retainers (one praying) around the body, enemies 7-13 m off; " +
+                  $"Production targeting, production CorpseSeizure; ragdoll up {Sim.SeizeRagdollUpSeconds:0.#} s after the fall; {seeds} seeds, cap {Sim.MaxTime:0}s ===");
+Console.WriteLine($"{"case",-26}{"seized",8}{"t seize s",13}{"annihil",9}{"secured",9}{"t end s",11}{"guards@body",13}{"seizers@body",14}{"outnumb",12}{"guardOnSz",12}{"hits@body",11}");
+foreach (var c in SeizeCase.All)
+{
+    var results = new SeizeResult[seeds];
+    Parallel.For(0, seeds, i => results[i] = new Sim(Model.Production, Scenario.Seize, 1000 + i, c).RunSeize());
+    string F(Func<SeizeResult, double> f, string fmt) => Stat.Format(results.Select(f).ToArray(), fmt);
+    Console.WriteLine($"{c.Name,-26}{results.Count(r => r.Seized) * 100.0 / seeds,7:0}%{F(r => r.Seized ? r.TimeToSeize : double.NaN, "0.0"),13}" +
+                      $"{results.Count(r => r.Annihilated) * 100.0 / seeds,8:0}%{results.Count(r => r.Secured) * 100.0 / seeds,8:0}%{F(r => r.End, "0"),11}{F(r => r.GuardsAtBody, "0.0"),13}" +
+                      $"{F(r => r.SeizersAtBody, "0.0"),14}{F(r => r.OutnumberedShare, "0.00"),12}{F(r => r.GuardsOnSeizers, "0.00"),12}{F(r => r.HitsAtBody, "0"),11}");
+}
+Console.WriteLine();
+Console.WriteLine("seized = the body carried off while a retainer stands (DISGRACED); t seize = seconds from the fall (seized runs only);");
+Console.WriteLine("annihil = every retainer fell first (ANNIHILATED: the outcome is decided, the seizure stops); secured = every enemy slain first;");
+Console.WriteLine("guards@body / seizers@body = mean retainers within 3.5 m of the body / seizers whose edge is within 3.5 m, over the");
+Console.WriteLine("frames anyone goes for it; outnumb = share of those frames with more seizers than retainers there; guardOnSz = share");
+Console.WriteLine("of guard alive-time spent on a seizer; hits@body = allied hits on a seizer within 3.5 m of the body (per run).");
 
 enum Side { Ally, Enemy }
 enum Role { Tank, Melee, Ranged, Player, Prayer }
 enum Model { Current, CurrentNoOverride, Softmax, Weighted, Production }
-enum Scenario { Open, Protect }
+enum Scenario { Open, Protect, Seize }
+
+/// <summary>Who stands at the body when the lord falls (retainers include the one praying) and who comes for it.</summary>
+sealed record SeizeCase(string Name, int AllyTank, int AllyMelee, int AllyRanged, int EnemyTank, int EnemyMelee, int EnemyRanged)
+{
+    public int Retainers => AllyTank + AllyMelee + AllyRanged + (AllyTank + AllyMelee + AllyRanged > 0 ? 1 : 0);
+    // Two senses of "even" (see README.md): "field-even" is a coin flip when nobody goes for the body (TS_NO_SEIZE=1);
+    // "guard-even" is a coin flip when the body cannot be taken (SeizeSecondsPerMargin set huge in a scratch build). The
+    // one praying fights no one, takes x4, draws the seizers x100 and is replaced by a guard when it falls, so equal
+    // numbers lose the guarding fight outright.
+    public static readonly SeizeCase[] All =
+    {
+        // The log (ddddWS, 9 v 9): the lord fell, 8 retainers (one praying) against 9.
+        new("9 v 9 lord down: 8 v 9", 1, 4, 2, 1, 5, 3),
+        new("equal numbers: 8 v 8", 1, 4, 2, 1, 5, 2),
+        new("Palace: 20 v 20", 3, 10, 6, 2, 12, 6),
+        new("outnumbered: 8 v 12", 1, 4, 2, 2, 7, 3),
+        new("field-even: 20 v 16", 3, 10, 6, 2, 9, 5),
+        new("guard-even: 8 v 4", 1, 4, 2, 1, 2, 1),
+        new("guard-even: 20 v 12", 3, 10, 6, 2, 7, 3),
+        new("outnumbering: 20 v 10", 3, 10, 6, 1, 6, 3),
+        // Nobody at the body (read as the retainers being elsewhere): how fast it goes uncontested.
+        new("undefended: 0 v 4", 0, 0, 0, 0, 4, 0),
+    };
+}
+
+record struct SeizeResult(bool Seized, double TimeToSeize, bool Secured, bool Annihilated, double End, double GuardsAtBody, double SeizersAtBody,
+    double OutnumberedShare, double GuardsOnSeizers, double HitsAtBody);
 
 sealed class Actor
 {
@@ -68,6 +122,12 @@ sealed class Actor
     public Random Rng = null!;
     /// <summary>Production model: the plugin's per-fighter state (its generator is <see cref="Rng"/>).</summary>
     public AggroState Aggro = null!;
+    /// <summary>Seize scenario: the body the seizure sends this enemy to, whether a retainer holds it off there
+    /// (both set by the production CorpseSeizure), and whether it fights the guard in its reach (NpcAiController.TryCrowdMove).</summary>
+    public Vector3? SeizeGoal;
+    public bool SeizeHeld, SeizeInReach;
+    /// <summary>Seize scenario: the one praying has reached its post before the body (x4 damage, open to the enemy).</summary>
+    public bool AtPost;
     public bool IsTank => Role == Role.Tank;
     public bool IsRanged => Role == Role.Ranged;
     public bool Fights => Role != Role.Prayer;
@@ -127,7 +187,8 @@ sealed class Sim
     readonly Model model;
     readonly Scenario scenario;
     readonly Actor[] a;
-    readonly int n, player, prayer = -1;
+    readonly int n, player;
+    int prayer = -1;
     readonly float bodyX = 0f, bodyZ = -4f;
     readonly float[] threat; // threat[victim * n + source]
     readonly float decay = MathF.Exp(-Dt / EnemyMovementMath.ThreatDecayTau);
@@ -138,7 +199,7 @@ sealed class Sim
     double maxAttackers, samples, samplesOver6, atkSum, atkCount, switches, aliveFrames, idleFrames, blockedFrames;
     double enemyDmg, enemyDmgOnTanks, seizerFrames, seizerOnHolderFrames, holderSamples, holderAtkSum, seizerPrayFrames, seizerOnPrayFrames;
 
-    public Sim(Model model, Scenario scenario, int seed)
+    public Sim(Model model, Scenario scenario, int seed, SeizeCase? seizeCase = null)
     {
         this.model = model;
         this.scenario = scenario;
@@ -175,14 +236,59 @@ sealed class Sim
                 list.Add(act);
             }
         }
-        Add(Side.Ally, Role.Tank, 3);
-        Add(Side.Ally, Role.Melee, 10);
-        Add(Side.Ally, Role.Ranged, 7);
-        Add(Side.Ally, Role.Player, 1);
-        if (scenario == Scenario.Protect) Add(Side.Ally, Role.Prayer, 1);
-        Add(Side.Enemy, Role.Tank, 2);
-        Add(Side.Enemy, Role.Melee, 12);
-        Add(Side.Enemy, Role.Ranged, 6);
+        if (scenario == Scenario.Seize)
+        {
+            // The lord has just fallen: the retainers stand around the body (2-6 m), one kneels at its post before
+            // it, the enemy is 7-13 m off on one side (ranged 5 m further back).
+            var c = seizeCase!;
+            void Place(Side side, Role role, int count)
+            {
+                for (var i = 0; i < count; i++)
+                {
+                    Add(side, role, 1);
+                    var act = list[^1];
+                    if (side == Side.Ally)
+                    {
+                        var angle = (float)(rng.NextDouble() * MathF.Tau);
+                        var r = 2f + (float)rng.NextDouble() * 4f;
+                        (act.X, act.Z) = (bodyX + MathF.Sin(angle) * r, bodyZ + MathF.Cos(angle) * r);
+                    }
+                    else
+                    {
+                        act.X = bodyX + (float)(rng.NextDouble() * 16 - 8);
+                        act.Z = bodyZ + 7f + (float)rng.NextDouble() * 6f + (role == Role.Ranged ? 5f : 0f);
+                    }
+                }
+            }
+            Place(Side.Ally, Role.Tank, c.AllyTank);
+            Place(Side.Ally, Role.Melee, c.AllyMelee);
+            Place(Side.Ally, Role.Ranged, c.AllyRanged);
+            Add(Side.Ally, Role.Player, 1);
+            list[^1].Alive = false;
+            list[^1].Hp = 0f;
+            list[^1].DeathTime = 0f;
+            list[^1].X = bodyX;
+            list[^1].Z = bodyZ;
+            if (c.Retainers > 0)
+            {
+                Add(Side.Ally, Role.Prayer, 1);
+                (list[^1].X, list[^1].Z, list[^1].AtPost) = (PostX, PostZ, true);
+            }
+            Place(Side.Enemy, Role.Tank, c.EnemyTank);
+            Place(Side.Enemy, Role.Melee, c.EnemyMelee);
+            Place(Side.Enemy, Role.Ranged, c.EnemyRanged);
+        }
+        else
+        {
+            Add(Side.Ally, Role.Tank, 3);
+            Add(Side.Ally, Role.Melee, 10);
+            Add(Side.Ally, Role.Ranged, 7);
+            Add(Side.Ally, Role.Player, 1);
+            if (scenario == Scenario.Protect) Add(Side.Ally, Role.Prayer, 1);
+            Add(Side.Enemy, Role.Tank, 2);
+            Add(Side.Enemy, Role.Melee, 12);
+            Add(Side.Enemy, Role.Ranged, 6);
+        }
         a = list.ToArray();
         n = a.Length;
         player = Array.FindIndex(a, x => x.Role == Role.Player);
@@ -194,6 +300,14 @@ sealed class Sim
             var seizers = 0;
             foreach (var e in a)
                 if (e.Side == Side.Enemy && e.Role == Role.Melee && seizers < 8) { e.Seizer = true; seizers++; }
+        }
+        if (scenario == Scenario.Seize)
+        {
+            prayer = Array.FindIndex(a, x => x.Role == Role.Prayer);
+            hadRetainers = seizeCase!.Retainers > 0;
+            seizeWorld = new SeizeWorld(this);
+            var rules = new BattleRules(new SeizeRules(), () => true, () => false);
+            seizure = new CorpseSeizure<Actor>(rules, seizeWorld, seizeWorld, LordContestRadius);
         }
         threat = new float[n * n];
         foreach (var x in a)
@@ -220,6 +334,16 @@ sealed class Sim
     /// <summary>LordSeizerTarget (Lord.cs:210): the prayer while it lives, else the retainer nearest the body.</summary>
     int Holder()
     {
+        if (scenario == Scenario.Seize)
+        {
+            // CorpseSeizureRule.HolderFor: the one praying, else the retainer nearest the body, within 3.5 + 2 m of it.
+            const float atBody = LordContestRadius + 2f;
+            if (Live(prayer) && DistToBody(a[prayer]) <= atBody) return prayer;
+            int near = -1; var nd = atBody;
+            foreach (var c in a)
+                if (c.Alive && c.IsCompanion && DistToBody(c) < nd) { nd = DistToBody(c); near = c.Id; }
+            return near;
+        }
         if (scenario != Scenario.Protect) return -1;
         if (Live(prayer)) return prayer;
         int best = -1; var bd = float.MaxValue;
@@ -261,6 +385,172 @@ sealed class Sim
             seizerOnHolderFrames / Math.Max(1, seizerFrames), holderAtkSum / Math.Max(1, holderSamples), seizerOnPrayFrames / Math.Max(1, seizerPrayFrames));
     }
 
+    // ------------------------------------------------------------------ the corpse seizure (Scenario.Seize)
+
+    /// <summary>CombatCompanionManager.LordContestRadius.</summary>
+    public const float LordContestRadius = 3.5f;
+    /// <summary>The lord's ragdoll starts this long after the fall (the body can be taken in hand from then).</summary>
+    public const float SeizeRagdollUpSeconds = 2f;
+    // LordGuardRule: the one praying kneels 1.3 m before the body; it is at its post within 0.6 m of it.
+    float PostX => bodyX;
+    float PostZ => bodyZ + 1.3f;
+
+    readonly CorpseSeizure<Actor>? seizure;
+    readonly SeizeWorld? seizeWorld;
+    readonly bool hadRetainers;
+    /// <summary>CombatEngine.TriggerEnemyVictoryIfPartyDefeated: the lord dead and no retainer left (ANNIHILATED); the
+    /// outcome is decided and the seizure stops. ("undefended" has no retainers at all: read as retainers far off.)</summary>
+    bool Annihilated => hadRetainers && !a.Any(x => x.Alive && x.IsCompanion);
+    bool seized;
+    float seizedAt = float.NaN;
+    double seizeFrames, guardsAtBodySum, seizersAtBodySum, outnumberedFrames, guardFrames, guardOnSeizerFrames, hitsAtBody;
+
+    /// <summary>
+    /// The lord down: allies look then enemies (production weights, the seizure's seizers and holder), everyone moves
+    /// (seizers as NpcAiController.TryCrowdMove sends them), attacks land, then the war tick (the production
+    /// CorpseSeizure). Ends when the body is carried off, every enemy is slain, or at the cap.
+    /// </summary>
+    /// <summary>TS_NO_SEIZE=1: nobody goes for the body (the fight alone, for comparison).</summary>
+    static readonly bool Trace = Environment.GetEnvironmentVariable("TS_TRACE") == "1";
+    static readonly bool NoSeize = Environment.GetEnvironmentVariable("TS_NO_SEIZE") == "1";
+
+    public SeizeResult RunSeize()
+    {
+        while (t < MaxTime && !seized && !Annihilated && SideAlive(Side.Enemy))
+        {
+            for (var i = 0; i < threat.Length; i++) threat[i] *= decay;
+            ReplacePrayer();
+            SelectTargets();
+            Move();
+            Attack();
+            if (!NoSeize) seizure!.Tick(Dt);
+            SampleSeize();
+            if (Trace && ((int)MathF.Round(t / Dt)) % 30 == 0)
+                Console.WriteLine($"t {t:0} allies {a.Count(x => x.Alive && x.IsCompanion)} enemies {a.Count(x => x.Alive && x.Side == Side.Enemy)} seizers {a.Count(x => x.Alive && x.SeizeGoal != null)} at {a.Count(x => x.Alive && x.SeizeGoal != null && GapToBody(x) <= LordContestRadius)} held {a.Any(x => x.Alive && x.SeizeHeld)} guards@ {RetainersWithin(LordContestRadius)} progress {seizure!.Progress:0.00} prayer {(Live(prayer) ? DistToBody(a[prayer]).ToString("0.0") : "-")}");
+            t += Dt;
+        }
+        return new SeizeResult(seized, seizedAt, !seized && !SideAlive(Side.Enemy), !seized && Annihilated, t,
+            guardsAtBodySum / Math.Max(1, seizeFrames), seizersAtBodySum / Math.Max(1, seizeFrames),
+            outnumberedFrames / Math.Max(1, seizeFrames), guardOnSeizerFrames / Math.Max(1, guardFrames), hitsAtBody);
+    }
+
+    /// <summary>LordGuardRule.TickBeforeAllies: the one praying fell, the retainer nearest the post goes to pray.</summary>
+    void ReplacePrayer()
+    {
+        if (prayer < 0 || a[prayer].Alive) return;
+        int best = -1; var bd = float.MaxValue;
+        foreach (var c in a)
+        {
+            if (!c.Alive || !c.IsCompanion) continue;
+            var d = MathF.Sqrt((c.X - PostX) * (c.X - PostX) + (c.Z - PostZ) * (c.Z - PostZ));
+            if (d < bd) { bd = d; best = c.Id; }
+        }
+        if (best < 0) return;
+        prayer = best;
+        a[best].Role = Role.Prayer;
+        a[best].AtPost = false;
+        SetTarget(a[best], -1);
+    }
+
+    float GapToBody(Actor x) => DistToBody(x) - 0.5f;
+
+    int RetainersWithin(float radius)
+    {
+        var count = 0;
+        foreach (var c in a)
+            if (c.Alive && c.IsCompanion && DistToBody(c) <= radius) count++;
+        return count;
+    }
+
+    void SampleSeize()
+    {
+        foreach (var c in a)
+        {
+            if (!c.Alive || !c.IsCompanion || !c.Fights) continue;
+            guardFrames++;
+            if (Live(c.Target) && a[c.Target].Seizer) guardOnSeizerFrames++;
+        }
+        var seizersAt = 0;
+        var any = false;
+        foreach (var e in a)
+        {
+            if (!e.Alive || e.SeizeGoal == null) continue;
+            any = true;
+            if (GapToBody(e) <= LordContestRadius) seizersAt++;
+        }
+        if (!any) return;
+        seizeFrames++;
+        var guards = RetainersWithin(LordContestRadius);
+        guardsAtBodySum += guards;
+        seizersAtBodySum += seizersAt;
+        if (seizersAt > guards) outnumberedFrames++;
+    }
+
+    sealed class SeizeRules : IBattleRuleSettings
+    {
+        public WarFallenRule FallenRule => WarFallenRule.WarringStates;
+        public bool Hostages => false;
+        public bool Retreat => true;
+        public uint CaptiveEmoteId => 0;
+        public bool ShowResultBanner => true;
+        public bool EnableRagdoll => true;
+    }
+
+    /// <summary>The plugin's BattleModule.CorpseSeizureWorld over this 2D world. No grab (nothing to hold).</summary>
+    sealed class SeizeWorld : ICorpseSeizureWorld<Actor>, ICorpseGrab<Actor>
+    {
+        readonly Sim sim;
+        readonly List<Actor> enemies;
+        public SeizeWorld(Sim sim)
+        {
+            this.sim = sim;
+            enemies = sim.a.Where(x => x.Side == Side.Enemy).ToList();
+        }
+        public bool OutcomeDecided => sim.seized || sim.Annihilated;
+        public Vector3? LordBodyLocation() => new Vector3(sim.bodyX, 0f, sim.bodyZ);
+        public IReadOnlyList<Actor> Enemies => enemies;
+        public bool IsPresent(Actor npc) => npc.Alive;
+        public bool IsCaptive(Actor npc) => false;
+        public bool IsIdleSentry(Actor npc) => false;
+        public Vector3 PositionOf(Actor npc) => new(npc.X, 0f, npc.Z);
+        public float HitboxRadiusOf(Actor npc) => 0.5f;
+        public string NameOf(Actor npc) => $"E{npc.Id}";
+        public uint IdOf(Actor npc) => Uid(npc.Id);
+        public void SetSeizeGoal(Actor npc, Vector3? goal) => npc.SeizeGoal = goal;
+        public void SetSeizeHeld(Actor npc, bool held) => npc.SeizeHeld = held;
+        public void Engage(Actor npc) { }
+        public void ClearSeizerIds() { foreach (var e in enemies) e.Seizer = false; }
+        public void AddSeizerId(uint id) => sim.a[(int)id - 1].Seizer = true;
+        public int RetainersAtBody(Vector3 body, float radius, out string? nearestGuard, out float nearestDistance)
+        {
+            nearestGuard = null;
+            nearestDistance = float.MaxValue;
+            foreach (var c in sim.a)
+                if (c.Alive && c.IsCompanion && sim.DistToBody(c) < nearestDistance)
+                {
+                    nearestDistance = sim.DistToBody(c);
+                    nearestGuard = $"A{c.Id}";
+                }
+            return sim.RetainersWithin(radius);
+        }
+        public bool BodyReady => sim.t >= SeizeRagdollUpSeconds;
+        public void SetCorpseCaptured(bool captured) { }
+        public void SurrenderRetainers() { }
+        public void ForceEnemyVictory()
+        {
+            sim.seized = true;
+            sim.seizedAt = sim.t;
+        }
+        public void BattleLog(string text) { }
+        public void Info(string text) { }
+        public void Warning(string text) { }
+        public bool BodyCanBeHeld => false;
+        public bool IsControlling => false;
+        public void TakeControl(Actor npc) { }
+        public void Grab() { }
+        public bool IsHolding => false;
+    }
+
     void UpdatePlayer()
     {
         var p = a[player];
@@ -290,7 +580,7 @@ sealed class Sim
         {
             if (!c.Alive || c.Side == x.Side) continue;
             // Guarding the lord, allies only fight inside the guard range (AssignCompanionTarget: !IsWithinCommandRange clears the target).
-            if (scenario == Scenario.Protect && x.Side == Side.Ally && DistToBody(c) > LordGuardRange + x.Reach) continue;
+            if (scenario != Scenario.Open && x.Side == Side.Ally && DistToBody(c) > LordGuardRange + x.Reach) continue;
             yield return c;
         }
     }
@@ -648,9 +938,9 @@ sealed class Sim
                 if (focusId != 0 && Uid(c.Id) == focusId) w *= AggroModel.FocusGain;
                 if (c.Target == player && a[player].Alive) w *= AggroModel.AttackingPlayerGain;
                 if (IsExposed(c.Target)) w *= AggroModel.ExposedGain;
-                if (scenario == Scenario.Protect)
+                if (scenario != Scenario.Open)
                 {
-                    if (c.Seizer) w *= AggroModel.GuardSeizerGain;
+                    if (c.Seizer) w *= scenario == Scenario.Seize ? SeizeGuardSeizerGain : AggroModel.GuardSeizerGain;
                     w *= 1f + Math.Clamp(1f - DistToBody(c) / NearBodyTargetReach, 0f, 1f);
                     // (Out of a guard's reach: left out of the candidates here, x0.05 in the plugin.)
                 }
@@ -663,7 +953,11 @@ sealed class Sim
     }
 
     /// <summary>IsExposed: the one praying over the body (always at its post here); nobody raises in this model.</summary>
-    bool IsExposed(int id) => id >= 0 && id == prayer && Live(prayer);
+    bool IsExposed(int id) => id >= 0 && id == prayer && Live(prayer) && (scenario != Scenario.Seize || a[prayer].AtPost);
+
+    /// <summary>The guards' weight on a seizer in the Seize scenario: production's, or TS_SEIZE_GUARD for a sweep.</summary>
+    static readonly float SeizeGuardSeizerGain =
+        float.TryParse(Environment.GetEnvironmentVariable("TS_SEIZE_GUARD"), System.Globalization.CultureInfo.InvariantCulture, out var g) ? g : AggroModel.GuardSeizerGain;
 
     /// <summary>CountAggro: [target*2 + ranged] over living enemies and companions with a target (the player is not counted).</summary>
     int[] ProductionCounts()
@@ -694,10 +988,26 @@ sealed class Sim
     {
         foreach (var x in a)
         {
-            if (!x.Alive || x.Role == Role.Prayer) continue;
+            if (!x.Alive) continue;
             float gx, gz, stop;
-            if (Live(x.Target)) { gx = a[x.Target].X; gz = a[x.Target].Z; stop = x.Reach - 0.3f; }
-            else if (scenario == Scenario.Protect && x.Side == Side.Ally) { gx = bodyX; gz = bodyZ; stop = 3f; }
+            if (x.Role == Role.Prayer)
+            {
+                // Seize: a new one praying walks to its post before the body and kneels there.
+                if (scenario != Scenario.Seize || x.AtPost) continue;
+                (gx, gz, stop) = (PostX, PostZ, 0f);
+                var pd = MathF.Sqrt((gx - x.X) * (gx - x.X) + (gz - x.Z) * (gz - x.Z));
+                if (pd <= 0.6f) { x.AtPost = true; continue; }
+            }
+            else if (x.SeizeGoal is { } goal)
+            {
+                // NpcAiController.TryCrowdMove: held off, it fights a guard in its reach where it stands; otherwise
+                // straight on to the body (to 0.8 m of it: bodies do not stack in the crowd).
+                x.SeizeInReach = x.SeizeHeld && Live(x.Target) && Dist(x, a[x.Target]) <= x.Reach;
+                if (x.SeizeInReach) continue;
+                (gx, gz, stop) = (goal.X, goal.Z, 0.8f);
+            }
+            else if (Live(x.Target)) { gx = a[x.Target].X; gz = a[x.Target].Z; stop = x.Reach - 0.3f; }
+            else if (scenario != Scenario.Open && x.Side == Side.Ally) { gx = bodyX; gz = bodyZ; stop = 3f; }
             else continue;
             var dx = gx - x.X; var dz = gz - x.Z;
             var d = MathF.Sqrt(dx * dx + dz * dz);
@@ -715,7 +1025,7 @@ sealed class Sim
         var byTarget = new List<Actor>[n];
         foreach (var x in a)
         {
-            if (!x.Alive || !x.Fights || !Live(x.Target)) continue;
+            if (!x.Alive || !x.Fights || !Live(x.Target) || (x.SeizeGoal != null && !x.SeizeInReach)) continue;
             if (x.IsRanged) { slotOk[x.Id] = true; continue; }
             if (Dist(x, a[x.Target]) > x.Reach) continue;
             (byTarget[x.Target] ??= new()).Add(x);
@@ -732,7 +1042,8 @@ sealed class Sim
         {
             if (!x.Alive || !x.Fights) continue;
             aliveFrames++;
-            var inReach = Live(x.Target) && Dist(x, a[x.Target]) <= x.Reach;
+            // One going for the body swings only at the guard holding it off (NpcAiController.TryCrowdMove).
+            var inReach = Live(x.Target) && Dist(x, a[x.Target]) <= x.Reach && (x.SeizeGoal == null || x.SeizeInReach);
             if (!inReach || !slotOk[x.Id])
             {
                 idleFrames++;
@@ -743,7 +1054,7 @@ sealed class Sim
             if (x.AtkTimer > 0) continue;
             x.AtkTimer += AttackInterval;
             var v = a[x.Target];
-            var dmg = x.Damage * (v.Role == Role.Prayer ? RaiserDamageScale : 1f);
+            var dmg = x.Damage * (v.Role == Role.Prayer && (scenario != Scenario.Seize || v.AtPost) ? RaiserDamageScale : 1f);
             v.Hp -= dmg;
             v.EverDamaged = true;
             threat[v.Id * n + x.Id] += EnemyMovementMath.HitThreat((int)dmg, x.IsTank);
@@ -759,6 +1070,9 @@ sealed class Sim
                 enemyDmg += dmg;
                 if (v.IsTank) enemyDmgOnTanks += dmg;
             }
+            if (scenario == Scenario.Seize && x.Side == Side.Ally && v.SeizeGoal != null && GapToBody(v) <= LordContestRadius) hitsAtBody++;
+            // BattleModule.NoteDamage: every hit that lands is put to the seizure (it knocks the seizing back on a seizer at the body).
+            if (x.Side == Side.Ally) seizure?.NoteHit(Uid(v.Id));
             if (v.Hp <= 0 && v.Alive) dying.Add(v);
         }
         foreach (var v in dying)

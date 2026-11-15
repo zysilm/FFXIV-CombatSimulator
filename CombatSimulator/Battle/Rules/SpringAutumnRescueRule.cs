@@ -78,6 +78,15 @@ public sealed unsafe class SpringAutumnRescueRule : BattleRule
     public float? RescueProgress(uint patientId)
         => rescues.TryGetValue(patientId, out var rescue) && rescue.Channelling ? rescue.Progress / RaiseSeconds : null;
 
+    /// <summary>The progress (0..1) of the raise this companion is kneeling at, or null.</summary>
+    public float? RaiseProgressBy(uint rescuerId)
+    {
+        foreach (var rescue in rescues.Values)
+            if (rescue.RescuerId == rescuerId && rescue.Channelling)
+                return rescue.Progress / RaiseSeconds;
+        return null;
+    }
+
     public override bool Tends(BattleContext ctx, uint allyId) => IsRescuing(allyId);
 
     /// <summary>The one raising, once kneeling.</summary>

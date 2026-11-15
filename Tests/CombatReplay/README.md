@@ -152,3 +152,8 @@ plugin ticked it); since B6 the same output comes from the merged settlement and
 Not reached by the loop scenarios: the engine cast and snapshotted-area path (Fighting Mode), sentries and patrols,
 the charge, freeing a captive (Spring and Autumn with hostages); executions, the corpse seizure and the banner are
 reached by the engine side's files above (and Tests/CorpseSeizure).
+
+2026-11-15: `seizure.txt` re-recorded for the gameplay change to the corpse seizure (rate by numbers, `Progress` 0..1):
+the `f` progress values are shares now, the `War:` lines' percentages follow, and "taken" is carried off at frame 132
+instead of 114 (3 seizers against 2, then 1, then 0 retainers fill at margin / 4 s instead of 1 s/s); "retreat off" is
+still taken at frame 150 and "never ready" still ends ANNIHILATED. The other 18 files were unchanged.

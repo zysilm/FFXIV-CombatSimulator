@@ -49,12 +49,12 @@ const float Dt = 1f / 64f;          // exact in binary
     seizure.Tick(Dt);
     Check(s, !a.Held && !b.Held, "one guard against two: no longer held");
     Check(s, w.BattleLogs.Count == 1 && w.BattleLogs[0] == "Nobody stands over the lord's body!", "the line is logged once on losing the hold");
-    Check(s, seizure.Progress == Dt, $"progress starts filling ({seizure.Progress})");
-    for (var i = 0; i < 126; i++)
+    Check(s, seizure.Progress == Dt / 4f, $"progress starts filling at margin 1 / 4 s ({seizure.Progress})");
+    for (var i = 0; i < 254; i++)
         seizure.Tick(Dt);
-    Check(s, !seizure.BodySeized && seizure.Progress == 127 * Dt, "127 frames: not yet");
+    Check(s, !seizure.BodySeized && seizure.Progress == 255 * Dt / 4f, "255 frames: not yet");
     seizure.Tick(Dt);
-    Check(s, seizure.BodySeized, "128 frames (2 s): seized");
+    Check(s, seizure.BodySeized, "256 frames (4 s at margin 1): seized");
     Check(s, w.BattleLogs.Count == 2, "only one 'Nobody stands over' line");
 }
 
@@ -68,18 +68,18 @@ const float Dt = 1f / 64f;          // exact in binary
     w.Enemy("D", 31f, 0f);
     w.Guard("G1", 0f, 1f);
     var seizure = w.Build();
-    for (var i = 0; i < 127; i++)
+    for (var i = 0; i < 255; i++)
         seizure.Tick(Dt);
-    Check(s, !seizure.BodySeized && seizure.Progress == 127 * Dt, $"127 frames: not seized ({seizure.Progress})");
+    Check(s, !seizure.BodySeized && seizure.Progress == 255 * Dt / 4f, $"255 frames: not seized ({seizure.Progress})");
     Check(s, w.BattleLogs.Count == 0, "uncontested from the start: no change, no line");
     seizure.Tick(Dt);
-    Check(s, seizure.BodySeized, "frame 128: seized");
+    Check(s, seizure.BodySeized, "frame 256: seized (2 seizers v 1 retainer: margin 1, 4 s)");
     Check(s, w.CorpseCaptured == true, "corpse captured");
     Check(s, w.Surrendered == 1 && w.EnemyVictories == 1, "retainers surrendered, enemy victory forced, once");
     Check(s, w.BattleLogs.Count == 1 && w.BattleLogs[0] == "A carries off the lord's body!", "carried off by the closest (A, gap 0.5)");
     Check(s, a.Goal == null && !a.Held && b.Goal == null && !b.Held && w.SeizerIds.Count == 0, "seizers released");
     Check(s, w.ControlledBy == a && w.Grabs == 1, "the grab is tried at once on A");
-    Check(s, seizure.Progress == 2f, "progress is left full");
+    Check(s, seizure.Progress == 1f, "progress is left full");
     w.OutcomeDecided = true;
     seizure.Tick(Dt);
     Check(s, seizure.Progress == 0f, "after the outcome: progress back to 0");
@@ -93,20 +93,20 @@ const float Dt = 1f / 64f;          // exact in binary
     var a = w.Enemy("A", 1f, 0f);       // gap 0.5
     w.Enemy("C", 30f, 0f);
     var seizure = w.Build();
-    for (var i = 0; i < 64; i++)
+    for (var i = 0; i < 128; i++)
         seizure.Tick(Dt);
-    Check(s, seizure.Progress == 1f, $"1 s at the body: 1 s of progress ({seizure.Progress})");
+    Check(s, seizure.Progress == 0.5f, $"2 s at the body alone: half ({seizure.Progress})");
     a.Position = new Vector3(2.5f, 0f, 0f);   // gap 2.0 > 1.5: out of reach, still a seizer
     for (var i = 0; i < 64; i++)
         seizure.Tick(Dt);
-    Check(s, seizure.Progress == 0.5f, $"1 s pushed out: drained by half a second ({seizure.Progress})");
+    Check(s, seizure.Progress == 0.25f, $"1 s pushed out: drained by a quarter ({seizure.Progress})");
     Check(s, a.Goal != null, "still a seizer");
     a.Position = new Vector3(1f, 0f, 0f);
-    for (var i = 0; i < 95; i++)
+    for (var i = 0; i < 191; i++)
         seizure.Tick(Dt);
-    Check(s, !seizure.BodySeized, "95 frames back in: not yet (0.5 + 95/64 < 2)");
+    Check(s, !seizure.BodySeized, "191 frames back in: not yet (0.25 + 191/256 < 1)");
     seizure.Tick(Dt);
-    Check(s, seizure.BodySeized, "96 frames back in: seized (0.5 + 1.5 = 2)");
+    Check(s, seizure.BodySeized, "192 frames back in: seized (0.25 + 0.75 = 1)");
 
     // A long push drains to 0 and stops there.
     var w2 = new World();
@@ -128,15 +128,15 @@ const float Dt = 1f / 64f;          // exact in binary
     var seizure = w.Build();
     for (var i = 0; i < 320; i++)
         seizure.Tick(Dt);
-    Check(s, seizure.Progress == 2f * 0.95f, $"held at 95% ({seizure.Progress})");
+    Check(s, seizure.Progress == 0.95f, $"held at 95% ({seizure.Progress})");
     Check(s, !seizure.BodySeized, "not seized while the ragdoll waits");
     Check(s, w.Infos.Count > 0 && w.Infos[^1].Contains("; body not yet fallen (ragdoll waiting); seized 95 %."), $"log says so: {w.Infos.LastOrDefault()}");
     w.BodyReady = true;
-    for (var i = 0; i < 6; i++)
+    for (var i = 0; i < 12; i++)
         seizure.Tick(Dt);
-    Check(s, !seizure.BodySeized, "6 frames after: not yet (1.9 + 6/64 < 2)");
+    Check(s, !seizure.BodySeized, "12 frames after: not yet (0.95 + 12/256 < 1)");
     seizure.Tick(Dt);
-    Check(s, seizure.BodySeized, "7th frame after the ragdoll is up: seized");
+    Check(s, seizure.BodySeized, "13th frame after the ragdoll is up: seized");
 }
 
 // --- Grab retry: every 0.4 s for up to 8 s. ---------------------------------------------------------------------
@@ -147,7 +147,7 @@ const float Dt = 1f / 64f;          // exact in binary
     var w = new World { HoldWorks = false };
     w.Enemy("A", 1f, 0f);
     var seizure = w.Build();
-    for (var i = 0; i < 128; i++)
+    for (var i = 0; i < 256; i++)
         seizure.Tick(Dt);
     Check(s, seizure.BodySeized && w.Grabs == 1, "seized; first grab");
     var grabFrames = new List<int>();
@@ -169,7 +169,7 @@ const float Dt = 1f / 64f;          // exact in binary
     var w = new World { HoldWorks = false };
     w.Enemy("A", 1f, 0f);
     var seizure = w.Build();
-    for (var i = 0; i < 8; i++)
+    for (var i = 0; i < 16; i++)
         seizure.Tick(0.25f);
     Check(s, seizure.BodySeized && w.Grabs == 1, "seized after 8 quarter seconds; first grab");
     var grabFrames = new List<int>();
@@ -190,7 +190,7 @@ const float Dt = 1f / 64f;          // exact in binary
     var w = new World { HoldWorks = false };
     w.Enemy("A", 1f, 0f);
     var seizure = w.Build();
-    for (var i = 0; i < 8; i++)
+    for (var i = 0; i < 16; i++)
         seizure.Tick(0.25f);
     seizure.Tick(0.25f);
     w.HoldWorks = true;             // the retry on the next frame (frame 2) takes hold
@@ -209,7 +209,7 @@ const float Dt = 1f / 64f;          // exact in binary
     var w = new World { BodyCanBeHeldOverride = false };
     w.Enemy("A", 1f, 0f);
     var seizure = w.Build();
-    for (var i = 0; i < 128; i++)
+    for (var i = 0; i < 256; i++)
         seizure.Tick(Dt);
     Check(s, seizure.BodySeized && w.ControlledBy == null && w.Grabs == 0, "no control without a ragdoll to hold");
     var w2 = new World { ControlStarts = false };
@@ -351,9 +351,9 @@ const float Dt = 1f / 64f;          // exact in binary
     var w = new World();
     var a = w.Enemy("A", 1f, 0f);
     var seizure = w.Build();
-    for (var i = 0; i < 64; i++)
+    for (var i = 0; i < 128; i++)
         seizure.Tick(Dt);
-    Check(s, a.Goal != null && seizure.Progress == 1f, "seizing under way");
+    Check(s, a.Goal != null && seizure.Progress == 0.5f, "seizing under way");
     w.Settings.Retreat = false;     // switched off mid-battle
     seizure.Tick(Dt);
     Check(s, a.Goal == null && seizure.Progress == 0f && w.SeizerIds.Count == 0, "Retreat off: released, progress 0");
@@ -378,11 +378,60 @@ const float Dt = 1f / 64f;          // exact in binary
     Check(s, a.Goal != null, "all set again: going");
 
     // Reset: progress, seizure and the captured flag cleared; seizers released.
-    for (var i = 0; i < 200; i++)
+    for (var i = 0; i < 300; i++)
         seizure.Tick(Dt);
     Check(s, seizure.BodySeized && w.CorpseCaptured == true, "seized");
     seizure.Reset();
     Check(s, !seizure.BodySeized && seizure.Progress == 0f && w.CorpseCaptured == false, "reset clears it");
+}
+
+// --- 2026-11-15: the rate by numbers, and a hit on a seizer at the body knocks it back. --------------------------
+{
+    const string s = "margin";
+    // 3 seizers at the body against 1 retainer: margin 2, full in 2 s (128 frames).
+    var w = new World();
+    w.Enemy("A", 1f, 0f);
+    w.Enemy("B", -1f, 0f);
+    w.Enemy("C", 0f, 1.5f);
+    for (var i = 0; i < 3; i++)
+        w.Enemy($"F{i}", 30f + i, 0f);
+    w.Guard("G1", 0f, -1f);
+    var seizure = w.Build();
+    seizure.Tick(Dt);
+    Check(s, seizure.Progress == 2f * Dt / 4f, $"margin 2: twice the rate ({seizure.Progress})");
+    for (var i = 0; i < 126; i++)
+        seizure.Tick(Dt);
+    Check(s, !seizure.BodySeized, "127 frames: not yet");
+    seizure.Tick(Dt);
+    Check(s, seizure.BodySeized, "128 frames (2 s at margin 2): seized");
+}
+{
+    const string s = "hits";
+    var w = new World();
+    var a = w.Enemy("A", 1f, 0f);       // at the body
+    var b = w.Enemy("B", 6f, 0f);       // a seizer outside the contest radius (gap 5.5)
+    w.Enemy("C", 30f, 0f);              // not a seizer
+    w.Enemy("D", 31f, 0f);
+    var seizure = w.Build();
+    for (var i = 0; i < 128; i++)
+        seizure.Tick(Dt);
+    Check(s, seizure.Progress == 0.5f, $"half way ({seizure.Progress})");
+    Check(s, b.Goal != null, "B is a seizer");
+    seizure.NoteHit(a.Id);
+    Check(s, MathF.Abs(seizure.Progress - 0.4f) < 1e-6f, $"a hit on A at the body: back by 10% ({seizure.Progress})");
+    seizure.NoteHit(b.Id);
+    seizure.NoteHit(w.EnemyList[2].Id);
+    seizure.NoteHit(12345);
+    Check(s, MathF.Abs(seizure.Progress - 0.4f) < 1e-6f, "hits on a far seizer, a non-seizer or someone else: nothing");
+    for (var i = 0; i < 10; i++)
+        seizure.NoteHit(a.Id);
+    Check(s, seizure.Progress == 0f, "never below 0");
+    for (var i = 0; i < 64; i++)
+        seizure.Tick(Dt);
+    Check(s, w.Infos.Count > 0 && w.Infos[^1].EndsWith("; seized 0 %, knocked back by 11 hits."), $"the War: line counts the hits: {w.Infos.LastOrDefault()}");
+    seizure.Reset();
+    seizure.NoteHit(a.Id);
+    Check(s, seizure.Progress == 0f, "after a reset: nothing at stake");
 }
 
 // --- The War: line, word for word (the template at Plugin.War.cs:261-265, e93e51e). ----------------------------
@@ -394,7 +443,7 @@ const float Dt = 1f / 64f;          // exact in binary
     var seizure = w.Build();
     seizure.Tick(Dt);
     var expected = "War: lord's body at <0.0, 0.0, 0.0>; 1 going for it, the closest A 0.5 m from it; " +
-                   "1 seizers and 0 retainers within 3.5 m; not held, nearest retainer G1 5.0 m away; seized 1 %.";
+                   "1 seizers and 0 retainers within 3.5 m; not held, nearest retainer G1 5.0 m away; seized 0 %.";
     Check(s, w.Infos.Count == 1 && w.Infos[0] == expected, $"first frame line:\n  got      {w.Infos.FirstOrDefault()}\n  expected {expected}");
     for (var i = 0; i < 127; i++)
         seizure.Tick(Dt);

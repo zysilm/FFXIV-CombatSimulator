@@ -15,3 +15,12 @@ completion 7 frames after it is, grab retry (every 0.4 s for 8 s; the warning on
 frame the 8 s run out), seizer review every 3 s (dropped beyond max(10 m, 2x the nearest non-seizer)), idle sentries
 beyond 40 m not woken, seizer share ceil(living / 2) with at least 1, the rule switches read live, reset, and the
 `War:` log line word for word.
+
+2026-11-15 (a gameplay change, not a refactor): the seizing fills by (seizers − retainers within 3.5 m) / 4 s of the
+whole per second, drains by a quarter per second, stops at 95 % until the ragdoll is up, and every hit on a seizer
+within 3.5 m knocks it back by 10 % (`CorpseSeizure.NoteHit`). `Progress` is now 0..1 (it was seconds, full at 2).
+Changed expectations, each for that reason alone: the frames to a seizure at margin 1 (128 → 256; 1/4 s steps 8 → 16),
+the half-way and drain values in "pushed out" (1 s → 0.5, drained 0.25), the 95 % cap (1.9 → 0.95; 7 → 13 frames
+after the ragdoll), the progress after 1 s in "rules" (1 → 0.5 after 2 s), the reset scenario's run (200 → 300
+frames), and the first `War:` line ("seized 1 %" → "0 %"). New: margin 2 is twice the rate; hits at the body knock it
+back, hits elsewhere do not, never below 0, the `War:` line counts them ("knocked back by N hits").

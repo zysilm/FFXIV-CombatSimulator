@@ -111,6 +111,25 @@ internal sealed unsafe class BattleModule
         warBanner.Hide();
     }
 
+    /// <summary>A hit landed (<c>CombatEvents.DamageLanded</c>): a seizer struck at the lord's body knocks the seizing back.</summary>
+    public void NoteDamage(SimulatedEntityState target, DamageResult hit, SimulatedEntityState? source)
+    {
+        if (!target.IsPlayer && !target.IsCompanion)
+            corpseSeizure.NoteHit(target.EntityId);
+    }
+
+    /// <summary>The seizing above the lord's body, for the HP bars: where the body lies and how far it has gone
+    /// (null while nothing is under way or once the body is carried off).</summary>
+    public (Vector3 Body, float Progress)? SeizureBar()
+    {
+        if (corpseSeizure == null || corpseSeizure.BodySeized || corpseSeizure.Progress <= 0f)
+            return null;
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player == null)
+            return null;
+        return (LordBodyPosition() ?? player.Position, corpseSeizure.Progress);
+    }
+
     /// <summary>The battle rules after the engine (the corpse seizure's tick).</summary>
     public void TickWar(float deltaTime) => companionManager.RuleParts.TickAfterEngine(deltaTime);
 
