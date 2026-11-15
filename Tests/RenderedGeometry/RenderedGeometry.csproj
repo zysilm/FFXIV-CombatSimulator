@@ -4,7 +4,7 @@
     <PackageReference Include="Lumina" Version="7.6.0" />
     <!-- The library's rendered-geometry snapshot types are internal; the library grants this test InternalsVisibleTo
          (from 0.1.0-beta.2). Keep the version equal to CombatSimulator.csproj's. -->
-    <PackageReference Include="AdvancedRagdoll" Version="0.1.0-beta.2" />
+    <PackageReference Include="AdvancedRagdoll" Version="0.1.0-beta.3" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../../CombatSimulator/Animation/ModelGeometryData.cs" Link="Production/ModelGeometryData.cs" />
