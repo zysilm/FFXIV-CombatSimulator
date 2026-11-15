@@ -2105,14 +2105,6 @@ public partial class MainWindow : IDisposable
                 chatGui.Print("[CombatSim] Combat state reset.");
             }
 
-            var dmgMult = config.DamageMultiplier;
-            if (ImGui.SliderFloat("Damage Multiplier", ref dmgMult, 0.1f, 5.0f, "%.1f"))
-            {
-                config.DamageMultiplier = dmgMult;
-                config.Save();
-            }
-            HelpMarker("Global damage multiplier applied to all attacks.");
-
             var randomHits = config.EnableCriticalHits || config.EnableDirectHits;
             if (ImGui.Checkbox("Random crits / direct hits", ref randomHits))
             {

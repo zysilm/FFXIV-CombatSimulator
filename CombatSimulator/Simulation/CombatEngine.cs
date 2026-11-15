@@ -132,7 +132,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
     public Action? BeforePlayerDeath { get => Events.BeforePlayerDeath; set => Events.BeforePlayerDeath = value; }
 
     // Configuration (set from plugin config)
-    private float DamageMultiplier => config.DamageMultiplier;
     private bool EnableCriticalHits => config.EnableCriticalHits;
     private bool EnableDirectHits => config.EnableDirectHits;
     private const int GuardMpRestore = 1000;
@@ -663,7 +662,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
             targets,
             t => damageCalculator.Calculate(
                 State.PlayerState, t, ScaleActionPotency(actionData, targets.Count), isCombo,
-                EnableCriticalHits, EnableDirectHits, DamageMultiplier));
+                EnableCriticalHits, EnableDirectHits));
         if (hits.Count == 0)
         {
             result.FailReason = "No valid targets.";
@@ -1720,7 +1719,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
                 continue;
             var dmg = damageCalculator.Calculate(
                 ps, target, damageAction, false,
-                EnableCriticalHits, EnableDirectHits, DamageMultiplier);
+                EnableCriticalHits, EnableDirectHits);
             LandDamage(target, dmg, ps);
             hits.Add(new AppliedActionDamage(target, dmg));
             total += dmg.Damage;

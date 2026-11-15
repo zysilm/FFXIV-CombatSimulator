@@ -15,7 +15,6 @@ namespace CombatSimulator.Simulation;
 public interface ICombatEngineSettings : Battle.IBattleRuleSettings
 {
     bool ActionMode { get; }
-    float DamageMultiplier { get; }
     bool EnableCriticalHits { get; }
     bool EnableDirectHits { get; }
     int LightAttackPotency { get; }

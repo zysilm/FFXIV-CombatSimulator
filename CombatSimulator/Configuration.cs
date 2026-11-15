@@ -79,7 +79,6 @@ public partial class Configuration : IPluginConfiguration
     public int OthersSkillEffects { get; set; } = 1;
 
     // Simulation
-    public float DamageMultiplier { get; set; } = 1.0f;
     public bool EnableCriticalHits { get; set; } = true;
     public bool EnableDirectHits { get; set; } = true;
 
@@ -699,6 +698,8 @@ public partial class Configuration : IPluginConfiguration
         "PartyMeleeAttackRange", "PartyRangedAttackRange",
         // Action combat is the only combat (2026-11-13).
         "ActionMode",
+        // The player-only damage multiplier, removed (2026-11-15, user's decision: not used).
+        "DamageMultiplier",
         // The old movers, replaced by the crowd on the plugin's navigation mesh (2026-11-13).
         "EnableTargetApproach", "UseSoloTargetFormationWhenNoCompanions", "TargetApproachDistance",
         "UseVNavmeshTargetApproach",
