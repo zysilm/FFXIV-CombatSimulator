@@ -32,16 +32,6 @@ public partial class MainWindow : IDisposable
     /// <summary>Takes the battle result banner off the screen (its switch was turned off).</summary>
     public Action? HideResultBanner { get; set; }
 
-    private static readonly (string Label, string BoneName)[] FightingModeTranslateBones =
-    {
-        ("Hips (j_kosi)", "j_kosi"),
-        ("Lower Spine (j_sebo_a)", "j_sebo_a"),
-        ("Mid Spine (j_sebo_b)", "j_sebo_b"),
-        ("Upper Spine (j_sebo_c)", "j_sebo_c"),
-        ("Neck (j_kubi)", "j_kubi"),
-        ("Head (j_kao)", "j_kao"),
-    };
-
     private static readonly string[] NpcCollisionModeLabels = { "Fast", "Accurate" };
 
     private readonly Configuration config;
@@ -66,14 +56,43 @@ public partial class MainWindow : IDisposable
     private readonly CombatRecipeBook recipeBook;
     private readonly IPluginLog log;
 
-    // Start confirmation popup, shown when a client-side safety barrier is down
+    // Start confirmation popup, shown when a client-side safety barrier is down: a plain start may go ahead on
+    // confirmation (barrierPendingStart); a start that spawns simulated actors is refused (barrierRefusedSpawn).
     private bool showBarrierConfirmPopup;
+    private Action? barrierPendingStart;
+    private bool barrierRefusedSpawn;
 
     private static readonly Vector4 ConflictYellow = new(1f, 0.8f, 0f, 1f);
     private static readonly Vector4 BarrierRed = new(1f, 0.4f, 0.4f, 1f);
 
+    /// <summary>The client-side safety barriers (set by the presentation module right after construction).</summary>
+    public SafetyBarriers Barriers { get; set; } = null!;
+
     /// <summary>True when every interceptor that keeps simulated combat off the server is installed.</summary>
-    private bool SafetyBarriersHealthy => useActionHook.IsHealthy && playerTargetController.IsHardTargetGuardHealthy;
+    private bool SafetyBarriersHealthy => Barriers.AllHealthy;
+
+    /// <summary>
+    /// The one barrier check before anything that starts the simulation or spawns its actors. Barriers up: true,
+    /// go ahead. A barrier down: false, and the "Safety Barrier Down" popup opens: a plain start can still be
+    /// confirmed there (<paramref name="start"/> runs on "Start Anyway"); one that spawns simulated actors is
+    /// refused outright.
+    /// </summary>
+    private bool PassSafetyBarrier(Action? start, bool spawnsActors)
+    {
+        if (SafetyBarriersHealthy)
+            return true;
+
+        barrierRefusedSpawn = spawnsActors;
+        // "Start Anyway" only when the hard-target guard is the one down: with an action hook down the
+        // simulation's per-frame safety check stops it again on the next frame, so starting is pointless.
+        var onlyTargetGuardDown = Barriers.UseActionHealthy && Barriers.UseActionLocationHealthy;
+        barrierPendingStart = spawnsActors || !onlyTargetGuardDown ? null : start;
+        showBarrierConfirmPopup = true;
+        if (spawnsActors)
+            chatGui.PrintError($"[CombatSim] Not started: a client-side safety barrier is down ({Barriers.FirstDown}), " +
+                               "so no simulated actors can be spawned. See the Diagnose tab.");
+        return false;
+    }
 
     // Glamourer design list cache for combo box
     private List<KeyValuePair<Guid, string>> glamourerDesigns = new();
@@ -261,6 +280,9 @@ public partial class MainWindow : IDisposable
         ImGui.SameLine();
         HelpMarker("vnavmesh is recommended for better pathfinding. The plugin works without it, but enemy movement will be limited.");
 
+        // Barrier confirmation popup (the fast-combat panel above can raise it)
+        DrawBarrierConfirmPopup();
+
         ImGui.End();
     }
 
@@ -330,10 +352,6 @@ public partial class MainWindow : IDisposable
         {
             case 0: // Combat
                 DrawSimulationSection();
-                // Hidden pending a security review (see update log 2.6.0.1); only
-                // reachable via the Dev Experimental unlock.
-                if (DevExperimentalUnlocked)
-                    DrawFightingModeSection();
                 DrawActionModeSection();
                 DrawEnemyTacticsSection();
                 DrawMapEnemiesSection();
@@ -427,13 +445,28 @@ public partial class MainWindow : IDisposable
     /// <summary>Start from a button: straight away when the barriers are up, otherwise ask first.</summary>
     private void RequestStartSimulation()
     {
-        if (!SafetyBarriersHealthy)
-        {
-            showBarrierConfirmPopup = true;
-            return;
-        }
+        if (PassSafetyBarrier(StartSimulationNow, spawnsActors: false))
+            StartSimulationNow();
+    }
+
+    private void StartSimulationNow()
+    {
         combatEngine.StartSimulation();
         chatGui.Print("[CombatSim] Combat simulation started.");
+    }
+
+    /// <summary>Reboot from a button: stop, then start again behind the same barrier check as Start.</summary>
+    private void RequestRebootSimulation()
+    {
+        if (PassSafetyBarrier(RebootSimulationNow, spawnsActors: false))
+            RebootSimulationNow();
+    }
+
+    private void RebootSimulationNow()
+    {
+        combatEngine.StopSimulation();
+        combatEngine.StartSimulation();
+        chatGui.Print("[CombatSim] Combat simulation rebooted.");
     }
 
     private void DrawStatusSection()
@@ -483,19 +516,6 @@ public partial class MainWindow : IDisposable
         {
             ImGui.TextDisabled("Action combat");
             HelpMarker(BuildActionModeQuickHelp());
-
-            // Hidden pending a security review of its direct position/rotation writes
-            // (see update log 2.6.0.1) — only reachable via the Dev Experimental unlock.
-            if (DevExperimentalUnlocked)
-            {
-                var fightingMode = config.FightingMode;
-                if (ImGui.Checkbox("Fighting Mode [Experimental]", ref fightingMode))
-                {
-                    config.FightingMode = fightingMode;
-                    config.Save();
-                }
-                HelpMarker("Experimental 1v1 side-view mode. Press an attack on an enemy to lock the pair into a 2D fighting lane and side camera. Ignores profiles while active.");
-            }
         }
 
         if (compact)
@@ -744,6 +764,7 @@ public partial class MainWindow : IDisposable
         }
 
         DrawFastCombatPanel(compact: true);
+        DrawBarrierConfirmPopup();
         ImGui.End();
     }
 
@@ -776,19 +797,11 @@ public partial class MainWindow : IDisposable
 
     private void StartRecipe(CombatRecipe recipe)
     {
-        StopFastCombat(print: false);
-
-        if (config.FightingMode)
-        {
-            config.EnableCombatCompanions = false;
-            config.SensePartyMembers = false;
-            config.EnableMapPlayerEnemySensing = false;
-            npcSpawner.SpawnModeActive = false;
-            mapEnemyController.ClearRecipeSettings();
-            combatEngine.StartSimulation();
-            chatGui.Print("[CombatSim] Fighting Mode started. Attack one enemy to begin a 1v1.");
+        // Spawns simulated actors: refused while a safety barrier is down.
+        if (!PassSafetyBarrier(null, spawnsActors: true))
             return;
-        }
+
+        StopFastCombat(print: false);
 
         // Recipe-scoped NPC collision. Null leaves the user's own setting in force; the
         // StopFastCombat above has already cleared any previous recipe's override.
@@ -1668,6 +1681,10 @@ public partial class MainWindow : IDisposable
 
     private void SpawnChosen(bool asAlly, int count, int room, SpawnPlacement placement, bool patrol)
     {
+        // Spawns simulated actors: refused while a safety barrier is down.
+        if (!PassSafetyBarrier(null, spawnsActors: true))
+            return;
+
         var entry = selectedCatalogEntry!;
 
         // Always available: activate spawn mode and start the simulation on demand so the user
@@ -2139,482 +2156,12 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private void DrawFightingModeSection()
-    {
-        if (!ImGui.CollapsingHeader("Fighting Mode [Experimental]"))
-            return;
-
-        var fightingMode = config.FightingMode;
-        if (ImGui.Checkbox("Enable Fighting Mode", ref fightingMode))
-        {
-            config.FightingMode = fightingMode;
-            config.Save();
-        }
-        HelpMarker("1v1 side-view combat mode. The first player attack against an enemy locks the pair into a fighting-game lane and camera: 2D movement (forward/back + jump), weapon-contact hit detection, timed guard against telegraphs, a dedicated fighting AI, and a KO camera.");
-
-        if (!config.FightingMode)
-            return;
-
-        ImGui.SameLine();
-        if (ImGui.Button("Reset defaults##fightingmode"))
-        {
-            config.ResetFightingModeDefaults();
-            config.Save();
-        }
-        HelpMarker("Reset every Fighting Mode setting (movement, combat, AI, cameras) to defaults. Keeps the mode enabled.");
-
-        ImGui.Separator();
-        ImGui.Text("Lane");
-
-        var minSep = config.FightingModeMinSeparation;
-        if (ImGui.SliderFloat("Min separation##fightingmode", ref minSep, 0.1f, 1.5f, "%.2f"))
-        {
-            config.FightingModeMinSeparation = minSep;
-            config.Save();
-        }
-        HelpMarker("Closest the pair can stand: whoever moves is clamped this far from the other along the lane.");
-
-        ImGui.Separator();
-        ImGui.Text("Input");
-        HelpMarker("Fighting Mode uses no keys of its own. Movement, run and jump are the game's own bindings (projected onto the 2D lane); a second jump press mid-air vaults over the enemy. The basic attack and guard reuse the Action Mode binds — configure them under Action Mode.");
-
-        var vaultDur = config.FightingModeVaultDuration;
-        if (ImGui.SliderFloat("Vault duration##fightingmode", ref vaultDur, 0.2f, 1.2f, "%.2f s"))
-        {
-            config.FightingModeVaultDuration = vaultDur;
-            config.Save();
-        }
-        HelpMarker("How long the mid-air vault arc over the enemy lasts. Triggered by a second press of your game jump bind while airborne.");
-
-        ImGui.Separator();
-        ImGui.Text("Weapon Combat");
-
-        var debugDraw = config.FightingModeDebugDraw;
-        if (ImGui.Checkbox("Debug draw##fightingmode", ref debugDraw))
-        {
-            config.FightingModeDebugDraw = debugDraw;
-            config.Save();
-        }
-        HelpMarker("Draws the live weapon segment (yellow; red while the hit window is open) and the enemy hurtbox capsule. Essential for tuning the values below.");
-
-        var weaponLen = config.FightingModeWeaponLength;
-        if (ImGui.SliderFloat("Weapon length##fightingmode", ref weaponLen, 0.2f, 3.0f, "%.2f"))
-        {
-            config.FightingModeWeaponLength = weaponLen;
-            config.Save();
-        }
-        HelpMarker("Used for single-bone weapons and the unarmed/hand-bone fallback. Multi-bone weapons derive length from their own skeleton.");
-
-        var weaponScale = config.FightingModeWeaponLengthScale;
-        if (ImGui.SliderFloat("Weapon length scale##fightingmode", ref weaponScale, 0.5f, 2.0f, "%.2f"))
-        {
-            config.FightingModeWeaponLengthScale = weaponScale;
-            config.Save();
-        }
-
-        var weaponRadius = config.FightingModeWeaponRadius;
-        if (ImGui.SliderFloat("Weapon radius##fightingmode", ref weaponRadius, 0.02f, 0.6f, "%.2f"))
-        {
-            config.FightingModeWeaponRadius = weaponRadius;
-            config.Save();
-        }
-
-        var weaponAxis = config.FightingModeWeaponAxis;
-        if (ImGui.Combo("Weapon axis##fightingmode", ref weaponAxis, "X\0Y\0Z\0"))
-        {
-            config.FightingModeWeaponAxis = Math.Clamp(weaponAxis, 0, 2);
-            config.Save();
-        }
-        HelpMarker("Blade direction in the weapon's local space, for single-bone weapons only.");
-
-        var hurtHeight = config.FightingModeHurtboxHeight;
-        if (ImGui.SliderFloat("Hurtbox height##fightingmode", ref hurtHeight, 0.5f, 5.0f, "%.2f"))
-        {
-            config.FightingModeHurtboxHeight = hurtHeight;
-            config.Save();
-        }
-
-        var hurtScale = config.FightingModeHurtboxRadiusScale;
-        if (ImGui.SliderFloat("Hurtbox radius scale##fightingmode", ref hurtScale, 0.3f, 3.0f, "%.2f"))
-        {
-            config.FightingModeHurtboxRadiusScale = hurtScale;
-            config.Save();
-        }
-
-        var activeStart = config.FightingModeAttackActiveStartPct;
-        if (ImGui.SliderFloat("Hit window start##fightingmode", ref activeStart, 0f, 0.9f, "%.2f"))
-        {
-            config.FightingModeAttackActiveStartPct = activeStart;
-            config.Save();
-        }
-        HelpMarker("Active hit window as a fraction of the attack animation: contact only counts between start and end.");
-
-        var activeEnd = config.FightingModeAttackActiveEndPct;
-        if (ImGui.SliderFloat("Hit window end##fightingmode", ref activeEnd, 0.1f, 1f, "%.2f"))
-        {
-            config.FightingModeAttackActiveEndPct = MathF.Max(activeEnd, config.FightingModeAttackActiveStartPct + 0.05f);
-            config.Save();
-        }
-
-        ImGui.Separator();
-        ImGui.Text("Fighting AI");
-
-        var aiSpeed = config.FightingAiMoveSpeed;
-        if (ImGui.SliderFloat("AI move speed##fightingai", ref aiSpeed, 0.5f, 8.0f, "%.1f"))
-        {
-            config.FightingAiMoveSpeed = aiSpeed;
-            config.Save();
-        }
-
-        var aiRetreatScale = config.FightingAiRetreatSpeedScale;
-        if (ImGui.SliderFloat("Retreat speed scale##fightingai", ref aiRetreatScale, 0.1f, 1.0f, "%.2f"))
-        {
-            config.FightingAiRetreatSpeedScale = aiRetreatScale;
-            config.Save();
-        }
-        HelpMarker("Backpedal speed as a fraction of move speed — keep it below your run speed or the enemy is uncatchable.");
-
-        var aiRangeMin = config.FightingAiRangeMin;
-        if (ImGui.SliderFloat("Preferred range min##fightingai", ref aiRangeMin, 0.5f, 6.0f, "%.1f"))
-        {
-            config.FightingAiRangeMin = aiRangeMin;
-            config.Save();
-        }
-
-        var aiRangeMax = config.FightingAiRangeMax;
-        if (ImGui.SliderFloat("Preferred range max##fightingai", ref aiRangeMax, 1.0f, 10.0f, "%.1f"))
-        {
-            config.FightingAiRangeMax = MathF.Max(aiRangeMax, config.FightingAiRangeMin + 0.2f);
-            config.Save();
-        }
-        HelpMarker("The enemy holds this spacing band: approaches when farther, backs off when closer, attacks from inside it.");
-
-        var aiCooldown = config.FightingAiAttackCooldown;
-        if (ImGui.SliderFloat("Attack cooldown##fightingai", ref aiCooldown, 0.3f, 8.0f, "%.1f s"))
-        {
-            config.FightingAiAttackCooldown = aiCooldown;
-            config.Save();
-        }
-
-        var aiJitter = config.FightingAiAttackCooldownJitter;
-        if (ImGui.SliderFloat("Cooldown jitter##fightingai", ref aiJitter, 0f, 4.0f, "%.1f s"))
-        {
-            config.FightingAiAttackCooldownJitter = aiJitter;
-            config.Save();
-        }
-
-        var aiCombo = config.FightingAiComboChance;
-        if (ImGui.SliderFloat("Combo chance##fightingai", ref aiCombo, 0f, 1f, "%.2f"))
-        {
-            config.FightingAiComboChance = aiCombo;
-            config.Save();
-        }
-        HelpMarker("Probability an attack opens a combo string (up to Max combo hits, chained with a short gap).");
-
-        var aiComboMax = config.FightingAiMaxComboHits;
-        if (ImGui.SliderInt("Max combo hits##fightingai", ref aiComboMax, 2, 5))
-        {
-            config.FightingAiMaxComboHits = aiComboMax;
-            config.Save();
-        }
-
-        var aiComboGap = config.FightingAiComboGap;
-        if (ImGui.SliderFloat("Combo gap##fightingai", ref aiComboGap, 0.05f, 0.8f, "%.2f s"))
-        {
-            config.FightingAiComboGap = aiComboGap;
-            config.Save();
-        }
-
-        var aiDash = config.FightingAiDashChance;
-        if (ImGui.SliderFloat("Dash-in chance##fightingai", ref aiDash, 0f, 1f, "%.2f"))
-        {
-            config.FightingAiDashChance = aiDash;
-            config.Save();
-        }
-        HelpMarker("When out of range, chance to burst-dash in (at the speed scale below) and attack immediately.");
-
-        var aiDashScale = config.FightingAiDashSpeedScale;
-        if (ImGui.SliderFloat("Dash speed scale##fightingai", ref aiDashScale, 1.2f, 4.0f, "%.1f"))
-        {
-            config.FightingAiDashSpeedScale = aiDashScale;
-            config.Save();
-        }
-
-        var aiJumpOver = config.FightingAiJumpOverChance;
-        if (ImGui.SliderFloat("Jump-over chance##fightingai", ref aiJumpOver, 0f, 1f, "%.2f"))
-        {
-            config.FightingAiJumpOverChance = aiJumpOver;
-            config.Save();
-        }
-        HelpMarker("Chance the enemy hops over you to the other side instead of attacking.");
-
-        var aiJumpDur = config.FightingAiJumpDuration;
-        if (ImGui.SliderFloat("Jump duration##fightingai", ref aiJumpDur, 0.3f, 1.2f, "%.2f s"))
-        {
-            config.FightingAiJumpDuration = aiJumpDur;
-            config.Save();
-        }
-
-        var aiJumpHeight = config.FightingAiJumpHeight;
-        if (ImGui.SliderFloat("Jump height##fightingai", ref aiJumpHeight, 0.5f, 4.0f, "%.1f"))
-        {
-            config.FightingAiJumpHeight = aiJumpHeight;
-            config.Save();
-        }
-
-        var aiJumpIn = config.FightingAiJumpInAttackChance;
-        if (ImGui.SliderFloat("Jump-in attack chance##fightingai", ref aiJumpIn, 0f, 1f, "%.2f"))
-        {
-            config.FightingAiJumpInAttackChance = aiJumpIn;
-            config.Save();
-        }
-        HelpMarker("Chance to attack immediately on landing a jump-over.");
-
-        var aiRetreat = config.FightingAiRetreatChance;
-        if (ImGui.SliderFloat("Retreat chance##fightingai", ref aiRetreat, 0f, 1f, "%.2f"))
-        {
-            config.FightingAiRetreatChance = aiRetreat;
-            config.Save();
-        }
-        HelpMarker("Probability of backing off after each attack instead of staying in.");
-
-        var aiRetreatDur = config.FightingAiRetreatDuration;
-        if (ImGui.SliderFloat("Retreat duration##fightingai", ref aiRetreatDur, 0.2f, 3.0f, "%.1f s"))
-        {
-            config.FightingAiRetreatDuration = aiRetreatDur;
-            config.Save();
-        }
-
-        var aiRecover = config.FightingAiRecoverTime;
-        if (ImGui.SliderFloat("Recover time##fightingai", ref aiRecover, 0.1f, 3.0f, "%.1f s"))
-        {
-            config.FightingAiRecoverTime = aiRecover;
-            config.Save();
-        }
-
-        var aiHitstun = config.FightingAiHitstunDuration;
-        if (ImGui.SliderFloat("Hitstun duration##fightingai", ref aiHitstun, 0.05f, 1.5f, "%.2f s"))
-        {
-            config.FightingAiHitstunDuration = aiHitstun;
-            config.Save();
-        }
-
-        var aiPushback = config.FightingAiHitstunPushback;
-        if (ImGui.SliderFloat("Hitstun pushback##fightingai", ref aiPushback, 0f, 5.0f, "%.1f"))
-        {
-            config.FightingAiHitstunPushback = aiPushback;
-            config.Save();
-        }
-        HelpMarker("Distance the enemy is shoved back along the lane by a weapon-contact hit (super-armored during its own windup).");
-
-        ImGui.Separator();
-        ImGui.Text("Camera");
-
-        var camSide = config.FightingModeCameraSide;
-        if (ImGui.Combo("Camera side##fightingmode", ref camSide, "Right\0Left\0"))
-        {
-            config.FightingModeCameraSide = Math.Clamp(camSide, 0, 1);
-            config.Save();
-        }
-        HelpMarker("Which side of the fighting lane the 2D camera views from. Also applies to the KO camera's side-view lock.");
-
-        var margin = config.FightingModeCameraMargin;
-        if (ImGui.SliderFloat("Frame margin##fightingmode", ref margin, 0.4f, 1.8f, "%.2f"))
-        {
-            config.FightingModeCameraMargin = margin;
-            config.Save();
-        }
-
-        var minDist = config.FightingModeCameraMinDistance;
-        if (ImGui.SliderFloat("Min camera distance##fightingmode", ref minDist, 1.5f, 10.0f, "%.2f"))
-        {
-            config.FightingModeCameraMinDistance = minDist;
-            config.Save();
-        }
-
-        var maxDist = config.FightingModeCameraMaxDistance;
-        if (ImGui.SliderFloat("Max camera distance##fightingmode", ref maxDist, 3.0f, 25.0f, "%.2f"))
-        {
-            config.FightingModeCameraMaxDistance = MathF.Max(maxDist, config.FightingModeCameraMinDistance + 0.1f);
-            config.Save();
-        }
-
-        var smooth = config.FightingModeCameraSmoothing;
-        if (ImGui.SliderFloat("Camera smoothing##fightingmode", ref smooth, 1.0f, 30.0f, "%.1f"))
-        {
-            config.FightingModeCameraSmoothing = smooth;
-            config.Save();
-        }
-
-        var height = config.FightingModeCameraHeight;
-        if (ImGui.SliderFloat("Camera center height##fightingmode", ref height, 0.0f, 3.0f, "%.2f"))
-        {
-            config.FightingModeCameraHeight = height;
-            config.Save();
-        }
-
-        var vertical = config.FightingModeCameraVerticalAngle;
-        if (ImGui.SliderFloat("Vertical angle##fightingmode", ref vertical, -0.8f, 0.5f, "%.2f rad"))
-        {
-            config.FightingModeCameraVerticalAngle = vertical;
-            config.Save();
-        }
-
-        ImGui.Separator();
-        ImGui.Text("KO Camera");
-        HelpMarker("After defeat, while the controlled monster's camera-follow is on, the camera frames the midpoint of your corpse and the monster and zooms out with their separation (fighting-game KO shot). Otherwise the Translate Cam below applies.");
-
-        var koMargin = config.FightingModeKoCameraMargin;
-        if (ImGui.SliderFloat("KO distance margin##fightingmode", ref koMargin, 0.2f, 2.0f, "%.2f"))
-        {
-            config.FightingModeKoCameraMargin = koMargin;
-            config.Save();
-        }
-
-        var koBase = config.FightingModeKoCameraBase;
-        if (ImGui.SliderFloat("KO base distance##fightingmode", ref koBase, 1.0f, 10.0f, "%.1f"))
-        {
-            config.FightingModeKoCameraBase = koBase;
-            config.Save();
-        }
-
-        var koMin = config.FightingModeKoCameraMinDistance;
-        if (ImGui.SliderFloat("KO min distance##fightingmode", ref koMin, 1.0f, 10.0f, "%.1f"))
-        {
-            config.FightingModeKoCameraMinDistance = koMin;
-            config.Save();
-        }
-
-        var koMax = config.FightingModeKoCameraMaxDistance;
-        if (ImGui.SliderFloat("KO max distance##fightingmode", ref koMax, 4.0f, 30.0f, "%.1f"))
-        {
-            config.FightingModeKoCameraMaxDistance = MathF.Max(koMax, config.FightingModeKoCameraMinDistance + 0.5f);
-            config.Save();
-        }
-
-        var koHeight = config.FightingModeKoCameraHeight;
-        if (ImGui.SliderFloat("KO center height##fightingmode", ref koHeight, -1.0f, 3.0f, "%.2f"))
-        {
-            config.FightingModeKoCameraHeight = koHeight;
-            config.Save();
-        }
-
-        var koLock = config.FightingModeKoLockAngle;
-        if (ImGui.Checkbox("KO side-view lock##fightingmode", ref koLock))
-        {
-            config.FightingModeKoLockAngle = koLock;
-            config.Save();
-        }
-        HelpMarker("Keeps the camera perpendicular to the corpse-monster axis; off = you keep manual rotation.");
-
-        ImGui.Separator();
-        ImGui.Text("Translate Cam");
-
-        var translate = config.FightingModeTranslateCam;
-        if (ImGui.Checkbox("Translate cam on defeat##fightingmode", ref translate))
-        {
-            config.FightingModeTranslateCam = translate;
-            config.Save();
-        }
-        HelpMarker("When the player is defeated, smoothly transition the Fighting Mode camera to a player-bone follow camera. If enabled after defeat, it performs the translate once on the next frame.");
-
-        var duration = config.FightingModeTranslateDuration;
-        if (ImGui.SliderFloat("Translate duration##fightingmode", ref duration, 0.1f, 10.0f, "%.2f s"))
-        {
-            config.FightingModeTranslateDuration = duration;
-            config.Save();
-        }
-
-        var translateDistance = config.FightingModeTranslateDistance;
-        if (ImGui.SliderFloat("Translate zoom distance##fightingmode", ref translateDistance, 1.0f, 20.0f, "%.2f"))
-        {
-            config.FightingModeTranslateDistance = translateDistance;
-            config.Save();
-        }
-
-        var bones = FightingModeTranslateBones;
-        var boneNames = new string[bones.Length];
-        var boneIdx = 0;
-        for (int i = 0; i < bones.Length; i++)
-        {
-            boneNames[i] = bones[i].Label;
-            if (bones[i].BoneName == config.FightingModeTranslateBoneName)
-                boneIdx = i;
-        }
-
-        if (config.FightingModeTranslateBoneName == "n_hara")
-        {
-            config.FightingModeTranslateBoneName = "j_kosi";
-            config.Save();
-        }
-
-        if (ImGui.Combo("Track bone##fightingmode", ref boneIdx, boneNames, boneNames.Length))
-        {
-            config.FightingModeTranslateBoneName = bones[boneIdx].BoneName;
-            config.Save();
-        }
-
-        var translateHeight = config.FightingModeTranslateHeightOffset;
-        if (ImGui.SliderFloat("Track height offset##fightingmode", ref translateHeight, -3.0f, 5.0f, "%.2f"))
-        {
-            config.FightingModeTranslateHeightOffset = translateHeight;
-            config.Save();
-        }
-
-        var translateSide = config.FightingModeTranslateSideOffset;
-        if (ImGui.SliderFloat("Track side offset##fightingmode", ref translateSide, -5.0f, 5.0f, "%.2f"))
-        {
-            config.FightingModeTranslateSideOffset = translateSide;
-            config.Save();
-        }
-
-        var lockH = config.FightingModeTranslateLockHorizontal;
-        if (ImGui.Checkbox("Lock horizontal rotation##fightingmode", ref lockH))
-        {
-            config.FightingModeTranslateLockHorizontal = lockH;
-            config.Save();
-        }
-
-        if (config.FightingModeTranslateLockHorizontal)
-        {
-            var h = config.FightingModeTranslateHorizontalAngle;
-            if (ImGui.SliderFloat("Horizontal angle##fightingmode", ref h, -MathF.PI, MathF.PI, "%.2f rad"))
-            {
-                config.FightingModeTranslateHorizontalAngle = h;
-                config.Save();
-            }
-        }
-
-        var lockV = config.FightingModeTranslateLockVertical;
-        if (ImGui.Checkbox("Lock vertical rotation##fightingmode", ref lockV))
-        {
-            config.FightingModeTranslateLockVertical = lockV;
-            config.Save();
-        }
-
-        if (config.FightingModeTranslateLockVertical)
-        {
-            var v = config.FightingModeTranslateVerticalAngle;
-            if (ImGui.SliderFloat("Vertical angle##fightingmode", ref v, -0.8f, 0.5f, "%.2f rad"))
-            {
-                config.FightingModeTranslateVerticalAngle = v;
-                config.Save();
-            }
-        }
-    }
-
     private static readonly string[] ActionDifficultyLabels = { "Easy", "Normal", "Hard" };
 
     private void DrawActionModeSection()
     {
         if (!ImGui.CollapsingHeader("Action Combat"))
             return;
-
-        if (!config.ActionMode)
-        {
-            ImGui.TextWrapped("Fighting Mode is on: it runs its own 1v1 combat.");
-            return;
-        }
 
         var difficulty = Math.Clamp(config.ActionDifficulty, 0, ActionDifficultyLabels.Length - 1);
         ImGui.SetNextItemWidth(200f);
@@ -2901,8 +2448,13 @@ public partial class MainWindow : IDisposable
 
             ImGui.Spacing();
             ImGui.TextWrapped(
-                "A client-side safety barrier is not installed, so simulated actions or targets " +
-                "might reach the server as if they were real.\n\n" +
+                $"A client-side safety barrier is not installed ({Barriers.FirstDown ?? "now back up"}), so simulated " +
+                "actions or targets might reach the server as if they were real.\n\n" +
+                (barrierRefusedSpawn
+                    ? "Battles that spawn enemies or allies cannot start until it is back.\n\n"
+                    : barrierPendingStart == null
+                        ? "With an action interceptor down the simulation cannot run: it would stop itself at once.\n\n"
+                        : "") +
                 "Restart the game or reload Combat Simulator to reinstall it. " +
                 "The Diagnose tab shows which barrier is down.");
 
@@ -2910,19 +2462,26 @@ public partial class MainWindow : IDisposable
             ImGui.Separator();
             ImGui.Spacing();
 
-            if (ImGui.Button("Start Anyway", new Vector2(150, 0)))
+            // Only a plain start may go ahead on confirmation; a start that spawns simulated actors may not.
+            if (!barrierRefusedSpawn && barrierPendingStart != null)
             {
-                combatEngine.StartSimulation();
-                chatGui.Print("[CombatSim] Combat simulation started.");
-                ImGui.CloseCurrentPopup();
+                if (ImGui.Button("Start Anyway", new Vector2(150, 0)))
+                {
+                    var start = barrierPendingStart;
+                    barrierPendingStart = null;
+                    start();
+                    ImGui.CloseCurrentPopup();
+                }
+                ImGui.SameLine();
             }
 
-            ImGui.SameLine();
             if (ImGui.Button("Go to Diagnose", new Vector2(120, 0)))
             {
                 // Was hardcoded to 8, which had been the Settings tab — the button never went
                 // where it said it did.
                 selectedTab = TabIndex("Diagnose");
+                config.ShowProfessionalWindow = true;
+                config.Save();
                 ImGui.CloseCurrentPopup();
             }
 
@@ -2943,8 +2502,15 @@ public partial class MainWindow : IDisposable
 
         if (ImGui.Button("Recover Player Animation"))
         {
-            ragdollController.Deactivate();
-            animationController.RecoverPlayerAnimationState();
+            if (AnimationController.PlayerBusyReason() is { } busy)
+            {
+                chatGui.PrintError($"[CombatSim] Not recovered: you are {busy}. Try again when you are not.");
+            }
+            else
+            {
+                ragdollController.Deactivate();
+                animationController.RecoverPlayerAnimationState();
+            }
         }
         HelpMarker("Force-clear CombatSimulator-owned player animation state if the local player gets stuck in a death, guard, or combat idle pose.");
         ImGui.Spacing();
@@ -3104,8 +2670,9 @@ public partial class MainWindow : IDisposable
         ImGui.Separator();
         ImGui.Spacing();
 
-        var actionOk = useActionHook.IsHealthy;
-        var targetGuardOk = playerTargetController.IsHardTargetGuardHealthy;
+        var actionOk = Barriers.UseActionHealthy;
+        var actionLocationOk = Barriers.UseActionLocationHealthy;
+        var targetGuardOk = Barriers.HardTargetGuardHealthy;
         var allOk = SafetyBarriersHealthy;
 
         using (ImRaii.PushFont(UiBuilder.IconFont))
@@ -3124,13 +2691,15 @@ public partial class MainWindow : IDisposable
 
         if (ImGui.BeginTable("##SafetyHookTable", 3, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg))
         {
-            ImGui.TableSetupColumn("Barrier", ImGuiTableColumnFlags.WidthFixed, 190);
+            ImGui.TableSetupColumn("Barrier", ImGuiTableColumnFlags.WidthFixed, 220);
             ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 80);
             ImGui.TableSetupColumn("Protects against", ImGuiTableColumnFlags.WidthStretch);
             ImGui.TableHeadersRow();
 
             DrawSafetyHookRow("UseAction interceptor", actionOk,
                 "Simulated actions being sent to the server as real action packets.");
+            DrawSafetyHookRow("UseActionLocation interceptor", actionLocationOk,
+                "Ground-target confirms, or other plugins calling the game directly, sending a real action during the simulation.");
             DrawSafetyHookRow("Hard-target guard", targetGuardOk,
                 "Clicking a simulated actor syncing a fake target id to the server.");
 
@@ -3142,7 +2711,8 @@ public partial class MainWindow : IDisposable
             ImGui.Spacing();
             ImGui.TextWrapped(
                 "If a barrier is down, restart the game or reload Combat Simulator to reinstall its hooks. " +
-                "The simulation also auto-stops if the UseAction interceptor fails while combat is active.");
+                "Battles that spawn enemies or allies will not start, simulated actors are not targetable, and " +
+                "the simulation auto-stops if an action interceptor fails while combat is active.");
         }
     }
 
@@ -3830,11 +3400,7 @@ public partial class MainWindow : IDisposable
 
         ImGui.SameLine();
         if (ImGui.Button("Reboot", btnSize))
-        {
-            combatEngine.StopSimulation();
-            combatEngine.StartSimulation();
-            chatGui.Print("[CombatSim] Combat simulation rebooted.");
-        }
+            RequestRebootSimulation();
 
         ImGui.End();
     }

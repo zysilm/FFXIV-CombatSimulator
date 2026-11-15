@@ -35,7 +35,7 @@ namespace CombatSimulator.Camera;
 /// hooks), so the game builds its own view and projection from them. No roll (the game camera has no roll field the
 /// plugin knows to work). It blends in from the camera it found over <see cref="BlendSeconds"/>, and at the end releases
 /// the coordinator and blends back over the same time to whatever camera the game then produces (the Directed camera's
-/// death framing, which waits while the shot plays, Enemy Control's follow, ...). Not in Fighting Mode, not while a
+/// death framing, which waits while the shot plays, Enemy Control's follow, ...). Not while a
 /// private scene runs.
 ///
 /// Log: one <c>CutShot:</c> line when a shot starts (shot, roles, actors, duration) and one when it ends (time, reason,
@@ -232,7 +232,6 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
     {
         var entry = Catalog.Find(id);
         if (entry == null) { Skip(why, id, "not in the curated list (list updated?)"); return; }
-        if (config.FightingMode) { Skip(why, id, "Fighting Mode is on"); return; }
         if (suppressed()) { Skip(why, id, "a scene owns the camera"); return; }
         if (GameOwnsCamera() is { } gameReason) { Skip(why, id, gameReason); return; }
         var player = Core.Services.ObjectTable.LocalPlayer;
@@ -397,7 +396,7 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
 
             if (phase == Phase.Playing)
             {
-                if (config.FightingMode || suppressed()) { BeginBlendOut("Fighting Mode or a scene took over"); }
+                if (suppressed()) { BeginBlendOut("a scene took over"); }
                 else if (!ActorValid(roles.Subject) || (shot.Entry.TwoPerson && !ActorValid(roles.Other))) { BeginBlendOut("an actor is gone"); }
                 else
                 {

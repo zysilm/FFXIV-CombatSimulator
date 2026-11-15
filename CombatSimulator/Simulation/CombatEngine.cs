@@ -258,7 +258,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         animationController.ResetPlayerDeathAnimation();
         animationController.RestorePlayerCombatVisualState();
         animationController.RemoveAllActiveVfx();
-        movementBlockHook.IsBlocking = false;
         ragdollController.Deactivate();
         playerInitiatedCombat = false;
         LastPlayerDefeatedBy = string.Empty;
@@ -307,7 +306,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
 
         animationController.ResetPlayerDeathAnimation();
         animationController.RestorePlayerCombatVisualState();
-        movementBlockHook.IsBlocking = false;
         ragdollController.Deactivate();
 
         playerDeathTriggered = false;
@@ -372,7 +370,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         if (friend.IsPlayer)
         {
             ClearQueuedActions();
-            movementBlockHook.IsBlocking = true;
             unsafe
             {
                 var player = Core.Services.ObjectTable.LocalPlayer;
@@ -397,7 +394,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
 
         if (friend.IsPlayer && !playerDeathTriggered)
         {
-            movementBlockHook.IsBlocking = false;
             unsafe
             {
                 var player = Core.Services.ObjectTable.LocalPlayer;
@@ -443,7 +439,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         LastPlayerKillerEntityId = 0;
         animationController.ResetPlayerDeathAnimation();
         animationController.RestorePlayerCombatVisualState();
-        movementBlockHook.IsBlocking = false;
         ragdollController.Deactivate();
 
         AddLogEntry("Player revived in place.", CombatLogType.Info);
@@ -482,7 +477,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
             TickCooldowns(entity, deltaTime);
 
         // Tick the player's animation lock. Enemy and companion locks are ticked by the controller
-        // that drives them (NpcAiController / CombatCompanionManager / FightingAiController); ticking
+        // that drives them (NpcAiController / CombatCompanionManager); ticking
         // them here as well ran every lock out at double speed.
         TickAnimationLock(State.PlayerState, deltaTime);
 
@@ -1238,7 +1233,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
             if (!playerDeathTriggered)
             {
                 playerDeathTriggered = true;
-                movementBlockHook.IsBlocking = true;
                 // Let the killing blow finish naturally. Tracked action VFX already have bounded
                 // TTLs, while StopSimulation/Dispose still perform immediate fail-safe cleanup.
                 BeforePlayerDeath?.Invoke();
@@ -1685,8 +1679,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
     /// basic attack). Reuses the same shape module + feedback (swing/impact sound/hit-react/flytext)
     /// normal mode uses. Returns the number of enemies hit; 0 = whiff (caller plays animation-only).
     /// </summary>
-    public int ApplyPlayerActionMode(uint actionId, ulong primaryEntityId, int potencyOverride = 0, float animationDuration = 0f,
-        bool suppressCasterActionEffect = false)
+    public int ApplyPlayerActionMode(uint actionId, ulong primaryEntityId, int potencyOverride = 0, float animationDuration = 0f)
     {
         var ps = State.PlayerState;
         if (!ps.IsAlive || ps.IsCaptive)
@@ -1742,29 +1735,13 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
             RestoreMp(ps, BasicAttackMpRestore);
 
         targeting.RegisterPlayerDamage(total);
-        if (suppressCasterActionEffect)
-            // Weapon-contact hit (Fighting Mode): the swing animation is already playing;
-            // fire impact-only feedback instead of restarting the caster's action effect.
-            TriggerManualPlayerHitFeedback(hits);
-        else
-            TriggerActionEffect(ps, actionData, hits);
+        TriggerActionEffect(ps, actionData, hits);
 
         foreach (var hit in hits)
             if (!hit.Target.IsAlive)
                 OnEntityDeath(hit.Target);
 
         return hits.Count;
-    }
-
-    private void TriggerManualPlayerHitFeedback(IReadOnlyList<AppliedActionDamage> hits)
-    {
-        foreach (var hit in hits)
-        {
-            if (hit.DamageResult.Damage <= 0)
-                continue;
-
-            PlayHitReactionOnTarget(hit.Target, isDamage: true);
-        }
     }
 
     private static ActionData ScaleActionPotency(ActionData actionData, int actualTargets)

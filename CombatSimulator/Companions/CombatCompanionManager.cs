@@ -110,6 +110,11 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
     public Action<CombatCompanion>? OnCompanionSpawnComplete { get => combatEngine.Events.AllySpawned; set => combatEngine.Events.AllySpawned = value; }
     public Action<nint>? OnCompanionDeathRagdoll { get => combatEngine.Events.AllyDied; set => combatEngine.Events.AllyDied = value; }
     public Action<string>? OnSpawnError { get => combatEngine.Events.AllySpawnError; set => combatEngine.Events.AllySpawnError = value; }
+
+    /// <summary>False while a client-side safety barrier is down (Safety/SafetyBarriers.cs): no ally is created
+    /// then. Null (before the barriers exist, and offline) allows.</summary>
+    public Func<bool>? SpawnAllowed { get; set; }
+    private bool spawnRefusalReported;
     // Whether a player seen nearby is one of the selected enemies (then it is not cloned into the party).
     private readonly Func<uint, bool> isSourceEnemy;
     // The bodies on the ground: where the lord's and a fallen friend's lie, and the corpse surface underfoot.
@@ -582,6 +587,19 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
 
     private void ProcessSpawnRequest(CompanionSpawnSource sourceInfo)
     {
+        if (SpawnAllowed?.Invoke() == false)
+        {
+            // Reported once until spawning is allowed again (the party-awareness loop retries every cycle).
+            if (!spawnRefusalReported)
+            {
+                spawnRefusalReported = true;
+                log.Warning("Ally spawn refused: a client-side safety barrier is down (Diagnose tab).");
+                OnSpawnError?.Invoke("Not spawned: a client-side safety barrier is down (see the Diagnose tab).");
+            }
+            return;
+        }
+        spawnRefusalReported = false;
+
         try
         {
             if (sourceInfo.Address == nint.Zero)

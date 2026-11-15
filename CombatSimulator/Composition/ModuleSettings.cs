@@ -18,7 +18,7 @@ namespace CombatSimulator.Composition;
 //
 // A module does not see the whole Configuration through these. What still takes the whole Configuration is
 // handed PluginModules.Config explicitly (m.Config): the systems outside the combat path that read many settings
-// or write them (animation, the ragdoll and its parts, the cameras, Fighting Mode and Enemy Control, the roster's
+// or write them (animation, the ragdoll and its parts, the cameras and Enemy Control, the roster's
 // selector and spawner, spectators and map enemies, the main window, voices, the update-log popup), and the few
 // module steps that write a setting (the directed camera switch, the voices' one-time default, an adopted ally
 // turning the party features on).
@@ -80,7 +80,6 @@ internal interface IPresentationModuleSettings :
     ICombatLinkSettings,
     IEnemyAreaDisplaySettings,
     IActionOverlaySettings,
-    IFightingDebugSettings,
     IDynamicCameraDebugSettings,
     IRagdollDebugSettings
 {

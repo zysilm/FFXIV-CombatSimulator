@@ -38,7 +38,8 @@
 - 配方里的敌人也用同一组强度和等级，不再各自一套（2026-11-11，`83621e9`）。
 - 队友也付 MP；被复活的人 50% HP、0 MP 回来（2026-11-13，`6e38892`、`3ac6147`）。
 - “Damage Multiplier”选项已删除（只作用于玩家自己的技能，用不上；旧配置里的值被清掉）（2026-11-15，用户裁决，`6ba4df6`）。用户的配置在 2026-10-25 之后不知何时变成了 5.0（滑条最大值，用户不记得动过），所以删除后玩家技能伤害从 5 倍回到 1 倍；用户选择保持 1 倍（一套数值）（2026-11-15，用户裁决）。暴击/直击开关仍只作用于玩家自己的技能。
-- 动作战斗是唯一战斗方式，旧的 tab-target 模式和 `ActionMode` 开关已退役；Fighting Mode 仍是独立实验模式（2026-11-13，用户裁决，`94b7f18`）。
+- 动作战斗是唯一战斗方式，旧的 tab-target 模式和 `ActionMode` 开关已退役（2026-11-13，用户裁决，`94b7f18`）。
+- Fighting Mode（实验性 1v1 横版：2D 车道、武器 hitbox、格斗 AI、KO 镜头）整体删除，不留退路；`ActionMode` 恒为 true；退役键见 `Configuration.cs` 的 `RetiredOptionNames`（2026-11-15，用户裁决：不再使用）。
 - 敌人技能从武器推导真实职业技能（武器→`Item.ClassJobUse`→职业→GCD 伤害技能），不再有行为下拉；只取 Spell/Weaponskill，优先 recast ≤2.55 s 的 GCD（2026-07-20，`b53668e`）。
 - 招架成功才响“叮”声：按下时静音，成功时重放招架时间线让游戏自己再发一次（2026-06-20，`25e8840`、`62cd4a9`）。
 
@@ -135,6 +136,13 @@
 
 - 过场跟拍镜头不写矩阵：在 `SetCameraLookAt` 钩子里原函数返回后把眼位/注视点写进调用方缓冲区，游戏自己出矩阵（反汇编确认，`f22c0f3`）。无滚转。
 - 库发布：`release` 环境当前不要求审批，推 tag 即发布（beta.3 于 2026-11-15 直接发布）。
+
+### 服务器安全屏障（2026-11-15）
+
+- 屏障 = UseAction + UseActionLocation + SetHardTarget 三个钩子（`Safety/SafetyBarriers.cs`）；所有开战/生成路径只查这一处。屏障失效时：生成假角色一律拒绝（界面弹 Safety Barrier Down、命令拒绝、生成器底层也拒绝）；只有硬目标保护失效时才允许 Start Anyway。
+- UseActionLocation 也拦：假目标一律拒绝；战斗中没经过 UseAction 的战斗技能丢弃；钩子异常时战斗中吞掉不放行。
+- 本地玩家永远不冻结位置/朝向（`MovementBlockHook` 只拦 NPC），服务器校正（击退等）必须生效；死亡姿态由布娃娃写 DrawObject。
+- 假角色只在战斗进行中且屏障完好时可选中，否则不可选中（`Safety/FakeActorGuard.cs`）；这也意味着停战后在 GPose 里点不中它们。游戏的硬/软/焦点目标一旦是假角色就当帧清掉。
 
 ## 3. 教训与死路
 
@@ -250,15 +258,10 @@
 
 ### 重构（2026-11-14）
 
-- [ ] 格斗模式下敌人读条（B4b `7b327dc` 搬动了这条路径，离线回放走不到）：读条照常开始和结束，日志有 "begins casting"。
 - [ ] 武器掉落（A5 搬进库，无录制保护）：死亡时武器脱手、落地、落尸体、远离时消失都正常。
 - [ ] A4 后完整版首次加载：布娃娃激活/停用、热重载（库 DLL 随插件重载）、旧配置读入无异常；之后重跑读 `bin/Release` 的 RagdollHullFit、RenderedGeometry。
 - [ ] 武器回收（私有模块，A3b 改走扩展接口，私有仓库 `591b9c4`）：完整版里照常工作；55 份金标准是公开版录的，覆盖不到这条路径。
 - [ ] 3 版录制器（A2b `c8526f7`）第一次在游戏里跑：网格碰撞、头发、武器落尸体、网格体积的录制能回放（网格体积只核对输入）。
-
-### 实验模式
-
-- [ ] Fighting Mode（2026-07-03，`83b1fb1` 等）：投影式移动手感、最小间距推挤抖动、二段跳翻越、AI 跳越/连段/冲刺、武器 hitbox、Ctrl 招架键冲突。
 
 ### 2026-11-15 批次
 
@@ -268,10 +271,12 @@
 - [ ] 敌人行为层：多对多开巡逻时全员巡逻（日志 `patrolling`，不再 `idle 100%`）；Enemy Control 只在战败后接管；1v1 战败立刻接管；被救起不接管。
 - [ ] 可达生成：不再刷到墙外/崖上/地下；日志 `spawn spot moved`、`post moved`。
 - [ ] Enemy Control 精简（只控制一个敌人）：Effects → Enemy Control → Show Enemy Control GUI 打开的窗口里不再有 Swarm 折叠栏和手臂姿势；控制、镜头切换、Release、抓取照常；旧抓取档案（含 Embrace）载入后没有手臂姿势。
+- [ ] Fighting Mode 删除：旧配置载入无异常；Combat 页签没有 Fighting Mode 折叠栏，快捷栏没有 Fighting Mode 勾选；Enemy Control 照常（它从 FightingModule 移到 ActorsModule）。
+- [ ] 服务器安全修复（2026-11-15）：Diagnose → Client-Side Safety 有三行（UseAction / UseActionLocation / Hard-target guard）；战斗中按住技能后开战，排队的技能不发到服务器（排队技能多半重走 UseAction；直接调 UseActionLocation 的是地面目标确认和 BossMod 这类插件，日志 `Suppressed direct UseActionLocation`）；停战后 Spawn 留下的敌人点不中（GPose 里也点不中）（日志 `FakeActorGuard: simulated actors not targetable`）；玩家死亡/待戮时击退等服务器校正照常生效；原生血条/目标栏战斗中隐藏、停战恢复，位置不变；坐骑上/坐下时 Recover Player Animation 拒绝并提示。
 
 ## 5. 搁置与未完成
 
-- Fighting Mode：尸体被踢走后死亡相机不跟随（2026-07-05 用户决定暂缓）。怀疑布娃娃激活延迟内取不到刚体，回落到冻结的骨骼姿态。
+- 已知仍未覆盖的泄漏路径（2026-11-15 审查）：战斗中对假敌人用 `<mo>` 宏、右键菜单命令（标记、查看）没有拦；`MouseOverTarget` 不清除。
 - 布娃娃关节 Tier A（降维坐标关节）未开始，BEPU2 没有 articulation，需要先做可行性验证；解剖 ROM 系列默认关。
 - 人形怪分类（读 sklb 判定、demihuman 补装备）不在当前主线；记录里的分支名是 `feature/humanoid-monster-export`，但本地和远端都找不到这个分支，位置待确认。
 - 敌人真实职业技能的残留：武器完全独占模型集的命名 NPC 只普攻；队友仍用旧技能模板；华丽的伤害 oGCD 未纳入。

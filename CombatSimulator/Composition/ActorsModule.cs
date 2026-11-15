@@ -35,6 +35,7 @@ internal sealed unsafe class ActorsModule
     private CombatCompanionManager companionManager = null!;
     private SpectatorController spectatorController = null!;
     private MapEnemyController mapEnemyController = null!;
+    private EnemyControlController enemyControlController = null!;
     private CombatRoster combatRoster = null!;
 
     public ActorsModule(PluginModules modules) => m = modules;
@@ -47,6 +48,8 @@ internal sealed unsafe class ActorsModule
     public CombatCompanionManager Companions => companionManager;
     public SpectatorController Spectators => spectatorController;
     public MapEnemyController MapEnemies => mapEnemyController;
+    /// <summary>Enemy Control: taking over one enemy after a lost battle (possession, movement, the grab).</summary>
+    public EnemyControlController EnemyControl => enemyControlController;
     public CombatRoster Roster => combatRoster;
 
     private IActorsModuleSettings config => m.Config;
@@ -88,6 +91,19 @@ internal sealed unsafe class ActorsModule
         npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, m.Config, npcActionProfileProvider, movementBlockHook, log);
         npcScaleController = new Effects.NpcScaleController(m.Config, npcSelector, objectTable);
         combatRoster = new CombatRoster(config);
+    }
+
+    /// <summary>
+    /// Enemy Control (taking over one enemy after a lost battle), with the camera coordinator it submits its
+    /// follow framing to.
+    /// </summary>
+    public void CreateEnemyControl(IKeyState keyState, IGamepadState gamepadState, IFramework framework)
+    {
+        enemyControlController = new EnemyControlController(
+            keyState, gamepadState, framework, m.Corpse.PlayerRagdoll, animationController, m.World.BoneTransforms,
+            movementBlockHook, m.Camera.Active, vnavmeshIpc,
+            m.Config, log);
+        enemyControlController.SetCameraCoordinator(m.Camera.Coordinator);
     }
 
     public void CreateCompanions(IObjectTable objectTable, IClientState clientState, ITargetManager targetManager)

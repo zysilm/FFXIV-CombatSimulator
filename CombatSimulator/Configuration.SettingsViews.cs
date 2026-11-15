@@ -27,7 +27,7 @@ public partial class Configuration :
     IPlayerInputSettings, IVirtualEnemyLookAtSettings,
     // The overlays.
     IHpBarSettings, IDamageNumberSettings, ICombatLinkSettings, IActionOverlaySettings,
-    IFightingDebugSettings, IDynamicCameraDebugSettings, IRagdollDebugSettings,
+    IDynamicCameraDebugSettings, IRagdollDebugSettings,
     // The feature modules (Composition/ModuleSettings.cs).
     IActorsModuleSettings, ICorpseModuleSettings, ICombatModuleSettings, IBattleModuleSettings,
     IPresentationModuleSettings

@@ -116,8 +116,8 @@ public sealed class ActionModeController
             if (comboTimer <= 0f) comboStep = 0;
         }
 
-        // guard/telegraph ticking moved to the plugin's frame loop — they are shared
-        // with Fighting Mode and must advance whichever mode is active.
+        // guard/telegraph ticking lives in the plugin's frame loop, which owns their
+        // lifecycle.
         SuppressGuardGamepadInputIfNeeded();
         SuppressBasicAttackGamepadInputIfNeeded();
         TickGuardKey();

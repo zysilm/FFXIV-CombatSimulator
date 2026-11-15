@@ -120,8 +120,6 @@ internal sealed unsafe class CorpseModule : ICorpseQuery
 
     public void OnNpcDeathRagdoll(nint address)
     {
-        // Fighting camera death transition must run regardless of ragdoll settings.
-
         if (address == nint.Zero)
             return;
 

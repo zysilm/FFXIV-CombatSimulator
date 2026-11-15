@@ -52,7 +52,6 @@ public partial class Configuration : IPluginConfiguration
     public bool ActionBasicAttackDefaultMigratedToSouth { get; set; } = false;
     public bool ActionAttackShapeDefaultsMigrated20260630 { get; set; } = false;
     public bool EnemyDismembermentDefaultsMigrated20260630 { get; set; } = false;
-    public bool FightingSpacingDefaultsMigrated20260703 { get; set; } = false;
     public bool NpcCollisionMeshDefaultMigrated { get; set; } = false;
     public bool NpcCollisionConvexHullDefaultMigrated20260716 { get; set; } = false;
     public bool RagdollLegModelRebuildMigrated20260816 { get; set; } = false;
@@ -446,83 +445,10 @@ public partial class Configuration : IPluginConfiguration
     // Combat is real-time action combat: player attacks/guard come from hotbar actions remapped by
     // actionId (the game resolves keyboard/gamepad for us); enemy attacks telegraph from a wind-up
     // snapshot, then resolve by hitbox at the active frame. The tab-target mode it once replaced is
-    // gone (2026-11-13); the only other combat is the experimental Fighting Mode, which runs its own
-    // 1v1 lane and takes the simulation's plain paths.
-    [JsonIgnore] public bool ActionMode => !FightingMode;
-
-    // Fighting Mode (Experimental): 1v1 side-view combat layer. It owns player
-    // action routing, constrains the player/enemy pair onto a 2D lane, and drives
-    // a fighting-game camera. Mutually exclusive with Action Mode.
-    public bool FightingMode { get; set; } = false;
-    public float FightingModeLaneHalfWidth { get; set; } = 0.35f;
-    public float FightingModeMinSeparation { get; set; } = 0.45f;
-    public float FightingModeMaxSeparation { get; set; } = 1.0f;
-    // Camera defaults are field-tuned in-game values.
-    public float FightingModeCameraMargin { get; set; } = 0.75f;
-    public float FightingModeCameraMinDistance { get; set; } = 2.31f;
-    public float FightingModeCameraMaxDistance { get; set; } = 3.5f;
-    public float FightingModeCameraSmoothing { get; set; } = 10.0f;
-    public float FightingModeCameraHeight { get; set; } = 1.18f;
-    public float FightingModeCameraVerticalAngle { get; set; } = 0.31f;
-    public bool FightingModeTranslateCam { get; set; } = true;
-    public float FightingModeTranslateDuration { get; set; } = 3.0f;
-    public float FightingModeTranslateDistance { get; set; } = 1.22f;
-    public string FightingModeTranslateBoneName { get; set; } = "j_kosi";
-    public float FightingModeTranslateHeightOffset { get; set; } = 0.44f;
-    public float FightingModeTranslateSideOffset { get; set; } = 0.0f;
-    public bool FightingModeTranslateLockHorizontal { get; set; } = false;
-    public float FightingModeTranslateHorizontalAngle { get; set; } = 0.0f;
-    public bool FightingModeTranslateLockVertical { get; set; } = false;
-    public float FightingModeTranslateVerticalAngle { get; set; } = 0.31f;
-    // Which side of the lane the 2D camera sits on (0 = right of the engage axis, 1 = left).
-    public int FightingModeCameraSide { get; set; } = 0;
-    // Double-jump vault: a second press of the game's own JUMP bind mid-air carries the player
-    // over the enemy. Fighting Mode has no key config of its own — jump inherits the game bind,
-    // and the basic attack / guard reuse the Action Mode binds.
-    public float FightingModeVaultDuration { get; set; } = 0.45f;
-    // Fighting Mode weapon-contact hit detection: the main-hand weapon segment must
-    // sweep through the enemy hurtbox capsule during the swing's active window.
-    public float FightingModeWeaponLength { get; set; } = 1.2f;       // fallback/single-bone length
-    public float FightingModeWeaponLengthScale { get; set; } = 1.1f;  // pad on skeleton-derived length
-    public int FightingModeWeaponAxis { get; set; } = 1;              // 0=X 1=Y 2=Z (single-bone weapons)
-    public float FightingModeWeaponRadius { get; set; } = 0.15f;
-    public float FightingModeHurtboxHeight { get; set; } = 2.0f;
-    public float FightingModeHurtboxRadiusScale { get; set; } = 1.0f;
-    public float FightingModeAttackActiveStartPct { get; set; } = 0.25f;
-    public float FightingModeAttackActiveEndPct { get; set; } = 0.70f;
-    public bool FightingModeDebugDraw { get; set; } = false;
-    // Fighting Mode 1v1 enemy AI (replaces NpcAiController for the engaged fighter):
-    // spacing band + approach/retreat + telegraphed attacks + hitstun pushback.
-    // Retreats slower than it approaches so the player can actually corner it.
-    public float FightingAiMoveSpeed { get; set; } = 2.5f;
-    public float FightingAiRetreatSpeedScale { get; set; } = 0.5f;
-    public float FightingAiRangeMin { get; set; } = 0.9f;
-    public float FightingAiRangeMax { get; set; } = 2.2f;
-    public float FightingAiAttackCooldown { get; set; } = 1.1f;
-    public float FightingAiAttackCooldownJitter { get; set; } = 0.7f;
-    // Fighting-game move variety: combo strings, dash-ins, and side-switching hops.
-    public float FightingAiComboChance { get; set; } = 0.35f;
-    public float FightingAiComboGap { get; set; } = 0.18f;
-    public int FightingAiMaxComboHits { get; set; } = 3;
-    public float FightingAiDashChance { get; set; } = 0.35f;
-    public float FightingAiDashSpeedScale { get; set; } = 2.2f;
-    public float FightingAiJumpOverChance { get; set; } = 0.15f;
-    public float FightingAiJumpDuration { get; set; } = 0.55f;
-    public float FightingAiJumpHeight { get; set; } = 1.6f;
-    public float FightingAiJumpInAttackChance { get; set; } = 0.5f;
-    public float FightingAiRetreatChance { get; set; } = 0.35f;
-    public float FightingAiRetreatDuration { get; set; } = 0.8f;
-    public float FightingAiRecoverTime { get; set; } = 0.6f;
-    public float FightingAiHitstunDuration { get; set; } = 0.35f;
-    public float FightingAiHitstunPushback { get; set; } = 1.5f;
-    // Fighting Mode KO camera: after the player's defeat, when the dev-controlled
-    // monster is followed, frame the corpse↔monster midpoint and zoom with separation.
-    public float FightingModeKoCameraMargin { get; set; } = 0.8f;
-    public float FightingModeKoCameraBase { get; set; } = 3.0f;
-    public float FightingModeKoCameraMinDistance { get; set; } = 3.0f;
-    public float FightingModeKoCameraMaxDistance { get; set; } = 14.0f;
-    public float FightingModeKoCameraHeight { get; set; } = 0.8f;
-    public bool FightingModeKoLockAngle { get; set; } = true;
+    // gone (2026-11-13), and so is the experimental Fighting Mode (2026-11-15): action combat is the
+    // only combat, so this is always on. (The settings views still read it; the simulation's plain
+    // paths behind it are unreachable.)
+    [JsonIgnore] public bool ActionMode => true;
 
     // Input map: put these actions on the hotbar; a press is interpreted as the
     // mapped role instead of firing the real action. 0 = unmapped.
@@ -632,7 +558,6 @@ public partial class Configuration : IPluginConfiguration
         MigrateActionBasicAttackDefaultButton();
         MigrateActionAttackShapeDefaults();
         MigrateEnemyDismembermentDefaults();
-        MigrateFightingSpacingDefaults();
         MigrateNpcCollisionMeshDefault();
         MigrateEnemyTacticsMeleeCap();
         MigrateNpcCollisionConvexHullDefault(); // after the mesh default above: it overrides that verdict
@@ -727,6 +652,28 @@ public partial class Configuration : IPluginConfiguration
         "EnemyControlLeftArmLowerPitch", "EnemyControlLeftArmLowerYaw", "EnemyControlLeftArmLowerRoll",
         "EnemyControlRightArmUpperPitch", "EnemyControlRightArmUpperYaw", "EnemyControlRightArmUpperRoll",
         "EnemyControlRightArmLowerPitch", "EnemyControlRightArmLowerYaw", "EnemyControlRightArmLowerRoll",
+        // Fighting Mode (the experimental 1v1 side-view lane, its weapon hitboxes, AI and cameras), removed
+        // (2026-11-15, user's decision: no longer used).
+        "FightingMode", "FightingModeLaneHalfWidth", "FightingModeMinSeparation", "FightingModeMaxSeparation",
+        "FightingModeCameraMargin", "FightingModeCameraMinDistance", "FightingModeCameraMaxDistance",
+        "FightingModeCameraSmoothing", "FightingModeCameraHeight", "FightingModeCameraVerticalAngle",
+        "FightingModeTranslateCam", "FightingModeTranslateDuration", "FightingModeTranslateDistance",
+        "FightingModeTranslateBoneName", "FightingModeTranslateHeightOffset", "FightingModeTranslateSideOffset",
+        "FightingModeTranslateLockHorizontal", "FightingModeTranslateHorizontalAngle",
+        "FightingModeTranslateLockVertical", "FightingModeTranslateVerticalAngle", "FightingModeCameraSide",
+        "FightingModeVaultDuration", "FightingModeWeaponLength", "FightingModeWeaponLengthScale",
+        "FightingModeWeaponAxis", "FightingModeWeaponRadius", "FightingModeHurtboxHeight",
+        "FightingModeHurtboxRadiusScale", "FightingModeAttackActiveStartPct", "FightingModeAttackActiveEndPct",
+        "FightingModeDebugDraw",
+        "FightingAiMoveSpeed", "FightingAiRetreatSpeedScale", "FightingAiRangeMin", "FightingAiRangeMax",
+        "FightingAiAttackCooldown", "FightingAiAttackCooldownJitter", "FightingAiComboChance", "FightingAiComboGap",
+        "FightingAiMaxComboHits", "FightingAiDashChance", "FightingAiDashSpeedScale", "FightingAiJumpOverChance",
+        "FightingAiJumpDuration", "FightingAiJumpHeight", "FightingAiJumpInAttackChance", "FightingAiRetreatChance",
+        "FightingAiRetreatDuration", "FightingAiRecoverTime", "FightingAiHitstunDuration",
+        "FightingAiHitstunPushback",
+        "FightingModeKoCameraMargin", "FightingModeKoCameraBase", "FightingModeKoCameraMinDistance",
+        "FightingModeKoCameraMaxDistance", "FightingModeKoCameraHeight", "FightingModeKoLockAngle",
+        "FightingSpacingDefaultsMigrated20260703",
     };
 
     // The Show*Label switches merged into their text: an empty text now means "off". A switch that was
@@ -887,70 +834,6 @@ public partial class Configuration : IPluginConfiguration
         Save();
     }
 
-    public void ResetFightingModeDefaults(bool preserveEnabled = true)
-    {
-        var enabled = FightingMode;
-        var defaults = new Configuration();
-
-        FightingMode = preserveEnabled ? enabled : defaults.FightingMode;
-        FightingModeLaneHalfWidth = defaults.FightingModeLaneHalfWidth;
-        FightingModeMinSeparation = defaults.FightingModeMinSeparation;
-        FightingModeMaxSeparation = defaults.FightingModeMaxSeparation;
-        FightingModeCameraMargin = defaults.FightingModeCameraMargin;
-        FightingModeCameraMinDistance = defaults.FightingModeCameraMinDistance;
-        FightingModeCameraMaxDistance = defaults.FightingModeCameraMaxDistance;
-        FightingModeCameraSmoothing = defaults.FightingModeCameraSmoothing;
-        FightingModeCameraHeight = defaults.FightingModeCameraHeight;
-        FightingModeCameraVerticalAngle = defaults.FightingModeCameraVerticalAngle;
-        FightingModeTranslateCam = defaults.FightingModeTranslateCam;
-        FightingModeTranslateDuration = defaults.FightingModeTranslateDuration;
-        FightingModeTranslateDistance = defaults.FightingModeTranslateDistance;
-        FightingModeTranslateBoneName = defaults.FightingModeTranslateBoneName;
-        FightingModeTranslateHeightOffset = defaults.FightingModeTranslateHeightOffset;
-        FightingModeTranslateSideOffset = defaults.FightingModeTranslateSideOffset;
-        FightingModeTranslateLockHorizontal = defaults.FightingModeTranslateLockHorizontal;
-        FightingModeTranslateHorizontalAngle = defaults.FightingModeTranslateHorizontalAngle;
-        FightingModeTranslateLockVertical = defaults.FightingModeTranslateLockVertical;
-        FightingModeTranslateVerticalAngle = defaults.FightingModeTranslateVerticalAngle;
-        FightingModeWeaponLength = defaults.FightingModeWeaponLength;
-        FightingModeWeaponLengthScale = defaults.FightingModeWeaponLengthScale;
-        FightingModeWeaponAxis = defaults.FightingModeWeaponAxis;
-        FightingModeWeaponRadius = defaults.FightingModeWeaponRadius;
-        FightingModeHurtboxHeight = defaults.FightingModeHurtboxHeight;
-        FightingModeHurtboxRadiusScale = defaults.FightingModeHurtboxRadiusScale;
-        FightingModeAttackActiveStartPct = defaults.FightingModeAttackActiveStartPct;
-        FightingModeAttackActiveEndPct = defaults.FightingModeAttackActiveEndPct;
-        FightingModeDebugDraw = defaults.FightingModeDebugDraw;
-        FightingModeCameraSide = defaults.FightingModeCameraSide;
-        FightingModeVaultDuration = defaults.FightingModeVaultDuration;
-        FightingAiMoveSpeed = defaults.FightingAiMoveSpeed;
-        FightingAiRetreatSpeedScale = defaults.FightingAiRetreatSpeedScale;
-        FightingAiRangeMin = defaults.FightingAiRangeMin;
-        FightingAiRangeMax = defaults.FightingAiRangeMax;
-        FightingAiAttackCooldown = defaults.FightingAiAttackCooldown;
-        FightingAiAttackCooldownJitter = defaults.FightingAiAttackCooldownJitter;
-        FightingAiComboChance = defaults.FightingAiComboChance;
-        FightingAiComboGap = defaults.FightingAiComboGap;
-        FightingAiMaxComboHits = defaults.FightingAiMaxComboHits;
-        FightingAiDashChance = defaults.FightingAiDashChance;
-        FightingAiDashSpeedScale = defaults.FightingAiDashSpeedScale;
-        FightingAiJumpOverChance = defaults.FightingAiJumpOverChance;
-        FightingAiJumpDuration = defaults.FightingAiJumpDuration;
-        FightingAiJumpHeight = defaults.FightingAiJumpHeight;
-        FightingAiJumpInAttackChance = defaults.FightingAiJumpInAttackChance;
-        FightingAiRetreatChance = defaults.FightingAiRetreatChance;
-        FightingAiRetreatDuration = defaults.FightingAiRetreatDuration;
-        FightingAiRecoverTime = defaults.FightingAiRecoverTime;
-        FightingAiHitstunDuration = defaults.FightingAiHitstunDuration;
-        FightingAiHitstunPushback = defaults.FightingAiHitstunPushback;
-        FightingModeKoCameraMargin = defaults.FightingModeKoCameraMargin;
-        FightingModeKoCameraBase = defaults.FightingModeKoCameraBase;
-        FightingModeKoCameraMinDistance = defaults.FightingModeKoCameraMinDistance;
-        FightingModeKoCameraMaxDistance = defaults.FightingModeKoCameraMaxDistance;
-        FightingModeKoCameraHeight = defaults.FightingModeKoCameraHeight;
-        FightingModeKoLockAngle = defaults.FightingModeKoLockAngle;
-    }
-
     public void ResetActionModeDefaults(bool preserveEnabled = true)
     {
         var defaults = new Configuration();
@@ -1022,31 +905,6 @@ public partial class Configuration : IPluginConfiguration
         }
 
         EnemyDismembermentDefaultsMigrated20260630 = true;
-        Save();
-    }
-
-    // Field testing showed the first fighting-AI spacing defaults made the enemy
-    // unreachable (band too wide, retreat at full speed). Move configs still on the
-    // old defaults to the retuned ones.
-    private void MigrateFightingSpacingDefaults()
-    {
-        if (FightingSpacingDefaultsMigrated20260703)
-            return;
-
-        if (MathF.Abs(FightingAiMoveSpeed - 3.0f) < 0.001f)
-            FightingAiMoveSpeed = 2.5f;
-        if (MathF.Abs(FightingAiRangeMin - 1.8f) < 0.001f)
-            FightingAiRangeMin = 0.9f;
-        if (MathF.Abs(FightingAiRangeMax - 3.2f) < 0.001f)
-            FightingAiRangeMax = 2.2f;
-        if (MathF.Abs(FightingAiAttackCooldown - 2.5f) < 0.001f)
-            FightingAiAttackCooldown = 1.1f;
-        if (MathF.Abs(FightingAiAttackCooldownJitter - 1.0f) < 0.001f)
-            FightingAiAttackCooldownJitter = 0.7f;
-        if (MathF.Abs(FightingModeCameraMaxDistance - 3.0f) < 0.001f)
-            FightingModeCameraMaxDistance = 3.5f;
-
-        FightingSpacingDefaultsMigrated20260703 = true;
         Save();
     }
 

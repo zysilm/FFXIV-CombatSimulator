@@ -5,7 +5,6 @@ using System.Numerics;
 using System.Text;
 using CombatSimulator.Animation;
 using CombatSimulator.Camera;
-using CombatSimulator.Fighting;
 using CombatSimulator.Integration;
 using CombatSimulator.Safety;
 using Dalamud.Bindings.ImGui;
@@ -86,7 +85,6 @@ public unsafe partial class EnemyControlController : IDisposable
     private bool colliderRegistered;
     private bool lastMovementActive;
     private readonly ActorVisualState visualState = new();
-    public IFightingModeLaneConstraint? FightingLane { get; set; }
     // Same per-leg solver NpcAiController uses. When it has bones resolved for the controlled
     // creature, it owns bending the affected leg(s) onto a corpse and root height below skips its
     // own corpse query entirely — otherwise both would react to the same contact and the whole
@@ -154,10 +152,6 @@ public unsafe partial class EnemyControlController : IDisposable
 
     /// <summary>True when the active camera is orbiting the creature; false = orbiting the player.</summary>
     public bool CameraFollowsControlledTarget => config.EnemyControlCameraFollowsControlledTarget;
-
-    /// <summary>Creature body-center for external framing (Fighting Mode's KO camera):
-    /// non-null only while active with camera-follow on.</summary>
-    public Vector3? FollowCenter => IsActive && config.EnemyControlCameraFollowsControlledTarget ? CameraCenter() : null;
 
     /// <summary>Toggle the camera between following the EnemyControl and the player (character cam).
     /// The choice is remembered (config) — spawn/despawn/reset never auto-switch it.
@@ -327,13 +321,6 @@ public unsafe partial class EnemyControlController : IDisposable
         var forward = new Vector3(-MathF.Sin(dirH), 0f, -MathF.Cos(dirH));
         var right = new Vector3(MathF.Cos(dirH), 0f, -MathF.Sin(dirH));
         var move = forward * fwd + right * strafe;
-        if (!ExternalControlActive && FightingLane is { IsLaneActive: true })
-        {
-            var scalar = Vector3.Dot(move, FightingLane.LaneAxis);
-            if (MathF.Abs(scalar) < 0.001f && (MathF.Abs(strafe) > 0.001f || MathF.Abs(fwd) > 0.001f))
-                scalar = MathF.Abs(strafe) > 0.001f ? strafe : fwd;
-            move = FightingLane.LaneAxis * scalar;
-        }
 
         OverrideExternalMovement(ref move, ref fwd, ref strafe);
         var inputMoving = move.LengthSquared() > 0.0001f;
@@ -427,14 +414,6 @@ public unsafe partial class EnemyControlController : IDisposable
             if (gamepad.Raw(GamepadButtons.L2) != 0) up -= 1f; // L2 descend
             posY += up * config.EnemyControlVerticalSpeed * dt;
             // No ground clamp — the creature may sink below the floor (unlimited), by request.
-        }
-
-        if (!ExternalControlActive && FightingLane is { IsLaneActive: true })
-        {
-            var constrained = FightingLane.ConstrainToLane(new Vector3(posX, posY, posZ));
-            posX = constrained.X;
-            posY = constrained.Y;
-            posZ = constrained.Z;
         }
 
         var actualMove = new Vector3(posX - oldPos.X, 0f, posZ - oldPos.Z);

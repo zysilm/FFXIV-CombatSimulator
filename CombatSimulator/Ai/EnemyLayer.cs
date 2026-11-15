@@ -10,7 +10,7 @@ namespace CombatSimulator.Ai;
 /// What drives one enemy this frame. Exactly one layer owns an enemy at a time, chosen per enemy by
 /// <see cref="EnemyLayers.Of"/> in this order (the first that applies wins):
 /// <list type="number">
-/// <item><see cref="Controlled"/>: something outside the enemy AI holds it (Enemy Control, Fighting Mode,
+/// <item><see cref="Controlled"/>: something outside the enemy AI holds it (Enemy Control,
 /// a private director). The AI neither moves nor decides for it, does not write its state, and leaves it out of
 /// everyone else's decisions (it raises no alarm, answers no call for help). Released, it carries on from the
 /// layer it was in.</item>

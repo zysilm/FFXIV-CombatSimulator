@@ -96,10 +96,9 @@ public unsafe class ActiveCameraController : IDisposable
     /// <summary>Current camera write authority, from the CameraModeCoordinator. The
     /// min-distance/vertical-lock overrides only apply when an active-camera
     /// personality (user bone follow or monster follow) is in charge — not when the
-    /// fighting cameras drive angles and zoom themselves.</summary>
+    /// Directed camera, a cutscene shot or an external provider drive angles and zoom themselves.</summary>
     public Func<CameraOwner>? GetCurrentOwner;
 
-    // Death transition (fighting → dead character's bone follow)
     public ActiveCameraController(IGameInteropProvider gameInterop, IClientState clientState,
         ISigScanner sigScanner, Configuration config, IPluginLog log)
     {
@@ -280,7 +279,7 @@ public unsafe class ActiveCameraController : IDisposable
 
         try
         {
-            // A mode-supplied center (fighting cameras, monster follow) replaces the
+            // A mode-supplied center (monster follow, an external provider) replaces the
             // orbit center wholesale — priority was already resolved by the coordinator.
             var focus = Inputs?.Focus;
             if (focus.HasValue && (!float.IsFinite(focus.Value.X) || !float.IsFinite(focus.Value.Y) || !float.IsFinite(focus.Value.Z))) focus = null;
@@ -351,7 +350,7 @@ public unsafe class ActiveCameraController : IDisposable
     private Vector3 ApplyActiveCameraSideOffset(Vector3 pos)
     {
         // Side offset is view-relative, so apply it in the camera hook rather than
-        // baking it into smoothed fighting-camera centers computed in Tick.
+        // baking it into smoothed mode-supplied centers computed in Tick.
         var sideOffset = Input(Inputs?.Side, config.ActiveCameraSideOffset);
         if (sideOffset == 0)
             return pos;
@@ -377,8 +376,7 @@ public unsafe class ActiveCameraController : IDisposable
         // stack the active-cam min-distance/vertical-lock overrides on top of them — the
         // vertical lock in particular would overwrite the pitch they just solved for.
         var owner = GetCurrentOwner?.Invoke() ?? CameraOwner.None;
-        var modeOwnsAngles = owner is CameraOwner.Fighting2D or CameraOwner.FightingKO
-            or CameraOwner.DynamicCam or CameraOwner.DynamicDeath or CameraOwner.CutsceneShot ||
+        var modeOwnsAngles = owner is CameraOwner.DynamicCam or CameraOwner.DynamicDeath or CameraOwner.CutsceneShot ||
             owner == CameraOwner.External && (ExternalOwnsAngles?.Invoke() ?? true);
 
         UpdateCollisionPolicy();

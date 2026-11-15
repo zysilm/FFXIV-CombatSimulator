@@ -7,7 +7,6 @@ using CombatSimulator.Animation;
 using CombatSimulator.Battle.Rules;
 using CombatSimulator.Combat;
 using CombatSimulator.Companions;
-using CombatSimulator.Fighting;
 using CombatSimulator.Navigation;
 using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
@@ -42,6 +41,8 @@ internal sealed class CombatModule
     private VirtualEnemyLookAtController virtualEnemyLookAt = null!;
     private PlayerTargetController playerTargetController = null!;
     private UseActionHook useActionHook = null!;
+    private SafetyBarriers safetyBarriers = null!;
+    private FakeActorGuard fakeActorGuard = null!;
     private TargetingService targeting = null!;
     private BattleRuleSet ruleParts = null!;
 
@@ -64,6 +65,10 @@ internal sealed class CombatModule
     public VirtualEnemyLookAtController EnemyLookAt => virtualEnemyLookAt;
     public PlayerTargetController PlayerTarget => playerTargetController;
     public UseActionHook UseAction => useActionHook;
+    /// <summary>The client-side safety barriers every start and spawn path checks.</summary>
+    public SafetyBarriers Barriers => safetyBarriers;
+    /// <summary>Keeps the simulation's own actors out of the game's real targeting (ticked every frame).</summary>
+    public FakeActorGuard FakeActors => fakeActorGuard;
     /// <summary>Who fights whom (both sides' threat, draw states and the enemies' targets).</summary>
     public TargetingService Targeting => targeting;
     /// <summary>The battle's rule parts (bound to their context by the allies' controller).</summary>
@@ -85,8 +90,7 @@ internal sealed class CombatModule
     private CombatCompanionManager companionManager => m.Actors.Companions;
     private MapEnemyController mapEnemyController => m.Actors.MapEnemies;
     private Camera.GameCameraUpdateHook gameCameraUpdateHook => m.Camera.UpdateHook;
-    private FightingModeController fightingModeController => m.Fighting.Mode;
-    private EnemyControlController enemyControlController => m.Fighting.EnemyControl;
+    private EnemyControlController enemyControlController => m.Actors.EnemyControl;
     private Dev.IDevExperimental devExperimental => m.SafetyDev.DevExperimental;
 
     public void CreateDamageCalculator()
@@ -139,10 +143,7 @@ internal sealed class CombatModule
             config,
             new CombatSimulator.ActionCombat.InstantAttackExecutor(combatEngine, config,
                 (npc, actionId) => animationController.PlayNpcWindupPose(npc, actionId)),
-            new CombatSimulator.ActionCombat.TelegraphedAttackExecutor(telegraphSystem, config),
-            // Deferred: fightingModeController is constructed later in this ctor; the
-            // router only queries at attack time.
-            () => fightingModeController?.IsEngaged == true);
+            new CombatSimulator.ActionCombat.TelegraphedAttackExecutor(telegraphSystem, config));
     }
 
     /// <summary>
@@ -166,10 +167,8 @@ internal sealed class CombatModule
             combatEngine, animationController, movementBlockHook, config, log,
             combatModeRouter, npcCorpseFootIkSolver,
             companionManager.CollectPartyPositions,
-            // Deferred: fightingModeController is constructed later in this ctor; the
-            // AI only queries during framework ticks.
-            addr => devExperimental.ControlsNpc(addr) || enemyControlController.ControlsNpc(addr) ||
-                    fightingModeController?.ControlsEnemy(addr) == true,
+            // The AI only queries during framework ticks.
+            addr => devExperimental.ControlsNpc(addr) || enemyControlController.ControlsNpc(addr),
             // Don't commit a new attack while this enemy already has a live telegraph (fixes the
             // double-swing where the old 0.6s animation lock expired mid-animation).
             telegraphSystem.IsBusy);
@@ -190,8 +189,7 @@ internal sealed class CombatModule
         npcCorpseFootIkSolver.CorpseSupportHeightProvider = corpses.ResolveCorpseTraversalHeight;
         enemyControlController.FootIkSolver = npcCorpseFootIkSolver;
         virtualEnemyLookAt = new VirtualEnemyLookAtController(boneTransformService, config, npcSpawner, combatEngine,
-            addr => devExperimental.ControlsNpc(addr) || enemyControlController.ControlsNpc(addr) ||
-                    fightingModeController?.ControlsEnemy(addr) == true,
+            addr => devExperimental.ControlsNpc(addr) || enemyControlController.ControlsNpc(addr),
             log);
     }
 
@@ -207,10 +205,17 @@ internal sealed class CombatModule
         combatEngine.GetLockedTargetId = () => playerTargetController.LockedTargetEntityId;
     }
 
-    /// <summary>The UseAction hook (created here, enabled by the plugin's constructor right after).</summary>
+    /// <summary>
+    /// The UseAction hook (created here, enabled by the plugin's constructor right after), and the safety barriers
+    /// it is part of: the spawners create simulated actors only while every barrier is up.
+    /// </summary>
     public void CreateUseActionHook(IGameInteropProvider gameInterop, IClientState clientState)
     {
         useActionHook = new UseActionHook(gameInterop, combatEngine, npcSelector, npcSpawner, config, clientState, log,
-            playerTargetController, mapEnemyController, actionComboSink, fightingModeController);
+            playerTargetController, mapEnemyController, actionComboSink);
+        safetyBarriers = new SafetyBarriers(useActionHook, playerTargetController);
+        npcSpawner.SpawnAllowed = () => safetyBarriers.AllHealthy;
+        companionManager.SpawnAllowed = () => safetyBarriers.AllHealthy;
+        fakeActorGuard = new FakeActorGuard(combatEngine, npcSpawner, companionManager, safetyBarriers, log);
     }
 }

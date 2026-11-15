@@ -1140,7 +1140,7 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
     private void TickDeath(nint playerAddress, FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCam,
         in GameCameraView view, float dt)
     {
-        // Soft yield to anything that still outranks the death shot (fighting cameras, the
+        // Soft yield to anything that still outranks the death shot (a cutscene shot, an external provider, the
         // user's Active Cam): keep declaring presence so we resume the instant they release,
         // but take none of the direct actions — pinning the zoom or consuming inputs for a
         // camera someone else is driving would corrupt THEIR frame.

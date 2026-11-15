@@ -25,10 +25,6 @@ public enum CameraOwner
     /// the follow centre stealing the camera away from the body the moment a grab started —
     /// the death shot is the one framing that scene and must keep the camera through it.</summary>
     DynamicDeath = 25,
-    /// <summary>Fighting Mode side-view combat camera.</summary>
-    Fighting2D = 30,
-    /// <summary>Fighting Mode post-defeat camera (translate / bone follow / KO framing).</summary>
-    FightingKO = 40,
     /// <summary>Optional external camera provider. User camera can still take over.</summary>
     External = 45,
     /// <summary>User-enabled Active Camera. Always wins.</summary>
@@ -68,7 +64,7 @@ public struct CameraRequest
 /// Single per-frame authority over the game camera. Mode controllers submit requests
 /// instead of writing camera fields directly; Apply picks the highest-priority live
 /// request and performs the writes. This replaces the previous scheme where
-/// FightingModeController, ActiveCameraController, and Enemy Control each wrote (or
+/// ActiveCameraController and Enemy Control each wrote (or
 /// toggled each other's active flags) independently and fought over the same fields.
 ///
 /// Submissions live for two Apply passes: Enemy Control ticks on its own
@@ -95,8 +91,6 @@ public sealed unsafe partial class CameraModeCoordinator
         CameraOwner.CutsceneShot,
         CameraOwner.UserActiveCam,
         CameraOwner.External,
-        CameraOwner.FightingKO,
-        CameraOwner.Fighting2D,
         CameraOwner.DynamicDeath,
         CameraOwner.EnemyControlFollow,
         CameraOwner.DynamicCam,

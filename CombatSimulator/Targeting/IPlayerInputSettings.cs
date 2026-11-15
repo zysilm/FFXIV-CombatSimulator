@@ -13,7 +13,6 @@ namespace CombatSimulator.Targeting;
 public interface IPlayerInputSettings
 {
     bool ActionMode { get; }
-    bool FightingMode { get; }
     bool EnableCustomTargeting { get; }
     bool EnableAutoCounter { get; }
     int EnemyStrength { get; }

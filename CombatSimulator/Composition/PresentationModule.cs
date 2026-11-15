@@ -6,7 +6,6 @@ using System.Linq;
 using CombatSimulator.Animation;
 using CombatSimulator.Camera;
 using CombatSimulator.Companions;
-using CombatSimulator.Fighting;
 using CombatSimulator.Gui;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
@@ -40,7 +39,6 @@ internal sealed class PresentationModule
     private CombatSimulator.ActionCombat.EnemyOmenVfx enemyOmenVfx = null!;
     private OsuParryOverlay osuParryOverlay = null!;
     private ReticleOverlay reticleOverlay = null!;
-    private FightingDebugOverlay fightingDebugOverlay = null!;
     private DynamicCameraDebugOverlay dynamicCameraDebugOverlay = null!;
     private UpdateLogPopupController updateLogPopupController = null!;
     private VoiceDirector voiceDirector = null!;
@@ -79,10 +77,7 @@ internal sealed class PresentationModule
     private Dev.KoStripController armorDetachmentController => m.Corpse.ArmorDetachment;
     private ActiveCameraController activeCameraController => m.Camera.Active;
     private DynamicCameraController dynamicCameraController => m.Camera.Dynamic;
-    private EnemyControlController enemyControlController => m.Fighting.EnemyControl;
-    private FightingModeController fightingModeController => m.Fighting.Mode;
-    private FightingCombatController fightingCombatController => m.Fighting.Combat;
-    private WeaponHitboxService weaponHitboxService => m.Fighting.WeaponHitboxes;
+    private EnemyControlController enemyControlController => m.Actors.EnemyControl;
     private HookSafetyChecker hookSafetyChecker => m.SafetyDev.HookSafety;
     private Dev.IDevExperimental devExperimental => m.SafetyDev.DevExperimental;
     private Gui.WarBanner warBanner => m.Battle.Banner;
@@ -91,6 +86,7 @@ internal sealed class PresentationModule
     public void CreateMainWindow(IClientState clientState, IDataManager dataManager, IChatGui chatGui)
     {
         mainWindow = new MainWindow(m.Config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, spectatorController, devExperimental, clientState, dataManager, chatGui, log);
+        mainWindow.Barriers = m.Combat.Barriers;
         mainWindow.ArrowImpacts = arrowImpactController;
         mainWindow.HideResultBanner = warBanner.Hide;
         mainWindow.ArmorDetachment = armorDetachmentController;
@@ -147,13 +143,8 @@ internal sealed class PresentationModule
         enemyOmenVfx = new CombatSimulator.ActionCombat.EnemyOmenVfx(
             enemyAreaMarkers, animationController, actionDataProvider.GetActionData, dataManager, config, log);
         enemyAreaOverlay.HasNativeOmen = enemyOmenVfx.HasOmen;
-        osuParryOverlay = new OsuParryOverlay(telegraphSystem, gameGui, config, playerGuardController)
-        {
-            AlsoEnabled = () => fightingModeController.IsEngaged,
-        };
+        osuParryOverlay = new OsuParryOverlay(telegraphSystem, gameGui, config, playerGuardController);
         reticleOverlay = new ReticleOverlay(playerHitboxResolver, combatEngine, gameGui, config);
-        fightingDebugOverlay = new FightingDebugOverlay(
-            fightingModeController, fightingCombatController, weaponHitboxService, gameGui, config);
         dynamicCameraDebugOverlay = new DynamicCameraDebugOverlay(dynamicCameraController, gameGui, config);
         updateLogPopupController = new UpdateLogPopupController(m.Config, log, hadExistingConfig);
     }
@@ -212,14 +203,13 @@ internal sealed class PresentationModule
             if (config.ShowCombatLinkArcs || config.ShowLockMarker)
                 combatLinkOverlay.Draw();
 
-            if ((config.ActionMode || fightingModeController.IsEngaged) && config.ShowTelegraphs)
+            if (config.ActionMode && config.ShowTelegraphs)
                 telegraphOverlay.Draw();
             // Real-shape enemy areas (any mode); empty unless an enemy-skill option registered one.
             enemyAreaOverlay.Draw();
 
             osuParryOverlay.Draw();
             reticleOverlay.Draw();
-            fightingDebugOverlay.Draw();
         }
 
         ragdollDebugOverlay.Draw();

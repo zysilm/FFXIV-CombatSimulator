@@ -52,14 +52,6 @@ public interface IActionOverlaySettings
     float OsuOuterStartScale { get; }
 }
 
-/// <summary>Fighting Mode's hurtboxes (<c>FightingDebugOverlay</c>).</summary>
-public interface IFightingDebugSettings
-{
-    bool FightingModeDebugDraw { get; }
-    float FightingModeHurtboxHeight { get; }
-    float FightingModeHurtboxRadiusScale { get; }
-}
-
 /// <summary>The dynamic camera's framing (<c>DynamicCameraDebugOverlay</c>).</summary>
 public interface IDynamicCameraDebugSettings
 {

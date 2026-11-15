@@ -23,7 +23,6 @@ internal sealed class PluginModules
     public CorpseModule Corpse { get; }
     public CameraModule Camera { get; }
     public CombatModule Combat { get; }
-    public FightingModule Fighting { get; }
     public BattleModule Battle { get; }
     public PresentationModule Presentation { get; }
     public SafetyDevModule SafetyDev { get; }
@@ -37,7 +36,6 @@ internal sealed class PluginModules
         Corpse = new CorpseModule(this);
         Camera = new CameraModule(this);
         Combat = new CombatModule(this);
-        Fighting = new FightingModule(this);
         Battle = new BattleModule(this);
         Presentation = new PresentationModule(this);
         SafetyDev = new SafetyDevModule(this);

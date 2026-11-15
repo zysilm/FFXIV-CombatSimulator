@@ -45,9 +45,6 @@ public sealed class OsuParryOverlay
     private float absorbPop;     // 1→0 burst on each absorb
     private float countFade;     // keeps the count visible briefly after the chain ends
 
-    /// <summary>Extra enable gate beyond Action Mode (Fighting Mode engagement).</summary>
-    public Func<bool>? AlsoEnabled { get; set; }
-
     public OsuParryOverlay(TelegraphSystem telegraphs, IGameGui gameGui, IActionOverlaySettings config, PlayerGuardController guard)
     {
         this.telegraphs = telegraphs;
@@ -58,7 +55,7 @@ public sealed class OsuParryOverlay
 
     public void Draw()
     {
-        if (!config.ActionMode && AlsoEnabled?.Invoke() != true)
+        if (!config.ActionMode)
             return;
         if (!config.OsuCircleEnabled)
             return;

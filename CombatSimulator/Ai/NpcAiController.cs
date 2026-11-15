@@ -870,7 +870,7 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
 
     /// <summary>
     /// The enemies' half of the shared step: an attack goes to the attack router (an instant one, or
-    /// a telegraph); with the engine's cast bar (Fighting Mode only, ActionMode false) a skill with a
+    /// a telegraph); with the engine's cast bar (only when ActionMode is off, which no mode does any more) a skill with a
     /// cast time starts a cast instead, paid for at once, its area snapshotted.
     /// </summary>
     private sealed class EnemyStepSink(NpcAiController owner) : ICombatStepSink<SimulatedNpc, SimulatedEntityState>
@@ -1000,7 +1000,7 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
         npc.State.IsCasting = false;
         npc.CastArea = null;
         npc.CurrentCastSkill = null;
-        // CastTime 0: the wait already happened here; a telegraphed executor (Fighting Mode)
+        // CastTime 0: the wait already happened here; a telegraphed executor
         // must not add the cast again as lead-in.
         var ok = attackSink.ExecuteEnemyAttack(npc, new CombatSimulator.ActionCombat.NpcAttackRequest(
             skill.ActionId, npc.State.CastTargetId, skill.Potency, skill.AttackStyle, skill.Radius, 0f, Area: area));

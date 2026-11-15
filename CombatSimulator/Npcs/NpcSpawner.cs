@@ -97,6 +97,11 @@ public unsafe class NpcSpawner : IDisposable
     }
     public Action<string>? OnSpawnError { get; set; }
 
+    /// <summary>False while a client-side safety barrier is down (Safety/SafetyBarriers.cs): nothing is created
+    /// then. Null (before the barriers exist) allows.</summary>
+    public Func<bool>? SpawnAllowed { get; set; }
+    private bool spawnRefusalReported;
+
     /// <summary>Dev-experimental seam: when true, every spawned humanoid virtual enemy has body + legs
     /// stripped (model id 0 — the same bare "smallclothes" result unequipping those slots in-game
     /// produces) regardless of its real equipment. Null (the production default, before the
@@ -203,6 +208,19 @@ public unsafe class NpcSpawner : IDisposable
 
     private void ProcessSpawnRequest(NpcSpawnRequest request)
     {
+        if (SpawnAllowed?.Invoke() == false)
+        {
+            // Reported once until spawning is allowed again (a queue of requests would repeat it).
+            if (!spawnRefusalReported)
+            {
+                spawnRefusalReported = true;
+                log.Warning("NPC spawn refused: a client-side safety barrier is down (Diagnose tab).");
+                OnSpawnError?.Invoke("Not spawned: a client-side safety barrier is down (see the Diagnose tab).");
+            }
+            return;
+        }
+        spawnRefusalReported = false;
+
         try
         {
             var npcName = GetNpcName(request);

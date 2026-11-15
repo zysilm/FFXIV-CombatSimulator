@@ -50,7 +50,7 @@ internal sealed unsafe class BattleModule
     private NpcSelector npcSelector => m.Actors.Selector;
     private CombatCompanionManager companionManager => m.Actors.Companions;
     private RagdollController ragdollController => m.Corpse.PlayerRagdoll;
-    private EnemyControlController enemyControlController => m.Fighting.EnemyControl;
+    private EnemyControlController enemyControlController => m.Actors.EnemyControl;
     private Vector3? LordBodyPosition() => m.Corpse.LordBodyPosition();
 
     /// <summary>The celebration after an outcome; animation plays it. (The crowd's reaction is subscribed
