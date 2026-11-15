@@ -377,6 +377,11 @@ internal static class ReplayDriver
                 controller.CreateGrabConstraint(call[2].AsString!, call[3].AsVector3, (nint)call[4].AsULong,
                     call[5].AsFloat, call[6].AsFloat, call[7].AsFloat);
                 break;
+            case nameof(RagdollController.CreateGrabConstraintAt):
+                controller.GrabRigid = call[9].AsBool;
+                controller.CreateGrabConstraintAt(call[2].AsString!, call[3].AsVector3, call[4].AsVector3,
+                    (nint)call[5].AsULong, call[6].AsFloat, call[7].AsFloat, call[8].AsFloat);
+                break;
             case nameof(RagdollController.SetGrabTuning):
                 controller.SetGrabTuning(call[2].AsInt, call[3].AsFloat, call[4].AsFloat, call[5].AsFloat);
                 break;

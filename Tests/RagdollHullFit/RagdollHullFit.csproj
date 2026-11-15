@@ -5,7 +5,7 @@
     <PackageReference Include="BepuPhysics" Version="2.5.0-beta.22" />
     <!-- The library's fitter, hull shape, tuning and skeleton profile types are internal; the library grants this test
          InternalsVisibleTo (from 0.1.0-beta.2). Keep the version equal to CombatSimulator.csproj's. -->
-    <PackageReference Include="AdvancedRagdoll" Version="0.1.0-beta.3" />
+    <PackageReference Include="AdvancedRagdoll" Version="0.1.0-beta.4" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../../CombatSimulator/Animation/ModelGeometryData.cs" Link="Production/ModelGeometryData.cs" />

@@ -171,45 +171,8 @@ public partial class Configuration
         if (changed) Save();
     }
 
+    // Pairs differ by bones AND anchors (two picked points under the same pair of bones are two holds).
     private static bool DeduplicateEnemyControlGrabPairs(List<EnemyControlGrabPairConfig> pairs, bool ensureOne)
-    {
-        var changed = false;
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        for (var i = 0; i < pairs.Count; i++)
-        {
-            var pair = pairs[i];
-            if (pair == null || string.IsNullOrWhiteSpace(pair.NpcBone) || string.IsNullOrWhiteSpace(pair.PlayerBone))
-            {
-                pairs.RemoveAt(i);
-                i--;
-                changed = true;
-                continue;
-            }
-
-            var npcBone = pair.NpcBone.Trim();
-            var playerBone = pair.PlayerBone.Trim();
-            if (!seen.Add($"{npcBone}\u001f{playerBone}"))
-            {
-                pairs.RemoveAt(i);
-                i--;
-                changed = true;
-                continue;
-            }
-
-            if (npcBone != pair.NpcBone || playerBone != pair.PlayerBone)
-            {
-                pair.NpcBone = npcBone;
-                pair.PlayerBone = playerBone;
-                changed = true;
-            }
-        }
-
-        if (ensureOne && pairs.Count == 0)
-        {
-            pairs.Add(new EnemyControlGrabPairConfig());
-            changed = true;
-        }
-        return changed;
-    }
+        => EnemyControlGrabPairList.Deduplicate(pairs, ensureOne);
 
 }

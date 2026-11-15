@@ -63,6 +63,9 @@ public partial class MainWindow
 
     public void DrawEnemyControlWindow(EnemyControlController ctrl)
     {
+        // Its own window (the pick catcher) or the foreground draw list (markers): drawn even while this one is collapsed.
+        DrawEnemyControlAnchorOverlay(ctrl);
+
         var showWindow = config.ShowEnemyControlGui;
         if (!ImGui.Begin("Enemy Control", ref showWindow,
                 ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
@@ -334,7 +337,7 @@ public partial class MainWindow
     {
         var snapshot = new EnemyControlGrabProfile { Name = name };
         foreach (var pair in config.EnemyControlGrabPairs)
-            snapshot.Pairs.Add(new EnemyControlGrabPairConfig { NpcBone = pair.NpcBone, PlayerBone = pair.PlayerBone });
+            snapshot.Pairs.Add(EnemyControlGrabPairList.Clone(pair));
         snapshot.GrabEmoteId = config.EnemyControlGrabEmoteId;
         snapshot.GrabAnyBone = config.EnemyControlGrabAnyBone;
         snapshot.GrabAnyNpcBone = config.EnemyControlGrabAnyNpcBone;
@@ -362,16 +365,7 @@ public partial class MainWindow
     private void LoadEnemyControlGrabProfile(EnemyControlGrabProfile p)
     {
         config.EnemyControlGrabPairs.Clear();
-        var seenPairs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var pair in p.Pairs)
-        {
-            var npcBone = pair.NpcBone.Trim();
-            var playerBone = pair.PlayerBone.Trim();
-            if (seenPairs.Add($"{npcBone}\u001f{playerBone}"))
-                config.EnemyControlGrabPairs.Add(new EnemyControlGrabPairConfig { NpcBone = npcBone, PlayerBone = playerBone });
-        }
-        if (config.EnemyControlGrabPairs.Count == 0)
-            config.EnemyControlGrabPairs.Add(new EnemyControlGrabPairConfig());
+        config.EnemyControlGrabPairs.AddRange(EnemyControlGrabPairList.CopyForUse(p.Pairs));
         config.EnemyControlGrabEmoteId = p.GrabEmoteId;
         config.EnemyControlGrabAnyBone = p.GrabAnyBone;
         config.EnemyControlGrabAnyNpcBone = p.GrabAnyNpcBone;
@@ -425,11 +419,11 @@ public partial class MainWindow
             ImGui.PushID(i);
             var pair = pairs[i];
 
-            DrawEnemyControlGrabbingBonePicker(ctrl, pair);
+            DrawEnemyControlGrabSide(ctrl, pair, i, enemySide: true);
             ImGui.SameLine();
             ImGui.Text("->");
             ImGui.SameLine();
-            DrawEnemyControlGrabbedBonePicker(pair);
+            DrawEnemyControlGrabSide(ctrl, pair, i, enemySide: false);
 
             ImGui.SameLine();
             if (ImGui.Button("X##EnemyControlGrabRemovePair"))
@@ -465,6 +459,159 @@ public partial class MainWindow
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Add another grab pair. Any number can be held at once — e.g. one hand on the neck\n" +
                              "and the other on the pelvis for a carry/lift pose.");
+    }
+
+    // ── Grab points picked on the models (docs/ENEMY_CONTROL_GRAB.md §3) ──
+
+    private int enemyControlAnchorPickPair = -1;
+    private bool enemyControlAnchorPickEnemy;
+    private bool enemyControlAnchorPickFocus;
+
+    /// <summary>One end of a pair: its bone picker and a Pick button, or, once a point is picked, the point's bone
+    /// and a Clear button.</summary>
+    private void DrawEnemyControlGrabSide(EnemyControlController ctrl, EnemyControlGrabPairConfig pair, int index, bool enemySide)
+    {
+        var anchor = enemySide ? pair.NpcAnchor : pair.PlayerAnchor;
+        var id = enemySide ? "Npc" : "Player";
+        if (anchor != null)
+        {
+            ImGui.AlignTextToFramePadding();
+            ImGui.Text($"{anchor.Bone} · anchor set");
+            ImGui.SameLine();
+            if (ImGui.Button($"Clear##EnemyControlAnchorClear{id}"))
+                ClearEnemyControlAnchor(pair, enemySide);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Forget the picked point; the grab holds the bone itself again.");
+            return;
+        }
+
+        if (enemySide) DrawEnemyControlGrabbingBonePicker(ctrl, pair);
+        else DrawEnemyControlGrabbedBonePicker(pair);
+
+        ImGui.SameLine();
+        var canPick = enemySide ? ctrl.ControlledActor != nint.Zero : Core.Services.ObjectTable.LocalPlayer != null;
+        ImGui.BeginDisabled(!canPick || enemyControlAnchorPickPair >= 0);
+        if (ImGui.Button($"Pick##EnemyControlAnchorPick{id}"))
+        {
+            enemyControlAnchorPickPair = index;
+            enemyControlAnchorPickEnemy = enemySide;
+            enemyControlAnchorPickFocus = true;
+        }
+        ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(enemySide
+                ? canPick
+                    ? "Click on the enemy you control to choose exactly where its grip is."
+                    : "Take control of an enemy first (On death: Control killer)."
+                : "Click on your character to choose exactly where the body is held.");
+    }
+
+    private void ClearEnemyControlAnchor(EnemyControlGrabPairConfig pair, bool enemySide)
+    {
+        if (enemySide)
+        {
+            pair.NpcAnchor = null;
+            // The short list cannot show a bone outside it; put the row back on a bone it can show.
+            if (!config.EnemyControlGrabAnyNpcBone && Array.IndexOf(EnemyControlGrabNpcBones, pair.NpcBone) < 0)
+                pair.NpcBone = EnemyControlGrabNpcBones[0];
+        }
+        else
+        {
+            pair.PlayerAnchor = null;
+            if (!config.EnemyControlGrabAnyBone && Array.IndexOf(EnemyControlGrabPlayerBones, pair.PlayerBone) < 0)
+                pair.PlayerBone = EnemyControlGrabPlayerBones[0];
+        }
+        config.Save();
+    }
+
+    /// <summary>
+    /// While a Pick is armed: a transparent window over the whole screen takes the mouse (so the click never reaches
+    /// the game's targeting or camera); a left click on the model sets the point, Esc cancels. Otherwise: a marker on
+    /// each picked point while the Enemy Control window is open.
+    /// </summary>
+    private void DrawEnemyControlAnchorOverlay(EnemyControlController ctrl)
+    {
+        var pairs = config.EnemyControlGrabPairs;
+        var player = Core.Services.ObjectTable.LocalPlayer?.Address ?? nint.Zero;
+        var enemy = ctrl.ControlledActor;
+        var io = ImGui.GetIO();
+
+        if (enemyControlAnchorPickPair < 0)
+        {
+            DrawEnemyControlAnchorMarkers(ctrl, pairs, enemy, player);
+            return;
+        }
+
+        var actor = enemyControlAnchorPickEnemy ? enemy : player;
+        if (enemyControlAnchorPickPair >= pairs.Count || actor == nint.Zero)
+        {
+            enemyControlAnchorPickPair = -1;
+            return;
+        }
+
+        ImGui.SetNextWindowPos(Vector2.Zero);
+        ImGui.SetNextWindowSize(io.DisplaySize);
+        if (enemyControlAnchorPickFocus)
+        {
+            ImGui.SetNextWindowFocus();
+            enemyControlAnchorPickFocus = false;
+        }
+        const ImGuiWindowFlags flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoBackground |
+                                       ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoSavedSettings |
+                                       ImGuiWindowFlags.NoNav;
+        if (ImGui.Begin("##EnemyControlAnchorPick", flags))
+        {
+            var hint = enemyControlAnchorPickEnemy
+                ? "Click on the enemy to set where it grips.  Esc: cancel"
+                : "Click on your character to set where it is held.  Esc: cancel";
+            var size = ImGui.CalcTextSize(hint);
+            var at = new Vector2((io.DisplaySize.X - size.X) * 0.5f, io.DisplaySize.Y * 0.12f);
+            var draw = ImGui.GetWindowDrawList();
+            draw.AddRectFilled(at - new Vector2(10, 6), at + size + new Vector2(10, 6), ImGui.GetColorU32(new Vector4(0f, 0f, 0f, 0.6f)), 6f);
+            draw.AddText(at, ImGui.GetColorU32(new Vector4(1f, 0.9f, 0.4f, 1f)), hint);
+            draw.AddCircle(io.MousePos, 6f, ImGui.GetColorU32(new Vector4(1f, 0.9f, 0.4f, 1f)), 16, 1.5f);
+
+            if (ImGui.IsKeyPressed(ImGuiKey.Escape))
+                enemyControlAnchorPickPair = -1;
+            else if (ImGui.IsWindowHovered() && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            {
+                if (ctrl.AnchorPicker.TryPick(actor, io.MousePos, io.DisplaySize, out var anchor, out var message))
+                {
+                    var pair = pairs[enemyControlAnchorPickPair];
+                    if (enemyControlAnchorPickEnemy) { pair.NpcAnchor = anchor; pair.NpcBone = anchor.Bone; }
+                    else { pair.PlayerAnchor = anchor; pair.PlayerBone = anchor.Bone; }
+                    config.Save();
+                    enemyControlAnchorPickPair = -1;
+                    chatGui.Print($"[CombatSim] Grab point set on {anchor.Bone}.");
+                }
+                else
+                    chatGui.Print($"[CombatSim] No grab point: {message}. Click on the model again, or Esc to cancel.");
+            }
+        }
+        ImGui.End();
+    }
+
+    private void DrawEnemyControlAnchorMarkers(EnemyControlController ctrl, List<EnemyControlGrabPairConfig> pairs,
+        nint enemy, nint player)
+    {
+        var draw = ImGui.GetForegroundDrawList();
+        var enemyColor = ImGui.GetColorU32(new Vector4(1f, 0.55f, 0.15f, 1f));
+        var playerColor = ImGui.GetColorU32(new Vector4(0.3f, 0.85f, 1f, 1f));
+        for (var i = 0; i < pairs.Count; i++)
+        {
+            var pair = pairs[i];
+            Mark(pair.NpcAnchor, enemy, enemyColor, i);
+            Mark(pair.PlayerAnchor, player, playerColor, i);
+        }
+
+        void Mark(EnemyControlGrabAnchor? anchor, nint actor, uint color, int index)
+        {
+            if (anchor == null || actor == nint.Zero || !ctrl.TryResolveAnchor(actor, anchor, out var world)) return;
+            if (!Core.Services.GameGui.WorldToScreen(world, out var screen)) return;
+            draw.AddCircleFilled(screen, 4f, color);
+            draw.AddCircle(screen, 7f, ImGui.GetColorU32(new Vector4(0f, 0f, 0f, 0.8f)), 16, 1.5f);
+            draw.AddText(screen + new Vector2(8f, -8f), color, (index + 1).ToString());
+        }
     }
 
     /// <summary>

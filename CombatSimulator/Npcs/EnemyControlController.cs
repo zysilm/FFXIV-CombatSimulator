@@ -60,19 +60,36 @@ public unsafe partial class EnemyControlController : IDisposable
     // Bookkeeping for whichever grab pairs (see config.EnemyControlGrabPairs) are currently held. Two
     // independent id spaces per pair: the ragdoll's own constraint slot, and the conform solver's —
     // they're allocated by different owners, so there's no reason to force them to match.
+    // NpcAnchor/PlayerAnchor are the picked points this hold uses (null = the bone, as before anchors; an enemy anchor
+    // whose bone this creature lacks is already dropped to null here). PlayerBone/Index are for the log only.
     private readonly struct ActiveGrabPair
     {
         public readonly int RagdollSlotId;
         public readonly int ConformSlotId;
         public readonly string NpcBone;
-        public ActiveGrabPair(int ragdollSlotId, int conformSlotId, string npcBone)
+        public readonly EnemyControlGrabAnchor? NpcAnchor;
+        public readonly EnemyControlGrabAnchor? PlayerAnchor;
+        public readonly string PlayerBone;
+        public readonly int Index;
+        public readonly float StartGap;
+        public ActiveGrabPair(int ragdollSlotId, int conformSlotId, string npcBone, EnemyControlGrabAnchor? npcAnchor = null,
+            EnemyControlGrabAnchor? playerAnchor = null, string playerBone = "", int index = 0, float startGap = 0f)
         {
             RagdollSlotId = ragdollSlotId;
             ConformSlotId = conformSlotId;
             NpcBone = npcBone;
+            NpcAnchor = npcAnchor;
+            PlayerAnchor = playerAnchor;
+            PlayerBone = playerBone;
+            Index = index;
+            StartGap = startGap;
         }
     }
     private readonly List<ActiveGrabPair> activeGrabPairs = new();
+    // GrabAnchor: one follow-up log line this long after an anchored grab starts (how close the points got).
+    private const float GrabAnchorReportSeconds = 1f;
+    private float grabAnchorReportTimer = -1f;
+    private readonly EnemyControlGrabAnchorPicker anchorPicker;
 
     private uint EnemyControlEntityId;
     private nint controlledAddress;
@@ -130,6 +147,7 @@ public unsafe partial class EnemyControlController : IDisposable
         this.config = config;
         this.log = log;
         defaultGrabConform = new EnemyControlGrabConformSolver(boneService, playerRagdoll, config, log);
+        anchorPicker = new EnemyControlGrabAnchorPicker(boneService, log);
         framework.Update += OnUpdate;
         boneService.OnPosePrepared += UpdatePreparedGrabTargets;
     }
@@ -542,6 +560,7 @@ public unsafe partial class EnemyControlController : IDisposable
         playerRagdoll.GrabRigid = config.EnemyControlGrabRigid;
 
         activeGrabPairs.Clear();
+        grabAnchorReportTimer = -1f;
         var resolvedPairs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var duplicateResolvedPairs = 0;
 
@@ -551,26 +570,66 @@ public unsafe partial class EnemyControlController : IDisposable
             if (string.IsNullOrWhiteSpace(pair.NpcBone) || string.IsNullOrWhiteSpace(pair.PlayerBone))
                 continue;
 
+            // The picked points, if any (docs/ENEMY_CONTROL_GRAB.md §3). An enemy anchor names a bone of the creature
+            // it was picked on; another creature may not have it, and then the grab falls back to the hand chain below
+            // and the point is dropped (user decision 2026-11-15).
+            var npcAnchor = pair.NpcAnchor;
+            if (npcAnchor != null && !CreatureHasBone(npcAnchor.Bone))
+            {
+                log.Info($"GrabAnchor: pair {i}: this creature has no '{npcAnchor.Bone}' — the enemy point is dropped, grabbing with the fallback bone");
+                npcAnchor = null;
+            }
+            var playerAnchor = pair.PlayerAnchor;
+            var bodyAddress = GrabbedBodyAddress();
+            if (playerAnchor != null &&
+                GrabAnchorSkeleton.IsUnderAny(boneService, bodyAddress, playerAnchor.Bone, config.DismemberPocBones))
+            {
+                log.Info($"GrabAnchor: pair {i}: '{playerAnchor.Bone}' is on a severed part — pair skipped");
+                continue;
+            }
+
             // What this particular creature actually grabs WITH — a hand if it has one, and something
             // it does have if it does not. See ResolveGrabAttackBone.
-            var npcBone = ResolveGrabAttackBone(pair.NpcBone);
-            var playerBone = pair.PlayerBone.Trim();
+            var npcBone = npcAnchor?.Bone ?? ResolveGrabAttackBone(pair.NpcBone);
+            var playerBone = (playerAnchor?.Bone ?? pair.PlayerBone).Trim();
             // Several configured hands can legitimately collapse to the same fallback bone on a
             // handless creature. Attaching identical constraints does not improve the hold; it only
             // multiplies solver load (the supplied log created twenty j_kao->j_kubi constraints).
-            if (!resolvedPairs.Add($"{npcBone}\u001f{playerBone}"))
+            if (!resolvedPairs.Add(EnemyControlGrabPairList.Key(npcBone, playerBone, npcAnchor, playerAnchor)))
             {
                 duplicateResolvedPairs++;
                 continue;
             }
             var conformSlotId = i;
 
+            // The player's end: with a picked point, the exact point on the body (re-snapped onto its surface as it is
+            // now), held by the body that carries the picked bone; without one, the bone itself, as before.
+            Vector3? gripPoint = null;
+            var surfaceBone = playerBone;
+            var snapMm = 0f;
+            if (playerAnchor != null)
+            {
+                if (TryResolvePlayerGripPoint(playerAnchor, bodyAddress, out var point, out surfaceBone, out snapMm))
+                    gripPoint = point;
+                else
+                {
+                    log.Info($"GrabAnchor: pair {i}: the body's point on '{playerAnchor.Bone}' could not be read — grabbing the bone itself");
+                    playerAnchor = null;
+                }
+            }
+
             // Arm the conform first: it measures the grip volume from the pose the animation is
             // holding right now, and that measurement is what the pull aims at from here on. A
             // creature with no digits under that bone simply gets no conform — see EnemyControlGrabConformSolver.
-            grabConform.Begin(conformSlotId, controlledAddress, npcBone, playerBone);
+            // An enemy point only curls digits when the picked bone is itself a hand (a point on a forearm must not
+            // bend the hand), and the digits conform to the body that carries the picked player bone.
+            var conform = npcAnchor == null || grabConform.HasDigitHand(controlledAddress, npcBone);
+            if (conform)
+                grabConform.Begin(conformSlotId, controlledAddress, npcBone, surfaceBone);
 
-            var target = grabConform.GripAnchor(conformSlotId) ?? ResolveGrabAttackTarget(npcBone);
+            var target = npcAnchor != null
+                ? ResolveEnemyAnchorTarget(npcAnchor)
+                : grabConform.GripAnchor(conformSlotId) ?? ResolveGrabAttackTarget(npcBone);
             if (!target.HasValue)
             {
                 log.Warning($"EnemyControlMode: grab pair {i} ('{npcBone}'->'{playerBone}') could not resolve source bone.");
@@ -578,10 +637,15 @@ public unsafe partial class EnemyControlController : IDisposable
                 continue;
             }
 
-            var ragdollSlotId = playerRagdoll.CreateGrabConstraint(playerBone, target.Value, suspendAddress,
-                maxForce: config.EnemyControlGrabServoForce,
-                maxSpeed: config.EnemyControlGrabServoSpeed,
-                springFreq: config.EnemyControlGrabServoFrequency);
+            var ragdollSlotId = gripPoint.HasValue
+                ? playerRagdoll.CreateGrabConstraintAt(playerBone, gripPoint.Value, target.Value, suspendAddress,
+                    maxForce: config.EnemyControlGrabServoForce,
+                    maxSpeed: config.EnemyControlGrabServoSpeed,
+                    springFreq: config.EnemyControlGrabServoFrequency)
+                : playerRagdoll.CreateGrabConstraint(playerBone, target.Value, suspendAddress,
+                    maxForce: config.EnemyControlGrabServoForce,
+                    maxSpeed: config.EnemyControlGrabServoSpeed,
+                    springFreq: config.EnemyControlGrabServoFrequency);
             if (ragdollSlotId == null)
             {
                 grabConform.End(conformSlotId);
@@ -589,7 +653,20 @@ public unsafe partial class EnemyControlController : IDisposable
                 continue;
             }
 
-            activeGrabPairs.Add(new ActiveGrabPair(ragdollSlotId.Value, conformSlotId, npcBone));
+            var startGap = 0f;
+            if (npcAnchor != null || playerAnchor != null)
+            {
+                var held = gripPoint ?? boneService.GetBoneWorldPos(bodyAddress, playerBone) ?? target.Value;
+                startGap = Vector3.Distance(held, target.Value);
+                LogEnemyAnchorScale(i, npcBone);
+                log.Info($"GrabAnchor: pair {i} start — enemy {(npcAnchor != null ? $"point on '{npcBone}'" : $"bone '{npcBone}'")}, " +
+                         $"body {(playerAnchor != null ? $"point on '{playerBone}' (carried by '{surfaceBone}', re-snapped {snapMm:F1} mm)" : $"bone '{playerBone}'")}, " +
+                         $"finger conform {(conform ? "on" : "off")}, start distance {startGap * 1000f:F0} mm");
+                grabAnchorReportTimer = 0f;
+            }
+
+            activeGrabPairs.Add(new ActiveGrabPair(ragdollSlotId.Value, conformSlotId, npcBone, npcAnchor, playerAnchor,
+                playerBone, i, startGap));
             log.Info($"EnemyControlMode: grab pair {i} started ({npcBone}->{playerBone}).");
         }
 
@@ -629,8 +706,104 @@ public unsafe partial class EnemyControlController : IDisposable
         if (!grabAttackActive) return;
         foreach (var pair in activeGrabPairs)
         {
-            var target = grabConform.GripAnchor(pair.ConformSlotId) ?? ResolveGrabAttackTarget(pair.NpcBone);
+            var target = pair.NpcAnchor != null
+                ? ResolveEnemyAnchorTarget(pair.NpcAnchor)
+                : grabConform.GripAnchor(pair.ConformSlotId) ?? ResolveGrabAttackTarget(pair.NpcBone);
             if (target.HasValue) playerRagdoll.UpdateGrabTarget(pair.RagdollSlotId, target.Value);
+        }
+    }
+
+    // ── Anchored grab (docs/ENEMY_CONTROL_GRAB.md §3) ──
+
+    /// <summary>Turns clicks on the models into anchors (the Enemy Control window's Pick buttons).</summary>
+    public EnemyControlGrabAnchorPicker AnchorPicker => anchorPicker;
+
+    /// <summary>The controlled creature's address while it is live, for picking and markers; zero otherwise.</summary>
+    public nint ControlledActor => IsActive && EnemyControlObjectAlive() ? controlledAddress : nint.Zero;
+
+    /// <summary>Where an anchor is on a live character now (for the window's markers).</summary>
+    public bool TryResolveAnchor(nint actor, EnemyControlGrabAnchor anchor, out Vector3 point)
+        => GrabAnchorSkeleton.TryResolve(boneService, actor, anchor, out point, out _);
+
+    /// <summary>The body the grab holds: the ragdoll's own character, else the local player.</summary>
+    private nint GrabbedBodyAddress()
+    {
+        var body = playerRagdoll.TargetCharacterAddress;
+        return body != nint.Zero ? body : Core.Services.ObjectTable.LocalPlayer?.Address ?? nint.Zero;
+    }
+
+    private bool CreatureHasBone(string bone)
+    {
+        if (controlledAddress == nint.Zero || string.IsNullOrWhiteSpace(bone)) return false;
+        foreach (var name in boneService.GetBoneNames(controlledAddress))
+            if (name == bone) return true;
+        return false;
+    }
+
+    /// <summary>The enemy's picked point now, moved out along its normal by the Skin gap.</summary>
+    private Vector3? ResolveEnemyAnchorTarget(EnemyControlGrabAnchor anchor)
+    {
+        if (!IsActive || !GrabAnchorSkeleton.TryResolve(boneService, controlledAddress, anchor, out var point, out var normal))
+            return null;
+        return point + normal * config.EnemyControlGrabFingerClearance;
+    }
+
+    // The re-snap may move the point this far along its normal (times the body's scale); beyond that the surface
+    // found is not the patch that was picked, and the stored depth is kept.
+    private const float MaxGripSnap = 0.05f;
+
+    /// <summary>
+    /// The body's picked point at grab start: the stored point on its bone as posed now, then moved along its normal
+    /// onto the body's surface as it is now (gear taken off, another race), so the hand closes on skin rather than on
+    /// where the coat was. <paramref name="surfaceBone"/> is the bone whose body carries the point (the surface query
+    /// and the finger conform use it).
+    /// </summary>
+    private bool TryResolvePlayerGripPoint(EnemyControlGrabAnchor anchor, nint body, out Vector3 point,
+        out string surfaceBone, out float snapMm)
+    {
+        surfaceBone = anchor.Bone;
+        snapMm = 0f;
+        if (!GrabAnchorSkeleton.TryResolve(boneService, body, anchor, out point, out var normal)) return false;
+        var ragdoll = playerRagdoll;
+        surfaceBone = GrabAnchorSkeleton.CarryingBone(boneService, body, anchor.Bone, ragdoll.IsBoneSimulated);
+        if (ragdoll.TryGetCharacterSurface(surfaceBone, point, CharacterSurfaceUsage.Grab, out var surface))
+        {
+            var scale = GrabAnchorSkeleton.TryScaledBoneOrigin(boneService, body, anchor.Bone, out _, out _, out var s) ? s.X : 1f;
+            var raw = point;
+            var move = EnemyControlGrabAnchorMath.SnapAlongNormal(ref point, normal, surface.Point, MaxGripSnap * MathF.Max(1f, scale));
+            snapMm = move * 1000f;
+            if (move == 0f && Vector3.Distance(raw, surface.Point) > 0.001f)
+                log.Info($"GrabAnchor: re-snap on '{surfaceBone}' kept the stored depth (surface {Vector3.Dot(surface.Point - raw, normal) * 1000f:F0} mm away along the normal)");
+        }
+        return true;
+    }
+
+    /// <summary>The enemy's draw scale and how far the scaled bone origin (what anchors use, like the rendered mesh)
+    /// is from the unscaled reading the bone grab uses — verifies the anchor math on scaled creatures.</summary>
+    private void LogEnemyAnchorScale(int index, string npcBone)
+    {
+        if (GrabAnchorSkeleton.TryScaledBoneOrigin(boneService, controlledAddress, npcBone, out var scaled, out var unscaled, out var scale))
+            log.Info($"GrabAnchor: pair {index} enemy scale ({scale.X:F2},{scale.Y:F2},{scale.Z:F2}), " +
+                     $"scaled vs unscaled '{npcBone}' origin {Vector3.Distance(scaled, unscaled) * 1000f:F0} mm");
+    }
+
+    /// <summary>The GrabAnchor follow-up line: how far each anchored pair's two points still are apart.</summary>
+    private void ReportAnchoredGrab()
+    {
+        var body = GrabbedBodyAddress();
+        foreach (var pair in activeGrabPairs)
+        {
+            if (pair.NpcAnchor == null && pair.PlayerAnchor == null) continue;
+            var target = pair.NpcAnchor != null
+                ? ResolveEnemyAnchorTarget(pair.NpcAnchor)
+                : grabConform.GripAnchor(pair.ConformSlotId) ?? ResolveGrabAttackTarget(pair.NpcBone);
+            Vector3? held = null;
+            if (pair.PlayerAnchor != null && GrabAnchorSkeleton.TryResolve(boneService, body, pair.PlayerAnchor, out var p, out _))
+                held = p;
+            held ??= boneService.GetBoneWorldPos(body, pair.PlayerBone);
+            if (!target.HasValue || !held.HasValue) continue;
+            log.Info($"GrabAnchor: pair {pair.Index} after {GrabAnchorReportSeconds:F1} s — gap {Vector3.Distance(held.Value, target.Value) * 1000f:F0} mm " +
+                     $"(start {pair.StartGap * 1000f:F0} mm)");
         }
     }
 
@@ -655,6 +828,16 @@ public unsafe partial class EnemyControlController : IDisposable
 
             if (!lastMovementActive)
                 ApplyGrabAttackTimeline();
+
+            if (grabAnchorReportTimer >= 0f)
+            {
+                grabAnchorReportTimer += dt;
+                if (grabAnchorReportTimer >= GrabAnchorReportSeconds)
+                {
+                    grabAnchorReportTimer = -1f;
+                    ReportAnchoredGrab();
+                }
+            }
         }
 
         if (!grabAttackRestorePending)

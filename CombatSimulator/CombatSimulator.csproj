@@ -44,7 +44,7 @@
          (https://github.com/zysilm/AdvancedRagdoll); how library changes reach the plugin: CLAUDE.md. NuGet takes the
          lowest matching version and packages.lock.json pins it. Like every package dependency, its DLL is copied next
          to the plugin DLL and into the packaged zip. -->
-    <PackageReference Include="AdvancedRagdoll" Version="0.1.0-beta.3" />
+    <PackageReference Include="AdvancedRagdoll" Version="0.1.0-beta.4" />
   </ItemGroup>
   <ItemGroup>
     <!-- The offline replay (Tests/RagdollReplay) drives RagdollController through its internal host constructor. -->

@@ -130,6 +130,7 @@
 - Enemy Control 只在胜负已分（我方战败，`OutcomeDecided(false)`）后才接管；主角死亡不算分出胜负。接管对象：尸体被抢 → 抢尸者；否则凶手（按 EntityId 记、接管前核对存活）；都不行就不接管。Control killer 关时谁都不接管（用户裁决，`43c4c3d`）。
 - Enemy Control 的“生成一只怪来控制”已删除（用户裁决）；退役键 `EnemyControlSpawnOnDeath`、`EnemyControlModelId`、`EnemyControlModelNameId`。
 - Enemy Control 只做“控制一个敌人”：附身、移动、镜头跟随、放开、抓住尸体（grab）。Swarm（选中的敌人跟随、爬上尸体踩踏、阵型）和手臂姿势覆盖（手动转动敌人上臂/前臂骨骼）已删除，用户用过、效果不好（2026-11-15，用户裁决）；退役键见 `Configuration.cs` 的 `RetiredOptionNames`，抓取档案里的手臂姿势字段一并丢弃。
+- 精确抓取点（anchor）：抓取对两端可在 3D 画面里点模型选点（不做部位列表），存为拥有那块皮肤的骨骼 + 骨骼局部偏移/法线；敌人点的骨骼在别的生物上不存在时退回手/后备骨骼链并丢掉偏移；两点开始时相距远照样用现有拉入；第一版只约束位置；库 0.1.0-beta.4 的 `CreateGrabConstraintAt`（2026-11-15，用户裁决）→ [ENEMY_CONTROL_GRAB.md](ENEMY_CONTROL_GRAB.md) §3。没设点的对行为不变。
 - 生成点、岗位、巡逻点都吸到我方能走到的网格块上（从候选点向外逐圈搜，首次进人群最远 96 m，重新进人群 20 m/12 m）。
 
 ### 相机 / 过场镜头（2026-11-15）
@@ -274,6 +275,8 @@
 - [ ] Fighting Mode 删除：旧配置载入无异常；Combat 页签没有 Fighting Mode 折叠栏，快捷栏没有 Fighting Mode 勾选；Enemy Control 照常（它从 FightingModule 移到 ActorsModule）。
 - [ ] 服务器安全修复（2026-11-15）：Diagnose → Client-Side Safety 有三行（UseAction / UseActionLocation / Hard-target guard）；战斗中按住技能后开战，排队的技能不发到服务器（排队技能多半重走 UseAction；直接调 UseActionLocation 的是地面目标确认和 BossMod 这类插件，日志 `Suppressed direct UseActionLocation`）；停战后 Spawn 留下的敌人点不中（GPose 里也点不中）（日志 `FakeActorGuard: simulated actors not targetable`）；原生血条/目标栏战斗中隐藏、停战恢复，位置不变；坐骑上/坐下时 Recover Player Animation 拒绝并提示。
 - [ ] 玩家冻结恢复（2026-11-15）：战败后 Enemy Control 用 WASD 控制敌人时，玩家本人原地不动；复活/重置/停战后能正常走动。
+- [ ] 精确抓取点（2026-11-15，库 0.1.0-beta.4）→ [ENEMY_CONTROL_GRAB.md](ENEMY_CONTROL_GRAB.md) §3：Enemy Control 窗口抓取对两端的 Pick 能点中模型（日志 `GrabAnchor: picked …` 的 ray residual 在几像素内、round trip ≈ 0），点击不落到游戏选目标/镜头，Esc 取消；标记画在点上；抓取时两点贴合（`GrabAnchor: pair N after 1.0 s — gap` 小）；缩放 ≠ 1 的生物看 `scaled vs unscaled` 差值并确认点落在可见的手上；换种族/脱衣后玩家点 `re-snapped` 幅度合理；点在前臂等非手骨上时手指不乱弯；没设点的对与以前一样。
+- [ ] 库 0.1.0-beta.4：布娃娃、抓取照常（回放 97/97、扩展 6/6 已过）。
 
 ## 5. 搁置与未完成
 
