@@ -90,41 +90,6 @@ public sealed unsafe class MapEnemyController
         SenseMapEnemies(settings);
     }
 
-    public SimulatedNpc? TryRegisterByEntityId(ulong targetId, bool force = false)
-    {
-        if (targetId == 0 || targetId == 0xE0000000)
-            return null;
-
-        if (!combatEngine.IsActive)
-            return null;
-
-        var settings = force
-            ? new MapEnemySettings
-            {
-                Enabled = true,
-                IncludeBattleNpcs = true,
-                IncludePlayers = false,
-                MaxCount = Math.Max(1, config.MaxTargets),
-                SenseRange = Math.Max(0.1f, config.MapEnemySenseRange),
-                Tier = CombatBudgetModel.TierForChoice(config.EnemyStrength),
-                Level = config.EnemyLevel,
-            }
-            : CurrentSettings();
-        if (settings is not { Enabled: true })
-            return null;
-
-        foreach (var obj in objectTable)
-        {
-            if (obj.EntityId != (uint)targetId)
-                continue;
-
-            var friendly = NearestFriendly(obj.Position);
-            return RegisterObject(obj, settings, friendly.EntityId);
-        }
-
-        return null;
-    }
-
     private MapEnemySettings? CurrentSettings()
     {
         // A battle profile brings its own map settings (none: the map stays out of it). A battle

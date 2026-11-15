@@ -6,7 +6,6 @@ using CombatSimulator.Animation;
 using CombatSimulator.Camera;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
-using CombatSimulator.Targeting;
 using Dalamud.Plugin.Services;
 
 namespace CombatSimulator.Composition;
@@ -37,7 +36,6 @@ internal sealed unsafe class CameraModule
     private IPluginLog log => m.Log;
     private CombatEngine combatEngine => m.Combat.Engine;
     private NpcSelector npcSelector => m.Actors.Selector;
-    private PlayerTargetController playerTargetController => m.Combat.PlayerTarget;
     private BoneTransformService boneTransformService => m.World.BoneTransforms;
     private RagdollController ragdollController => m.Corpse.PlayerRagdoll;
 
@@ -61,7 +59,7 @@ internal sealed unsafe class CameraModule
     public void CreateDynamic(ISigScanner sigScanner)
     {
         dynamicCameraController = new DynamicCameraController(
-            m.Config, cameraModeCoordinator, combatEngine, npcSelector, playerTargetController,
+            m.Config, cameraModeCoordinator, combatEngine, npcSelector,
             boneTransformService, ragdollController, sigScanner, log);
         dynamicCameraController.GetCurrentOwner = () => cameraModeCoordinator.CurrentOwner;
         // The death shot forces its locked pitch/zoom inside the game's camera update.

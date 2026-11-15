@@ -8,7 +8,6 @@ using System.Numerics;
 using CombatSimulator.Animation;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
-using CombatSimulator.Targeting;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 using GameCameraManager = FFXIVClientStructs.FFXIV.Client.Game.Control.CameraManager;
@@ -97,7 +96,6 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
     private readonly CameraModeCoordinator coordinator;
     private readonly CombatEngine combatEngine;
     private readonly NpcSelector npcSelector;
-    private readonly PlayerTargetController playerTargetController;
     private readonly BoneTransformService boneService;
     private readonly RagdollController playerRagdoll;
     private readonly IPluginLog log;
@@ -362,7 +360,6 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
         CameraModeCoordinator coordinator,
         CombatEngine combatEngine,
         NpcSelector npcSelector,
-        PlayerTargetController playerTargetController,
         BoneTransformService boneService,
         RagdollController playerRagdoll,
         ISigScanner sigScanner,
@@ -372,7 +369,6 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
         this.coordinator = coordinator;
         this.combatEngine = combatEngine;
         this.npcSelector = npcSelector;
-        this.playerTargetController = playerTargetController;
         this.boneService = boneService;
         this.playerRagdoll = playerRagdoll;
         this.log = log;
@@ -1101,14 +1097,6 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
 
     private SimulatedNpc? FindFocusEnemy(nint playerAddress)
     {
-        var locked = playerTargetController.LockedTargetEntityId;
-        if (locked != 0)
-        {
-            var target = npcSelector.GetSelectedNpc(locked);
-            if (target is { BattleChara: not null } && target.IsAlive)
-                return target;
-        }
-
         var playerPos = ReadObjectPosition(playerAddress);
         SimulatedNpc? bestEngaged = null;
         SimulatedNpc? bestAlive = null;

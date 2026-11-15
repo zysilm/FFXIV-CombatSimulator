@@ -17,7 +17,6 @@ using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
 using CombatSimulator.Spectators;
-using CombatSimulator.Targeting;
 using CombatSimulator.Voice;
 using Dalamud.Game.Command;
 using Dalamud.Plugin;
@@ -137,7 +136,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     private NpcAiController npcAiController => combatModule.EnemyAi;
     private NpcCorpseFootIkSolver npcCorpseFootIkSolver => combatModule.CorpseFootIk;
     private VirtualEnemyLookAtController virtualEnemyLookAt => combatModule.EnemyLookAt;
-    private PlayerTargetController playerTargetController => combatModule.PlayerTarget;
+    private HardTargetGuard hardTargetGuard => combatModule.HardTarget;
     private UseActionHook useActionHook => combatModule.UseAction;
     private SafetyBarriers safetyBarriers => combatModule.Barriers;
     // Enemy Control
@@ -216,7 +215,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         worldModule.CreateGameAccess(pluginInterface, gameInterop, clientState, dataManager, sigScanner, config, log);
         actorsModule.AttachMonsterKits(dataManager);
         worldModule.CreateBoneTransforms(gameInterop, sigScanner, log);
-        actorsModule.CreateRoster(objectTable, targetManager, dataManager, clientState);
+        actorsModule.CreateRoster(objectTable, dataManager, clientState);
         corpseModule.CreatePlayerBody(objectTable);
         worldModule.CreateGeometryRenderer(gameInterop, sigScanner, log);
         corpseModule.CreateArrowImpacts();
@@ -259,8 +258,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         actorsModule.CreateSpectators(clientState);
         // NpcAiController's constructor subscribes its own SimulationStarted #1 and SimulationReset #4.
         combatModule.CreateEnemyAi();
-        combatModule.CreatePlayerTargeting(gameInterop, objectTable, gameGui);
-        combatEvents.PlayerHitBy = playerTargetController.NotifyPlayerHitBy;
+        combatModule.CreateHardTargetGuard(gameInterop);
         cameraModule.CreateDynamic(sigScanner);
         actorsModule.CreateMapEnemies(objectTable);
         combatEvents.BeforePlayerDeath = () =>
@@ -374,7 +372,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         safetyDevModule.CreateHookSafetyChecker(pluginInterface);
 
         // Safety — enable hooks immediately; they gate on internal state
-        combatModule.CreateUseActionHook(gameInterop, clientState);
+        combatModule.CreateUseActionHook(gameInterop);
         useActionHook.Enable();
         movementBlockHook.Enable();
 
@@ -480,7 +478,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         worldGeometryRenderer.Dispose();
         npcSpawner.Dispose();
         useActionHook.Dispose();
-        playerTargetController.Dispose();
+        hardTargetGuard.Dispose();
         movementBlockHook.Dispose();
         combatLogWindow.Dispose();
         hpBarOverlay.Dispose();
@@ -739,10 +737,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             activeCameraController.SetModeActive(cameraModeCoordinator.WantsOrbitHook);
             activeCameraController.Tick(deltaTime);
 
-            // Target lock upkeep (drops dead/stale locks, clears when inactive).
-            // Runs every frame so the lock is cleared the moment the sim stops.
-            playerTargetController.Tick(deltaTime);
-
             // Guard + telegraphs: ticked centrally so no single controller owns their
             // lifecycle (inert when nothing is active).
             if (!PrivateDirectorActive)
@@ -753,9 +747,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
                 enemyOmenVfx.Tick();
             }
 
-            // Action Mode loop (player combo/guard + enemy telegraphs). Runs every
-            // frame so guard windows and toggle-off cleanup are handled even
-            // when the sim is not active; gates internally on config.ActionMode.
+            // Action combat loop (player combo/guard + enemy telegraphs). Runs every
+            // frame so guard windows are cleared even when the sim is not active.
             if (!PrivateDirectorActive) actionModeController.Tick(deltaTime);
 
             // Hit feedback (camera punch decay + hitstop restore). Runs every frame.

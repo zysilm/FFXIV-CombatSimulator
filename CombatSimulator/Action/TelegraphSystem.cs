@@ -434,19 +434,6 @@ public sealed class TelegraphSystem
         return false;
     }
 
-    /// <summary>Interrupt: cancel an enemy telegraph that is still in its cast lead-in (no strike).</summary>
-    public bool TryInterrupt(uint npcSimId)
-    {
-        foreach (var t in active)
-        {
-            if (t.Resolved || t.Source.SimulatedEntityId != npcSimId || t.IsApproachActive)
-                continue;
-            Finish(t, TelegraphOutcome.Dodged);
-            return true;
-        }
-        return false;
-    }
-
     public void Clear()
     {
         foreach (var t in active)

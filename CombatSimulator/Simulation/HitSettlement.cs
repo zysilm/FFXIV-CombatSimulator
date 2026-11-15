@@ -427,7 +427,7 @@ internal sealed class HitSettlement
             State.TotalDamageTaken += damage.Damage;
             if (damage.Damage > 0)
                 host.RaisePlayerDamagedByNpc();
-            // Player was hit and survived → let auto-counter consider locking this attacker.
+            // Player was hit and survived (PlayerHitBy: no plugin subscriber since the target lock went; the replay records it).
             if (target.IsAlive)
                 host.RaisePlayerHitByNpc(attacker.SimulatedEntityId);
         }

@@ -24,12 +24,11 @@ public sealed class EnemyAreaMarker
 }
 
 /// <summary>
-/// The enemy attack areas currently on the ground, independent of which path committed them:
-/// Action-Mode telegraphs and ordinary cast bars both register here, and the overlay draws from
+/// The enemy attack areas currently on the ground: the telegraphs register here, and the overlay draws from
 /// this one list. Every marker has a hard lifetime (duration plus a grace) so a missed removal
 /// can never leave a danger zone on the floor.
 /// </summary>
-public sealed class EnemyAreaMarkers : Combat.ICastAreaMarkers
+public sealed class EnemyAreaMarkers
 {
     private const float ExpiryGrace = 1.0f;
 

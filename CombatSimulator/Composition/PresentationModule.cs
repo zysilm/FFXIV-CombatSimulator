@@ -12,7 +12,6 @@ using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
 using CombatSimulator.Spectators;
-using CombatSimulator.Targeting;
 using CombatSimulator.UpdateLog;
 using CombatSimulator.Voice;
 using Dalamud.Plugin.Services;
@@ -62,7 +61,6 @@ internal sealed class PresentationModule
     private ActionDataProvider actionDataProvider => m.Actors.ActionData;
     private CombatEngine combatEngine => m.Combat.Engine;
     private UseActionHook useActionHook => m.Combat.UseAction;
-    private PlayerTargetController playerTargetController => m.Combat.PlayerTarget;
     private CombatSimulator.ActionCombat.TelegraphSystem telegraphSystem => m.Combat.Telegraphs;
     private CombatSimulator.ActionCombat.EnemyAreaMarkers enemyAreaMarkers => m.Combat.AreaMarkers;
     private CombatSimulator.ActionCombat.PlayerGuardController playerGuardController => m.Combat.Guard;
@@ -85,7 +83,7 @@ internal sealed class PresentationModule
 
     public void CreateMainWindow(IClientState clientState, IDataManager dataManager, IChatGui chatGui)
     {
-        mainWindow = new MainWindow(m.Config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, spectatorController, devExperimental, clientState, dataManager, chatGui, log);
+        mainWindow = new MainWindow(m.Config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, spectatorController, devExperimental, clientState, dataManager, chatGui, log);
         mainWindow.Barriers = m.Combat.Barriers;
         mainWindow.ArrowImpacts = arrowImpactController;
         mainWindow.HideResultBanner = warBanner.Hide;
@@ -133,7 +131,7 @@ internal sealed class PresentationModule
     {
         combatLogWindow = new CombatLogWindow(combatEngine);
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, dismembermentController, mainWindow, config, gameGui, clientState);
-        combatLinkOverlay = new CombatLinkOverlay(npcSelector, playerTargetController, combatEngine, boneTransformService, gameGui, config);
+        combatLinkOverlay = new CombatLinkOverlay(npcSelector, combatEngine, boneTransformService, gameGui, config);
         telegraphOverlay = new TelegraphOverlay(telegraphSystem, gameGui, config);
         hpBarOverlay.ExternalCast = npc =>
             telegraphSystem.TryGetCast(npc.SimulatedEntityId, out var castActionId, out var castProgress)
@@ -144,7 +142,7 @@ internal sealed class PresentationModule
             enemyAreaMarkers, animationController, actionDataProvider.GetActionData, dataManager, config, log);
         enemyAreaOverlay.HasNativeOmen = enemyOmenVfx.HasOmen;
         osuParryOverlay = new OsuParryOverlay(telegraphSystem, gameGui, config, playerGuardController);
-        reticleOverlay = new ReticleOverlay(playerHitboxResolver, combatEngine, gameGui, config);
+        reticleOverlay = new ReticleOverlay(playerHitboxResolver, combatEngine, gameGui);
         dynamicCameraDebugOverlay = new DynamicCameraDebugOverlay(dynamicCameraController, gameGui, config);
         updateLogPopupController = new UpdateLogPopupController(m.Config, log, hadExistingConfig);
     }
@@ -200,10 +198,10 @@ internal sealed class PresentationModule
             if (config.ShowCombatLog)
                 combatLogWindow.Draw();
 
-            if (config.ShowCombatLinkArcs || config.ShowLockMarker)
+            if (config.ShowCombatLinkArcs)
                 combatLinkOverlay.Draw();
 
-            if (config.ActionMode && config.ShowTelegraphs)
+            if (config.ShowTelegraphs)
                 telegraphOverlay.Draw();
             // Real-shape enemy areas (any mode); empty unless an enemy-skill option registered one.
             enemyAreaOverlay.Draw();

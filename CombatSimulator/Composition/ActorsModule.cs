@@ -85,9 +85,9 @@ internal sealed unsafe class ActorsModule
     /// The selected enemies, the spawner and enemy scaling; and the roster of the player's side (the allies'
     /// list, which the engine is given by constructor and the allies' controller keeps).
     /// </summary>
-    public void CreateRoster(IObjectTable objectTable, ITargetManager targetManager, IDataManager dataManager, IClientState clientState)
+    public void CreateRoster(IObjectTable objectTable, IDataManager dataManager, IClientState clientState)
     {
-        npcSelector = new NpcSelector(objectTable, targetManager, m.Config, npcActionProfileProvider, log);
+        npcSelector = new NpcSelector(objectTable, m.Config, npcActionProfileProvider, log);
         npcSpawner = new NpcSpawner(objectTable, dataManager, clientState, m.Config, npcActionProfileProvider, movementBlockHook, log);
         npcScaleController = new Effects.NpcScaleController(m.Config, npcSelector, objectTable);
         combatRoster = new CombatRoster(config);

@@ -136,9 +136,6 @@ public sealed class GameAttackSink : IAttackSink
                 "IAttackSink.ExecuteEnemyAttack: this GameAttackSink was built without an attack router (the allies' adapter); only the enemies' supports it."))
             .AttackExecutor.Execute(npc, request);
 
-    public TelegraphShape SnapshotShape(SimulatedNpc npc, NpcAttackRequest request, SimulatedEntityState target)
-        => TelegraphSystem.SnapshotShape(combatEngine, npc, request, target);
-
     public SimulatedActionResult ProcessCompanionAction(CombatCompanion companion, SimulatedNpc target, uint actionId,
         int potency = 0, NpcAttackStyle attackStyle = NpcAttackStyle.Auto, float radius = 0)
         => combatEngine.ProcessCompanionAction(companion, target, actionId, potency, attackStyle, radius);

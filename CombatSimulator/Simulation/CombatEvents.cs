@@ -44,7 +44,7 @@ public sealed class CombatEvents
     /// <summary>An enemy hit took HP off the player (the killing blow too).</summary>
     public Action? PlayerDamaged { get; set; }
 
-    /// <summary>An enemy's attack landed on the still-living player (the attacker's simulated id).</summary>
+    /// <summary>An enemy's attack landed on the still-living player (the attacker's simulated id). Nothing in the plugin subscribes since the target lock was removed; kept as the settlement's notification (the settlement replay records it).</summary>
     public Action<uint>? PlayerHitBy { get; set; }
 
     // The allies' side (stage B9; raised by CombatCompanionManager, whose older members OnCompanionSpawnComplete,

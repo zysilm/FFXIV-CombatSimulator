@@ -8,7 +8,6 @@ using CombatSimulator.Combat;
 using CombatSimulator.Gui;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
-using CombatSimulator.Targeting;
 
 namespace CombatSimulator.Composition;
 
@@ -47,7 +46,7 @@ internal interface ICorpseModuleSettings
     bool NpcCollisionActive { get; }
 }
 
-/// <summary>The combat module: the engine, action combat, the enemies' AI, the look-at, the player's target lock and UseAction hook.</summary>
+/// <summary>The combat module: the engine, action combat, the enemies' AI, the look-at and UseAction hook.</summary>
 internal interface ICombatModuleSettings :
     ICombatEngineSettings,
     IActionComboSettings,
@@ -57,11 +56,8 @@ internal interface ICombatModuleSettings :
     IEnemyAttackSettings,
     IHitFeedbackSettings,
     ICombatAiSettings,
-    IVirtualEnemyLookAtSettings,
-    IPlayerInputSettings
+    IVirtualEnemyLookAtSettings
 {
-    /// <summary>The damage calculator's action-combat switch (the same setting every base view has).</summary>
-    new bool ActionMode { get; }
 }
 
 /// <summary>The battle module: the battle's end (the celebration, the result banner, the body ready to be held).</summary>

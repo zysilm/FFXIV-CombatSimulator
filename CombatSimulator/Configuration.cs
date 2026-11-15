@@ -239,21 +239,9 @@ public partial class Configuration : IPluginConfiguration
     // Maximum number of active targets
     public int MaxTargets { get; set; } = 10;
 
-    // Custom in-simulation targeting: during an active simulation the plugin
-    // takes over the game's target keybinds (confirm acquires, cancel releases,
-    // next/prev cycle) and the player only attacks the locked target.
-    public bool EnableCustomTargeting { get; set; } = true;
-
-    // Auto-counter: while custom targeting is active and the player has no locked
-    // target, being hit by an enemy auto-locks that attacker. Pressing cancel
-    // suppresses it (no auto-lock even when hit) until the player confirm-locks again.
-    public bool EnableAutoCounter { get; set; } = true;
-
-    // Combat-link arcs: blue arc = player → locked target, red arcs = every enemy
-    // currently attacking the player. Drawn above the head with a flowing animation
-    // from attacker toward the one being attacked.
+    // Combat-link arcs: a red arc from every enemy currently attacking the player, drawn above the head
+    // with a flowing animation from the attacker toward the player.
     public bool ShowCombatLinkArcs { get; set; } = true;
-    public bool ShowLockMarker { get; set; } = true;
     public float CombatLinkHeightOffset { get; set; } = 0.3f; // extra Y above the head anchor
     public float CombatLinkAlpha { get; set; } = 0.55f;       // base stroke opacity
     public float CombatLinkThickness { get; set; } = 4.0f;    // core stroke thickness (px)
@@ -444,11 +432,8 @@ public partial class Configuration : IPluginConfiguration
     // -- Action Mode --------------------------------------------------------
     // Combat is real-time action combat: player attacks/guard come from hotbar actions remapped by
     // actionId (the game resolves keyboard/gamepad for us); enemy attacks telegraph from a wind-up
-    // snapshot, then resolve by hitbox at the active frame. The tab-target mode it once replaced is
-    // gone (2026-11-13), and so is the experimental Fighting Mode (2026-11-15): action combat is the
-    // only combat, so this is always on. (The settings views still read it; the simulation's plain
-    // paths behind it are unreachable.)
-    [JsonIgnore] public bool ActionMode => true;
+    // snapshot, then resolve by hitbox at the active frame. It is the only combat: the tab-target mode
+    // it once replaced is gone (2026-11-13), and so is the experimental Fighting Mode (2026-11-15).
 
     // Input map: put these actions on the hotbar; a press is interpreted as the
     // mapped role instead of firing the real action. 0 = unmapped.
@@ -621,8 +606,9 @@ public partial class Configuration : IPluginConfiguration
         "EnemyTelegraphedCasts", "EnemyMaxCastSeconds", "EnemyKitIncludeAoe", "EnemyHpPhaseSkills",
         "KeepCompanionsOnReset", "PartyCommandRange", "PartyCommandRangeRandomness",
         "PartyMeleeAttackRange", "PartyRangedAttackRange",
-        // Action combat is the only combat (2026-11-13).
-        "ActionMode",
+        // Action combat is the only combat (2026-11-13). The tab-target lock that went with the old mode
+        // (target keybinds, auto-counter, the locked target's marker) was unreachable since, removed 2026-11-15.
+        "ActionMode", "EnableCustomTargeting", "EnableAutoCounter", "ShowLockMarker",
         // The player-only damage multiplier, removed (2026-11-15, user's decision: not used).
         "DamageMultiplier",
         // The old movers, replaced by the crowd on the plugin's navigation mesh (2026-11-13).
@@ -834,7 +820,7 @@ public partial class Configuration : IPluginConfiguration
         Save();
     }
 
-    public void ResetActionModeDefaults(bool preserveEnabled = true)
+    public void ResetActionModeDefaults()
     {
         var defaults = new Configuration();
 

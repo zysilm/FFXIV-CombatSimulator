@@ -140,7 +140,6 @@ sealed record Settings : ICombatAiSettings
     public bool EnableNpcAutoEngage { get; init; }
     public float NpcAutoEngageDelay { get; init; } = 2f;
     public bool EnableNpcTargetPlayer { get; init; } = true;
-    public bool ActionMode { get; init; } = true;
     public float ActionEnemyAttackSpeed { get; init; } = 1.6f;
     public float NpcSkillRateLimit { get; init; } = 5f;
     public bool EnemyTelegraphRealShapes { get; init; } = true;
@@ -350,7 +349,7 @@ sealed class Replay
         enemyRng = new Random(seed);
         allyRng = new Random(seed + 1);
         aggroSeed = new Random(seed + 2);
-        damage = new DamageCalculator(new Random(seed + 3)) { IsActionMode = () => cfg.ActionMode, PlayerMaxHp = () => 60000f };
+        damage = new DamageCalculator(new Random(seed + 3)) { IsActionMode = () => true, PlayerMaxHp = () => 60000f };
         foreach (var f in all.Where(f => f.Acts))
         {
             var rng = f.Ally ? allyRng : enemyRng;
@@ -360,7 +359,7 @@ sealed class Replay
 
     private Vector3 Body => player.Position;
     private ReachScale Scale => ReachScale.From(cfg);
-    private float Pace => CombatantMath.ActionPace(cfg.ActionMode, cfg.ActionEnemyAttackSpeed);
+    private float Pace => CombatantMath.ActionPace(actionMode: true, cfg.ActionEnemyAttackSpeed);
     private Fighter? Get(uint id) => id == 0 ? null : all.Find(f => f.Id == id);
     private IEnumerable<Fighter> Allies => all.Where(f => f.Ally && !f.IsPlayer);
     private IEnumerable<Fighter> Enemies => all.Where(f => !f.Ally);

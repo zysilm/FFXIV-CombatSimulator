@@ -30,7 +30,7 @@ public interface IDamageNumberSettings
     bool ShowDamageNumbers { get; }
 }
 
-/// <summary>The arcs between the fighters and their targets, and the lock marker (<see cref="CombatLinkOverlay"/>).</summary>
+/// <summary>The arcs from the enemies attacking the player (<see cref="CombatLinkOverlay"/>).</summary>
 public interface ICombatLinkSettings
 {
     float CombatLinkAlpha { get; }
@@ -38,13 +38,11 @@ public interface ICombatLinkSettings
     float CombatLinkHeightOffset { get; }
     float CombatLinkThickness { get; }
     bool ShowCombatLinkArcs { get; }
-    bool ShowLockMarker { get; }
 }
 
-/// <summary>Action combat's own overlays: the parry circle (<see cref="OsuParryOverlay"/>) and the reticle (<see cref="ReticleOverlay"/>).</summary>
+/// <summary>Action combat's parry circle (<see cref="OsuParryOverlay"/>).</summary>
 public interface IActionOverlaySettings
 {
-    bool ActionMode { get; }
     float GuardActiveWindow { get; }
     float OsuAnchorHeight { get; }
     bool OsuCircleEnabled { get; }

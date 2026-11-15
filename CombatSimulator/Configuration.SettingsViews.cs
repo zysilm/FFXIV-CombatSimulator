@@ -9,7 +9,6 @@ using CombatSimulator.Composition;
 using CombatSimulator.Gui;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
-using CombatSimulator.Targeting;
 
 namespace CombatSimulator;
 
@@ -24,7 +23,7 @@ public partial class Configuration :
     ICombatAiSettings, IBattleRuleSettings, ICombatRosterSettings, ICombatEngineSettings,
     IActionComboSettings, IActionInputSettings, IPlayerHitboxSettings, IPlayerGuardSettings,
     IEnemyAttackSettings, IHitFeedbackSettings, IEnemyAreaDisplaySettings,
-    IPlayerInputSettings, IVirtualEnemyLookAtSettings,
+    IVirtualEnemyLookAtSettings,
     // The overlays.
     IHpBarSettings, IDamageNumberSettings, ICombatLinkSettings, IActionOverlaySettings,
     IDynamicCameraDebugSettings, IRagdollDebugSettings,

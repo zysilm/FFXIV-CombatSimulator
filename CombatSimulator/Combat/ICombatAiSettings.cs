@@ -21,7 +21,6 @@ public interface ICombatAiSettings : ICombatRosterSettings
     bool EnableNpcAutoEngage { get; }
     float NpcAutoEngageDelay { get; }
     bool EnableNpcTargetPlayer { get; }
-    bool ActionMode { get; }
     float ActionEnemyAttackSpeed { get; }
     float NpcSkillRateLimit { get; }
     bool EnemyTelegraphRealShapes { get; }

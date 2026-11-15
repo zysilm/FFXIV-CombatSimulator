@@ -65,9 +65,6 @@ public abstract unsafe class Combatant
     public bool InReach { get; set; }
     public ActorVisualState VisualState { get; set; } = new();
 
-    // Casting
-    public NpcSkill? CurrentCastSkill { get; set; }
-
     // Lifecycle
     public bool IsAlive => State.IsAlive;
     public bool IsSpawned { get; set; }

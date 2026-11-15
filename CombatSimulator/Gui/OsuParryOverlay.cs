@@ -55,8 +55,6 @@ public sealed class OsuParryOverlay
 
     public void Draw()
     {
-        if (!config.ActionMode)
-            return;
         if (!config.OsuCircleEnabled)
             return;
 

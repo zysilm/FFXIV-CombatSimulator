@@ -230,12 +230,7 @@ public class HpBarOverlay : IDisposable
             : hp > 0.25f ? new Vector4(0.8f, 0.8f, 0.1f, 1)
             : new Vector4(0.8f, 0.1f, 0.1f, 1);
 
-    private (string Name, float Progress)? CastOf(SimulatedNpc npc)
-    {
-        if (npc.State.IsCasting && npc.CurrentCastSkill != null)
-            return (npc.CurrentCastSkill.Name, npc.State.CastTimeTotal > 0 ? npc.State.CastTimeElapsed / npc.State.CastTimeTotal : 0f);
-        return ExternalCast?.Invoke(npc);
-    }
+    private (string Name, float Progress)? CastOf(SimulatedNpc npc) => ExternalCast?.Invoke(npc);
 
     // Native addon names to hide when combat sim is active
     private static readonly string[] NativeAddonNames =
@@ -546,17 +541,10 @@ public class HpBarOverlay : IDisposable
                 hpText);
         }
 
-        // Cast bar: the engine cast, or (Action Mode) a telegraph still in its cast lead-in.
+        // Cast bar: a telegraph still in its cast lead-in.
         string? castName = null;
         float castPercent = 0f;
-        if (npc.State.IsCasting && npc.CurrentCastSkill != null)
-        {
-            castName = npc.CurrentCastSkill.Name;
-            castPercent = npc.State.CastTimeTotal > 0
-                ? npc.State.CastTimeElapsed / npc.State.CastTimeTotal
-                : 0;
-        }
-        else if (ExternalCast?.Invoke(npc) is { } external)
+        if (ExternalCast?.Invoke(npc) is { } external)
         {
             castName = external.Name;
             castPercent = external.Progress;

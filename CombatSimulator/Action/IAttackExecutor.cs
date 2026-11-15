@@ -14,16 +14,11 @@ public readonly record struct NpcAttackRequest(
     NpcAttackStyle Style,
     float Radius,
     float CastTime,
-    bool IsAutoAttack = false,
-    // Area snapshotted when a cast began (real-shape telegraphs); resolve against it, not live data.
-    CombatSimulator.Simulation.TelegraphShape? Area = null);
+    bool IsAutoAttack = false);
 
 /// <summary>
-/// Seam 2: how an enemy attack resolves. The enemy AI (skills, pathing, HP) is
-/// unchanged — it just commits an attack through this interface. The default
-/// <see cref="InstantAttackExecutor"/> reproduces the original range-gated/instant
-/// behavior; <see cref="TelegraphedAttackExecutor"/> defers to a snapshot telegraph
-/// + active-frame hitbox.
+/// Seam 2: how an enemy attack resolves. The enemy AI (skills, pathing, HP) just commits an attack through
+/// this interface; <see cref="TelegraphedAttackExecutor"/> turns it into a snapshot telegraph + active-frame hitbox.
 /// </summary>
 public interface IAttackExecutor
 {

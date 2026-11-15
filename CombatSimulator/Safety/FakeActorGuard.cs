@@ -20,9 +20,8 @@ namespace CombatSimulator.Safety;
 /// plugin takes:
 /// <list type="bullet">
 /// <item>The game's target slots (hard target, soft target, focus target) never hold one of them. The
-/// SetHardTarget guard (<see cref="Targeting.PlayerTargetController"/>) refuses them and routes a click into the
-/// simulation's own lock instead; anything else that leaves one there (a direct write, a path that does not go
-/// through SetHardTarget) is cleared here the next frame.</item>
+/// SetHardTarget guard (<see cref="HardTargetGuard"/>) refuses them; anything else that leaves one there (a direct
+/// write, a path that does not go through SetHardTarget) is cleared here the next frame.</item>
 /// <item>They are targetable only while a simulation runs with every safety barrier up. A Spawn-mode enemy left
 /// standing after the simulation stops (it stays until a zone change), or any of them while a barrier is down,
 /// cannot be targeted or attacked.</item>

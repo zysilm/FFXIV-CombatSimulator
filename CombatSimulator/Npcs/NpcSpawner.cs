@@ -114,29 +114,10 @@ public unsafe class NpcSpawner : IDisposable
     public Func<bool>? StripAccessories { private get; set; }
 
     /// <summary>
-    /// When true, spawn mode is active: all player actions are routed to spawned NPCs
-    /// and the game's target system is bypassed for combat.
+    /// When true, spawn mode is active (a battle of spawned enemies): they register as combat targets past the
+    /// usual target limit, and the map enemy controller reads it.
     /// </summary>
     public bool SpawnModeActive { get; set; }
-
-    /// <summary>
-    /// Returns the last alive spawned NPC, used as the automatic attack target in spawn mode.
-    /// </summary>
-    public SimulatedNpc? GetLastAliveSpawnedNpc()
-    {
-        // A sentry that has not noticed the party yet may be far off on the map: only when nothing
-        // else is left.
-        SimulatedNpc? unaware = null;
-        for (int i = spawnedNpcs.Count - 1; i >= 0; i--)
-        {
-            if (!spawnedNpcs[i].IsSpawned || !spawnedNpcs[i].IsAlive)
-                continue;
-            if (!spawnedNpcs[i].IsSentry || spawnedNpcs[i].AiState != CombatSimulator.Combat.CombatantAiState.Idle)
-                return spawnedNpcs[i];
-            unaware ??= spawnedNpcs[i];
-        }
-        return unaware;
-    }
 
     public NpcSpawner(
         IObjectTable objectTable,

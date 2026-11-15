@@ -20,7 +20,7 @@ public readonly record struct PlayerActionInput(PlayerInputRole Role, uint Actio
 
 /// <summary>
 /// The Action-Mode player input sink. <see cref="UseActionHook"/> routes every
-/// intercepted combat action here while <c>config.ActionMode</c> is on; the real
+/// intercepted combat action here during a simulation; the real
 /// action never fires. The pressed <c>actionId</c> is mapped to a role via the
 /// configured map and queued for the framework thread to drain.
 /// </summary>

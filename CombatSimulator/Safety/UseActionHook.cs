@@ -4,10 +4,7 @@
 
 using System;
 using System.Numerics;
-using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
-using CombatSimulator.Targeting;
-using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -31,13 +28,7 @@ namespace CombatSimulator.Safety;
 public unsafe class UseActionHook : IDisposable
 {
     private readonly CombatEngine combatEngine;
-    private readonly NpcSelector npcSelector;
-    private readonly NpcSpawner npcSpawner;
-    private readonly Targeting.IPlayerInputSettings config;
-    private readonly IClientState clientState;
     private readonly IPluginLog log;
-    private readonly PlayerTargetController targetController;
-    private readonly MapEnemyController mapEnemyController;
     private readonly CombatSimulator.ActionCombat.IPlayerActionSink actionSink;
 
     // Client-only simulated actors are assigned entity ids at/above this floor. Such an
@@ -99,23 +90,11 @@ public unsafe class UseActionHook : IDisposable
     public UseActionHook(
         IGameInteropProvider gameInterop,
         CombatEngine combatEngine,
-        NpcSelector npcSelector,
-        NpcSpawner npcSpawner,
-        Targeting.IPlayerInputSettings config,
-        IClientState clientState,
         IPluginLog log,
-        PlayerTargetController targetController,
-        MapEnemyController mapEnemyController,
         CombatSimulator.ActionCombat.IPlayerActionSink actionSink)
     {
         this.combatEngine = combatEngine;
-        this.npcSelector = npcSelector;
-        this.npcSpawner = npcSpawner;
-        this.config = config;
-        this.clientState = clientState;
         this.log = log;
-        this.targetController = targetController;
-        this.mapEnemyController = mapEnemyController;
         this.actionSink = actionSink;
 
         try
@@ -203,83 +182,10 @@ public unsafe class UseActionHook : IDisposable
 
             if (SuppressExternalInput?.Invoke() == true) return true;
 
-            // Action Mode: hotbar presses are remapped to action-combat inputs
-            // (light attack / guard / skill) and never reach the server. Bypasses all
-            // sim-mode targeting/spawn routing below.
-            if (config.ActionMode)
-            {
-                // Diagnostic: confirms out-of-range/no-target presses still reach us
-                // (the game calls UseAction for them) — they should always whiff-swing.
-                log.Debug($"Action Mode input: actionId={actionId}, targetId=0x{targetId:X}");
-                actionSink.OnAction((uint)actionType, actionId, targetId, extraParam);
-                return true;
-            }
-
-            // Custom targeting: our PlayerTargetController owns the player's target.
-            // Route every combat action to the locked target; with no lock, swallow
-            // the action (no server packet, no simulation) so "attack only when a
-            // target is locked" holds.
-            if (config.EnableCustomTargeting)
-            {
-                var lockedId = targetController.LockedTargetEntityId;
-                if (lockedId == 0)
-                {
-                    lockedId = targetController.TryAcquireTargetForAction();
-                    if (lockedId != 0)
-                    {
-                        log.Info($"INTERCEPTED (custom targeting acquired): actionId={actionId} -> locked 0x{lockedId:X}");
-                        combatEngine.EnqueuePlayerAction((uint)actionType, actionId, lockedId, extraParam);
-                        return true;
-                    }
-
-                    var selected = targetId is not 0 and not 0xE0000000
-                        ? npcSelector.GetSelectedNpc((uint)targetId)
-                        : null;
-                    selected ??= mapEnemyController.TryRegisterByEntityId(targetId);
-                    if (selected != null)
-                    {
-                        targetController.LockTarget(selected);
-                        log.Info($"INTERCEPTED (map enemy join): actionId={actionId} -> 0x{selected.SimulatedEntityId:X}");
-                        combatEngine.EnqueuePlayerAction((uint)actionType, actionId, selected.SimulatedEntityId, extraParam);
-                        return true;
-                    }
-
-                    log.Debug("Custom targeting: no locked target; action ignored.");
-                    return true;
-                }
-
-                log.Info($"INTERCEPTED (custom targeting): actionId={actionId} -> locked 0x{lockedId:X}");
-                combatEngine.EnqueuePlayerAction((uint)actionType, actionId, lockedId, extraParam);
-                return true;
-            }
-
-            // Spawn mode: when active, route all combat actions to the last alive
-            // spawned NPC. No game target needed — bypasses TargetSystem entirely.
-            if (npcSpawner.SpawnModeActive && (targetId == 0 || targetId == 0xE0000000))
-            {
-                var spawnTarget = npcSpawner.GetLastAliveSpawnedNpc();
-                if (spawnTarget != null)
-                {
-                    targetId = spawnTarget.SimulatedEntityId;
-                    log.Debug($"Spawn mode: routing action to '{spawnTarget.Name}' (0x{targetId:X}).");
-                }
-            }
-
-            var isSelected = IsSelectedTarget(targetId);
-
-            // Auto-select: if simulation is active and target is not yet registered, register it
-            if (!isSelected)
-                isSelected = TryAutoSelectTarget(targetId);
-
-            log.Info($"UseAction check: actionId={actionId}, targetId=0x{targetId:X}, isSelected={isSelected}");
-
-            if (!isSelected)
-                return CallOriginalGuarded(actionManager, actionType, actionId,
-                    targetId, extraParam, mode, comboRouteId, outOptAreaTargeted);
-
-            // Intercept — route to simulation, don't send to server
-            log.Info($"INTERCEPTED UseAction: actionId={actionId}, targetId=0x{targetId:X}");
-            combatEngine.EnqueuePlayerAction((uint)actionType, actionId, targetId, extraParam);
+            // Action combat: every hotbar press is remapped to a light attack, guard or skill input and never
+            // reaches the server.
+            log.Debug($"Action input: actionId={actionId}, targetId=0x{targetId:X}");
+            actionSink.OnAction((uint)actionType, actionId, targetId, extraParam);
             return true;
         }
         catch (Exception ex)
@@ -317,9 +223,9 @@ public unsafe class UseActionHook : IDisposable
     /// Invoke the real UseAction — unless the target id belongs to a client-only simulated
     /// actor (>= <see cref="SimulatedEntityIdFloor"/>), in which case swallow the call
     /// instead of passing it through. Every pass-through path (sim inactive, non-Action
-    /// type, unselected target, and the exception fallback) routes through here so that a
-    /// fake target id — e.g. one Spawn mode rewrote onto <c>targetId</c> before an
-    /// exception — can never leave the client as a real action packet.
+    /// type, and the exception fallback) routes through here so that a fake target id
+    /// (a click on a simulated actor outside a battle, another plugin's call) can never
+    /// leave the client as a real action packet.
     /// </summary>
     private bool CallOriginalGuarded(
         ActionManager* actionManager,
@@ -400,82 +306,6 @@ public unsafe class UseActionHook : IDisposable
 
         return useActionLocationHook!.Original(actionManager, actionType, actionId,
             targetId, location, extraParam, a7);
-    }
-
-    /// <summary>
-    /// Attempt to auto-select the target as a combat NPC when simulation is active.
-    /// Returns true if the target was successfully registered.
-    /// </summary>
-    private bool TryAutoSelectTarget(ulong targetId)
-    {
-        try
-        {
-            // Don't auto-select self
-            var localPlayer = CombatSimulator.Core.Services.ObjectTable.LocalPlayer;
-            if (localPlayer == null || targetId == localPlayer.EntityId)
-                return false;
-
-            // Don't auto-select invalid targets
-            if (targetId == 0 || targetId == 0xE0000000)
-                return false;
-
-            // Don't auto-select other players
-            foreach (var obj in Core.Services.ObjectTable)
-            {
-                if (obj.EntityId == (uint)targetId)
-                {
-                    if (obj is IPlayerCharacter)
-                    {
-                        log.Debug($"Auto-select skipped: target 0x{targetId:X} is a player.");
-                        return false;
-                    }
-                    break;
-                }
-            }
-
-            // Use NpcSelector to register the target (it reads from targetManager.Target)
-            var (npc, error) = npcSelector.SelectCurrentTarget(
-                CombatBudgetModel.TierForChoice(config.EnemyStrength),
-                config.EnemyLevel);
-
-            if (npc != null)
-            {
-                // Verify the selected target matches what we expected
-                if (npc.SimulatedEntityId == (uint)targetId)
-                {
-                    combatEngine.RegisterNpcEntity(npc);
-                    log.Info($"Auto-selected '{npc.Name}' (0x{targetId:X}) as combat target ({npc.State.Tier}, Lv.{npc.State.Level}).");
-                    return true;
-                }
-                else
-                {
-                    // Selected wrong target — shouldn't happen but deselect to be safe
-                    log.Warning($"Auto-select mismatch: expected 0x{targetId:X}, got 0x{npc.SimulatedEntityId:X}. Deselecting.");
-                    npcSelector.DeselectNpc(npc);
-                    return false;
-                }
-            }
-            else
-            {
-                log.Debug($"Auto-select failed for 0x{targetId:X}: {error}");
-                return false;
-            }
-        }
-        catch (Exception ex)
-        {
-            log.Error(ex, $"Auto-select error for target 0x{targetId:X}.");
-            return false;
-        }
-    }
-
-    private bool IsSelectedTarget(ulong targetId)
-    {
-        foreach (var npc in npcSelector.SelectedNpcs)
-        {
-            if (npc.SimulatedEntityId == (uint)targetId)
-                return true;
-        }
-        return false;
     }
 
     public void Dispose()

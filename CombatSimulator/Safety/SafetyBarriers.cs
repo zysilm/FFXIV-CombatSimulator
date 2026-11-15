@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-using CombatSimulator.Targeting;
 
 namespace CombatSimulator.Safety;
 
@@ -15,12 +14,12 @@ namespace CombatSimulator.Safety;
 public sealed class SafetyBarriers
 {
     private readonly UseActionHook useAction;
-    private readonly PlayerTargetController targets;
+    private readonly HardTargetGuard hardTarget;
 
-    public SafetyBarriers(UseActionHook useAction, PlayerTargetController targets)
+    public SafetyBarriers(UseActionHook useAction, HardTargetGuard hardTarget)
     {
         this.useAction = useAction;
-        this.targets = targets;
+        this.hardTarget = hardTarget;
     }
 
     /// <summary>Hotbar / keybind actions (<c>ActionManager.UseAction</c>).</summary>
@@ -30,7 +29,7 @@ public sealed class SafetyBarriers
     public bool UseActionLocationHealthy => useAction.IsUseActionLocationHealthy;
 
     /// <summary>Clicking a simulated actor (<c>TargetSystem.SetHardTarget</c>).</summary>
-    public bool HardTargetGuardHealthy => targets.IsHardTargetGuardHealthy;
+    public bool HardTargetGuardHealthy => hardTarget.IsHealthy;
 
     /// <summary>True when every barrier is installed.</summary>
     public bool AllHealthy => UseActionHealthy && UseActionLocationHealthy && HardTargetGuardHealthy;

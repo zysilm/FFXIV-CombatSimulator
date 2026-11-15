@@ -75,17 +75,14 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
     /// </summary>
     private readonly Action<List<Vector3>>? collectPartyPositions;
 
-    /// <summary>Where telegraphed casts register their snapshotted area (null = none drawn).</summary>
-    public ICastAreaMarkers? AreaMarkers { private get; set; }
-
     // What the enemies did, counted per frame and written to the log every few seconds of a fight
     // (the mirror of the allies' line in CombatCompanionManager.Crowd.cs). Counting reads what the
     // movement pass has just decided; it decides nothing.
     private const int EnemyInReach = 0, EnemyWalkingIn = 1, EnemyWaiting = 2, EnemyGoingForBody = 3, EnemyFleeing = 4,
-        EnemyCasting = 5, EnemyPatrolling = 6, EnemyAtPost = 7, EnemyIdle = 8, EnemyOffMesh = 9, EnemyControlled = 10;
+        EnemyPatrolling = 5, EnemyAtPost = 6, EnemyIdle = 7, EnemyOffMesh = 8, EnemyControlled = 9;
     private static readonly string[] EnemyActivityNames =
     {
-        "in reach", "walking in", "waiting a turn", "going for the body", "fleeing", "casting",
+        "in reach", "walking in", "waiting a turn", "going for the body", "fleeing",
         "patrolling", "at its post", "idle", "off the mesh", "under control",
     };
     private readonly CombatActivityTally enemyActivity = new(EnemyActivityNames, listUnseen: true);
@@ -94,14 +91,12 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
 
     /// <summary>
     /// What an enemy on the mesh did this frame, read from what TryCrowdMove left behind, in the order
-    /// it decides: a caster stands; going for the body (or fighting its guard); an unaware sentry (on
+    /// it decides: going for the body (or fighting its guard); an unaware sentry (on
     /// patrol, or at its post); no living target; running from the fight; waiting for a melee place; in
     /// reach or walking in.
     /// </summary>
     private int EnemyActivityOf(SimulatedNpc npc, bool fightingLiveTarget)
     {
-        if (npc.State.IsCasting)
-            return EnemyCasting;
         if (npc.SeizeGoal != null)
             return npc.InReach ? EnemyInReach : EnemyGoingForBody;
         if (IsUnawareSentry(npc))
@@ -339,7 +334,7 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
                 continue;
 
             npc.IsAttackingPlayer = false;
-            ClearNpcActionState(npc);
+            ClearActionState(npc);
             npc.EngageDelayTimer = 0f;
 
             if (!npc.State.IsAlive)
@@ -608,9 +603,9 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
         {
             // Going for the lord's body: while a retainer holds it, a guard within reach is fought where
             // it stands; with nobody holding it, straight on to the body whoever is in reach.
-            npc.InReach = npc.SeizeHeld && target is { IsAlive: true } guard && !npc.State.IsCasting &&
+            npc.InReach = npc.SeizeHeld && target is { IsAlive: true } guard &&
                           CrowdGap(npc, guard, npcPos, combatEngine.GetSimulatedEntityPosition(guard)) <= ReachNow(npc);
-            if (!npc.InReach && !npc.State.IsCasting)
+            if (!npc.InReach)
                 goal = seize;
         }
         else if (IsUnawareSentry(npc))
@@ -623,7 +618,7 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
                 npc.WalkPace = true;
             }
         }
-        else if (fighting && target is { IsAlive: true } && !npc.State.IsCasting)
+        else if (fighting && target is { IsAlive: true })
         {
             var targetPos = combatEngine.GetSimulatedEntityPosition(target);
             var reach = ReachNow(npc);
@@ -725,8 +720,6 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
         if (!BeginTurn(npc, deltaTime))
             return;
 
-        DiscardInvalidNpcActionState(npc);
-
         var npcPos = GetNpcPosition(npc);
         float distToPlayer = Vector3.Distance(npcPos, playerPos);
 
@@ -778,7 +771,7 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
     /// </summary>
     protected override void OnDeadTurn(SimulatedNpc npc)
     {
-        ClearNpcActionState(npc);
+        ClearActionState(npc);
         if (npc.AiState != CombatantAiState.Dead)
         {
             npc.AiState = CombatantAiState.Dead;
@@ -796,7 +789,7 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
         var simulatedTarget = combatEngine.GetNpcTarget(npc);
         if (simulatedTarget == null || !simulatedTarget.IsAlive)
         {
-            ClearNpcActionState(npc);
+            ClearActionState(npc);
             npc.AiState = CombatantAiState.Idle;
             return;
         }
@@ -807,59 +800,14 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
 
         var targetPos = combatEngine.GetSimulatedEntityPosition(simulatedTarget);
         var distToTarget = CrowdGap(npc, simulatedTarget, npcPos, targetPos);
-        var targetEntityId = simulatedTarget.EntityId;
-
-        if (npc.State.IsCasting && npc.State.CastTargetId != targetEntityId)
-        {
-            ClearNpcActionState(npc);
-            if (npc.BattleChara != null)
-                world.ApplyCombatIdle(npc);
-        }
 
         // The crowd pass faces the enemies it moves; one standing off the mesh faces its target here.
         if (!npc.CrowdDriven)
             ForceRotateToward(npc, targetPos, deltaTime);
 
-        // A telegraphed cast runs to completion wherever its target goes: the area is fixed, so
-        // walking out of it is the dodge. Letting the range gate below pause it would let the
-        // player freeze a cast just by stepping back.
-        if (npc.CastArea != null && TickSnapshotCast(npc, deltaTime))
-            return;
-
         // Out of reach: the crowd is walking it in.
         if (distToTarget > ReachNow(npc))
             return;
-
-        // Handle casting
-        if (npc.State.IsCasting)
-        {
-            var castTarget = combatEngine.State.GetEntity(npc.State.CastTargetId);
-            if (castTarget == null || !castTarget.IsAlive)
-            {
-                ClearNpcActionState(npc);
-                if (npc.BattleChara != null)
-                    world.ApplyCombatIdle(npc);
-                return;
-            }
-
-            if (npc.BattleChara != null)
-                world.ApplyActionLocked(npc);
-            npc.State.CastTimeElapsed += deltaTime;
-            if (npc.State.CastTimeElapsed >= npc.State.CastTimeTotal)
-            {
-                npc.State.IsCasting = false;
-                if (npc.CurrentCastSkill != null)
-                {
-                    var ok = attackSink.ExecuteEnemyAttack(npc, new CombatSimulator.ActionCombat.NpcAttackRequest(
-                        npc.CurrentCastSkill.ActionId, npc.State.CastTargetId, npc.CurrentCastSkill.Potency,
-                        npc.CurrentCastSkill.AttackStyle, npc.CurrentCastSkill.Radius, npc.CurrentCastSkill.CastTime));
-                    if (ok)
-                        npc.CurrentCastSkill.CooldownRemaining = npc.CurrentCastSkill.Cooldown / ActionPace();
-                    npc.CurrentCastSkill = null;
-                }
-            }
-            return;
-        }
 
         // Lock, telegraph still running, skills (a random ready one after a token), auto-attack:
         // the step both sides share (Combat/CombatStep.cs).
@@ -869,9 +817,8 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
     private readonly EnemyStepSink stepSink;
 
     /// <summary>
-    /// The enemies' half of the shared step: an attack goes to the attack router (an instant one, or
-    /// a telegraph); with the engine's cast bar (only when ActionMode is off, which no mode does any more) a skill with a
-    /// cast time starts a cast instead, paid for at once, its area snapshotted.
+    /// The enemies' half of the shared step: every attack goes to the attack router, which telegraphs it (a skill's
+    /// cast time becomes the telegraph's lead-in).
     /// </summary>
     private sealed class EnemyStepSink(NpcAiController owner) : ICombatStepSink<SimulatedNpc, SimulatedEntityState>
     {
@@ -889,31 +836,9 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
 
         public AttackCommit CommitSkill(SimulatedNpc npc, SimulatedEntityState simulatedTarget, NpcSkill skill, int mpCost)
         {
-            var targetEntityId = simulatedTarget.EntityId;
-            var castTime = owner.EffectiveCastTime(skill);
-
-            // Action Mode skips the engine cast bar — the telegraph executor owns the
-            // windup uniformly (cast time feeds the telegraph duration).
-            if (!owner.config.ActionMode && castTime > 0)
-            {
-                npc.State.IsCasting = true;
-                npc.State.CastActionId = skill.ActionId;
-                npc.State.CastTimeTotal = castTime;
-                npc.State.CastTimeElapsed = 0;
-                npc.State.CastTargetId = targetEntityId;
-                npc.State.CastInterruptible = skill.Interruptible;
-                npc.CurrentCastSkill = skill;
-                npc.State.CurrentMp = Math.Max(0, npc.State.CurrentMp - mpCost);
-                owner.BeginSnapshotCast(npc, skill, simulatedTarget, castTime);
-
-                owner.combatEngine.AddLogEntry(
-                    $"{npc.Name} begins casting {skill.Name}...",
-                    CombatLogType.Info);
-                return AttackCommit.CastStarted;
-            }
-
             var ok = owner.attackSink.ExecuteEnemyAttack(npc, new CombatSimulator.ActionCombat.NpcAttackRequest(
-                skill.ActionId, targetEntityId, skill.Potency, skill.AttackStyle, skill.Radius, castTime));
+                skill.ActionId, simulatedTarget.EntityId, skill.Potency, skill.AttackStyle, skill.Radius,
+                owner.EffectiveCastTime(skill)));
             return ok ? AttackCommit.Landed : AttackCommit.Failed;
         }
 
@@ -944,101 +869,6 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
         return hasArea
             ? MathF.Min(skill.NativeCastTime, EnemyMaxCastSeconds)
             : skill.CastTime;
-    }
-
-    /// <summary>
-    /// Real-shape option: freeze the cast's area now, the way the game places an omen when the
-    /// cast bar starts, and draw it for the length of the cast.
-    /// </summary>
-    private void BeginSnapshotCast(SimulatedNpc npc, NpcSkill skill, SimulatedEntityState target, float castTime)
-    {
-        npc.CastArea = null;
-        if (!config.EnemyTelegraphRealShapes)
-            return;
-
-        var req = new CombatSimulator.ActionCombat.NpcAttackRequest(
-            skill.ActionId, target.EntityId, skill.Potency, skill.AttackStyle, skill.Radius, castTime);
-        var shape = attackSink.SnapshotShape(npc, req, target);
-        if (!shape.IsArea)
-            return;
-
-        npc.CastArea = shape;
-        var actionId = skill.ActionId;
-        AreaMarkers?.Add(npc.SimulatedEntityId, actionId, shape, castTime,
-            () => npc.State.IsCasting && npc.State.CastActionId == actionId && npc.CastArea != null);
-    }
-
-    /// <summary>
-    /// Advance a snapshotted cast. Returns true while it owns this frame. A cast the engine
-    /// stopped (interrupt/stun) spends the skill, so it is not immediately recast.
-    /// </summary>
-    private bool TickSnapshotCast(SimulatedNpc npc, float deltaTime)
-    {
-        var skill = npc.CurrentCastSkill;
-        if (skill == null)
-        {
-            npc.CastArea = null;
-            return false;
-        }
-
-        if (!npc.State.IsCasting)
-        {
-            skill.CooldownRemaining = skill.Cooldown / ActionPace();
-            npc.CurrentCastSkill = null;
-            npc.CastArea = null;
-            combatEngine.AddLogEntry($"{npc.Name}'s {skill.Name} is interrupted.", CombatLogType.Info);
-            return false;
-        }
-
-        if (npc.BattleChara != null)
-            world.ApplyActionLocked(npc);
-        npc.State.CastTimeElapsed += deltaTime;
-        if (npc.State.CastTimeElapsed < npc.State.CastTimeTotal)
-            return true;
-
-        var area = npc.CastArea;
-        npc.State.IsCasting = false;
-        npc.CastArea = null;
-        npc.CurrentCastSkill = null;
-        // CastTime 0: the wait already happened here; a telegraphed executor
-        // must not add the cast again as lead-in.
-        var ok = attackSink.ExecuteEnemyAttack(npc, new CombatSimulator.ActionCombat.NpcAttackRequest(
-            skill.ActionId, npc.State.CastTargetId, skill.Potency, skill.AttackStyle, skill.Radius, 0f, Area: area));
-        if (ok)
-            skill.CooldownRemaining = skill.Cooldown / ActionPace();
-        npc.State.AnimationLock = MathF.Max(npc.State.AnimationLock, 0.6f);
-        return true;
-    }
-
-    private static void ClearNpcActionState(SimulatedNpc npc)
-    {
-        ClearActionState(npc);
-        npc.CastArea = null; // its marker sees the cast end and leaves on the next tick
-    }
-
-    private void DiscardInvalidNpcActionState(SimulatedNpc npc)
-    {
-        if (!npc.State.IsCasting && npc.CurrentCastSkill == null)
-            return;
-
-        var target = combatEngine.State.GetEntity(npc.State.CastTargetId);
-        var selectedTarget = combatEngine.GetNpcTarget(npc);
-        var stateAllowsCast = npc.AiState is CombatantAiState.Combat or CombatantAiState.Chasing;
-        var invalid = npc.CurrentCastSkill == null ||
-                      npc.State.CastTargetId == 0 ||
-                      target == null ||
-                      !target.IsAlive ||
-                      selectedTarget == null ||
-                      !selectedTarget.IsAlive ||
-                      selectedTarget.EntityId != npc.State.CastTargetId ||
-                      !stateAllowsCast;
-
-        if (!invalid)
-            return;
-
-        ClearNpcActionState(npc);
-        if (npc.BattleChara != null && npc.AiState != CombatantAiState.Dead)
-            world.ApplyCombatIdle(npc);
     }
 
     private void RotateTowardPlayer(SimulatedNpc npc, Vector3 playerPos, float deltaTime)

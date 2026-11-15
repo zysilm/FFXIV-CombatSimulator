@@ -12,7 +12,6 @@ namespace CombatSimulator.ActionCombat;
 /// <summary>What the player's skill and guard buttons map to (<see cref="ActionComboSink"/>).</summary>
 public interface IActionComboSettings
 {
-    bool ActionMode { get; }
     uint ActionGuardId { get; }
     uint ActionSkill1Id { get; }
     uint ActionSkill2Id { get; }
@@ -21,7 +20,6 @@ public interface IActionComboSettings
 /// <summary>The player's own input in action combat: the keys, the light attack and its swing (<see cref="ActionModeController"/>).</summary>
 public interface IActionInputSettings
 {
-    bool ActionMode { get; }
     GamepadButtons ActionBasicAttackGamepadButton { get; }
     int ActionBasicAttackKey { get; }
     GamepadButtons ActionGuardGamepadButton { get; }
@@ -56,13 +54,11 @@ public interface IPlayerGuardSettings
 }
 
 /// <summary>
-/// The enemies' attacks from commit to landing: which executor runs them (<see cref="CombatModeRouter"/>), the
-/// instant one (<see cref="InstantAttackExecutor"/>), the telegraphed one's windup
+/// The enemies' attacks from commit to landing: the telegraphed executor's windup
 /// (<see cref="TelegraphedAttackExecutor"/>) and the telegraphs (<see cref="TelegraphSystem"/>).
 /// </summary>
 public interface IEnemyAttackSettings
 {
-    bool ActionMode { get; }
     float ActionWindupSeconds { get; }
     bool ActionEnemyWindupSwing { get; }
     bool EnemyMonsterRealSkills { get; }

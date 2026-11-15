@@ -17,7 +17,6 @@ using CombatSimulator.Recipes;
 using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
 using CombatSimulator.Spectators;
-using CombatSimulator.Targeting;
 using Dalamud.Game.ClientState.GamePad;
 using Dalamud.Interface;
 using Dalamud.Interface.Utility;
@@ -49,7 +48,6 @@ public partial class MainWindow : IDisposable
     private readonly DynamicCameraController dynamicCameraController;
     private readonly HookSafetyChecker hookSafetyChecker;
     private readonly UseActionHook useActionHook;
-    private readonly PlayerTargetController playerTargetController;
     private readonly IClientState clientState;
     private readonly IDataManager dataManager;
     private readonly IChatGui chatGui;
@@ -96,7 +94,6 @@ public partial class MainWindow : IDisposable
 
     // Glamourer design list cache for combo box
     private List<KeyValuePair<Guid, string>> glamourerDesigns = new();
-    private bool showControlsPopup;
 
     // Local player's skeleton bone names (Virtual Enemies look-at bone fallback list).
 
@@ -185,7 +182,6 @@ public partial class MainWindow : IDisposable
         DynamicCameraController dynamicCameraController,
         HookSafetyChecker hookSafetyChecker,
         UseActionHook useActionHook,
-        PlayerTargetController playerTargetController,
         SpectatorController spectatorController,
         CombatSimulator.Dev.IDevExperimental devExperimental,
         IClientState clientState,
@@ -208,7 +204,6 @@ public partial class MainWindow : IDisposable
         this.dynamicCameraController = dynamicCameraController;
         this.hookSafetyChecker = hookSafetyChecker;
         this.useActionHook = useActionHook;
-        this.playerTargetController = playerTargetController;
         this.spectatorController = spectatorController;
         this.clientState = clientState;
         this.dataManager = dataManager;
@@ -265,11 +260,6 @@ public partial class MainWindow : IDisposable
             config.Save();
         }
         HelpMarker("Open the War Generator: build a battle, choose its rules, and save it as a profile.");
-
-        if (ImGui.Button("Controls"))
-            showControlsPopup = true;
-        HelpMarker("Show the combat targeting controls used by Combat Simulator.");
-        DrawControlsPopup();
 
         ImGui.Separator();
         vnavmeshIpc.RefreshStatus();
@@ -561,53 +551,6 @@ public partial class MainWindow : IDisposable
             }
             HelpMarker("Hide every name and number on the HP bars, your own included.");
         }
-    }
-
-    private void DrawControlsPopup()
-    {
-        if (!showControlsPopup)
-            return;
-
-        ImGui.OpenPopup("Combat Controls");
-        if (ImGui.BeginPopupModal("Combat Controls", ref showControlsPopup, ImGuiWindowFlags.AlwaysAutoResize))
-        {
-            ImGui.TextUnformatted("Combat targeting uses your current game keybinds.");
-            ImGui.Spacing();
-
-            if (ImGui.BeginTable("##CombatControlTable", 3, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg))
-            {
-                ImGui.TableSetupColumn("Action");
-                ImGui.TableSetupColumn("Keyboard / Mouse");
-                ImGui.TableSetupColumn("Gamepad");
-                ImGui.TableHeadersRow();
-
-                DrawControlRow("Acquire target", "Confirm / OK binding", "Confirm / OK button");
-                DrawControlRow("Cancel target", "Cancel binding", "Cancel button");
-                DrawControlRow("Next target", "Target Next binding", "D-pad Right");
-                DrawControlRow("Previous target", "Target Previous binding", "D-pad Left");
-                DrawControlRow("Attack", "Your normal action hotkeys", "Your normal hotbar buttons");
-                DrawControlRow("Auto-counter", "Hit while unlocked can lock the attacker", "Same behavior");
-
-                ImGui.EndTable();
-            }
-
-            ImGui.Spacing();
-            if (ImGui.Button("Close", new Vector2(100, 0)))
-                showControlsPopup = false;
-
-            ImGui.EndPopup();
-        }
-    }
-
-    private static void DrawControlRow(string action, string keyboard, string gamepad)
-    {
-        ImGui.TableNextRow();
-        ImGui.TableNextColumn();
-        ImGui.TextUnformatted(action);
-        ImGui.TableNextColumn();
-        ImGui.TextUnformatted(keyboard);
-        ImGui.TableNextColumn();
-        ImGui.TextUnformatted(gamepad);
     }
 
     private string BuildActionModeQuickHelp()
@@ -1244,16 +1187,6 @@ public partial class MainWindow : IDisposable
         HelpMarker("Humanoid enemies cast their real job's strongest N damage skills (by weapon → job). " +
                    "Monsters and NPC-only weapons auto-attack only. 0 = everyone auto-attacks.");
         DrawEnemySkillsSection();
-
-        ImGui.Separator();
-
-        var autoCounter = config.EnableAutoCounter;
-        if (ImGui.Checkbox("Auto-counter", ref autoCounter))
-        {
-            config.EnableAutoCounter = autoCounter;
-            config.Save();
-        }
-        HelpMarker("When you have no locked target, being hit by an enemy auto-locks that attacker. Pressing cancel stops auto-counter (no auto-lock even when hit) until you press confirm to lock a target again. Requires custom targeting.");
     }
 
 

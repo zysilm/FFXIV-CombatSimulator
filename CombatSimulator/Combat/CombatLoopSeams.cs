@@ -114,15 +114,12 @@ public interface ICombatWorld
 /// Where an attack the loops commit is resolved (today the enemies' attack router and the engine's companion action).
 /// <para>Which side's game adapter supports what (<c>GameAttackSink</c>): the allies' has no attack
 /// router, so <see cref="ExecuteEnemyAttack"/> is enemy-only and throws <see cref="NotSupportedException"/>
-/// there. <see cref="SnapshotShape"/> (used by the enemies) and <see cref="ProcessCompanionAction"/> (used by
-/// the allies) only need the engine and work on both.</para>
+/// there. <see cref="ProcessCompanionAction"/> (used by the allies) only needs the engine and works on both.</para>
 /// </summary>
 public interface IAttackSink
 {
     /// <summary><c>combatModeRouter.AttackExecutor.Execute(npc, request)</c>. Enemy adapter only.</summary>
     bool ExecuteEnemyAttack(SimulatedNpc npc, NpcAttackRequest request);
-    /// <summary><c>TelegraphSystem.SnapshotShape(combatEngine, npc, request, target)</c>.</summary>
-    TelegraphShape SnapshotShape(SimulatedNpc npc, NpcAttackRequest request, SimulatedEntityState target);
     /// <summary><c>combatEngine.ProcessCompanionAction(companion, target, actionId, potency, style, radius)</c>.</summary>
     SimulatedActionResult ProcessCompanionAction(CombatCompanion companion, SimulatedNpc target, uint actionId,
         int potency = 0, NpcAttackStyle attackStyle = NpcAttackStyle.Auto, float radius = 0);
@@ -184,10 +181,4 @@ public interface ICrowdAgents
     /// stood on it since); while not, <see cref="TryReachableSpot"/> finds nothing.
     /// </summary>
     bool CanJudgeReach { get; }
-}
-
-/// <summary>Where a telegraphed cast's area is drawn (implemented by ActionCombat.EnemyAreaMarkers).</summary>
-public interface ICastAreaMarkers
-{
-    int Add(uint sourceSimId, uint actionId, in TelegraphShape shape, float duration, Func<bool>? stillValid = null);
 }

@@ -224,7 +224,7 @@ public unsafe partial class NpcAiController
             tactics.FleeTimeLeft = FleeMaxDuration;
             tactics.FleeAllyId = best?.SimulatedEntityId ?? 0;
             tactics.FleeFallback = npc.SpawnPosition;
-            ClearNpcActionState(npc);
+            ClearActionState(npc);
             combatEngine.AddLogEntry($"{npc.Name} flees!", CombatLogType.Info);
         }
 
@@ -492,5 +492,5 @@ public unsafe partial class NpcAiController
         => StrafeIntervalMin + RandomSource.NextSingle() * (StrafeIntervalMax - StrafeIntervalMin);
 
     private bool IsNpcBusyAttacking(SimulatedNpc npc)
-        => npc.State.IsCasting || npc.State.AnimationLock > 0f || isTelegraphBusy(npc.SimulatedEntityId);
+        => npc.State.AnimationLock > 0f || isTelegraphBusy(npc.SimulatedEntityId);
 }

@@ -189,6 +189,8 @@ enum Call
     SetTargetId, SetRotation, SetEntityId, SetNormalMode, AddApproach, RemoveApproach, ClearApproach, SetApproachPosition,
     SetApproachRotation, ApplyMoving, ApplyMovingTimeline, ApplyCombatIdle, ApplyActionLocked, ApplyDead, ClearMovement,
     SetBattleStance, ClearBattleStance, PlayDeathAnimation, ResetDeathAnimation, PlayEmote, HoldEmoteLoop, ResetEmote,
+    // AreaMarker: no longer raised (the enemies' cast areas went with the engine cast bar, 2026-11-15); kept so
+    // the call-count hash keeps its layout and the golden files stay comparable.
     TrackFootIk, ReportRootLift, CrowdDrive, CrowdObstacle, AreaMarker, Count,
 }
 
@@ -196,7 +198,7 @@ enum Call
 /// The flat world: bodies on a plane, read and written by address; the crowd walks each agent straight at its
 /// goal at its speed (no navigation, no avoidance, no floor); the visual states only record their kind.
 /// </summary>
-sealed unsafe class FlatWorld : ICombatWorld, ICrowdAgents, ICastAreaMarkers
+sealed unsafe class FlatWorld : ICombatWorld, ICrowdAgents
 {
     private readonly Dictionary<nint, Body> bodies = new();
     private readonly LoopLog log;
@@ -281,12 +283,6 @@ sealed unsafe class FlatWorld : ICombatWorld, ICrowdAgents, ICastAreaMarkers
     public void TrackFootIk(nint address, float deltaTime) => log.Note(Call.TrackFootIk);
     public float FootIkPelvisOffset(nint address) => 0f;
     public void ReportFootIkRootLift(nint address, float lift) => log.Note(Call.ReportRootLift);
-
-    public int Add(uint sourceSimId, uint actionId, in TelegraphShape shape, float duration, Func<bool>? stillValid = null)
-    {
-        log.Note(Call.AreaMarker);
-        return 0;
-    }
 
     // ---- the crowd: every agent walks straight at its goal, the frame after it is set ----
 
@@ -532,8 +528,6 @@ sealed class FakeAttacks : IAttackSink
         return true;
     }
 
-    public TelegraphShape SnapshotShape(SimulatedNpc npc, NpcAttackRequest request, SimulatedEntityState target) => default;
-
     /// <summary>The telegraphs whose time is up land (TelegraphSystem.Tick), in the order they began.</summary>
     public void Tick()
     {
@@ -750,7 +744,7 @@ sealed unsafe class LoopReplay
 
         world = new FlatWorld(log);
         engine = new FakeEngine(world, log, scenario.Rules);
-        var damage = new DamageCalculator(new Random(seed + 3)) { IsActionMode = () => settings.ActionMode, PlayerMaxHp = () => 60000f };
+        var damage = new DamageCalculator(new Random(seed + 3)) { IsActionMode = () => true, PlayerMaxHp = () => 60000f };
         attacks = new FakeAttacks(engine, damage, log);
 
         // The player: a body and the engine's player state.
