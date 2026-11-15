@@ -16,7 +16,7 @@
 ### 工作方式 / git
 
 - 协调者 + 子代理工作流，实现交给后台子代理，主线留给讨论（2026-11-14，用户裁决）→ [AGENT_WORKFLOW.md](AGENT_WORKFLOW.md)。
-- 只有协调者提交推送；不用 `git stash`、不强推、不改历史；提交只 `git add -A CombatSimulator AdvancedRagdoll Tests docs CombatSimulator.sln CLAUDE.md ':!CombatSimulator/Dev/Experimental'`。
+- 只有协调者提交推送；不用 `git stash`、不强推、不改历史；提交只 `git add -A CombatSimulator Tests docs CombatSimulator.sln CLAUDE.md ':!CombatSimulator/Dev/Experimental'`。
 - 对用户一律中文；界面指引写确切页签名和折叠栏标题，先在 `Gui/MainWindow.cs` 核对（2026-10-24，用户裁决）。
 - 简短反馈既像报 bug 又像提需求时，先一句话复述确认再动手；修 bug 只改根因（2026-10-25）。
 - 重写就删干净，旧路径不留作退路（2026-11-13，用户裁决）。
@@ -99,6 +99,7 @@
 - NuGet 发布用 Trusted Publishing（GitHub Actions OIDC，`NuGet/login@v1` 换 1 小时临时密钥），不用长期 API 密钥：nuget.org 策略 owner `zysilm`、repo `AdvancedRagdoll`、workflow `publish.yml`、environment `release`、glob `AdvancedRagdoll`；GitHub secret `NUGET_USER` = nuget.org 用户名（2026-11-14，用户指出 API 密钥已不推荐）。
 - AdvancedRagdoll 库用 MPL-2.0，与插件相同（2026-11-14，用户裁决；先定 GPL v3，得知动态链接也受约束后改回）；闭源项目可以引用，改了库文件须公开该文件；Bepu 为 Apache-2.0，兼容。
 - 私有模块：A3b/A4 需要时由协调者改接法，代码不进公开库（2026-11-14，用户授权协调者自行决定）。
+- 插件以 NuGet 包引用 AdvancedRagdoll（`PackageReference`，精确版本，锁文件锁定），不用子模块，也不留源码副本；库很少改动，改动在库自己的仓库（`C:\PROJECT\AdvancedRagdoll`）里做，打 `v<版本>` 标签发布，插件再升 `PackageReference`（2026-11-14，用户裁决；流程见 `AGENT_WORKFLOW.md` §3）。库自己的离线测试搬进库仓库 `tests/`。
 - 网格体积（两条工作线程）不开 BEPU 确定性模式：游戏行为不变，这条路径的录制只核对产物被正确回答，不要求逐位相同（2026-11-14，用户按协调者建议裁决）。
 
 ### 镜头
@@ -148,8 +149,8 @@
 
 ### 构建 / 配置
 
-- 2026-11-14：游戏的热重载只监视 `CombatSimulator.dll` 的写入；被引用的库若生成引用程序集，只改库里的方法体不会重写插件 DLL，游戏不重载 → 库项目设 `ProduceReferenceAssembly=false`（`fa89b5a`）。
-- 2026-11-14：命令行的 `-p:DefineConstants=…` 会传给被引用的项目并顶掉它自己的编译常量 → `ProjectReference` 上加 `GlobalPropertiesToRemove="DefineConstants"`。
+- 2026-11-14：游戏的热重载只监视 `CombatSimulator.dll` 的写入；被引用的库若生成引用程序集，只改库里的方法体不会重写插件 DLL，游戏不重载 → 库项目设 `ProduceReferenceAssembly=false`（`fa89b5a`）。（2026-11-14 起插件改引用 NuGet 包，这条只在库还是同仓库项目引用时有意义：包里的 DLL 只在升版本时变，升版本会重新编译插件 DLL，游戏照常重载；库项目里的这个设置留着无害。）
+- 2026-11-14：命令行的 `-p:DefineConstants=…` 会传给被引用的项目并顶掉它自己的编译常量 → `ProjectReference` 上加 `GlobalPropertiesToRemove="DefineConstants"`。（改引用 NuGet 包后不再适用：包是编好的 DLL。）
 - 2026-11-14：用户配置按“类型名, 程序集名”保存（`$type`），写进配置的类型换了程序集，旧配置就读不回来 → 这类类型留在插件程序集里。
 - 2026-11-14：用 `-p:DefineConstants=PUBLIC_BUILD` 验证公开构建时要加 `-o <仓库外目录>`，否则会覆盖游戏正在加载的 `bin/Release`。
 

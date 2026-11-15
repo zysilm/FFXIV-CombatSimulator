@@ -2,7 +2,7 @@
 
 本文件规定 agent 在本仓库怎么干活（2026-11-14 建立，参照 vestra-player 的 agentic workflow，按本项目的规模简化）。每个会话、每个子代理开工前先读它。流程有变化就改这里，不只留在某个 agent 的记忆里。
 
-本项目只有一个插件仓库，没有 SDK、发版流水线或多方协作，所以只保留三件事：
+本项目以插件仓库为主（布娃娃库 AdvancedRagdoll 在自己的仓库里，以 NuGet 包引用，见 §3），没有多方协作，所以只保留三件事：
 - 主线专心和用户讨论；
 - 实现交给子代理；
 - 交付前有人复查。
@@ -72,10 +72,22 @@ flowchart TB
 - 需要并行时，第二个实现者在自己的 git worktree 里工作。它在 worktree 里编译，不影响游戏。做完由协调者把改动合回主检出，再编译一次。
 - 离线测试项目在 `Tests/` 下，用 `dotnet run -c Release` 跑，不依赖游戏。
 
+### 布娃娃库 AdvancedRagdoll（独立仓库，NuGet 包）
+
+- 插件用 `PackageReference` 引用 nuget.org 上的 `AdvancedRagdoll` 包（精确版本，`CombatSimulator/packages.lock.json` 锁定），本仓库里没有库的源码，也没有子模块。库很少改动。
+- 库的源码、库自己的离线测试（`tests/`）和 CI 在 `C:\PROJECT\AdvancedRagdoll`（https://github.com/zysilm/AdvancedRagdoll，分支 `main`）。库的测试直接编译库的源文件，看得到库的内部类型；插件仓库的测试看不到（库的 `InternalsVisibleTo` 只给 `CombatSimulator` 和 `RagdollReplay`）。
+- 改库的流程：
+  1. 在库仓库里改代码，跑 `dotnet build AdvancedRagdoll.csproj -c Release` 和相关的 `tests/<Name>`（`dotnet run -c Release`），把 `AdvancedRagdoll.csproj` 的 `<Version>` 改成新版本，提交并推送；
+  2. 推送标签 `v<版本>`（例：`git tag v0.1.0-beta.2 && git push origin v0.1.0-beta.2`），包的版本号取自标签；
+  3. GitHub Actions 的 `publish` 工作流停在环境 `release` 等待批准——在 GitHub 上批准后，它用 Trusted Publishing 发布到 nuget.org（几分钟到十几分钟后才能还原，用 `dotnet package search AdvancedRagdoll --prerelease` 查）；
+  4. 插件把 `CombatSimulator/CombatSimulator.csproj` 里的 `PackageReference` 版本改成新版本，编译（会更新 `packages.lock.json`），跑布娃娃回放（`Tests/RagdollReplay`）等相关测试，连同锁文件一起提交。
+- 发布前想在插件里试库的改动：在库仓库 `dotnet pack -c Release -o <临时目录>`，插件编译时加 `-p:RestoreAdditionalProjectSources=<临时目录>`，并把 `NUGET_PACKAGES` 指到一个临时目录（否则本地打的包会占住全局缓存里同版本号的位置）；试完别提交这样生成的锁文件。
+- 库的 `InternalsVisibleTo`、公开 API 或依赖有变化，都要发新版本；插件仓库不能自己补。
+
 ## 4. 所有 agent 都遵守的项目规矩
 
 - **语言**：对用户一律用中文，包括回答、汇报、进度说明。仓库里的提交说明用英文；文档中英皆可，跟随所在文件。简报用英文或中文都行；子代理向协调者报告用中文。
-- **不碰** `CombatSimulator/Dev/Experimental`（独立仓库，子模块）。提交只用：`git add -A CombatSimulator AdvancedRagdoll Tests docs CombatSimulator.sln CLAUDE.md ':!CombatSimulator/Dev/Experimental'`。
+- **不碰** `CombatSimulator/Dev/Experimental`（独立仓库，子模块）。提交只用：`git add -A CombatSimulator Tests docs CombatSimulator.sln CLAUDE.md ':!CombatSimulator/Dev/Experimental'`。
 - **git**：只有协调者提交和推送，推送用普通 `git push`。任何人都不用 `git stash`，不做强推，不改历史。
 - **提交说明**：私有或实验性功能的提交说明保持中性措辞（具体名单协调者知道，子代理按简报写）。提交说明结尾带会话指定的署名行。
 - **重写就删干净**：新系统替换旧系统时，旧路径同一批删掉，不留作“退路”。

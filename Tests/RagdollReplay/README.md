@@ -7,7 +7,7 @@ real `RagdollController`, offline, and checks that it produces the same output b
 ## How the controller runs offline
 
 The controller (since stage A4 the library's `Ragdoll`, which the plugin's `RagdollController` derives from) asks
-everything of the game through the internal host interfaces in `AdvancedRagdoll/Hosting/` (named `IHost*` since stage A7;
+everything of the game through the internal host interfaces in the library's `Hosting/` folder (https://github.com/zysilm/AdvancedRagdoll) (named `IHost*` since stage A7;
 the public API other games use is a facade over them) (skeletons, world queries, characters, colliders, the models (`IMeshSource`,
 A2b), settings, clock, random, scheduler, log). In the game those are thin adapters over the old calls; here
 `ReplayHost.cs` and `ReplayMeshSource.cs` implement them from the recording: every query takes the record its own
@@ -57,6 +57,12 @@ dotnet build ../../CombatSimulator -c Release -p:DefineConstants=PUBLIC_BUILD -o
 dotnet build -c Release
 "%APPDATA%\XIVLauncher\runtime\dotnet.exe" bin\Release\net10.0-windows\RagdollReplay.dll <file.rgdrec | folder> [--keep]
 ```
+
+The first command builds the plugin, which restores the AdvancedRagdoll package from nuget.org (the version in
+`CombatSimulator/CombatSimulator.csproj`, pinned by its `packages.lock.json`); the replay then references the
+`CombatSimulator.dll` and `AdvancedRagdoll.dll` of that output folder (`PluginDir`). A new library version can change
+the outputs, so after a library version bump re-run the replay over the recordings before committing the bump. The replay assembly is named `RagdollReplay` because the library and the plugin
+grant internals to that name (`InternalsVisibleTo`).
 
 Run it on the .NET runtime the game uses (XIVLauncher's, above): results are bit-exact only on the same machine,
 runtime and BepuPhysics version. `--keep` keeps the replayed recordings (they are deleted otherwise). Exit code 0
