@@ -318,24 +318,24 @@ public unsafe class ActiveCameraController : IDisposable
         }
         catch { }
 
-        Vector3? ownedLookAt = null;
+        setCameraLookAtHook!.Original(camera, lookAt, cameraPosition, scratch);
+
+        // The camera update stores these two buffers (its locals) as the scene camera's position and look-at
+        // point right after this call, and builds its view from them: a pose written here is the one rendered.
+        // Both overrides therefore write the caller's buffers after the original returns (handing the original
+        // a copy, as this hook once did, changed nothing the game kept). The cutscene pose runs last and wins.
         if (isMain && IsActive && ModeLookAtOverride != null)
         {
             try
             {
-                ownedLookAt = ModeLookAtOverride(*lookAt, *cameraPosition);
+                var owned = ModeLookAtOverride(*lookAt, *cameraPosition);
+                if (owned.HasValue && float.IsFinite(owned.Value.X) && float.IsFinite(owned.Value.Y) &&
+                    float.IsFinite(owned.Value.Z))
+                    *lookAt = owned.Value;
             }
             catch (Exception ex) { log.Warning(ex, "Mode look-at override failed; using native target."); }
         }
-        if (ownedLookAt.HasValue)
-        {
-            var point = ownedLookAt.Value;
-            setCameraLookAtHook!.Original(camera, &point, cameraPosition, scratch);
-        }
-        else setCameraLookAtHook!.Original(camera, lookAt, cameraPosition, scratch);
 
-        // The camera update stores these two buffers (its locals) as the scene camera's position and look-at
-        // point right after this call, and builds its view from them: a pose written here is the one rendered.
         if (isMain && PoseOverride != null)
         {
             var target = *lookAt;

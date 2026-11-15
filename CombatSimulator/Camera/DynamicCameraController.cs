@@ -319,6 +319,7 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
     private long nextLookAtLog;
     private long lookAtOverrides;
     private float lastLookAtRenderedChi;
+    private float lastLookAtSceneChi;
 
     /// <summary>Keep native yaw and camera position, but remove the distance-dependent
     /// vertical aim offset for the owned death shot. No pitch feedback or matrix writes.</summary>
@@ -339,7 +340,7 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
             nextLookAtLog = now + 5000;
             log.Info($"DynamicCam look-at override: nativeY={nativeLookAt.Y:F4}, ownedY={owned.Y:F4}, " +
                 $"cameraY={cameraPosition.Y:F4}, horizontal={horizontal:F3}, commandedChi={-enforceDirV:F4}, " +
-                $"renderedChi={lastLookAtRenderedChi:F4}, calls={lookAtOverrides}");
+                $"sceneChi={lastLookAtSceneChi:F4}, renderedChi={lastLookAtRenderedChi:F4}, calls={lookAtOverrides}");
         }
         return owned;
     }
@@ -1213,6 +1214,7 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
         // we take whatever it currently is and solve around it.
         DynamicCameraSolver.MeasureAngles(view.Forward, out var yawReal, out var chiReal);
         lastLookAtRenderedChi = chiReal;
+        DynamicCameraSolver.MeasureAngles(view.LookDirection, out _, out lastLookAtSceneChi);
 
         // Measure the game's orbit direction: where it put the camera relative to the pivot
         // we handed it last frame. This is the exact mapping the pivot decomposition needs.
