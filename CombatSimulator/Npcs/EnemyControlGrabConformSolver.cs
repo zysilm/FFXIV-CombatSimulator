@@ -206,6 +206,50 @@ public sealed unsafe class EnemyControlGrabConformSolver : IDisposable
     }
 
     /// <summary>
+    /// Whether a bone is a hand, judged by its skeleton alone: two to <see cref="MaxDigits"/> children (helper "n_"
+    /// bones aside), each an unbranched chain no longer than <see cref="MaxDigitJoints"/>, at least two of them with a
+    /// joint to bend. A hand or a claw is; a forearm (one child, the hand), a chest or a head (long or branching
+    /// subtrees, or many short ones) is not. An anchored grab only curls digits when the picked bone passes this — a
+    /// point on a forearm must not bend the hand onto the body.
+    /// </summary>
+    public bool HasDigitHand(nint actor, string bone)
+    {
+        var skelN = boneService.TryGetSkeleton(actor);
+        if (skelN == null) return false;
+        var skel = skelN.Value;
+        var index = boneService.ResolveBoneIndex(skel, bone);
+        var count = Math.Min(skel.BoneCount, skel.ParentCount);
+        if (index < 0 || index >= count) return false;
+
+        var parents = skel.HavokSkeleton->ParentIndices;
+        var bones = skel.HavokSkeleton->Bones;
+        var children = new List<int>?[count];
+        for (int i = 1; i < count; i++)
+        {
+            var parent = parents[i];
+            if (parent < 0 || parent >= count || i >= bones.Length) continue;
+            if (bones[i].Name.String is { } name && name.StartsWith("n_", StringComparison.Ordinal)) continue;
+            (children[parent] ??= new List<int>()).Add(i);
+        }
+
+        var roots = children[index];
+        if (roots == null || roots.Count < 2 || roots.Count > MaxDigits) return false;
+        var bendable = 0;
+        foreach (var root in roots)
+        {
+            var length = 1;
+            var current = root;
+            while (children[current] is { Count: > 0 } kids)
+            {
+                if (kids.Count > 1 || ++length > MaxDigitJoints) return false;
+                current = kids[0];
+            }
+            if (length >= 2) bendable++;
+        }
+        return bendable >= 2;
+    }
+
+    /// <summary>
     /// Every root-to-leaf path below the hand is a digit. Bones whose names start with "n_" are
     /// skipped: that is the game's prefix for helper/attachment bones (weapon mounts hang off the
     /// hand exactly like a finger would), and curling a sword into someone's neck is not the goal.

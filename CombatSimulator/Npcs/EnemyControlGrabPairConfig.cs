@@ -12,4 +12,9 @@ public class EnemyControlGrabPairConfig
 {
     public string NpcBone { get; set; } = "j_te_r";
     public string PlayerBone { get; set; } = "j_kubi";
+
+    // Exact points picked on the models (docs/ENEMY_CONTROL_GRAB.md §3). Null = the bone itself, as before
+    // anchors existed. Setting one also sets the bone above to the anchor's bone.
+    public EnemyControlGrabAnchor? NpcAnchor { get; set; }
+    public EnemyControlGrabAnchor? PlayerAnchor { get; set; }
 }

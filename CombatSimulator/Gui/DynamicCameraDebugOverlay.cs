@@ -27,9 +27,9 @@ public sealed unsafe class DynamicCameraDebugOverlay
 {
     private readonly DynamicCameraController dynamicCam;
     private readonly IGameGui gameGui;
-    private readonly Configuration config;
+    private readonly IDynamicCameraDebugSettings config;
 
-    public DynamicCameraDebugOverlay(DynamicCameraController dynamicCam, IGameGui gameGui, Configuration config)
+    public DynamicCameraDebugOverlay(DynamicCameraController dynamicCam, IGameGui gameGui, IDynamicCameraDebugSettings config)
     {
         this.dynamicCam = dynamicCam;
         this.gameGui = gameGui;

@@ -9,8 +9,17 @@
 //       with the same tokens, wherever it lives now.
 //
 // Usage (from this folder):  dotnet run -c Release [-- <old-rev> [<dump-dir>]]
-//   old = CombatSimulator/Plugin*.cs at <old-rev> (default 9ea6cba, the commit before the split), read with git show;
+//   old = CombatSimulator/Plugin*.cs at <old-rev>, read with git show, and CombatSimulator/Composition/*.cs when that
+//         revision has them (a revision after the split). Default e50250f: the last feature commit that changed the
+//         build steps (the armor detachment for allies and enemies), after the split; every later revision up to
+//         Refactoring II compares equal to it. The split itself (stage B7) was checked against 9ea6cba, the commit
+//         before it; that revision still runs, but (b) and (d) then also show e50250f (OnNpcDeathRagdoll and
+//         OnCompanionDeathRagdoll strip armour on a KO, and the AllyRevived handler forgets it).
 //   new = CombatSimulator/Plugin*.cs and CombatSimulator/Composition/*.cs in the working tree.
+//   Refactoring II (stages R2-P1, R2-P2) changed the build list on purpose; the changes are listed one by one in
+//   RefactoringII at the end of this file and applied to the old sequence before (b) compares (each stage's list
+//   only when the old revision is from before that stage). A module's "m.Config" (the whole Configuration, handed
+//   on explicitly) reads as "config" (its narrow settings view).
 //   Each comparison is made twice: parsed without defines and with DEV_EXPERIMENTAL (the private module's #if blocks).
 //   <dump-dir> receives the extracted sequences (old-*.txt, new-*.txt) for reading. Exit code 0 = everything equal.
 //
@@ -35,7 +44,9 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
-var oldRev = args.Length > 0 ? args[0] : "9ea6cba";
+// Default baseline: e4ddd07, after the intended change that made enemy death ragdolls follow the ragdoll start
+// settings (2026-11-15). Pass e50250f to compare across Refactoring II with its listed edits.
+var oldRev = args.Length > 0 ? args[0] : "e4ddd07";
 var dumpDir = args.Length > 1 ? args[1] : null;
 var repo = FindRepoRoot();
 var pluginDir = Path.Combine(repo, "CombatSimulator");
@@ -59,7 +70,7 @@ foreach (var defines in new[] { Array.Empty<string>(), new[] { "DEV_EXPERIMENTAL
     var oldModel = new Model(oldFiles, defines);
     var newModel = new Model(newFiles, defines);
 
-    failures += CompareSequence("(b) constructor", oldModel, newModel, m => m.Constructor(), label);
+    failures += CompareSequence("(b) constructor", oldModel, newModel, m => m.Constructor(), label, RefactoringII.Apply);
     failures += CompareSequence("(a) per-frame update (OnFrameworkUpdate)", oldModel, newModel,
         m => m.MethodSequence(Model.PluginClass, "OnFrameworkUpdate"), label);
     failures += CompareSequence("(c) Dispose", oldModel, newModel, m => m.MethodSequence(Model.PluginClass, "Dispose"), label);
@@ -71,10 +82,17 @@ Console.WriteLine();
 Console.WriteLine(failures == 0 ? "ALL EQUAL" : $"{failures} DIFFERENCE(S)");
 return failures == 0 ? 0 : 1;
 
-int CompareSequence(string what, Model oldModel, Model newModel, Func<Model, List<string>> extract, string label)
+int CompareSequence(string what, Model oldModel, Model newModel, Func<Model, List<string>> extract, string label,
+    Func<List<string>, List<string>, int>? edit = null)
 {
     var a = extract(oldModel);
     var b = extract(newModel);
+    if (edit != null)
+    {
+        var failed = edit(a, b);
+        if (failed > 0)
+            return failed;
+    }
     if (dumpDir != null)
     {
         Directory.CreateDirectory(dumpDir);
@@ -109,7 +127,8 @@ int CompareBodies(Model oldModel, Model newModel)
     {
         var name = key[(key.LastIndexOf('.') + 1)..];
         // Split on purpose: the constructor's build steps are compared as a sequence in (b).
-        if (name is "WireVictoryCelebration" or "InitVoice" or "WireWar" || key == "CombatSimulatorPlugin..ctor")
+        if (name is "WireVictoryCelebration" or "InitVoice" or "WireWar" || key == "CombatSimulatorPlugin..ctor" ||
+            RefactoringII.Bodies.Contains(key))
         {
             skipped.Add(key);
             continue;
@@ -153,7 +172,16 @@ static List<(string Name, string Text)> GitShowPluginFiles(string repo, string r
         .Where(p => Path.GetFileName(p).StartsWith("Plugin") && p.EndsWith(".cs"))
         .OrderBy(p => p, StringComparer.Ordinal)
         .ToList();
-    return names.Select(p => (Name: Path.GetFileName(p), Text: Git(repo, $"show {rev}:{p}"))).ToList();
+    var files = names.Select(p => (Name: Path.GetFileName(p), Text: Git(repo, $"show {rev}:{p}"))).ToList();
+    // A revision after the split (stage B7) has the modules too: read them as the working tree's are read
+    // ("Composition/<file>"), so a later stage can be checked against it.
+    var modules = Git(repo, $"ls-tree --name-only {rev} CombatSimulator/Composition/")
+        .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Where(p => p.EndsWith(".cs"))
+        .OrderBy(p => p, StringComparer.Ordinal);
+    foreach (var p in modules)
+        files.Add((Name: "Composition" + Path.DirectorySeparatorChar + Path.GetFileName(p), Text: Git(repo, $"show {rev}:{p}")));
+    return files;
 }
 
 static string Git(string repo, string arguments)
@@ -503,6 +531,11 @@ sealed class Model
             var name = node.Name.Identifier.Text;
             if (node.Expression is ThisExpressionSyntax)
                 return Visit(node.Name);
+            // Refactoring II (settings views): a module reads its own settings through a narrow view still named
+            // "config", and hands the whole Configuration (PluginModules.Config) explicitly to what still takes it
+            // or writes it. Both are the plugin's one Configuration object.
+            if (receiver is "m" or "modules" && name == "Config")
+                return SyntaxFactory.IdentifierName("config");
             if (ModuleReceivers.Contains(receiver))
                 return SyntaxFactory.IdentifierName(model.accessors.TryGetValue(name, out var field) ? field : name);
             if (EventReceivers.Contains(receiver) && EventSlots.TryGetValue(name, out var slot))
@@ -511,5 +544,111 @@ sealed class Model
                 return SyntaxFactory.ParseExpression("CombatantAiState." + name);
             return base.VisitMemberAccessExpression(node);
         }
+    }
+}
+
+/// <summary>
+/// Refactoring II, stage R2-P1 (docs/REFACTOR_PLAN.md §4.9 items 5 and 6): the engine is given the roster of the
+/// player's side, who fights whom and the battle's rule parts by constructor instead of the seven queries and the
+/// rule parts it was handed after the allies' manager was built; the manager is given the same three. These are the
+/// only changes to the build list, each listed here and each required to apply exactly once to the old sequence (so
+/// nothing else can hide behind them): the three objects are created before the engine (the roster with the
+/// enemies' selector and spawner, the other two right before the engine), the engine and the manager are created
+/// with them, and the seven assignments are gone (CombatModule.WireCompanions keeps ResolveNpcTarget). Applied only
+/// when the new side has that shape and the old side has not.
+/// <para>Stage R2-P2 (docs/REFACTOR_PLAN.md §6, the R2-P1 tails): the allies' manager is given the corpse queries
+/// (the corpse module as ICorpseQuery) and "is this player a selected enemy" by constructor, the enemies' AI the
+/// party's positions; the five assignments that handed them over after construction are gone. Applied after
+/// R2-P1's list, only when the new side has the R2-P2 manager and the old side (so edited) has not.</para>
+/// </summary>
+static class RefactoringII
+{
+    const string Marker = "new CombatRoster ( config )";
+
+    const string ManagerR2P1 =
+        "new CombatCompanionManager ( objectTable , clientState , config , combatEngine , combatRoster , targeting , ruleParts , animationController , movementBlockHook , targetManager , log )";
+    const string MarkerR2P2 =
+        "new CombatCompanionManager ( objectTable , clientState , config , combatEngine , combatRoster , targeting , ruleParts , corpse , entityId => npcSelector . GetSelectedNpc ( entityId ) != null , animationController , movementBlockHook , targetManager , log )";
+
+    static readonly (string Old, string[] New)[] EditsR2P2 =
+    {
+        (ManagerR2P1, new[] { MarkerR2P2 }),
+        ("new NpcAiController ( combatEngine , animationController , movementBlockHook , config , log , combatModeRouter , npcCorpseFootIkSolver , addr => devExperimental . ControlsNpc ( addr ) || enemyControlController . ControlsNpc ( addr ) || fightingModeController ? . ControlsEnemy ( addr ) == true , telegraphSystem . IsBusy )",
+            new[] { "new NpcAiController ( combatEngine , animationController , movementBlockHook , config , log , combatModeRouter , npcCorpseFootIkSolver , companionManager . CollectPartyPositions , addr => devExperimental . ControlsNpc ( addr ) || enemyControlController . ControlsNpc ( addr ) || fightingModeController ? . ControlsEnemy ( addr ) == true , telegraphSystem . IsBusy )" }),
+        ("assign npcAiController . CollectPartyPositions = companionManager . CollectPartyPositions", Array.Empty<string>()),
+        ("assign companionManager . CorpseSupportHeightProvider = ResolveCorpseTraversalHeight", Array.Empty<string>()),
+        ("assign companionManager . LordBodyPosition = LordBodyPosition", Array.Empty<string>()),
+        ("assign companionManager . BodyPositionOf = BodyPositionOf", Array.Empty<string>()),
+        ("assign companionManager . IsSourceEnemy = entityId => npcSelector . GetSelectedNpc ( entityId ) != null", Array.Empty<string>()),
+    };
+
+    static readonly (string Old, string[] New)[] Edits =
+    {
+        ("new Effects . NpcScaleController ( config , npcSelector , objectTable )",
+            new[] { "new Effects . NpcScaleController ( config , npcSelector , objectTable )", Marker }),
+        ("new CombatEngine ( actionDataProvider , damageCalculator , animationController , movementBlockHook , ragdollController , config , npcSelector , clientState , log )",
+            new[]
+            {
+                "new TargetingService ( ( ) => combatEngine . State . SimulationTime )",
+                "new BattleRuleSet ( BattleRuleFactory . CreateAll ( ) )",
+                "new CombatEngine ( actionDataProvider , damageCalculator , animationController , movementBlockHook , ragdollController , config , npcSelector , combatRoster , targeting , ruleParts , clientState , log )",
+            }),
+        ("new CombatCompanionManager ( objectTable , clientState , config , combatEngine , animationController , movementBlockHook , targetManager , log )",
+            new[] { ManagerR2P1 }),
+        ("assign combatEngine . ResolveExternalEntityAddress = companionManager . ResolveAddress", Array.Empty<string>()),
+        ("assign combatEngine . HasLivingCompanions = ( ) => companionManager . HasLivingCompanions", Array.Empty<string>()),
+        ("assign combatEngine . OnPlayerDamageDealt = companionManager . RegisterPlayerDamage", Array.Empty<string>()),
+        ("assign combatEngine . OnPlayerDamageDealtToTarget = companionManager . RegisterPlayerDamage", Array.Empty<string>()),
+        ("assign combatEngine . ForceNpcTarget = companionManager . ForceEnemyTarget", Array.Empty<string>()),
+        ("assign combatEngine . OnHit = companionManager . RegisterHit", Array.Empty<string>()),
+        ("assign combatEngine . RuleParts = companionManager . RuleParts", Array.Empty<string>()),
+    };
+
+    /// <summary>The module build steps whose bodies Refactoring II changed on purpose (their effect on the build list is (b)'s).</summary>
+    public static readonly HashSet<string> Bodies = new(StringComparer.Ordinal)
+    {
+        "ActorsModule.CreateRoster", "ActorsModule.CreateCompanions",
+        "CombatModule.CreateEngineAndActionCombat", "CombatModule.WireCompanions",
+        // R2-P2: the assignments moved into the constructors.
+        "ActorsModule.WireActorCallbacks", "CombatModule.CreateEnemyAi",
+    };
+
+    /// <summary>Applies the listed edits to the old sequence; returns how many did not apply exactly once.</summary>
+    public static int Apply(List<string> oldSteps, List<string> newSteps)
+    {
+        var failures = 0;
+        if (newSteps.Contains(Marker) && !oldSteps.Contains(Marker))
+        {
+            var failed = ApplyList(Edits, oldSteps);
+            Console.WriteLine($"  (b) Refactoring II R2-P1: {Edits.Length - failed}/{Edits.Length} listed edits applied to the old sequence " +
+                              "(3 objects created before the engine, the engine and the allies' manager created with them, 7 assignments gone)");
+            failures += failed;
+        }
+        if (newSteps.Contains(MarkerR2P2) && !oldSteps.Contains(MarkerR2P2))
+        {
+            var failed = ApplyList(EditsR2P2, oldSteps);
+            Console.WriteLine($"  (b) Refactoring II R2-P2: {EditsR2P2.Length - failed}/{EditsR2P2.Length} listed edits applied to the old sequence " +
+                              "(the allies' manager and the enemies' AI created with what they were handed after, 5 assignments gone)");
+            failures += failed;
+        }
+        return failures;
+    }
+
+    static int ApplyList((string Old, string[] New)[] edits, List<string> oldSteps)
+    {
+        var failures = 0;
+        foreach (var (old, replacement) in edits)
+        {
+            var at = oldSteps.IndexOf(old);
+            if (at < 0 || oldSteps.LastIndexOf(old) != at)
+            {
+                Console.WriteLine($"  (b) Refactoring II edit does not apply exactly once to the old sequence: {old}");
+                failures++;
+                continue;
+            }
+            oldSteps.RemoveAt(at);
+            oldSteps.InsertRange(at, replacement);
+        }
+        return failures;
     }
 }

@@ -62,8 +62,6 @@ public enum AttackCommit
 {
     Failed,
     Landed,
-    /// <summary>A cast began (the sink set up the cast and paid its MP); the attack lands when the cast ends.</summary>
-    CastStarted,
 }
 
 /// <summary>What <see cref="CombatStep.Run{TSelf, TTarget}"/> did this frame.</summary>
@@ -73,7 +71,6 @@ public enum StepResult
     Locked,
     SkillLanded,
     SkillFailed,
-    CastStarted,
     AutoAttackLanded,
     AutoAttackFailed,
     /// <summary>No skill, and the auto-attack is not due (or a caster's swing is held until it is in melee).</summary>
@@ -91,7 +88,7 @@ public interface ICombatStepSink<in TSelf, in TTarget> where TSelf : Combatant
     void ShowLocked(TSelf self);
     /// <summary>It is free to act: called once before the skills are looked at.</summary>
     void ShowReady(TSelf self);
-    /// <summary>Commit a skill. <paramref name="mpCost"/> is its price against this fighter's pool; the step pays it on <see cref="AttackCommit.Landed"/>, a sink that starts a cast pays it itself.</summary>
+    /// <summary>Commit a skill. <paramref name="mpCost"/> is its price against this fighter's pool; the step pays it on <see cref="AttackCommit.Landed"/>.</summary>
     AttackCommit CommitSkill(TSelf self, TTarget target, NpcSkill skill, int mpCost);
     /// <summary>Commit an auto-attack; true when it landed.</summary>
     bool CommitAutoAttack(TSelf self, TTarget target);
@@ -197,7 +194,6 @@ public static class CombatStep
             return result switch
             {
                 AttackCommit.Landed => StepResult.SkillLanded,
-                AttackCommit.CastStarted => StepResult.CastStarted,
                 _ => StepResult.SkillFailed,
             };
         }

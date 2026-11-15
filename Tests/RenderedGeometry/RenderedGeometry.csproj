@@ -2,13 +2,18 @@
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Lumina" Version="7.6.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <!-- The library's rendered-geometry snapshot types are internal; the library grants this test InternalsVisibleTo
          (from 0.1.0-beta.2). Keep the version equal to CombatSimulator.csproj's. -->
-    <PackageReference Include="AdvancedRagdoll" Version="0.1.0-beta.2" />
+    <PackageReference Include="AdvancedRagdoll" Version="0.1.0-beta.4" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../../CombatSimulator/Animation/ModelGeometryData.cs" Link="Production/ModelGeometryData.cs" />
     <Compile Include="../../CombatSimulator/Animation/RenderedGeometryDecoder.cs" Link="Production/RenderedGeometryDecoder.cs" />
     <Compile Include="../../CombatSimulator/Animation/RenderedRaceDeformation.cs" Link="Production/RenderedRaceDeformation.cs" />
+    <!-- The anchored grab's picking and bone-local math (GrabAnchorCrossRace.cs), and RagdollHullFit's sklb reader. -->
+    <Compile Include="../../CombatSimulator/Npcs/EnemyControlGrabAnchor.cs" Link="Production/EnemyControlGrabAnchor.cs" />
+    <Compile Include="../../CombatSimulator/Npcs/EnemyControlGrabPairConfig.cs" Link="Production/EnemyControlGrabPairConfig.cs" />
+    <Compile Include="../RagdollHullFit/Skeleton.cs" Link="Shared/Skeleton.cs" />
   </ItemGroup>
 </Project>

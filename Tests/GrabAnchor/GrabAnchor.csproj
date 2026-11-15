@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Offline checks of the anchored grab (docs/ENEMY_CONTROL_GRAB.md §3): the bone-local math, picking on a mesh,
+       and how anchors are stored, copied and de-duplicated. Compiles the production files as they are. -->
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><RootNamespace>GrabAnchorTests</RootNamespace></PropertyGroup>
+  <ItemGroup>
+    <!-- The version Dalamud ships (the plugin's configuration is saved with it). -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../../CombatSimulator/Npcs/EnemyControlGrabAnchor.cs" Link="Production/EnemyControlGrabAnchor.cs" />
+    <Compile Include="../../CombatSimulator/Npcs/EnemyControlGrabPairConfig.cs" Link="Production/EnemyControlGrabPairConfig.cs" />
+    <Compile Include="../../CombatSimulator/Npcs/EnemyControlGrabProfile.cs" Link="Production/EnemyControlGrabProfile.cs" />
+  </ItemGroup>
+</Project>

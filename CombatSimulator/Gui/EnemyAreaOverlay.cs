@@ -27,12 +27,12 @@ public sealed class EnemyAreaOverlay
 
     private readonly EnemyAreaMarkers markers;
     private readonly IGameGui gameGui;
-    private readonly Configuration config;
+    private readonly ActionCombat.IEnemyAreaDisplaySettings config;
 
     /// <summary>True when a native omen is rendering for this marker (set by the omen layer).</summary>
     public Func<EnemyAreaMarker, bool>? HasNativeOmen { private get; set; }
 
-    public EnemyAreaOverlay(EnemyAreaMarkers markers, IGameGui gameGui, Configuration config)
+    public EnemyAreaOverlay(EnemyAreaMarkers markers, IGameGui gameGui, ActionCombat.IEnemyAreaDisplaySettings config)
     {
         this.markers = markers;
         this.gameGui = gameGui;

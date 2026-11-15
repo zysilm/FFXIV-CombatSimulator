@@ -16,7 +16,7 @@ namespace CombatSimulator.ActionCombat;
 /// <summary>
 /// Orchestrates the Action-Mode player loop: drains buffered inputs, drives the light
 /// combo + hitbox, guard, and enemy telegraphs. Ticked from the framework
-/// update only while <c>config.ActionMode</c> is on. Enemy AI and the simulation
+/// update every frame. Enemy AI and the simulation
 /// engine continue to run as normal; only attack resolution differs.
 /// </summary>
 public sealed class ActionModeController
@@ -24,7 +24,7 @@ public sealed class ActionModeController
     private const float GuardCancelLockRatio = 0.70f;
     private const float PhysicalRangedBasicPotencyRatio = 0.75f;
 
-    private readonly Configuration config;
+    private readonly IActionInputSettings config;
     private readonly ActionComboSink comboSink;
     private readonly PlayerHitboxResolver hitbox;
     private readonly PlayerGuardController guard;
@@ -40,14 +40,13 @@ public sealed class ActionModeController
     private float attackLockoutTimer;
     private int comboStep;
     private float comboTimer;
-    private bool wasActive;
     private bool guardKeyWasDown;
     private bool basicAttackKeyWasDown;
     private int guardGamepadSuppressFrames;
     private int basicAttackGamepadSuppressFrames;
 
     public ActionModeController(
-        Configuration config,
+        IActionInputSettings config,
         ActionComboSink comboSink,
         PlayerHitboxResolver hitbox,
         PlayerGuardController guard,
@@ -74,17 +73,6 @@ public sealed class ActionModeController
 
     public void Tick(float dt)
     {
-        if (!config.ActionMode)
-        {
-            if (wasActive)
-            {
-                OnModeExit();
-                wasActive = false;
-            }
-            return;
-        }
-        wasActive = true;
-
         if (!combatEngine.IsActive)
         {
             guard.Reset();
@@ -116,8 +104,8 @@ public sealed class ActionModeController
             if (comboTimer <= 0f) comboStep = 0;
         }
 
-        // guard/telegraph ticking moved to the plugin's frame loop — they are shared
-        // with Fighting Mode and must advance whichever mode is active.
+        // guard/telegraph ticking lives in the plugin's frame loop, which owns their
+        // lifecycle.
         SuppressGuardGamepadInputIfNeeded();
         SuppressBasicAttackGamepadInputIfNeeded();
         TickGuardKey();
@@ -311,23 +299,6 @@ public sealed class ActionModeController
             return false;
 
         return guard.TryGuard();
-    }
-
-    private void OnModeExit()
-    {
-        comboSink.Clear();
-        guard.Reset();
-        telegraphs.Clear();
-        animationController.RestorePlayerGuardVisualState();
-        swingCooldown = 0f;
-        guardLockoutTimer = 0f;
-        attackLockoutTimer = 0f;
-        comboStep = 0;
-        comboTimer = 0f;
-        guardKeyWasDown = false;
-        basicAttackKeyWasDown = false;
-        guardGamepadSuppressFrames = 0;
-        basicAttackGamepadSuppressFrames = 0;
     }
 
     private void SuppressGuardGamepadInputIfNeeded()

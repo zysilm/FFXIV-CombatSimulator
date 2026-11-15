@@ -37,7 +37,9 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
     private readonly IObjectTable objectTable;
     private readonly IClientState clientState;
 
-    private readonly List<CombatCompanion> companions = new();
+    // The allies' list is the roster's (who is on the field); this controller adds, removes and orders them.
+    private readonly CombatRoster roster;
+    private readonly List<CombatCompanion> companions;
     private readonly List<PendingSpawn> pendingSpawns = new();
     private readonly ConcurrentQueue<CompanionSpawnSource> spawnQueue = new();
     private readonly HashSet<int> allocatedIndices = new();
@@ -53,8 +55,6 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
     // Pc, or an existing companion clone, would be re-cloned into the party).
     private const uint SimulatedEntityIdFloor = 0xF0000000;
 
-    private float playerRecentDamage;
-    private float playerRecentDps;
     private uint selectedFocusTargetId;
     private uint lastFocusTargetId;
     private float senseTimer;
@@ -67,7 +67,6 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
     public const int MaxCompanionCap = 50;
 
     private const int MaxPendingFrames = 120;
-    private const float RecentDpsWindowSeconds = 8.0f;
     private const float FollowDistance = 3.0f;
     private const float FollowStopDistance = 0.6f;
     private const float CombatAnchorRelocateDistance = 10.0f;
@@ -104,24 +103,40 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
     }
     public Func<bool>? SuspendCombat { get; set; }
     public int PendingCount => pendingSpawns.Count + spawnQueue.Count;
-    public bool HasActiveCompanions => config.EnableCombatCompanions && companions.Any(c => c.IsSpawned && c.State.IsAlive);
-    public bool HasLivingCompanions => config.EnableCombatCompanions && companions.Any(c => c.IsSpawned && c.State.IsAlive);
+    public bool HasLivingCompanions => roster.HasLivingAllies;
 
     // What the allies' side reports (stage B9: slots of the engine's CombatEvents; these names read and
     // write the same slots).
     public Action<CombatCompanion>? OnCompanionSpawnComplete { get => combatEngine.Events.AllySpawned; set => combatEngine.Events.AllySpawned = value; }
     public Action<nint>? OnCompanionDeathRagdoll { get => combatEngine.Events.AllyDied; set => combatEngine.Events.AllyDied = value; }
     public Action<string>? OnSpawnError { get => combatEngine.Events.AllySpawnError; set => combatEngine.Events.AllySpawnError = value; }
-    public Func<uint, bool>? IsSourceEnemy { get; set; }
-    /// <summary>Optional world-space surface height for walking over active corpses.</summary>
-    public Func<nint, Vector3, float?>? CorpseSupportHeightProvider { private get; set; }
 
-    /// <summary>The manager over its seams (the plugin's constructor is in CombatCompanionManager.Game.cs).</summary>
+    /// <summary>False while a client-side safety barrier is down (Safety/SafetyBarriers.cs): no ally is created
+    /// then. Null (before the barriers exist, and offline) allows.</summary>
+    public Func<bool>? SpawnAllowed { get; set; }
+    private bool spawnRefusalReported;
+    // Whether a player seen nearby is one of the selected enemies (then it is not cloned into the party).
+    private readonly Func<uint, bool> isSourceEnemy;
+    // The bodies on the ground: where the lord's and a fallen friend's lie, and the corpse surface underfoot.
+    private readonly ICorpseQuery corpses;
+
+    /// <summary>
+    /// The manager over its seams (the plugin's constructor is in CombatCompanionManager.Game.cs). The
+    /// roster (whose allies' list this manager keeps), who fights whom, and the battle's rule parts are
+    /// built before the engine, which is given them too; the rule parts get their context here, the
+    /// allies being this manager. The bodies on the ground and whether a player is a selected enemy are
+    /// asked of <paramref name="corpses"/> and <paramref name="isSourceEnemy"/>.
+    /// </summary>
     public CombatCompanionManager(
         IObjectTable objectTable,
         IClientState clientState,
         ICombatAiSettings config,
         ICombatLoopEngine combatEngine,
+        CombatRoster roster,
+        TargetingService targeting,
+        BattleRuleSet ruleParts,
+        ICorpseQuery corpses,
+        Func<uint, bool> isSourceEnemy,
         ICombatWorld world,
         IAttackSink attackSink,
         IPluginLog log)
@@ -129,11 +144,14 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
     {
         this.objectTable = objectTable;
         this.clientState = clientState;
-        targeting = new TargetingService(() => this.combatEngine.State.SimulationTime);
+        this.roster = roster;
+        companions = roster.AllyList;
+        this.targeting = targeting;
+        this.corpses = corpses;
+        this.isSourceEnemy = isSourceEnemy;
         stepSink = new AllyStepSink(this);
-        ruleParts = new BattleRuleSet(
-            new BattleContext(combatEngine.Rules, combatEngine, world, new RuleAllies(this)),
-            BattleRuleFactory.CreateAll());
+        ruleParts.Bind(new BattleContext(combatEngine.Rules, combatEngine, world, new RuleAllies(this)));
+        this.ruleParts = ruleParts;
     }
 
     /// <summary>
@@ -235,7 +253,7 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
                 continue;
             if (player.Address == nint.Zero)
                 continue;
-            if (IsSourceEnemy?.Invoke(player.EntityId) == true)
+            if (isSourceEnemy(player.EntityId))
                 continue;
             if (ShouldLeaveVisiblePlayerForEnemySide(player.EntityId))
                 continue;
@@ -345,7 +363,7 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
         for (var i = 0; i < liveCompanions.Count; i++)
             TickCompanion(liveCompanions[i], deltaTime, enemies, i, liveCompanions.Count);
 
-        TickPlayerRecentDps(deltaTime);
+        targeting.TickPlayerRecentDps(deltaTime);
         ReportActivity(enemies);
         ReportTargetSwitches(enemies);
     }
@@ -357,19 +375,7 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
             return;
 
         companion.RecentDamage += Math.Max(0, damage);
-        companion.RecentDps = Math.Max(companion.RecentDps, companion.RecentDamage / RecentDpsWindowSeconds);
-    }
-
-    public void RegisterPlayerDamage(int damage)
-    {
-        playerRecentDamage += Math.Max(0, damage);
-        playerRecentDps = Math.Max(playerRecentDps, playerRecentDamage / RecentDpsWindowSeconds);
-    }
-
-    public void RegisterPlayerDamage(uint targetId, int damage)
-    {
-        RegisterPlayerDamage(damage);
-        targeting.AddThreat(targetId, combatEngine.State.PlayerState.EntityId, damage, combatEngine.State.PlayerState.IsTank);
+        companion.RecentDps = Math.Max(companion.RecentDps, companion.RecentDamage / TargetingService.RecentDpsWindowSeconds);
     }
 
     /// <summary>
@@ -417,7 +423,7 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
 
         var candidates = new List<(uint EntityId, SimulatedEntityState State, float Dps)>();
         if (combatEngine.State.PlayerState.IsAlive)
-            candidates.Add((combatEngine.State.PlayerState.EntityId, combatEngine.State.PlayerState, playerRecentDps));
+            candidates.Add((combatEngine.State.PlayerState.EntityId, combatEngine.State.PlayerState, targeting.PlayerRecentDps));
 
         foreach (var companion in livingCompanions)
             candidates.Add((companion.SimulatedEntityId, companion.State, companion.RecentDps));
@@ -437,9 +443,6 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
     public CombatCompanion? GetCompanion(uint entityId)
         => companions.FirstOrDefault(c => c.SimulatedEntityId == entityId);
 
-    public nint? ResolveAddress(uint entityId)
-        => GetCompanion(entityId)?.Address;
-
     public void ForceEnemyTarget(uint enemyId, uint targetId)
         => targeting.ForceEnemyTarget(enemyId, targetId);
 
@@ -450,8 +453,6 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
     public void ResetForCombatReset()
     {
         targeting.Reset();
-        playerRecentDamage = 0;
-        playerRecentDps = 0;
         selectedFocusTargetId = 0;
         lastFocusTargetId = 0;
 
@@ -506,8 +507,6 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
         allocatedIndices.Clear();
         ruleParts.AlliesDismissed();
         targeting.Reset();
-        playerRecentDamage = 0;
-        playerRecentDps = 0;
         selectedFocusTargetId = 0;
         lastFocusTargetId = 0;
         combatAnchorActive = false;
@@ -550,7 +549,7 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
                 continue;
             if (player.EntityId >= SimulatedEntityIdFloor)
                 continue;
-            if (IsSourceEnemy?.Invoke(player.EntityId) == true)
+            if (isSourceEnemy(player.EntityId))
                 continue;
             if (ShouldLeaveVisiblePlayerForEnemySide(player.EntityId))
                 continue;
@@ -588,6 +587,19 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
 
     private void ProcessSpawnRequest(CompanionSpawnSource sourceInfo)
     {
+        if (SpawnAllowed?.Invoke() == false)
+        {
+            // Reported once until spawning is allowed again (the party-awareness loop retries every cycle).
+            if (!spawnRefusalReported)
+            {
+                spawnRefusalReported = true;
+                log.Warning("Ally spawn refused: a client-side safety barrier is down (Diagnose tab).");
+                OnSpawnError?.Invoke("Not spawned: a client-side safety barrier is down (see the Diagnose tab).");
+            }
+            return;
+        }
+        spawnRefusalReported = false;
+
         try
         {
             if (sourceInfo.Address == nint.Zero)
@@ -1328,22 +1340,9 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
             return;
         }
 
-        var decayPerSecond = companion.RecentDamage / RecentDpsWindowSeconds;
+        var decayPerSecond = companion.RecentDamage / TargetingService.RecentDpsWindowSeconds;
         companion.RecentDamage = Math.Max(0, companion.RecentDamage - decayPerSecond * deltaTime);
-        companion.RecentDps = companion.RecentDamage / RecentDpsWindowSeconds;
-    }
-
-    private void TickPlayerRecentDps(float deltaTime)
-    {
-        if (playerRecentDamage <= 0)
-        {
-            playerRecentDps = 0;
-            return;
-        }
-
-        var decayPerSecond = playerRecentDamage / RecentDpsWindowSeconds;
-        playerRecentDamage = Math.Max(0, playerRecentDamage - decayPerSecond * deltaTime);
-        playerRecentDps = playerRecentDamage / RecentDpsWindowSeconds;
+        companion.RecentDps = companion.RecentDamage / TargetingService.RecentDpsWindowSeconds;
     }
 
     private void Despawn(CombatCompanion companion)

@@ -27,11 +27,7 @@ internal readonly record struct AppliedActionDamage(
 /// taken, raises the player's hit and flinch cues and records the killer.
 /// </param>
 /// <param name="SkillDamageType">The hit takes the skill's damage type; otherwise it is physical.</param>
-/// <param name="FullFormulaForSkills">
-/// A skill without a potency override goes through the full formula (critical and direct hits, the damage
-/// multiplier); otherwise it is the bare-potency formula at the skill's potency.
-/// </param>
-/// <param name="RaisesOnHit">Each landed hit raises the engine's <c>OnHit</c> (the enemies' threat); the allies' is registered by their controller.</param>
+/// <param name="RaisesOnHit">Each landed hit is reported as threat (<c>TargetingService.RegisterHit</c>, the enemies' threat); the allies' is registered by their controller.</param>
 /// <param name="CountsDamageDealt">Each landed hit counts towards the damage dealt.</param>
 /// <param name="EngagesWhoItHits">Each target it hits is woken if idle (the primary as soon as the attack is made).</param>
 /// <param name="DeferredNeedsAttacker">An arrow still in the air is dropped if its shooter is gone when it would land.</param>
@@ -40,11 +36,13 @@ internal readonly record struct AppliedActionDamage(
 /// The deaths an arrow causes are settled after every target it hits has taken its share, the primary first
 /// (otherwise each target dies as it is hit).
 /// </param>
-/// <param name="LogsDamageTaken">The battle log line is "… → You: …" (damage taken); otherwise "… -> target: …" (damage dealt).</param>
+/// <param name="LogsDamageTaken">
+/// The battle log line is "… → You: …" on the player and "… → ally: …" on an ally (damage taken); otherwise
+/// "… -> target: …" (damage dealt).
+/// </param>
 public sealed record HitSide(
     bool OnPlayersSide,
     bool SkillDamageType,
-    bool FullFormulaForSkills,
     bool RaisesOnHit,
     bool CountsDamageDealt,
     bool EngagesWhoItHits,
@@ -55,13 +53,13 @@ public sealed record HitSide(
 {
     /// <summary>An enemy's attack on the player's side (<c>CombatEngine.ProcessNpcAction</c>).</summary>
     public static HitSide Enemy { get; } = new(
-        OnPlayersSide: true, SkillDamageType: true, FullFormulaForSkills: false, RaisesOnHit: true, CountsDamageDealt: false,
+        OnPlayersSide: true, SkillDamageType: true, RaisesOnHit: true, CountsDamageDealt: false,
         EngagesWhoItHits: false, DeferredNeedsAttacker: true, DeferredFlinchesPlayer: true, DeferredDeathsAfterAllHits: true,
         LogsDamageTaken: true);
 
     /// <summary>An ally's attack on an enemy (<c>CombatEngine.ProcessCompanionAction</c>).</summary>
     public static HitSide Ally { get; } = new(
-        OnPlayersSide: false, SkillDamageType: false, FullFormulaForSkills: true, RaisesOnHit: false, CountsDamageDealt: true,
+        OnPlayersSide: false, SkillDamageType: false, RaisesOnHit: false, CountsDamageDealt: true,
         EngagesWhoItHits: true, DeferredNeedsAttacker: false, DeferredFlinchesPlayer: false, DeferredDeathsAfterAllHits: false,
         LogsDamageTaken: false);
 }
@@ -77,9 +75,6 @@ internal interface IHitSettlementHost
     /// <summary>The battle's rule parts (a lethal blow is put to them), or null before they are wired.</summary>
     BattleRuleSet? RuleParts { get; }
     ActionData? GetActionData(uint actionId);
-    bool EnableCriticalHits { get; }
-    bool EnableDirectHits { get; }
-    float DamageMultiplier { get; }
 
     List<SimulatedEntityState> GetHostileTargets(SimulatedEntityState source);
     Vector3 GetEntityPosition(SimulatedEntityState entity);
@@ -90,7 +85,7 @@ internal interface IHitSettlementHost
 
     /// <summary>Takes a landed hit off the target's HP (<c>CombatEngine.LandDamage</c>).</summary>
     void LandDamage(SimulatedEntityState target, DamageResult damage, SimulatedEntityState? source);
-    /// <summary><c>OnHit</c>.</summary>
+    /// <summary>The hit's threat (<c>TargetingService.RegisterHit</c>; the engine's <c>OnHit</c> before Refactoring II).</summary>
     void RaiseHit(SimulatedEntityState source, SimulatedEntityState target, int damage);
     /// <summary><c>OnDamageLanded</c>.</summary>
     void RaiseDamageLanded(SimulatedEntityState target, DamageResult damage, SimulatedEntityState? source);
@@ -264,15 +259,14 @@ internal sealed class HitSettlement
 
         var resolvedActionData = host.GetActionData(actionId);
 
-        // The enemy's damage is budgeted against what its own kit sustains; measured once per kit.
+        // One rule for both sides (one set of numbers, docs/COMBAT_BUDGET_MODEL.md): a bare potency, the one
+        // given, else the action's, else an auto-attack's.
         var damageType = side.SkillDamageType ? resolvedActionData?.DamageType ?? SimDamageType.Physical : SimDamageType.Physical;
         DamageResult dmgResult;
         if (potency > 0)
             dmgResult = damageCalculator.CalculateNpcAutoAttack(attacker.State, target, potency, damageType);
         else if (resolvedActionData != null)
-            dmgResult = side.FullFormulaForSkills
-                ? damageCalculator.Calculate(attacker.State, target, resolvedActionData, false, host.EnableCriticalHits, host.EnableDirectHits, host.DamageMultiplier)
-                : damageCalculator.CalculateNpcAutoAttack(attacker.State, target, resolvedActionData.Potency, damageType);
+            dmgResult = damageCalculator.CalculateNpcAutoAttack(attacker.State, target, resolvedActionData.Potency, damageType);
         else
             dmgResult = damageCalculator.CalculateNpcAutoAttack(attacker.State, target);
 
@@ -319,9 +313,8 @@ internal sealed class HitSettlement
             if (extraTarget.EntityId == primaryId)
                 continue;
 
-            var extraDamage = side.FullFormulaForSkills && potency <= 0 && resolvedActionData != null
-                ? damageCalculator.Calculate(attacker.State, extraTarget, visualAction, false, host.EnableCriticalHits, host.EnableDirectHits, host.DamageMultiplier)
-                : damageCalculator.CalculateNpcAutoAttack(attacker.State, extraTarget, visualAction.Potency > 0 ? visualAction.Potency : 110, damageType);
+            var extraDamage = damageCalculator.CalculateNpcAutoAttack(attacker.State, extraTarget,
+                visualAction.Potency > 0 ? visualAction.Potency : 110, damageType);
             if (!deferred)
                 Land(side, attacker, extraTarget, extraDamage, primary: false);
             hits.Add(new AppliedActionDamage(extraTarget, extraDamage));
@@ -358,10 +351,9 @@ internal sealed class HitSettlement
         var actionName = actionId is 7 or 8
             ? "auto-attacks"
             : $"uses {(!string.IsNullOrWhiteSpace(visualAction.Name) ? visualAction.Name : "action")}";
-        // TODO: an enemy's line on a companion still renders the target as "You".
         if (side.LogsDamageTaken)
             host.AddLogEntry(
-                $"{attacker.Name} {actionName} → You: {dmgResult.Damage:N0} damage",
+                $"{attacker.Name} {actionName} → {(target.IsPlayer ? "You" : target.Name)}: {dmgResult.Damage:N0} damage",
                 CombatLogType.DamageTaken);
         else
             host.AddLogEntry(
@@ -435,7 +427,7 @@ internal sealed class HitSettlement
             State.TotalDamageTaken += damage.Damage;
             if (damage.Damage > 0)
                 host.RaisePlayerDamagedByNpc();
-            // Player was hit and survived → let auto-counter consider locking this attacker.
+            // Player was hit and survived (PlayerHitBy: no plugin subscriber since the target lock went; the replay records it).
             if (target.IsAlive)
                 host.RaisePlayerHitByNpc(attacker.SimulatedEntityId);
         }

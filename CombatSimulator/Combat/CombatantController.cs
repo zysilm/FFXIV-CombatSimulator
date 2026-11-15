@@ -126,7 +126,6 @@ public abstract unsafe class CombatantController<TSelf> : IDisposable where TSel
         self.State.CastTimeTotal = 0;
         self.State.CastTargetId = 0;
         self.State.AnimationLock = 0;
-        self.CurrentCastSkill = null;
     }
 
     /// <summary>
@@ -205,7 +204,7 @@ public abstract unsafe class CombatantController<TSelf> : IDisposable where TSel
     /// Action Mode makes both sides act faster (auto delays and skill cooldowns are divided by this), so
     /// the fight runs at action-game pace instead of the ~3 s tab-target cadence.
     /// </summary>
-    protected float ActionPace() => CombatantMath.ActionPace(config.ActionMode, config.ActionEnemyAttackSpeed);
+    protected float ActionPace() => CombatantMath.ActionPace(actionMode: true, config.ActionEnemyAttackSpeed);
 
     protected static float FlatDistance(Vector3 a, Vector3 b) => CombatantMath.FlatDistance(a, b);
 }

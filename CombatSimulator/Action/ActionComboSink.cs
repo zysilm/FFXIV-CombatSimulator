@@ -20,7 +20,7 @@ public readonly record struct PlayerActionInput(PlayerInputRole Role, uint Actio
 
 /// <summary>
 /// The Action-Mode player input sink. <see cref="UseActionHook"/> routes every
-/// intercepted combat action here while <c>config.ActionMode</c> is on; the real
+/// intercepted combat action here during a simulation; the real
 /// action never fires. The pressed <c>actionId</c> is mapped to a role via the
 /// configured map and queued for the framework thread to drain.
 /// </summary>
@@ -31,11 +31,11 @@ public interface IPlayerActionSink
 
 public sealed class ActionComboSink : IPlayerActionSink
 {
-    private readonly Configuration config;
+    private readonly IActionComboSettings config;
     private readonly Queue<PlayerActionInput> queue = new();
     private readonly object gate = new();
 
-    public ActionComboSink(Configuration config) => this.config = config;
+    public ActionComboSink(IActionComboSettings config) => this.config = config;
 
     public void OnAction(uint actionType, uint actionId, ulong targetId, uint extraParam)
     {

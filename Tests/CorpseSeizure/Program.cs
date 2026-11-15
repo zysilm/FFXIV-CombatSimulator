@@ -468,6 +468,142 @@ const float Dt = 1f / 64f;          // exact in binary
     Check(s, w3.Infos.Count == 1 && w3.Infos[0] == expected3, $"empty line:\n  got      {w3.Infos.FirstOrDefault()}\n  expected {expected3}");
 }
 
+// --- 2026-11-15 review: Enemy Control "On death: Nothing" never takes over the seizer. -------------------------
+{
+    const string s = "seizer-not-taken-when-off";
+    var w = new World { TakesOverSeizer = false };
+    w.Enemy("A", 1f, 0f);
+    var seizure = w.Build();
+    for (var i = 0; i < 700; i++)
+        seizure.Tick(Dt);
+    Check(s, seizure.BodySeized && w.EnemyVictories == 1, "the body is still carried off");
+    Check(s, w.TakeControlCalls == 0 && w.Grabs == 0, "nobody taken over, no grab");
+}
+
+// --- KillerPossession (CombatSimulator/Battle/KillerPossession.cs): one rule for every battle (2026-11-15, the
+// user's decision): the killer is remembered by id at the lord's fall and taken over only once the battle is lost.
+{
+    (KillerPossession<Npc> P, PossessionWorld W, Npc Killer) Make()
+    {
+        var w = new PossessionWorld();
+        var killer = new Npc("K", 7, Vector3.Zero);
+        w.Enemies.Add(killer);
+        return (new KillerPossession<Npc>(w), w, killer);
+    }
+
+    {
+        // The lord's death alone decides nothing: allies still fight (Spring and Autumn, Warring States with
+        // retainers, a plain battle with allies). Taken over only once the defeat is decided.
+        const string s = "only-after-defeat";
+        var (p, w, k) = Make();
+        p.OnLordFell(7);
+        for (var i = 0; i < 10; i++) p.Tick();
+        Check(s, w.Taken.Count == 0 && p.Pending, "lord down, battle undecided: nobody taken over");
+        Check(s, w.Infos.Count(l => l.Contains("not lost yet")) == 1, "the wait is logged once");
+        w.Lost = true;
+        p.Tick();
+        Check(s, w.Taken.SequenceEqual(new[] { k }) && !p.Pending, "the defeat decided: the killer is taken over");
+    }
+    {
+        // The lord alone (1v1): the defeat is decided as he falls: taken over in the same frame's war tick.
+        const string s = "lord-alone";
+        var (p, w, k) = Make();
+        w.Lost = true;
+        p.OnLordFell(7);
+        p.Tick();
+        Check(s, w.Taken.SequenceEqual(new[] { k }), "taken over at once");
+    }
+    {
+        const string s = "option-off";
+        var (p, w, _) = Make();
+        w.Enabled = false;
+        w.Lost = true;
+        p.OnLordFell(7);
+        p.Tick();
+        Check(s, w.Taken.Count == 0 && !p.Pending, "nothing remembered with the option off");
+        var (p2, w2, _) = Make();
+        p2.OnLordFell(7);
+        p2.Tick();
+        w2.Enabled = false;
+        w2.Lost = true;
+        p2.Tick();
+        Check(s, w2.Taken.Count == 0 && !p2.Pending, "turned off while waiting: dropped");
+    }
+    {
+        // Review item 1: waiting, then the lord is revived (Spring and Autumn): never taken over, even if the battle
+        // is lost later without him falling again.
+        const string s = "revived-while-waiting";
+        var (p, w, _) = Make();
+        p.OnLordFell(7);
+        p.Tick();
+        w.LordAlive = true;
+        p.Tick();
+        Check(s, w.Taken.Count == 0 && !p.Pending, "revived: dropped");
+        w.LordAlive = false;
+        w.Lost = true;
+        p.Tick();
+        Check(s, w.Taken.Count == 0, "and not later either");
+    }
+    {
+        // Warring States with Retreat: the body carried off is the defeat; its seizer is the one taken over (by the
+        // seizure), so the killer is let go.
+        const string s = "seized";
+        var (p, w, _) = Make();
+        p.OnLordFell(7);
+        p.Tick();
+        w.Seized = true;
+        w.Lost = true;
+        p.Tick();
+        Check(s, w.Taken.Count == 0 && !p.Pending, "body carried off: the seizer's, killer dropped");
+    }
+    {
+        const string s = "controlling-or-director";
+        var (p, w, _) = Make();
+        w.Controlling = true;
+        w.Lost = true;
+        p.OnLordFell(7);
+        p.Tick();
+        Check(s, w.Taken.Count == 0 && !p.Pending, "someone already held: dropped");
+        var (p2, w2, _) = Make();
+        p2.OnLordFell(7);
+        p2.Tick();
+        p2.Cancel(); // a director took over (Plugin: PrivateDirectorActive)
+        w2.Lost = true;
+        p2.Tick();
+        Check(s, w2.Taken.Count == 0, "cancelled: nothing later");
+    }
+    {
+        // Review item 2: by the time the battle is lost the killer's object is gone (despawned) or its address is
+        // another object's: never taken over (the plugin's IsLiveAndSame: the object table lists the address with
+        // the same entity id).
+        const string s = "stale-or-reused";
+        var (p, w, k) = Make();
+        p.OnLordFell(7);
+        p.Tick();
+        w.Live.Remove(7);
+        w.Lost = true;
+        p.Tick();
+        Check(s, w.Taken.Count == 0 && !p.Pending && w.Infos.Any(l => l.Contains("no valid killer")), "despawned / reused: not taken over");
+        var (p2, w2, k2) = Make();
+        p2.OnLordFell(7);
+        k2.Present = false;          // the killer died before the defeat
+        w2.Lost = true;
+        p2.Tick();
+        Check(s, w2.Taken.Count == 0, "dead killer: not taken over");
+        var (p3, w3, _) = Make();
+        w3.Enemies.Clear();
+        w3.Lost = true;
+        p3.OnLordFell(7);
+        p3.Tick();
+        Check(s, w3.Taken.Count == 0, "unknown id: not taken over");
+        var (p4, w4, _) = Make();
+        w4.Lost = true;
+        p4.OnLordFell(0);
+        p4.Tick();
+        Check(s, w4.Taken.Count == 0 && !p4.Pending, "no killer known: nothing");
+    }
+}
+
 Console.WriteLine(failures == 0 ? $"OK: {checks} checks passed." : $"{failures} of {checks} checks failed.");
 return failures == 0 ? 0 : 1;
 
@@ -584,6 +720,8 @@ sealed class World : ICorpseSeizureWorld<Npc>, ICorpseGrab<Npc>
     public void Info(string text) => Infos.Add(text);
     public void Warning(string text) => Warnings.Add(text);
 
+    // Enemy Control's "On death: Control killer" (off: the seizer is never taken over).
+    public bool TakesOverSeizer { get; set; } = true;
     public bool BodyCanBeHeld => BodyCanBeHeldOverride ?? BodyReady;
     public bool IsControlling => AlreadyControlling || ControlledBy != null;
     public void TakeControl(Npc npc)
@@ -599,4 +737,22 @@ sealed class World : ICorpseSeizureWorld<Npc>, ICorpseGrab<Npc>
             Holding = true;
     }
     public bool IsHolding => Holding;
+}
+
+sealed class PossessionWorld : IKillerPossessionWorld<Npc>
+{
+    public bool Enabled = true, LordAlive, Controlling, Seized, Lost;
+    public readonly List<Npc> Enemies = new();
+    public readonly HashSet<uint> Live = new() { 7 };
+    public readonly List<Npc> Taken = new();
+    public readonly List<string> Infos = new();
+    public bool ControlKillerEnabled => Enabled;
+    bool IKillerPossessionWorld<Npc>.LordAlive => LordAlive;
+    public bool IsControlling => Controlling;
+    public bool BodySeized => Seized;
+    public bool BattleLost => Lost;
+    public Npc? FindEnemy(uint entityId) => Enemies.FirstOrDefault(e => e.Id == entityId);
+    public bool IsLiveAndSame(Npc npc, uint entityId) => npc.Present && npc.Id == entityId && Live.Contains(entityId);
+    public void TakeControl(Npc npc) { Taken.Add(npc); Controlling = true; }
+    public void Info(string text) => Infos.Add(text);
 }

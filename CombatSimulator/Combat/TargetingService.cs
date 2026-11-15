@@ -37,9 +37,11 @@ public interface ITargetingRules
 /// Who fights whom: the state behind both sides' target draws (docs/PLUGIN_ARCHITECTURE.md §4,
 /// refactor stage B2b). Every fighter's threat table, every fighter's <see cref="AggroState"/> and its
 /// generator, the enemies' current targets, how many fighters are on each target, and the draw and
-/// switch counts behind the <c>Targets:</c> log line. Moved unchanged out of CombatCompanionManager,
-/// which owns it for now and forwards its public methods here; the draws themselves (and the
-/// situation multipliers) are still the manager's.
+/// switch counts behind the <c>Targets:</c> log line, and the player's recent damage. Moved unchanged out of
+/// CombatCompanionManager (stage B2b); built before the engine and given to the engine and the manager by
+/// constructor (Refactoring II): the engine reports here the hits that make threat (an enemy's on the player's
+/// side, the player's on an enemy) and the targets it forces. The draws themselves (and the situation
+/// multipliers) are still the manager's, which the engine asks through <c>CombatEngine.ResolveNpcTarget</c>.
 /// </summary>
 public sealed class TargetingService
 {
@@ -95,6 +97,43 @@ public sealed class TargetingService
         if (!threatByEnemy.TryGetValue(enemyId, out var table))
             threatByEnemy[enemyId] = table = new Dictionary<uint, float>();
         table[sourceId] = table.GetValueOrDefault(sourceId) + EnemyMovementMath.HitThreat(damage, isTank);
+    }
+
+    // ---- The player's recent damage (the candidates' DPS in an enemy's draw) ----
+
+    /// <summary>The window the recent damage is spread over (the allies' own tally uses the same).</summary>
+    public const float RecentDpsWindowSeconds = 8.0f;
+
+    private float playerRecentDamage;
+    private float playerRecentDps;
+
+    public float PlayerRecentDps => playerRecentDps;
+
+    /// <summary>Damage the player dealt (a whole action's total, or one hit of it).</summary>
+    public void RegisterPlayerDamage(int damage)
+    {
+        playerRecentDamage += Math.Max(0, damage);
+        playerRecentDps = Math.Max(playerRecentDps, playerRecentDamage / RecentDpsWindowSeconds);
+    }
+
+    /// <summary>One hit of the player's on a target: its recent damage, and the target's threat on the player.</summary>
+    public void RegisterPlayerDamage(SimulatedEntityState player, uint targetId, int damage)
+    {
+        RegisterPlayerDamage(damage);
+        AddThreat(targetId, player.EntityId, damage, player.IsTank);
+    }
+
+    public void TickPlayerRecentDps(float deltaTime)
+    {
+        if (playerRecentDamage <= 0)
+        {
+            playerRecentDps = 0;
+            return;
+        }
+
+        var decayPerSecond = playerRecentDamage / RecentDpsWindowSeconds;
+        playerRecentDamage = Math.Max(0, playerRecentDamage - decayPerSecond * deltaTime);
+        playerRecentDps = playerRecentDamage / RecentDpsWindowSeconds;
     }
 
     public void DecayThreat(float deltaTime)
@@ -239,12 +278,14 @@ public sealed class TargetingService
 
     // ---- Reset ----
 
-    /// <summary>Forgets every target, threat table and draw state (combat reset, despawn).</summary>
+    /// <summary>Forgets every target, threat table and draw state, and the player's recent damage (combat reset, despawn).</summary>
     public void Reset()
     {
         enemyTargetByEnemyId.Clear();
         threatByEnemy.Clear();
         aggro.Clear();
         aggroCounts.Clear();
+        playerRecentDamage = 0;
+        playerRecentDps = 0;
     }
 }

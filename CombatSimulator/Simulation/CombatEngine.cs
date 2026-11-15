@@ -30,8 +30,11 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
     private readonly DamageCalculator damageCalculator;
     private readonly AnimationController animationController;
     private readonly MovementBlockHook movementBlockHook;
-    private readonly Configuration config;
+    private readonly ICombatEngineSettings config;
     private readonly NpcSelector npcSelector;
+    // Who is on the player's side, and who fights whom (built before the engine; Refactoring II).
+    private readonly Combat.CombatRoster roster;
+    private readonly Combat.TargetingService targeting;
     private readonly IClientState clientState;
     private readonly IPluginLog log;
     private readonly RagdollController ragdollController;
@@ -44,11 +47,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
     private bool playerVictoryTriggered;
     private bool enemyVictoryTriggered;
     private bool instantRagdollOverride;
-    // Player auto-attack is gated on this — when NPCs auto-engage (Dev option),
-    // the player does NOT swing back until they manually use an action.
-    // Set by ProcessPlayerAction when the player lands a real action; cleared
-    // on Start / Reset / Stop.
-    private bool playerInitiatedCombat;
 
     public SimulationState State { get; } = new();
     public bool IsActive => State.IsActive;
@@ -58,25 +56,23 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
     /// <summary>The engine's notifications, subscribed by the composition root (docs/PLUGIN_ARCHITECTURE.md §6.3).</summary>
     public CombatEvents Events { get; } = new();
     public Action? OnSimulationStarted { get => Events.SimulationStarted; set => Events.SimulationStarted = value; }
-    public Func<SimulatedNpc, SimulatedEntityState?>? ResolveNpcTarget { get; set; }
-    /// <summary>Optional party-target routing override for one enemy.</summary>
-    public Action<uint, uint>? ForceNpcTarget { private get; set; }
-    public Func<uint, nint?>? ResolveExternalEntityAddress { get; set; }
-    public Func<bool>? HasLivingCompanions { get; set; }
     /// <summary>
-    /// Returns the simulated entity id of the player's currently locked target, or
-    /// 0 when none. Wired to PlayerTargetController. When custom targeting is on,
-    /// auto-attack only fires against this target.
+    /// An enemy's current target, as the allies' controller draws it (CombatCompanionManager.SelectEnemyTarget).
+    /// The one query still handed over after construction: the draw reads the allies' controller (the player's
+    /// focus, the allies' damage, the rule parts' holders and weights, the positions through its world), and
+    /// that controller is built on this engine.
     /// </summary>
-    public Func<uint>? GetLockedTargetId { get; set; }
+    public Func<SimulatedNpc, SimulatedEntityState?>? ResolveNpcTarget { get; set; }
+    /// <summary>An ally's character address (the roster's).</summary>
+    public Func<uint, nint?>? ResolveExternalEntityAddress { get; }
+    /// <summary>The allies take part and one of them is alive (the roster's).</summary>
+    public Func<bool>? HasLivingCompanions { get; }
     /// <summary>
     /// Action Mode: returns true while the target enemy is committed to a telegraphed
     /// attack (winding up), so the hit-reaction flinch is suppressed (super-armor) and
     /// rapid player hits don't visually stunlock it. Wired to TelegraphSystem.
     /// </summary>
     public Func<uint, bool>? IsTargetSuperArmored { get; set; }
-    public Action<int>? OnPlayerDamageDealt { get; set; }
-    public Action<uint, int>? OnPlayerDamageDealtToTarget { get; set; }
     /// <summary>Dev seam: suppress every non-player route that would put an idle enemy into combat.</summary>
     public Func<bool>? ShouldSuppressEnemyInitiation { private get; set; }
     public bool IsEnemyInitiationSuppressed => ShouldSuppressEnemyInitiation?.Invoke() == true;
@@ -85,7 +81,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
     /// <summary>Fired only after a player attack has successfully dealt damage to an enemy.</summary>
     public Action? OnPlayerAttackLanded { get; set; }
     // Fired when an NPC's attack lands on the (still-alive) player; argument is the
-    // attacker's simulated entity id. Drives auto-counter target acquisition.
+    // attacker's simulated entity id.
     public Action<uint>? OnPlayerHitByNpc { get => Events.PlayerHitBy; set => Events.PlayerHitBy = value; }
     /// <summary>Fired whenever an enemy hit deals damage to the player, including the killing blow.</summary>
     public Action? OnPlayerDamagedByNpc { get => Events.PlayerDamaged; set => Events.PlayerDamaged = value; }
@@ -125,15 +121,10 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
     public Action? BeforePlayerDeath { get => Events.BeforePlayerDeath; set => Events.BeforePlayerDeath = value; }
 
     // Configuration (set from plugin config)
-    private float DamageMultiplier => config.DamageMultiplier;
     private bool EnableCriticalHits => config.EnableCriticalHits;
     private bool EnableDirectHits => config.EnableDirectHits;
     private const int GuardMpRestore = 1000;
     private const int BasicAttackMpRestore = 300;
-
-    // Queued player actions (from UseAction hook, processed on framework thread)
-    private readonly Queue<QueuedAction> actionQueue = new();
-    private readonly object queueLock = new();
 
     // Pending death animations (delayed so the killing blow visuals play first)
     private readonly List<PendingDeath> pendingDeaths = new();
@@ -155,8 +146,11 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         AnimationController animationController,
         MovementBlockHook movementBlockHook,
         RagdollController ragdollController,
-        Configuration config,
+        ICombatEngineSettings config,
         NpcSelector npcSelector,
+        Combat.CombatRoster roster,
+        Combat.TargetingService targeting,
+        Battle.Rules.BattleRuleSet ruleParts,
         IClientState clientState,
         IPluginLog log)
     {
@@ -168,6 +162,11 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         this.config = config;
         Rules = new Battle.BattleRules(config, () => IsActive, () => State.PlayerState.IsAlive);
         this.npcSelector = npcSelector;
+        this.roster = roster;
+        this.targeting = targeting;
+        RuleParts = ruleParts;
+        ResolveExternalEntityAddress = roster.AddressOf;
+        HasLivingCompanions = () => roster.HasLivingAllies;
         this.clientState = clientState;
         this.log = log;
         settlement = new HitSettlement(new SettlementHost(this), damageCalculator);
@@ -189,7 +188,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         LastPlayerKillerEntityId = 0;
         playerVictoryTriggered = false;
         enemyVictoryTriggered = false;
-        playerInitiatedCombat = false;
         settlement.ForgetExecutionWindups();
         pendingDeaths.Clear();
         ClearDeferredHits();
@@ -206,9 +204,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
             return;
 
         State.IsActive = false;
-
-        lock (queueLock)
-            actionQueue.Clear();
 
         // Everything below that WRITES into actors needs the world to still exist. On logout
         // the game frees the actors before our framework tick sees IsLoggedIn go false, and
@@ -246,7 +241,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         animationController.RemoveAllActiveVfx();
         movementBlockHook.IsBlocking = false;
         ragdollController.Deactivate();
-        playerInitiatedCombat = false;
         LastPlayerDefeatedBy = string.Empty;
         LastPlayerKillerAddress = nint.Zero;
         LastPlayerKillerEntityId = 0;
@@ -274,7 +268,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
             npc.AutoAttackTimer = 0;
             npc.EngageDelayTimer = 0;
             npc.DeadTimer = 0;
-            npc.CurrentCastSkill = null;
             foreach (var skill in npc.Behavior.Skills)
                 skill.CooldownRemaining = 0;
 
@@ -302,11 +295,9 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         LastPlayerKillerEntityId = 0;
         playerVictoryTriggered = false;
         enemyVictoryTriggered = false;
-        playerInitiatedCombat = false;
         settlement.ForgetExecutionWindups();
         pendingDeaths.Clear();
         ClearDeferredHits();
-        ClearQueuedActions();
 
         AddLogEntry("Combat state reset.", CombatLogType.Info);
         log.Info("Combat state reset.");
@@ -357,7 +348,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
 
         if (friend.IsPlayer)
         {
-            ClearQueuedActions();
             movementBlockHook.IsBlocking = true;
             unsafe
             {
@@ -456,9 +446,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         // Track player's current target for victory sequence
         VictorySequence?.TrackTarget(npcSelector.SelectedNpcs);
 
-        // Process queued player actions
-        ProcessActionQueue();
-
         // Process pending death animations
         TickPendingDeaths(deltaTime);
 
@@ -468,7 +455,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
             TickCooldowns(entity, deltaTime);
 
         // Tick the player's animation lock. Enemy and companion locks are ticked by the controller
-        // that drives them (NpcAiController / CombatCompanionManager / FightingAiController); ticking
+        // that drives them (NpcAiController / CombatCompanionManager); ticking
         // them here as well ran every lock out at double speed.
         TickAnimationLock(State.PlayerState, deltaTime);
 
@@ -483,9 +470,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         foreach (var entity in State.Entities.Values)
             TickStatusEffects(entity, deltaTime);
 
-        // Tick auto-attack
-        TickAutoAttack(deltaTime);
-
         // Shots already in the air land now.
         TickDeferredHits(deltaTime);
 
@@ -494,23 +478,12 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
 
     }
 
-    public void EnqueuePlayerAction(uint actionType, uint actionId, ulong targetId, uint extraParam)
-    {
-        lock (queueLock)
-        {
-            actionQueue.Enqueue(new QueuedAction
-            {
-                ActionType = actionType,
-                ActionId = actionId,
-                TargetId = targetId,
-                ExtraParam = extraParam,
-            });
-        }
-    }
-
+    /// <summary>
+    /// Nothing to clear: the engine keeps no queue of player actions (action combat buffers the player's input in
+    /// ActionComboSink). Kept for the private module's story start, which still calls it.
+    /// </summary>
     public void ClearQueuedActions()
     {
-        lock (queueLock) actionQueue.Clear();
     }
 
     public bool TryReplacePlayerAttack(uint actionId, ulong targetEntityId)
@@ -541,231 +514,12 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
             if (!npc.IsSpawned || !npc.State.IsAlive)
                 continue;
 
-            ForceNpcTarget?.Invoke(npc.SimulatedEntityId, playerId);
+            targeting.ForceEnemyTarget(npc.SimulatedEntityId, playerId);
             npc.AiState = CombatSimulator.Combat.CombatantAiState.Combat;
             npc.EngageDelayTimer = 0f;
             npc.AutoAttackTimer = 0f;
             AddLogEntry($"{npc.Name} is provoked!", CombatLogType.Info);
         }
-    }
-
-    public SimulatedActionResult ProcessPlayerAction(uint actionId, ulong targetId)
-    {
-        var result = new SimulatedActionResult
-        {
-            ActionId = actionId,
-            SourceId = State.PlayerState.EntityId,
-            TargetId = targetId,
-        };
-
-        // Validate
-        if (!State.PlayerState.IsAlive)
-        {
-            result.FailReason = "Player is dead.";
-            return result;
-        }
-        if (State.PlayerState.IsCaptive)
-        {
-            result.FailReason = "Player is held captive.";
-            return result;
-        }
-
-        var target = State.GetEntity(targetId);
-        if (target == null)
-        {
-            result.FailReason = "Invalid target.";
-            return result;
-        }
-
-        if (!target.IsAlive)
-        {
-            result.FailReason = "Target is already dead.";
-            return result;
-        }
-
-        TryInterruptEnemyCast(actionId, target);
-
-        if (TryReplacePlayerAttack(actionId, target.EntityId))
-        {
-            result.Success = true;
-            result.Damage = 0;
-            return result;
-        }
-
-        // Get action data
-        var actionData = GetActionDataOrFallback(actionId);
-
-        // Check animation lock
-        if (State.PlayerState.AnimationLock > 0)
-        {
-            result.FailReason = "Animation locked.";
-            return result;
-        }
-
-        // Check GCD
-        if (actionData.RecastGroup == 58 && State.PlayerState.GcdRemaining > 0)
-        {
-            result.FailReason = "GCD not ready.";
-            return result;
-        }
-
-        // Check cooldown
-        if (actionData.RecastGroup != 58 &&
-            State.PlayerState.Cooldowns.TryGetValue(actionData.RecastGroup, out var cd) &&
-            cd.IsActive)
-        {
-            result.FailReason = "Action on cooldown.";
-            return result;
-        }
-
-        // Check combo
-        bool isCombo = false;
-        if (actionData.IsComboAction && State.PlayerState.ComboTimer > 0 &&
-            State.PlayerState.LastComboAction == actionData.ComboFrom)
-        {
-            isCombo = true;
-        }
-
-        // Record combat start
-        if (State.CombatStartTime == 0)
-            State.CombatStartTime = State.SimulationTime;
-
-        var targets = ResolveActionTargets(State.PlayerState, target, actionData);
-        if (targets.Count == 0)
-        {
-            result.FailReason = "No valid targets.";
-            return result;
-        }
-
-        if (!TrySpendMp(State.PlayerState, actionData, out var mpFailReason))
-        {
-            result.FailReason = mpFailReason;
-            return result;
-        }
-
-        var hits = ApplyDamageToTargets(
-            State.PlayerState,
-            targets,
-            t => damageCalculator.Calculate(
-                State.PlayerState, t, ScaleActionPotency(actionData, targets.Count), isCombo,
-                EnableCriticalHits, EnableDirectHits, DamageMultiplier));
-        if (hits.Count == 0)
-        {
-            result.FailReason = "No valid targets.";
-            return result;
-        }
-
-        // Apply animation lock
-        State.PlayerState.AnimationLock = actionData.AnimationLock;
-
-        // Apply GCD
-        if (actionData.RecastGroup == 58)
-            State.PlayerState.GcdRemaining = actionData.RecastTime > 0 ? actionData.RecastTime : 2.5f;
-
-        // Apply cooldown
-        if (actionData.RecastGroup != 58 && actionData.RecastTime > 0)
-        {
-            State.PlayerState.Cooldowns[actionData.RecastGroup] = new RecastState
-            {
-                ActionId = actionId,
-                Elapsed = 0,
-                Total = actionData.RecastTime,
-            };
-        }
-
-        // Update combo
-        State.PlayerState.LastComboAction = actionId;
-        State.PlayerState.ComboTimer = 30.0f;
-
-        var totalDamage = 0;
-        foreach (var hit in hits)
-        {
-            totalDamage += hit.DamageResult.Damage;
-            State.TotalDamageDealt += hit.DamageResult.Damage;
-            OnPlayerDamageDealtToTarget?.Invoke(hit.Target.EntityId, hit.DamageResult.Damage);
-        }
-        OnPlayerDamageDealt?.Invoke(totalDamage);
-        if (totalDamage > 0)
-            OnPlayerAttackLanded?.Invoke();
-
-        // Build result
-        result.Success = true;
-        result.Damage = totalDamage;
-        result.IsCritical = hits[0].DamageResult.IsCritical;
-        result.IsDirectHit = hits[0].DamageResult.IsDirectHit;
-        result.IsCombo = isCombo;
-
-        // Player chose to fight back — let TickAutoAttack swing from now on.
-        playerInitiatedCombat = true;
-
-        // Trigger animation
-        TriggerActionEffect(State.PlayerState, actionData, hits);
-
-        // Log
-        var primaryHit = hits[0].DamageResult;
-        var dmgResult = new DamageResult
-        {
-            Damage = totalDamage,
-            IsCritical = primaryHit.IsCritical,
-            IsDirectHit = primaryHit.IsDirectHit,
-            DamageType = primaryHit.DamageType,
-        };
-        var critText = primaryHit.IsCritical ? " critical" : "";
-        var dhText = primaryHit.IsDirectHit ? " direct" : "";
-        var comboText = isCombo ? " (combo)" : "";
-        var aoeText = hits.Count > 1 ? $" +{hits.Count - 1} targets" : "";
-        comboText += aoeText;
-        AddLogEntry(
-            $"You use {actionData.Name} → {target.Name}: {dmgResult.Damage:N0}{critText}{dhText} damage{comboText}",
-            CombatLogType.DamageDealt);
-
-        EngageIdleTarget(target.EntityId);
-
-        // Check death
-        foreach (var hit in hits)
-        {
-            if (!hit.Target.IsAlive)
-            {
-                if (hit.Target.EntityId == target.EntityId)
-                    result.TargetKilled = true;
-                OnEntityDeath(hit.Target);
-            }
-        }
-
-        return result;
-    }
-
-    // Role interrupts and stuns. Interject/Head Graze stop interruptible casts; stuns stop any.
-    private static bool IsInterruptAction(uint actionId) => actionId is 7538 or 7551;
-    private static bool IsStunAction(uint actionId) => actionId is 7540 or 7863 or 16;
-
-    /// <summary>Action-Mode hook: cancel the enemy's telegraph that is still in its cast lead-in.</summary>
-    public Func<uint, bool>? InterruptTelegraphCast { get; set; }
-
-    /// <summary>
-    /// Telegraphed-casts option: the player's interrupt or stun on a casting enemy stops the cast
-    /// (engine cast bar, or an Action-Mode telegraph still in its lead-in). Purely local state.
-    /// </summary>
-    private void TryInterruptEnemyCast(uint actionId, SimulatedEntityState target)
-    {
-        if (target.IsPlayer || target.IsCompanion)
-            return;
-        var stun = IsStunAction(actionId);
-        if (!stun && !IsInterruptAction(actionId))
-            return;
-
-        if (target.IsCasting && (stun || target.CastInterruptible))
-        {
-            target.IsCasting = false;
-            target.CastActionId = 0;
-            target.CastTimeElapsed = 0;
-            target.CastTimeTotal = 0;
-            AddLogEntry("You interrupt the cast.", CombatLogType.Info);
-            return;
-        }
-
-        if (target.EntityId <= uint.MaxValue && InterruptTelegraphCast?.Invoke((uint)target.EntityId) == true)
-            AddLogEntry("You interrupt the cast.", CombatLogType.Info);
     }
 
     /// <summary>An enemy's attack lands (see <see cref="HitSettlement"/>).</summary>
@@ -795,9 +549,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         float radius = 0)
         => settlement.ProcessCompanionAction(companion, targetNpc, actionId, potency, attackStyle, radius);
 
-    /// <summary>A hit by someone on someone: (source, target, damage). Who fights whom is drawn from these.</summary>
-    public Action<SimulatedEntityState, SimulatedEntityState, int>? OnHit { get; set; }
-
     /// <summary>A hit has landed and taken HP: (target, the hit, who struck it if known). Damage numbers are drawn from it.</summary>
     public Action<SimulatedEntityState, DamageResult, SimulatedEntityState?>? OnDamageLanded { get => Events.DamageLanded; set => Events.DamageLanded = value; }
 
@@ -814,26 +565,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
 
     public Vector3 GetSimulatedEntityPosition(SimulatedEntityState entity)
         => GetEntityPosition(entity);
-
-    private List<AppliedActionDamage> ApplyDamageToTargets(
-        SimulatedEntityState source,
-        IReadOnlyList<SimulatedEntityState> targets,
-        Func<SimulatedEntityState, DamageResult> calculateDamage)
-    {
-        var hits = new List<AppliedActionDamage>();
-        foreach (var target in targets)
-        {
-            if (!target.IsAlive || hits.Count >= 32)
-                continue;
-
-            var damage = calculateDamage(target);
-            LandDamage(target, damage, source);
-            OnHit?.Invoke(source, target, damage.Damage);
-            hits.Add(new AppliedActionDamage(target, damage));
-        }
-
-        return hits;
-    }
 
     private List<SimulatedEntityState> ResolveActionTargets(
         SimulatedEntityState source,
@@ -1370,13 +1101,13 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
             return;
         }
 
-        // Queue death animation with a short delay so the killing blow plays first. In Action Mode
-        // the player drops fast so the fall isn't lagging hundreds of ms behind the hit-react.
+        // Queue death animation with a short delay so the killing blow plays first. The player drops
+        // fast so the fall isn't lagging hundreds of ms behind the hit-react.
         pendingDeaths.Add(new PendingDeath
         {
             EntityId = entity.IsPlayer ? 0UL : entity.EntityId,
             IsPlayer = entity.IsPlayer,
-            Timer = entity.IsPlayer && config.ActionMode ? ActionPlayerDeathDelay : DeathAnimationDelay,
+            Timer = entity.IsPlayer ? ActionPlayerDeathDelay : DeathAnimationDelay,
         });
 
     }
@@ -1423,18 +1154,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
 
     private static bool IsTankJob(uint classJobId)
         => classJobId is 19 or 21 or 32 or 37;
-
-    private void ProcessActionQueue()
-    {
-        lock (queueLock)
-        {
-            while (actionQueue.Count > 0)
-            {
-                var action = actionQueue.Dequeue();
-                ProcessPlayerAction(action.ActionId, action.TargetId);
-            }
-        }
-    }
 
     private void TickCooldowns(SimulatedEntityState entity, float deltaTime)
     {
@@ -1498,121 +1217,6 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         }
     }
 
-    private void TickAutoAttack(float deltaTime)
-    {
-        // Action Mode replaces the timed auto-attack with button-driven combos.
-        if (config.ActionMode)
-            return;
-
-        var ps = State.PlayerState;
-        if (!ps.IsAlive || ps.IsCaptive)
-            return;
-
-        if (config.EnableCustomTargeting)
-        {
-            // Custom targeting: only auto-attack the locked target. No lock => no
-            // swings; the player attacks only while a target is explicitly locked.
-            var lockedId = GetLockedTargetId?.Invoke() ?? 0u;
-            if (lockedId == 0u)
-                return;
-
-            SimulatedNpc? target = null;
-            foreach (var npc in npcSelector.SelectedNpcs)
-            {
-                if (npc.SimulatedEntityId == lockedId)
-                {
-                    target = npc;
-                    break;
-                }
-            }
-            if (target == null || !target.State.IsAlive)
-                return;
-
-            // Locking onto an enemy and swinging commits to the fight — engage it
-            // if it was still idle (mirrors ProcessPlayerAction).
-            EngageIdleTarget(target.State.EntityId);
-
-            ps.AutoAttackTimer -= deltaTime;
-            if (ps.AutoAttackTimer <= 0)
-            {
-                ps.AutoAttackTimer = 2.56f; // Standard auto-attack delay
-                AutoAttackNpc(ps, target);
-            }
-            return;
-        }
-
-        // Legacy behavior (custom targeting disabled): don't auto-swing just because
-        // something engaged us — wait until the player chooses to fight.
-        if (!playerInitiatedCombat)
-            return;
-
-        ps.AutoAttackTimer -= deltaTime;
-        if (ps.AutoAttackTimer <= 0)
-        {
-            ps.AutoAttackTimer = 2.56f; // Standard auto-attack delay
-
-            // Auto-attack closest engaged NPC
-            foreach (var npc in npcSelector.SelectedNpcs)
-            {
-                if (npc.State.IsAlive && npc.IsEngaged)
-                {
-                    AutoAttackNpc(ps, npc);
-                    break;
-                }
-            }
-        }
-    }
-
-    private void AutoAttackNpc(SimulatedEntityState ps, SimulatedNpc npc)
-    {
-        if (TryReplacePlayerAttack(7, npc.State.EntityId))
-            return;
-
-        var dmg = damageCalculator.CalculateNpcAutoAttack(ps, npc.State, 110);
-        var autoAttackData = new ActionData
-        {
-            ActionId = 7, // Auto-attack
-            Potency = 110,
-            DamageType = SimDamageType.Physical,
-            AnimationLock = 0.6f,
-        };
-        var hits = new List<AppliedActionDamage> { new(npc.State, dmg) };
-
-        // Bow or gun: the shot motion starts now; the hit lands when the arrow does.
-        var contactDelay = RangedContactDelay(ps, npc.State);
-        if (contactDelay >= 0f)
-        {
-            TriggerActionEffect(ps, autoAttackData, hits, contactDelay: contactDelay, deferHitReaction: true);
-            DeferHit(contactDelay, () =>
-            {
-                if (!npc.IsSpawned || !npc.State.IsAlive)
-                    return;
-                ApplyPlayerAutoAttack(ps, npc, dmg);
-                PlayHitReactionOnTarget(npc.State, dmg.Damage > 0);
-                if (!npc.State.IsAlive)
-                    OnEntityDeath(npc.State);
-            });
-            return;
-        }
-
-        ApplyPlayerAutoAttack(ps, npc, dmg);
-        TriggerActionEffect(ps, autoAttackData, hits);
-
-        if (!npc.State.IsAlive)
-            OnEntityDeath(npc.State);
-    }
-
-    private void ApplyPlayerAutoAttack(SimulatedEntityState ps, SimulatedNpc npc, DamageResult dmg)
-    {
-        LandDamage(npc.State, dmg, ps);
-        State.TotalDamageDealt += dmg.Damage;
-        OnPlayerDamageDealt?.Invoke(dmg.Damage);
-        OnPlayerDamageDealtToTarget?.Invoke(npc.State.EntityId, dmg.Damage);
-        if (dmg.Damage > 0)
-            OnPlayerAttackLanded?.Invoke();
-        EngageIdleTarget(npc.State.EntityId);
-    }
-
     public ActionData? GetActionData(uint actionId) => actionDataProvider.GetActionData(actionId);
 
 
@@ -1674,8 +1278,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
     /// basic attack). Reuses the same shape module + feedback (swing/impact sound/hit-react/flytext)
     /// normal mode uses. Returns the number of enemies hit; 0 = whiff (caller plays animation-only).
     /// </summary>
-    public int ApplyPlayerActionMode(uint actionId, ulong primaryEntityId, int potencyOverride = 0, float animationDuration = 0f,
-        bool suppressCasterActionEffect = false)
+    public int ApplyPlayerActionMode(uint actionId, ulong primaryEntityId, int potencyOverride = 0, float animationDuration = 0f)
     {
         var ps = State.PlayerState;
         if (!ps.IsAlive || ps.IsCaptive)
@@ -1708,12 +1311,12 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
                 continue;
             var dmg = damageCalculator.Calculate(
                 ps, target, damageAction, false,
-                EnableCriticalHits, EnableDirectHits, DamageMultiplier);
+                EnableCriticalHits, EnableDirectHits);
             LandDamage(target, dmg, ps);
             hits.Add(new AppliedActionDamage(target, dmg));
             total += dmg.Damage;
             State.TotalDamageDealt += dmg.Damage;
-            OnPlayerDamageDealtToTarget?.Invoke(target.EntityId, dmg.Damage);
+            targeting.RegisterPlayerDamage(State.PlayerState, target.EntityId, dmg.Damage);
         }
 
         if (hits.Count == 0)
@@ -1730,30 +1333,14 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         if (actionId == 7 && potencyOverride > 0)
             RestoreMp(ps, BasicAttackMpRestore);
 
-        OnPlayerDamageDealt?.Invoke(total);
-        if (suppressCasterActionEffect)
-            // Weapon-contact hit (Fighting Mode): the swing animation is already playing;
-            // fire impact-only feedback instead of restarting the caster's action effect.
-            TriggerManualPlayerHitFeedback(hits);
-        else
-            TriggerActionEffect(ps, actionData, hits);
+        targeting.RegisterPlayerDamage(total);
+        TriggerActionEffect(ps, actionData, hits);
 
         foreach (var hit in hits)
             if (!hit.Target.IsAlive)
                 OnEntityDeath(hit.Target);
 
         return hits.Count;
-    }
-
-    private void TriggerManualPlayerHitFeedback(IReadOnlyList<AppliedActionDamage> hits)
-    {
-        foreach (var hit in hits)
-        {
-            if (hit.DamageResult.Damage <= 0)
-                continue;
-
-            PlayHitReactionOnTarget(hit.Target, isDamage: true);
-        }
     }
 
     private static ActionData ScaleActionPotency(ActionData actionData, int actualTargets)
@@ -1918,13 +1505,5 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
     public void Dispose()
     {
         StopSimulation();
-    }
-
-    private struct QueuedAction
-    {
-        public uint ActionType;
-        public uint ActionId;
-        public ulong TargetId;
-        public uint ExtraParam;
     }
 }

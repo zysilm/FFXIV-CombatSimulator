@@ -20,7 +20,6 @@ public unsafe class NpcSelector : IDisposable
     private const uint SimulatedEntityIdFloor = 0xF0000000;
 
     private readonly IObjectTable objectTable;
-    private readonly ITargetManager targetManager;
     private readonly Configuration config;
     private readonly NpcActionProfileProvider actionProfileProvider;
     private readonly IPluginLog log;
@@ -33,96 +32,14 @@ public unsafe class NpcSelector : IDisposable
 
     public NpcSelector(
         IObjectTable objectTable,
-        ITargetManager targetManager,
         Configuration config,
         NpcActionProfileProvider actionProfileProvider,
         IPluginLog log)
     {
         this.objectTable = objectTable;
-        this.targetManager = targetManager;
         this.config = config;
         this.actionProfileProvider = actionProfileProvider;
         this.log = log;
-    }
-
-    /// <summary>
-    /// Select the player's current target as a combat target.
-    /// Returns null with a reason string if it fails.
-    /// </summary>
-    public (SimulatedNpc? Npc, string? Error) SelectCurrentTarget(
-        EnemyTier? tier, int level)
-    {
-        if (selectedNpcs.Count >= MaxTargets)
-            return (null, "Maximum target limit reached.");
-
-        var target = targetManager.Target;
-        if (target == null)
-            return (null, "No target selected. Target an NPC first.");
-
-        // Check if already selected
-        foreach (var existing in selectedNpcs)
-        {
-            if (existing.SimulatedEntityId == target.EntityId)
-                return (null, $"'{target.Name}' is already a combat target.");
-        }
-
-        var battleChara = (BattleChara*)target.Address;
-        var character = (Character*)battleChara;
-        var gameObj = (GameObject*)battleChara;
-
-        // Read original model for potential restore
-        int originalModelCharaId = character->ModelContainer.ModelCharaId;
-
-        // Save original ObjectKind/SubKind before modifying
-        byte originalObjectKind = (byte)gameObj->ObjectKind;
-        byte originalSubKind = gameObj->SubKind;
-
-        var weaponStyle = NpcWeaponClassifier.DetectFromCharacter(character, log, target.Name.TextValue);
-        var npcLevel = EnemyStrength.ResolveLevel(level);
-        var npcTier = EnemyStrength.ResolveTier(tier, target.BaseId);
-        var behavior = actionProfileProvider.Create(
-            target.Name.TextValue, NpcWeaponClassifier.DetectJobFromCharacter(character), weaponStyle, npcLevel,
-            modelCharaId: (uint)Math.Max(0, originalModelCharaId));
-        int maxHp = EnemyStrength.MaxHp(npcTier, behavior.FightsAtRange, npcLevel);
-
-        var npc = new SimulatedNpc
-        {
-            SimulatedEntityId = target.EntityId,
-            ObjectIndex = -1,
-            Name = target.Name.TextValue,
-            BattleChara = battleChara,
-            GameObjectRef = target,
-            SpawnPosition = target.Position,
-            Behavior = behavior,
-            IsSpawned = true,
-            IsClientControlled = false,
-            IsRanged = weaponStyle == NpcAttackStyle.Ranged,
-            OriginalModelCharaId = originalModelCharaId,
-            OriginalObjectKind = originalObjectKind,
-            OriginalSubKind = originalSubKind,
-            State = new SimulatedEntityState
-            {
-                EntityId = target.EntityId,
-                Name = target.Name.TextValue,
-                IsPlayer = false,
-                Level = npcLevel,
-                LevelFactor = EnemyStrength.LevelFactor(npcLevel),
-                Tier = npcTier,
-                MaxHp = maxHp,
-                CurrentHp = maxHp,
-                MaxMp = 5000, // half the player's 10000 — enemy MP economy (NpcAiController)
-                CurrentMp = 5000,
-            },
-        };
-
-        // Make the NPC attackable by setting it as a BattleNpc Enemy
-        gameObj->ObjectKind = ObjectKind.BattleNpc;
-        gameObj->SubKind = (byte)BattleNpcSubKind.Combatant;
-        log.Info($"Changed ObjectKind from {originalObjectKind} to BattleNpc, SubKind from {originalSubKind} to Combatant(5).");
-
-        selectedNpcs.Add(npc);
-        log.Info($"Selected '{npc.Name}' (EntityId=0x{target.EntityId:X}) as combat target. HP={maxHp}");
-        return (npc, null);
     }
 
     /// <summary>

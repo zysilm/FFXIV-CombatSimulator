@@ -7,29 +7,17 @@ using System;
 namespace CombatSimulator.ActionCombat;
 
 /// <summary>
-/// Selects the active enemy-attack executor by mode, so call sites (NpcAiController)
-/// stay mode-agnostic: <c>router.AttackExecutor.Execute(...)</c>. Off = behavior-
-/// equivalent instant path; on = telegraphed. Fighting Mode forces the telegraphed
-/// path while engaged (its guard timing needs windups), independent of Action Mode.
+/// Where an enemy's committed attack goes (NpcAiController calls <c>router.AttackExecutor.Execute(...)</c>): the
+/// telegraphed executor, observed so listeners hear every accepted attack.
 /// </summary>
 public sealed class CombatModeRouter
 {
-    private readonly Configuration config;
-    private readonly IAttackExecutor instant;
-    private readonly IAttackExecutor telegraphed;
-    private readonly Func<bool>? forceTelegraphed;
-
-    public CombatModeRouter(Configuration config, IAttackExecutor instant, IAttackExecutor telegraphed,
-        Func<bool>? forceTelegraphed = null)
+    public CombatModeRouter(IAttackExecutor telegraphed)
     {
-        this.config = config;
-        this.instant = new ObservedExecutor(this, instant);
-        this.telegraphed = new ObservedExecutor(this, telegraphed);
-        this.forceTelegraphed = forceTelegraphed;
+        AttackExecutor = new ObservedExecutor(this, telegraphed);
     }
 
-    public IAttackExecutor AttackExecutor =>
-        config.ActionMode || forceTelegraphed?.Invoke() == true ? telegraphed : instant;
+    public IAttackExecutor AttackExecutor { get; }
 
     /// <summary>
     /// Raised after an executor accepted an attack (telegraphed: at windup start). Lets listeners

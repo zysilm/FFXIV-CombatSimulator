@@ -133,8 +133,8 @@ plugin ticked it); since B6 the same output comes from the merged settlement and
 
 - `settlement.txt` — seeds 1–3, 700 random events each: enemy attacks (auto-attacks and skills with and without
   action data and potency, styles, splash, snapshotted areas with and without the guarded player, the windup's
-  VFX-only strike, arrows in flight, unknown or dead targets), ally attacks (bare potency, the full formula with
-  critical and direct hits and the damage multiplier, splash, arrows), time passing (arrows landing), the war
+  VFX-only strike, arrows in flight, unknown or dead targets), ally attacks (with and without potency, splash,
+  arrows; the critical, direct-hit and multiplier switches are still drawn and written, see below), time passing (arrows landing), the war
   switches changed, fighters revived, enemies despawned. Captives come from hostages' lethal blows and are executed
   after the wind-up. The engine is `RecordingHost`: every call the settlement makes is an `h` line with what it was
   given; it changes HP and the captive state as `CombatEngine` does and finds the targets in an area as it does, but
@@ -167,3 +167,15 @@ fallen body the kneelers are while kneeling (set `KNEEL_DEBUG=1` for one line pe
 and to every corpse). Before the change: prayer 1.3–1.8 m from the lord's body, raise 1.3–1.5 m; after: 0.25 m, except
 in `loop-rule-switch` where two raises of an ally lying within 0.25 m of the lord's body, while another ally knelt at
 the lord, found no spot 0.8 m clear of that kneeler and knelt where they stood (1.26 and 1.49 m), as before.
+
+2026-11-15 (Refactoring II, stage R2-P2): `settlement.txt` re-recorded for two intended changes in `HitSettlement`; the
+other 18 files were unchanged. (1) An enemy's log line names the one it hit: "→ You" only on the player, else the
+target's name (before, every enemy line said "→ You"). (2) An ally's attack given without a potency went through the
+full formula (critical and direct hits, the damage multiplier, the action's damage type); it now takes the action's
+bare potency as an enemy's does (one set of numbers). No ally reaches that path in the plugin (every ally attack is
+handed a potency of at least 1: the kits' skills, the auto-attacks), so only this harness, which hands 443 of its 680
+ally events no potency, sees it. Checked in two steps: the run with only (2) (the log line kept as before) first
+differs from the old file, in each seed, at an ally event with no potency and action data found (seed 1 line 6, seed 2
+line 26, seed 3 line 6 of the seed), everything after following from the HP; the run with both differs from that one
+only in 244 `h log DamageTaken` lines (now 134 on the player, 214 on allies, 30 on enemies that the harness's enemies
+hit; none of them "You").

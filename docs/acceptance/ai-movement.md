@@ -38,7 +38,7 @@ clear companions under Combat tab → Party.
 - **Unverified:** very steep drops (>60°, ledges) now descend at the 60° rate rather than 1.5 y/s — should read as
   "walking down", but check that nobody visibly drops through a staircase.
 
-### A2. Fighting Mode ground height (e97d1af)
+### A2. Fighting Mode ground height (e97d1af) — obsolete: Fighting Mode was removed on 2026-11-15
 - **Changed:** `FightingAiController` latched the first ground Y. Each frame `FightingModeController` now casts one
   short downward BG-collision ray under the enemy (`TerrainHeightService.TrySampleGround`) and the AI keeps its
   initial clearance (clamped ±0.5y). Jump-over arcs ride on the tracked floor.

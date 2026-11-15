@@ -7716,7 +7716,8 @@ public unsafe partial class DismembermentController : IDisposable
             // Stronger damping than weapons (0.97/0.92) so limbs tumble a bit then settle, not roll far.
             new WeaponDropPoseIntegratorCallbacks(new Vector3(0, -RagdollTuning.Gravity, 0), 0.93f, 0.84f),
             new SolveDescription(4, 1));
-        CollisionWorkBudget.Register(simulation.NarrowPhase.CollisionTaskRegistry, () => config.RagdollMeshContactQuality);
+        // The mesh pair task asks for the quality inside the narrow phase: the same copy, not the Configuration.
+        CollisionWorkBudget.Register(simulation.NarrowPhase.CollisionTaskRegistry, () => contactSettings.RagdollMeshContactQuality);
 
         var shape = new Capsule(LimbRadius, LimbHalfLength * 2f);
         limbShapeIndex = simulation.Shapes.Add(shape);

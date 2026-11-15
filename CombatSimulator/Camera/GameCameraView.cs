@@ -28,6 +28,9 @@ public readonly struct GameCameraView
 {
     public readonly Vector3 Position;
     public readonly Vector3 Forward;
+    /// <summary>Normalized scene LookAtVector minus the render origin: the look direction the camera update
+    /// stored, before any view matrix (diagnostics: compare with <see cref="Forward"/>).</summary>
+    public readonly Vector3 LookDirection;
     /// <summary>SIGNED projection scales for the no-roll basis built by
     /// DynamicCameraSolver.BasisFromForward. Magnitudes come off the projection matrix
     /// diagonal; SIGNS come from comparing our cross-product right/up against the view
@@ -45,11 +48,12 @@ public readonly struct GameCameraView
     public readonly bool AxesAreRows;
     public readonly float AxisScore;
 
-    private GameCameraView(Vector3 position, Vector3 forward, float tanHalfH, float tanHalfV,
+    private GameCameraView(Vector3 position, Vector3 forward, Vector3 lookDirection, float tanHalfH, float tanHalfV,
         float gameFov, float dirH, float dirV, bool axesAreRows, float axisScore)
     {
         Position = position;
         Forward = forward;
+        LookDirection = lookDirection;
         TanHalfH = tanHalfH;
         TanHalfV = tanHalfV;
         GameFov = gameFov;
@@ -144,6 +148,7 @@ public readonly struct GameCameraView
             view = new GameCameraView(
                 origin,
                 fwd,
+                lookDir,
                 signH / proj.M11,
                 signV / proj.M22,
                 gameCam->FoV,

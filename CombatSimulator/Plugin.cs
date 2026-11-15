@@ -11,14 +11,12 @@ using CombatSimulator.Camera;
 using CombatSimulator.Companions;
 using CombatSimulator.Composition;
 using CombatSimulator.Core;
-using CombatSimulator.Fighting;
 using CombatSimulator.Gui;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
 using CombatSimulator.Spectators;
-using CombatSimulator.Targeting;
 using CombatSimulator.Voice;
 using Dalamud.Game.Command;
 using Dalamud.Plugin;
@@ -28,7 +26,7 @@ namespace CombatSimulator;
 
 /// <summary>
 /// The composition root (docs/PLUGIN_ARCHITECTURE.md §6). The plugin's objects live in feature modules
-/// (<see cref="Composition.PluginModules"/>: World, Actors, Corpse, Camera, Combat, Fighting, Battle,
+/// (<see cref="Composition.PluginModules"/>: World, Actors, Corpse, Camera, Combat, Battle,
 /// Presentation, Safety/Dev); this class keeps what only it can do:
 /// <list type="bullet">
 /// <item>the build list (the constructor): every module build step in the one order the game objects and
@@ -75,7 +73,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
 
     private bool hookSafetyScanned;
     private bool wasLoggedIn;
-    private bool wasDevExperimentalUnlocked;
 
     // ---- The feature modules (docs/PLUGIN_ARCHITECTURE.md §6.1) ----
     private WorldModule worldModule => modules.World;
@@ -85,7 +82,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     private IReadOnlyList<RagdollController> GetActiveCorpseRagdolls() => corpseModule.GetActiveCorpseRagdolls();
     private CameraModule cameraModule => modules.Camera;
     private CombatModule combatModule => modules.Combat;
-    private FightingModule fightingModule => modules.Fighting;
     private BattleModule battleModule => modules.Battle;
     private PresentationModule presentationModule => modules.Presentation;
     private SafetyDevModule safetyDevModule => modules.SafetyDev;
@@ -127,6 +123,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     private GameCameraUpdateHook gameCameraUpdateHook => cameraModule.UpdateHook;
     private ActiveCameraController activeCameraController => cameraModule.Active;
     private DynamicCameraController dynamicCameraController => cameraModule.Dynamic;
+    private CutsceneShotDirector cutsceneShots => cameraModule.CutsceneShots;
     // Combat
     private CombatEngine combatEngine => combatModule.Engine;
     private CombatSimulator.ActionCombat.ActionComboSink actionComboSink => combatModule.ComboSink;
@@ -139,12 +136,11 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     private NpcAiController npcAiController => combatModule.EnemyAi;
     private NpcCorpseFootIkSolver npcCorpseFootIkSolver => combatModule.CorpseFootIk;
     private VirtualEnemyLookAtController virtualEnemyLookAt => combatModule.EnemyLookAt;
-    private PlayerTargetController playerTargetController => combatModule.PlayerTarget;
+    private HardTargetGuard hardTargetGuard => combatModule.HardTarget;
     private UseActionHook useActionHook => combatModule.UseAction;
-    // Fighting / Enemy Control
-    private EnemyControlController enemyControlController => fightingModule.EnemyControl;
-    private FightingModeController fightingModeController => fightingModule.Mode;
-    private FightingCombatController fightingCombatController => fightingModule.Combat;
+    private SafetyBarriers safetyBarriers => combatModule.Barriers;
+    // Enemy Control
+    private EnemyControlController enemyControlController => actorsModule.EnemyControl;
     // Battle
     private VictoryCelebrationDirector? victoryCelebration => battleModule.VictoryCelebration;
     /// <summary>Exposed for private directors (stories) that hand actors in and out of it.</summary>
@@ -192,18 +188,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         config = pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         config.Initialize(pluginInterface);
 
-        // Security: Fighting Mode drives the local player's position/rotation directly
-        // (lane projection, min-separation clamp, vault) and is under review for movement
-        // patterns a server could flag. Force it off on every load regardless of the
-        // persisted value — see update log 2.6.0.1. The UI entry is also now hidden unless
-        // Dev Experimental is unlocked (see OnFrameworkUpdate / MainWindow).
-        if (config.FightingMode)
-        {
-            config.FightingMode = false;
-            config.Save();
-            log.Info("Fighting Mode force-disabled on load (security).");
-        }
-
 #if DEV_EXPERIMENTAL
         // One-time default fix: mounted-death dismemberment shipped defaulting to on, firing on every
         // player death while mounted with no unlock gate — never the intent. Existing configs already
@@ -231,7 +215,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         worldModule.CreateGameAccess(pluginInterface, gameInterop, clientState, dataManager, sigScanner, config, log);
         actorsModule.AttachMonsterKits(dataManager);
         worldModule.CreateBoneTransforms(gameInterop, sigScanner, log);
-        actorsModule.CreateRoster(objectTable, targetManager, dataManager, clientState);
+        actorsModule.CreateRoster(objectTable, dataManager, clientState);
         corpseModule.CreatePlayerBody(objectTable);
         worldModule.CreateGeometryRenderer(gameInterop, sigScanner, log);
         corpseModule.CreateArrowImpacts();
@@ -248,7 +232,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         // Super-armor enemies during their telegraph windup (no flinch from player hits).
         combatEngine.IsTargetSuperArmored = telegraphSystem.IsWindingUp;
 
-        fightingModule.CreateEnemyControl(keyState, gamepadState, framework);
+        actorsModule.CreateEnemyControl(keyState, gamepadState, framework);
 
         // The remaining experimental ("easter-egg") dev features live in one module (Victory/Hold +
         // dev-only per-frame tweaks). The engine drives the cinematic victory through the
@@ -274,20 +258,25 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         actorsModule.CreateSpectators(clientState);
         // NpcAiController's constructor subscribes its own SimulationStarted #1 and SimulationReset #4.
         combatModule.CreateEnemyAi();
-        combatModule.CreatePlayerTargeting(gameInterop, objectTable, gameGui);
-        combatEvents.PlayerHitBy = playerTargetController.NotifyPlayerHitBy;
+        combatModule.CreateHardTargetGuard(gameInterop);
         cameraModule.CreateDynamic(sigScanner);
         actorsModule.CreateMapEnemies(objectTable);
-        fightingModule.CreateFighting(gamepadState);
         combatEvents.BeforePlayerDeath = () =>
         {
-            fightingModeController.HandlePlayerDeath();
             // The killing blow was recorded when it landed; deaths resolve on a delay, so by
             // now the engine knows exactly who to frame alongside the body.
             dynamicCameraController.HandlePlayerDeath(
                 combatEngine.LastPlayerKillerAddress, combatEngine.LastPlayerKillerEntityId);
             devExperimental.BeforePlayerDeath();
         };
+        // Cutscene follow shots for death and victory (docs/CUTSCENE_SHOTS.md). After the Directed camera has armed its
+        // death framing above: the shot holds that framing while it plays and hands the camera back to it. (These
+        // listeners run before the SimulationStarted / SimulationReset handlers numbered #2 / #5 and on below.)
+        cameraModule.CreateCutsceneShots(targetManager, dataManager, condition, clientState, pluginInterface.GetPluginConfigDirectory(), () => PrivateDirectorActive);
+        combatEvents.BeforePlayerDeath += cutsceneShots.OnPlayerDeath;
+        combatEvents.DamageLanded += cutsceneShots.NoteDamage;
+        combatEvents.SimulationStarted += cutsceneShots.OnSimulationStarted;
+        combatEvents.SimulationReset += cutsceneShots.OnSimulationReset;
         actorsModule.WireActorCallbacks(chatGui);
 
         // Re-register alive spawned NPCs on sim start (they're removed from
@@ -330,7 +319,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             npcScaleController.Reset();
             devExperimental.ResetTransientState();
             enemyControlController.Despawn();
-            fightingModeController.Reset();
             dynamicCameraController.Reset();
 
             // Keep companions across a combat *reset* (IsActive stays true) — revive/heal
@@ -376,27 +364,15 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             }
             devExperimental.OnPlayerDeath(addr);
 
-            // Under Warring States with Retreat the lord's body is fought over: an enemy takes it with
-            // Enemy Control's grab only if it reaches it (the corpse seizure rule), not the moment the lord falls.
-            var bodyFoughtOver = companionManager.RuleParts.SuppressesKillerPossession();
-            if (bodyFoughtOver)
-                log.Info("EnemyControl: the lord's body is fought over; nobody takes it yet.");
-            else if (config.EnemyControlControlKiller)
-            {
-                var killer = actorsModule.FindNpcByAddress(combatEngine.LastPlayerKillerAddress);
-                if (killer != null) enemyControlController.ControlKiller(killer);
-                else log.Info("EnemyControl: no valid killer to control.");
-            }
-            else if (config.EnemyControlSpawnOnDeath)
-            {
-                enemyControlController.Spawn();
-            }
+            // Remember the killer: Enemy Control takes over one enemy only once the battle is lost
+            // (Battle/KillerPossession.cs, the war tick), never while the fight is undecided.
+            battleModule.OnLordFell(combatEngine.LastPlayerKillerEntityId);
         };
 
         safetyDevModule.CreateHookSafetyChecker(pluginInterface);
 
         // Safety — enable hooks immediately; they gate on internal state
-        combatModule.CreateUseActionHook(gameInterop, clientState);
+        combatModule.CreateUseActionHook(gameInterop);
         useActionHook.Enable();
         movementBlockHook.Enable();
 
@@ -413,9 +389,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         voiceDirector.LinesSuppressed = () => PrivateDirectorActive;
         // Only a story's performer is held back, and only while the story runs, so it never talks
         // over its own lines. Enemy Control possesses the killer on every defeat; that actor is
-        // often the last enemy standing and must still gloat. (ControlsNpc would also cover the
-        // pack following it, which silenced the taunts entirely.)
-        voiceDirector.IsActorReserved = addr => PrivateDirectorActive && enemyControlController.PossessesNpc(addr);
+        // often the last enemy standing and must still gloat.
+        voiceDirector.IsActorReserved = addr => PrivateDirectorActive && enemyControlController.ControlsNpc(addr);
         mainWindow.VoiceDirector = voiceDirector;
         InitPrivateDirectors();
         AttachPrivateEffects();
@@ -437,6 +412,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             previous?.Invoke(playerWon);
             battleModule.ShowOutcome(playerWon);
         };
+        combatEvents.OutcomeDecided += cutsceneShots.OnOutcome;                  // (OutcomeDecided #3)
         combatEvents.SimulationReset += battleModule.ResetWar;                   // (SimulationReset #9)
         presentationModule.CreateOverlays(gameGui, clientState, dataManager, hadExistingConfig);
 
@@ -502,7 +478,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         worldGeometryRenderer.Dispose();
         npcSpawner.Dispose();
         useActionHook.Dispose();
-        playerTargetController.Dispose();
+        hardTargetGuard.Dispose();
         movementBlockHook.Dispose();
         combatLogWindow.Dispose();
         hpBarOverlay.Dispose();
@@ -520,6 +496,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         // Any ragdoll recording still open (docs/REFACTOR_PLAN.md, stage A0) is closed with the plugin.
         RagdollRecordingSession.Stop();
         boneTransformService.Dispose();
+        cutsceneShots.Dispose();
         dynamicCameraController.Dispose();
         gameCameraUpdateHook.Dispose();
         cameraModeCoordinator.Reset();
@@ -585,6 +562,21 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
                     break;
                 }
 
+            case "cutprobe":
+                {
+                    // Passive calibration of the cutscene lens (docs/CUTSCENE_SHOTS.md §5): record the real camera
+                    // while one of the game's own cutscenes plays. Read-only.
+                    var probeCommand = parts.Length > 1 ? parts[1].Trim().ToLowerInvariant() : "status";
+                    var probeText = probeCommand switch
+                    {
+                        "start" => cutsceneShots.Probe.Start(),
+                        "stop" => cutsceneShots.Probe.Stop(),
+                        _ => cutsceneShots.Probe.Status(),
+                    };
+                    chatGui.Print($"[CombatSim] Cutscene probe: {probeText}");
+                    break;
+                }
+
             case "geometry":
                 var geometryCommand = parts.Length > 1 ? parts[1].Trim().ToLowerInvariant() : "status";
                 if (geometryCommand == "marker" && clientState.IsLoggedIn && Services.ObjectTable.LocalPlayer is { } geometryPlayer)
@@ -599,9 +591,12 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
                 break;
 
             case "start":
-                if (!useActionHook.IsHealthy)
+                // The one barrier check every start and spawn path makes (Safety/SafetyBarriers.cs); a command
+                // cannot ask, so it refuses.
+                if (safetyBarriers.FirstDown is { } down)
                 {
-                    chatGui.PrintError("[CombatSim] Cannot start: UseAction hook is not healthy. Actions would reach the server.");
+                    chatGui.PrintError($"[CombatSim] Cannot start: a client-side safety barrier is down ({down}). " +
+                                       "Simulated combat could reach the server. See the Diagnose tab.");
                     break;
                 }
                 combatEngine.StartSimulation();
@@ -619,6 +614,11 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
                 break;
 
             case "recover":
+                if (AnimationController.PlayerBusyReason() is { } busy)
+                {
+                    chatGui.PrintError($"[CombatSim] Not recovered: you are {busy}. Try again when you are not.");
+                    break;
+                }
                 ragdollController.Deactivate();
                 animationController.RecoverPlayerAnimationState();
                 chatGui.Print("[CombatSim] Player animation state recovered.");
@@ -711,18 +711,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
                 hookSafetyChecker.Scan();
             }
 
-            // Security: Fighting Mode is a hidden Dev Experimental feature (see MainWindow
-            // gating). Force it off the moment Dev Experimental gets unlocked in a session,
-            // so it can never be silently re-armed by a stale config value.
-            var devUnlocked = mainWindow.DevExperimentalUnlocked;
-            if (devUnlocked && !wasDevExperimentalUnlocked && config.FightingMode)
-            {
-                config.FightingMode = false;
-                config.Save();
-                log.Info("Fighting Mode force-disabled on Dev Experimental unlock (security).");
-            }
-            wasDevExperimentalUnlocked = devUnlocked;
-
             // Validate selected NPCs still exist
             npcSelector.Tick();
 
@@ -730,6 +718,9 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             npcSpawner.Tick();
             companionManager.Tick(deltaTime, npcSelector.SelectedNpcs);
             actorsModule.ProcessPendingGlamourerApplies();
+            // After the spawners: none of the simulation's own actors is left as a game target, and they are
+            // targetable only while a simulation runs with every safety barrier up.
+            combatModule.FakeActors.Tick();
 
             animationController.Tick(deltaTime);
             victoryCelebration?.Tick(deltaTime);
@@ -738,21 +729,16 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             // Camera controllers run independently of combat. Submitters tick first,
             // then the coordinator resolves priority and writes the camera once, and
             // the orbit hook host reflects whether any mode supplies an orbit center.
-            if (!PrivateDirectorActive) fightingModeController.Tick(deltaTime);
             dynamicCameraController.Tick(deltaTime);
             TickPrivateDirectors(deltaTime);
+            cutsceneShots.Tick(deltaTime);
             gameCameraUpdateHook.Tick();
             cameraModeCoordinator.Apply(deltaTime);
             activeCameraController.SetModeActive(cameraModeCoordinator.WantsOrbitHook);
             activeCameraController.Tick(deltaTime);
 
-            // Target lock upkeep (drops dead/stale locks, clears when inactive).
-            // Runs every frame so the lock is cleared the moment the sim stops.
-            playerTargetController.Tick(deltaTime);
-
-            // Guard + telegraphs are shared by Action Mode and Fighting Mode — tick
-            // them centrally so neither mode owns their lifecycle (inert when nothing
-            // is active).
+            // Guard + telegraphs: ticked centrally so no single controller owns their
+            // lifecycle (inert when nothing is active).
             if (!PrivateDirectorActive)
             {
                 playerGuardController.Tick(deltaTime);
@@ -761,12 +747,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
                 enemyOmenVfx.Tick();
             }
 
-            // Fighting Mode combat input (guard key); gates internally on engagement.
-            if (!PrivateDirectorActive) fightingCombatController.Tick(deltaTime);
-
-            // Action Mode loop (player combo/guard + enemy telegraphs). Runs every
-            // frame so guard windows and toggle-off cleanup are handled even
-            // when the sim is not active; gates internally on config.ActionMode.
+            // Action combat loop (player combo/guard + enemy telegraphs). Runs every
+            // frame so guard windows are cleared even when the sim is not active.
             if (!PrivateDirectorActive) actionModeController.Tick(deltaTime);
 
             // Hit feedback (camera punch decay + hitstop restore). Runs every frame.
@@ -799,13 +781,18 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             // If the hook is gone, actions would pass through to the server unintercepted.
             if (!useActionHook.IsHealthy)
             {
-                log.Error("UseAction hook is no longer healthy — emergency stopping simulation to prevent server packets.");
-                chatGui.PrintError("[CombatSim] SAFETY: UseAction hook failed. Simulation stopped to prevent server communication.");
+                log.Error("An action hook (UseAction / UseActionLocation) is no longer healthy — emergency stopping simulation to prevent server packets.");
+                chatGui.PrintError("[CombatSim] SAFETY: an action interceptor failed. Simulation stopped to prevent server communication.");
                 combatEngine.StopSimulation();
                 return;
             }
 
-            if (PrivateDirectorActive) return;
+            if (PrivateDirectorActive)
+            {
+                // A director drives the battle now: no killer is taken over after it ends.
+                battleModule.CancelKillerPossession();
+                return;
+            }
             mapEnemyController.Tick(deltaTime);
             combatEngine.Tick(deltaTime);
             corpseModule.ProcessPendingNpcRagdolls(deltaTime);
@@ -813,10 +800,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);
             // After AI: its movement cleanup would otherwise erase celebration loops every frame.
             victoryCelebration?.Reassert();
-            // Re-apply after NPC AI so the final frame pose is still constrained to the 2D lane.
-            // Lane only — the full Tick already ran this frame; running it again would advance
-            // camera smoothing and translate timers at double speed.
-            fightingModeController.ReapplyLane();
             // Remaining experimental dev ticking (Victory/Hold + occlusion hide).
             devExperimental.Tick(deltaTime);
         }
@@ -850,6 +833,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         spectatorController.DespawnAll();
         devExperimental.ResetWorldState();
         enemyControlController.Despawn();
+        cutsceneShots.Stop("zone change");
         dynamicCameraController.Reset();
 
         if (combatEngine.IsActive)
@@ -882,6 +866,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             spectatorController.DespawnAll();
             devExperimental.ResetWorldState();
             enemyControlController.Despawn();
+            cutsceneShots.Stop("logged out");
             dynamicCameraController.Reset();
             npcSpawner.DespawnAll();
             companionManager.DespawnAll();

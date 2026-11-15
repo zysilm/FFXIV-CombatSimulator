@@ -24,8 +24,8 @@ using LuminaAction = Lumina.Excel.Sheets.Action;
 
 namespace CombatSimulator.Gui;
 
-// Enemy Control: post-defeat creature possession (spawn or take over the killer, walk it, grab-as-
-// attack with finger conform, optional swarm formation). Moved out of the private Dev/Experimental
+// Enemy Control: post-defeat possession of one enemy (take over the killer, walk it, grab the body
+// with finger conform). Moved out of the private Dev/Experimental
 // module — entry point is DrawEnemyControlEntrySection (Effects tab); the window itself only opens
 // when the player turns it on there, same pattern as Armor Detachment.
 public partial class MainWindow
@@ -47,22 +47,9 @@ public partial class MainWindow
             config.ShowEnemyControlGui = showControls;
             config.Save();
         }
-        HelpMarker("Open the Enemy Control window: after a death, spawn or take over a controllable creature. " +
-                   "Every Enemy Control feature (on-death creature, swarm, grab) stays off until you enable it there.");
+        HelpMarker("Open the Enemy Control window: after the battle is lost, take over the enemy that defeated you " +
+                   "(set On death to Control killer there). Only that one enemy; everyone else carries on.");
     }
-
-    private static readonly (string Name, uint Id, uint NameId)[] EnemyControlModels =
-    {
-        ("Bat", 38, 38),
-        ("Cactuar", 3, 3),
-        ("Hog", 15, 15),
-        ("Imp", 21, 21),
-        ("Flytrap", 23, 23),
-        ("Tortoise", 34, 34),
-        ("Wisp", 45, 45),
-        ("Myconid", 48, 48),
-        ("Striking Dummy", 541, 541),
-    };
 
     private static readonly (string Name, int Key)[] EnemyControlAttackKeys =
     {
@@ -76,6 +63,9 @@ public partial class MainWindow
 
     public void DrawEnemyControlWindow(EnemyControlController ctrl)
     {
+        // Its own window (the pick catcher) or the foreground draw list (markers): drawn even while this one is collapsed.
+        DrawEnemyControlAnchorOverlay(ctrl);
+
         var showWindow = config.ShowEnemyControlGui;
         if (!ImGui.Begin("Enemy Control", ref showWindow,
                 ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize))
@@ -97,40 +87,21 @@ public partial class MainWindow
 
         var active = ctrl.IsActive;
 
-        var onDeath = config.EnemyControlControlKiller ? 2 : config.EnemyControlSpawnOnDeath ? 1 : 0;
+        var onDeath = config.EnemyControlControlKiller ? 1 : 0;
         ImGui.SetNextItemWidth(140);
         if (ImGui.Combo("On death##EnemyControl", ref onDeath, EnemyControlOnDeathLabels, EnemyControlOnDeathLabels.Length))
         {
-            config.EnemyControlSpawnOnDeath = onDeath == 1;
-            config.EnemyControlControlKiller = onDeath == 2;
-            if (onDeath == 2) ctrl.Despawn(); // can't keep a spawned creature while controlling the killer
+            config.EnemyControlControlKiller = onDeath == 1;
             config.Save();
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Spawn creature: a controllable creature appears when you are defeated.\n" +
-                             "Control killer: take control of the enemy that just defeated you instead. Same controls.");
+            ImGui.SetTooltip("Control killer: after the battle is lost, take control of the enemy that defeated you.\n" +
+                             "Your fall alone is not the end: while your side can still win (or raise you), nothing happens.\n" +
+                             "Only that one enemy; every other enemy keeps fighting or patrolling as before.\n" +
+                             "Warring States with Retreat: if your body is carried off, you control the enemy that took it.");
 
-        var modelIdx = Array.FindIndex(EnemyControlModels, m => m.Id == config.EnemyControlModelId);
-        if (modelIdx < 0) modelIdx = 0;
-        ImGui.SetNextItemWidth(140);
-        if (ImGui.BeginCombo("Model##EnemyControl", EnemyControlModels[modelIdx].Name))
-        {
-            for (int i = 0; i < EnemyControlModels.Length; i++)
-                if (ImGui.Selectable(EnemyControlModels[i].Name, i == modelIdx))
-                {
-                    config.EnemyControlModelId = EnemyControlModels[i].Id;
-                    config.EnemyControlModelNameId = EnemyControlModels[i].NameId;
-                    config.Save();
-                }
-            ImGui.EndCombo();
-        }
-
-        ImGui.BeginDisabled(active || config.EnemyControlControlKiller);
-        if (ImGui.Button("Spawn##EnemyControl")) ctrl.Spawn();
-        ImGui.EndDisabled();
-        ImGui.SameLine();
         ImGui.BeginDisabled(!active);
-        if (ImGui.Button("Despawn##EnemyControl")) ctrl.Despawn();
+        if (ImGui.Button("Release##EnemyControl")) ctrl.Despawn();
         ImGui.EndDisabled();
 
         ImGui.BeginDisabled(!active);
@@ -169,9 +140,8 @@ public partial class MainWindow
 
         DrawEnemyControlGrabAnimationPicker();
         DrawEnemyControlGrabPairsList(ctrl);
-        DrawEnemyControlArmPoseSection();
+        DrawEnemyControlGrabFitting();
         DrawEnemyControlGrabProfilesSection();
-        DrawEnemyControlSwarmSection(ctrl);
 
         ImGui.TextDisabled("WASD = camera-relative move; Q/E = down/up");
         ImGui.TextDisabled("Gamepad: left stick = move; L2/R2 = down/up; Cross = grab");
@@ -180,92 +150,7 @@ public partial class MainWindow
         ImGui.End();
     }
 
-    private void DrawEnemyControlSwarmSection(EnemyControlController ctrl)
-    {
-        if (!ImGui.CollapsingHeader("Swarm##EnemyControlswarm"))
-            return;
-
-        ImGui.Indent();
-        var enabled = config.EnemyControlSwarmEnabled;
-        if (ImGui.Checkbox("Enable swarm following##EnemyControlswarm", ref enabled))
-        {
-            config.EnemyControlSwarmEnabled = enabled;
-            config.Save();
-            ctrl.OnSwarmSettingChanged(enabled);
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Selected living enemies stop their normal AI and follow randomized stable slots around\n" +
-                             "the controlled EnemyControl. Turning this off immediately releases them back to AI.");
-        ImGui.SameLine();
-        ImGui.BeginDisabled(!config.EnemyControlSwarmEnabled);
-        if (ImGui.SmallButton("Reset##EnemyControlswarm"))
-            ctrl.ResetSwarm();
-        ImGui.EndDisabled();
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Hard-reset corpse assignments and support caches, then immediately redistribute all\n" +
-                             "followers into fresh formation slots around the controlled EnemyControl.");
-
-        var climbCorpses = config.EnemyControlSwarmClimbCorpses;
-        if (ImGui.Checkbox("Swarm auto-climbs nearest corpse##EnemyControlswarm", ref climbCorpses))
-        {
-            config.EnemyControlSwarmClimbCorpses = climbCorpses;
-            config.Save();
-            ctrl.OnSwarmClimbSettingChanged(climbCorpses);
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Followers independently choose the nearest active player, enemy, or party corpse at any\n" +
-                             "distance. The controlled EnemyControl remains under free manual control.");
-
-        ImGui.BeginDisabled(!config.EnemyControlSwarmEnabled || !config.EnemyControlSwarmClimbCorpses);
-        var moveAround = !config.EnemyControlSwarmRepositionOnCorpse ? 0
-            : Array.FindIndex(SwarmLandmarkFrequencies, f => f > 0f && MathF.Abs(f - config.EnemyControlSwarmLandmarkChangeFrequency) < 0.005f);
-        ImGui.SetNextItemWidth(150);
-        if (PresetCombo("Followers move around##EnemyControlswarm", SwarmMoveAroundLabels, moveAround, out var pickedMove))
-        {
-            var reposition = pickedMove > 0;
-            var previousFrequency = config.EnemyControlSwarmLandmarkChangeFrequency;
-            if (reposition) config.EnemyControlSwarmLandmarkChangeFrequency = SwarmLandmarkFrequencies[pickedMove];
-            if (reposition != config.EnemyControlSwarmRepositionOnCorpse)
-            {
-                config.EnemyControlSwarmRepositionOnCorpse = reposition;
-                ctrl.OnSwarmRepositionSettingChanged(reposition);
-            }
-            config.Save();
-            if (reposition && previousFrequency != config.EnemyControlSwarmLandmarkChangeFrequency)
-                ctrl.OnSwarmLandmarkChangeFrequencyChanged(previousFrequency, config.EnemyControlSwarmLandmarkChangeFrequency);
-        }
-        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("How often a follower on a corpse picks another spot on it. Never keeps its spot\n" +
-                             "until it becomes invalid.");
-        ImGui.EndDisabled();
-
-        var formation = Array.FindIndex(SwarmFormations, f =>
-            MathF.Abs(f.Distance - config.EnemyControlSwarmFollowDistance) < 0.005f &&
-            MathF.Abs(f.Compactness - config.EnemyControlSwarmCompactness) < 0.005f);
-        ImGui.SetNextItemWidth(150);
-        if (PresetCombo("Formation##EnemyControlswarm", SwarmFormationLabels, formation, out var pickedFormation))
-        {
-            (config.EnemyControlSwarmFollowDistance, config.EnemyControlSwarmCompactness) = SwarmFormations[pickedFormation];
-            config.Save();
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("How far followers spread around the controlled creature and how tightly they hold formation.");
-
-        ImGui.TextDisabled($"Followers: {ctrl.SwarmFollowerCount} | On corpse: {ctrl.SwarmCorpseOccupantCount}");
-        ImGui.Unindent();
-    }
-
-    private static readonly string[] EnemyControlOnDeathLabels = { "Nothing", "Spawn creature", "Control killer" };
-    private static readonly string[] SwarmMoveAroundLabels = { "Never", "Sometimes", "Often", "Very often" };
-    private static readonly float[] SwarmLandmarkFrequencies = { 0f, 1f, 1.36f, 2f };
-    private static readonly string[] SwarmFormationLabels = { "Tight", "Normal", "Loose", "Wide" };
-    private static readonly (float Distance, float Compactness)[] SwarmFormations =
-    {
-        (1.5f, 0.9f),
-        (2.5f, 0.65f),
-        (5f, 0.35f),
-        (12f, 1f),
-    };
+    private static readonly string[] EnemyControlOnDeathLabels = { "Nothing", "Control killer" };
 
     private uint[]? EnemyControlGrabEmoteIds;
     private string[]? EnemyControlGrabEmoteNames;
@@ -452,7 +337,7 @@ public partial class MainWindow
     {
         var snapshot = new EnemyControlGrabProfile { Name = name };
         foreach (var pair in config.EnemyControlGrabPairs)
-            snapshot.Pairs.Add(new EnemyControlGrabPairConfig { NpcBone = pair.NpcBone, PlayerBone = pair.PlayerBone });
+            snapshot.Pairs.Add(EnemyControlGrabPairList.Clone(pair));
         snapshot.GrabEmoteId = config.EnemyControlGrabEmoteId;
         snapshot.GrabAnyBone = config.EnemyControlGrabAnyBone;
         snapshot.GrabAnyNpcBone = config.EnemyControlGrabAnyNpcBone;
@@ -466,19 +351,6 @@ public partial class MainWindow
         snapshot.GrabFingerStrength = config.EnemyControlGrabFingerStrength;
         snapshot.GrabFingerMaxAngle = config.EnemyControlGrabFingerMaxAngle;
         snapshot.GrabFingerClearance = config.EnemyControlGrabFingerClearance;
-        snapshot.ArmPoseEnabled = config.EnemyControlArmPoseEnabled;
-        snapshot.LeftArmUpperPitch = config.EnemyControlLeftArmUpperPitch;
-        snapshot.LeftArmUpperYaw = config.EnemyControlLeftArmUpperYaw;
-        snapshot.LeftArmUpperRoll = config.EnemyControlLeftArmUpperRoll;
-        snapshot.LeftArmLowerPitch = config.EnemyControlLeftArmLowerPitch;
-        snapshot.LeftArmLowerYaw = config.EnemyControlLeftArmLowerYaw;
-        snapshot.LeftArmLowerRoll = config.EnemyControlLeftArmLowerRoll;
-        snapshot.RightArmUpperPitch = config.EnemyControlRightArmUpperPitch;
-        snapshot.RightArmUpperYaw = config.EnemyControlRightArmUpperYaw;
-        snapshot.RightArmUpperRoll = config.EnemyControlRightArmUpperRoll;
-        snapshot.RightArmLowerPitch = config.EnemyControlRightArmLowerPitch;
-        snapshot.RightArmLowerYaw = config.EnemyControlRightArmLowerYaw;
-        snapshot.RightArmLowerRoll = config.EnemyControlRightArmLowerRoll;
 
         var existing = config.EnemyControlGrabProfiles.FindIndex(p => p.Name == name);
         if (existing >= 0)
@@ -493,16 +365,7 @@ public partial class MainWindow
     private void LoadEnemyControlGrabProfile(EnemyControlGrabProfile p)
     {
         config.EnemyControlGrabPairs.Clear();
-        var seenPairs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var pair in p.Pairs)
-        {
-            var npcBone = pair.NpcBone.Trim();
-            var playerBone = pair.PlayerBone.Trim();
-            if (seenPairs.Add($"{npcBone}\u001f{playerBone}"))
-                config.EnemyControlGrabPairs.Add(new EnemyControlGrabPairConfig { NpcBone = npcBone, PlayerBone = playerBone });
-        }
-        if (config.EnemyControlGrabPairs.Count == 0)
-            config.EnemyControlGrabPairs.Add(new EnemyControlGrabPairConfig());
+        config.EnemyControlGrabPairs.AddRange(EnemyControlGrabPairList.CopyForUse(p.Pairs));
         config.EnemyControlGrabEmoteId = p.GrabEmoteId;
         config.EnemyControlGrabAnyBone = p.GrabAnyBone;
         config.EnemyControlGrabAnyNpcBone = p.GrabAnyNpcBone;
@@ -516,19 +379,6 @@ public partial class MainWindow
         config.EnemyControlGrabFingerStrength = p.GrabFingerStrength;
         config.EnemyControlGrabFingerMaxAngle = p.GrabFingerMaxAngle;
         config.EnemyControlGrabFingerClearance = p.GrabFingerClearance;
-        config.EnemyControlArmPoseEnabled = p.ArmPoseEnabled;
-        config.EnemyControlLeftArmUpperPitch = p.LeftArmUpperPitch;
-        config.EnemyControlLeftArmUpperYaw = p.LeftArmUpperYaw;
-        config.EnemyControlLeftArmUpperRoll = p.LeftArmUpperRoll;
-        config.EnemyControlLeftArmLowerPitch = p.LeftArmLowerPitch;
-        config.EnemyControlLeftArmLowerYaw = p.LeftArmLowerYaw;
-        config.EnemyControlLeftArmLowerRoll = p.LeftArmLowerRoll;
-        config.EnemyControlRightArmUpperPitch = p.RightArmUpperPitch;
-        config.EnemyControlRightArmUpperYaw = p.RightArmUpperYaw;
-        config.EnemyControlRightArmUpperRoll = p.RightArmUpperRoll;
-        config.EnemyControlRightArmLowerPitch = p.RightArmLowerPitch;
-        config.EnemyControlRightArmLowerYaw = p.RightArmLowerYaw;
-        config.EnemyControlRightArmLowerRoll = p.RightArmLowerRoll;
         config.Save();
         chatGui.Print($"[CombatSim] EnemyControl grab profile '{p.Name}' loaded.");
     }
@@ -569,11 +419,11 @@ public partial class MainWindow
             ImGui.PushID(i);
             var pair = pairs[i];
 
-            DrawEnemyControlGrabbingBonePicker(ctrl, pair);
+            DrawEnemyControlGrabSide(ctrl, pair, i, enemySide: true);
             ImGui.SameLine();
             ImGui.Text("->");
             ImGui.SameLine();
-            DrawEnemyControlGrabbedBonePicker(pair);
+            DrawEnemyControlGrabSide(ctrl, pair, i, enemySide: false);
 
             ImGui.SameLine();
             if (ImGui.Button("X##EnemyControlGrabRemovePair"))
@@ -609,6 +459,169 @@ public partial class MainWindow
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Add another grab pair. Any number can be held at once — e.g. one hand on the neck\n" +
                              "and the other on the pelvis for a carry/lift pose.");
+    }
+
+    // ── Grab points picked on the models (docs/ENEMY_CONTROL_GRAB.md §3) ──
+
+    private int enemyControlAnchorPickPair = -1;
+    private bool enemyControlAnchorPickEnemy;
+    private bool enemyControlAnchorPickFocus;
+
+    // The grab-point markers: shown after a successful Pick, hidden when a grab takes hold
+    // (EnemyControlController.GrabStarted), and not brought back by letting go; only the next Pick shows them again.
+    // Hidden on load. The points themselves stay saved and in use either way.
+    private bool enemyControlAnchorMarkersVisible;
+
+    /// <summary>Hide the grab-point markers (wired to EnemyControlController.GrabStarted).</summary>
+    public void HideEnemyControlAnchorMarkers() => enemyControlAnchorMarkersVisible = false;
+
+    /// <summary>One end of a pair: its bone picker and a Pick button, or, once a point is picked, the point's bone
+    /// and a Clear button.</summary>
+    private void DrawEnemyControlGrabSide(EnemyControlController ctrl, EnemyControlGrabPairConfig pair, int index, bool enemySide)
+    {
+        var anchor = enemySide ? pair.NpcAnchor : pair.PlayerAnchor;
+        var id = enemySide ? "Npc" : "Player";
+        if (anchor != null)
+        {
+            ImGui.AlignTextToFramePadding();
+            ImGui.Text($"{anchor.Bone} · anchor set");
+            ImGui.SameLine();
+            if (ImGui.Button($"Clear##EnemyControlAnchorClear{id}"))
+                ClearEnemyControlAnchor(pair, enemySide);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Forget the picked point; the grab holds the bone itself again.");
+            return;
+        }
+
+        if (enemySide) DrawEnemyControlGrabbingBonePicker(ctrl, pair);
+        else DrawEnemyControlGrabbedBonePicker(pair);
+
+        ImGui.SameLine();
+        var canPick = enemySide ? ctrl.ControlledActor != nint.Zero : Core.Services.ObjectTable.LocalPlayer != null;
+        ImGui.BeginDisabled(!canPick || enemyControlAnchorPickPair >= 0);
+        if (ImGui.Button($"Pick##EnemyControlAnchorPick{id}"))
+        {
+            enemyControlAnchorPickPair = index;
+            enemyControlAnchorPickEnemy = enemySide;
+            enemyControlAnchorPickFocus = true;
+        }
+        ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(enemySide
+                ? canPick
+                    ? "Click on the enemy you control to choose exactly where its grip is."
+                    : "Take control of an enemy first (On death: Control killer)."
+                : "Click on your character to choose exactly where the body is held.");
+    }
+
+    private void ClearEnemyControlAnchor(EnemyControlGrabPairConfig pair, bool enemySide)
+    {
+        if (enemySide)
+        {
+            pair.NpcAnchor = null;
+            // The short list cannot show a bone outside it; put the row back on a bone it can show.
+            if (!config.EnemyControlGrabAnyNpcBone && Array.IndexOf(EnemyControlGrabNpcBones, pair.NpcBone) < 0)
+                pair.NpcBone = EnemyControlGrabNpcBones[0];
+        }
+        else
+        {
+            pair.PlayerAnchor = null;
+            if (!config.EnemyControlGrabAnyBone && Array.IndexOf(EnemyControlGrabPlayerBones, pair.PlayerBone) < 0)
+                pair.PlayerBone = EnemyControlGrabPlayerBones[0];
+        }
+        config.Save();
+    }
+
+    /// <summary>
+    /// While a Pick is armed: a transparent window over the whole screen takes the mouse (so the click never reaches
+    /// the game's targeting or camera); a left click on the model sets the point, Esc cancels. Otherwise: a marker on
+    /// each picked point while the Enemy Control window is open, from a successful Pick until the next grab starts.
+    /// </summary>
+    private void DrawEnemyControlAnchorOverlay(EnemyControlController ctrl)
+    {
+        var pairs = config.EnemyControlGrabPairs;
+        var player = Core.Services.ObjectTable.LocalPlayer?.Address ?? nint.Zero;
+        var enemy = ctrl.ControlledActor;
+        var io = ImGui.GetIO();
+
+        if (enemyControlAnchorPickPair < 0)
+        {
+            if (enemyControlAnchorMarkersVisible)
+                DrawEnemyControlAnchorMarkers(ctrl, pairs, enemy, player);
+            return;
+        }
+
+        var actor = enemyControlAnchorPickEnemy ? enemy : player;
+        if (enemyControlAnchorPickPair >= pairs.Count || actor == nint.Zero)
+        {
+            enemyControlAnchorPickPair = -1;
+            return;
+        }
+
+        ImGui.SetNextWindowPos(Vector2.Zero);
+        ImGui.SetNextWindowSize(io.DisplaySize);
+        if (enemyControlAnchorPickFocus)
+        {
+            ImGui.SetNextWindowFocus();
+            enemyControlAnchorPickFocus = false;
+        }
+        const ImGuiWindowFlags flags = ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoBackground |
+                                       ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoSavedSettings |
+                                       ImGuiWindowFlags.NoNav;
+        if (ImGui.Begin("##EnemyControlAnchorPick", flags))
+        {
+            var hint = enemyControlAnchorPickEnemy
+                ? "Click on the enemy to set where it grips.  Esc: cancel"
+                : "Click on your character to set where it is held.  Esc: cancel";
+            var size = ImGui.CalcTextSize(hint);
+            var at = new Vector2((io.DisplaySize.X - size.X) * 0.5f, io.DisplaySize.Y * 0.12f);
+            var draw = ImGui.GetWindowDrawList();
+            draw.AddRectFilled(at - new Vector2(10, 6), at + size + new Vector2(10, 6), ImGui.GetColorU32(new Vector4(0f, 0f, 0f, 0.6f)), 6f);
+            draw.AddText(at, ImGui.GetColorU32(new Vector4(1f, 0.9f, 0.4f, 1f)), hint);
+            draw.AddCircle(io.MousePos, 6f, ImGui.GetColorU32(new Vector4(1f, 0.9f, 0.4f, 1f)), 16, 1.5f);
+
+            if (ImGui.IsKeyPressed(ImGuiKey.Escape))
+                enemyControlAnchorPickPair = -1;
+            else if (ImGui.IsWindowHovered() && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            {
+                if (ctrl.AnchorPicker.TryPick(actor, io.MousePos, io.DisplaySize, out var anchor, out var message))
+                {
+                    var pair = pairs[enemyControlAnchorPickPair];
+                    if (enemyControlAnchorPickEnemy) { pair.NpcAnchor = anchor; pair.NpcBone = anchor.Bone; }
+                    else { pair.PlayerAnchor = anchor; pair.PlayerBone = anchor.Bone; }
+                    config.Save();
+                    enemyControlAnchorPickPair = -1;
+                    enemyControlAnchorMarkersVisible = true;
+                    chatGui.Print($"[CombatSim] Grab point set on {anchor.Bone}.");
+                }
+                else
+                    chatGui.Print($"[CombatSim] No grab point: {message}. Click on the model again, or Esc to cancel.");
+            }
+        }
+        ImGui.End();
+    }
+
+    private void DrawEnemyControlAnchorMarkers(EnemyControlController ctrl, List<EnemyControlGrabPairConfig> pairs,
+        nint enemy, nint player)
+    {
+        var draw = ImGui.GetForegroundDrawList();
+        var enemyColor = ImGui.GetColorU32(new Vector4(1f, 0.55f, 0.15f, 1f));
+        var playerColor = ImGui.GetColorU32(new Vector4(0.3f, 0.85f, 1f, 1f));
+        for (var i = 0; i < pairs.Count; i++)
+        {
+            var pair = pairs[i];
+            Mark(pair.NpcAnchor, enemy, enemyColor, i);
+            Mark(pair.PlayerAnchor, player, playerColor, i);
+        }
+
+        void Mark(EnemyControlGrabAnchor? anchor, nint actor, uint color, int index)
+        {
+            if (anchor == null || actor == nint.Zero || !ctrl.TryResolveAnchor(actor, anchor, out var world)) return;
+            if (!Core.Services.GameGui.WorldToScreen(world, out var screen)) return;
+            draw.AddCircleFilled(screen, 4f, color);
+            draw.AddCircle(screen, 7f, ImGui.GetColorU32(new Vector4(0f, 0f, 0f, 0.8f)), 16, 1.5f);
+            draw.AddText(screen + new Vector2(8f, -8f), color, (index + 1).ToString());
+        }
     }
 
     /// <summary>
@@ -726,76 +739,6 @@ public partial class MainWindow
                 ImGui.SetTooltip("Grabbing bone — every bone on the ACTIVE creature's own skeleton. Claws, jaws, tentacles.\n" +
                                  "Only populated while a creature is out; spawn one first.");
         }
-    }
-
-    /// <summary>
-    /// Manual arm-pose override: bends the creature's own upper-arm/forearm bones independent of
-    /// whatever the grab animation is doing, so the reach can be lined up with wherever a grab pair
-    /// actually targets. Applied only while a grab is held (see
-    /// EnemyControlController.ApplyArmPoseOverrides).
-    /// </summary>
-    private void DrawEnemyControlArmPoseSection()
-    {
-        var enabled = config.EnemyControlArmPoseEnabled;
-        if (ImGui.Checkbox("Enable arm pose override##EnemyControlarmpose", ref enabled))
-        { config.EnemyControlArmPoseEnabled = enabled; config.Save(); }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Bend the creature's own upper-arm/forearm bones by hand, independent of whatever the grab\n" +
-                             "animation is doing. Only applied while a grab is held — outside a grab the creature moves\n" +
-                             "on its own animation.");
-
-        DrawEnemyControlGrabFitting();
-
-        if (!enabled)
-            return;
-
-        if (ImGui.CollapsingHeader("Left Arm Pose##EnemyControlarm"))
-        {
-            ImGui.Indent();
-            ImGui.TextDisabled("Upper arm");
-            DrawArmPoseAxisSlider("X##leftupperx", config.EnemyControlLeftArmUpperPitch, v => config.EnemyControlLeftArmUpperPitch = v);
-            DrawArmPoseAxisSlider("Y##leftuppery", config.EnemyControlLeftArmUpperYaw, v => config.EnemyControlLeftArmUpperYaw = v);
-            DrawArmPoseAxisSlider("Z##leftupperz", config.EnemyControlLeftArmUpperRoll, v => config.EnemyControlLeftArmUpperRoll = v);
-            ImGui.TextDisabled("Forearm");
-            DrawArmPoseAxisSlider("X##leftlowerx", config.EnemyControlLeftArmLowerPitch, v => config.EnemyControlLeftArmLowerPitch = v);
-            DrawArmPoseAxisSlider("Y##leftlowery", config.EnemyControlLeftArmLowerYaw, v => config.EnemyControlLeftArmLowerYaw = v);
-            DrawArmPoseAxisSlider("Z##leftlowerz", config.EnemyControlLeftArmLowerRoll, v => config.EnemyControlLeftArmLowerRoll = v);
-            if (ImGui.Button("Reset##EnemyControlLeftArmPoseReset"))
-            {
-                config.EnemyControlLeftArmUpperPitch = 0f; config.EnemyControlLeftArmUpperYaw = 0f; config.EnemyControlLeftArmUpperRoll = 0f;
-                config.EnemyControlLeftArmLowerPitch = 0f; config.EnemyControlLeftArmLowerYaw = 0f; config.EnemyControlLeftArmLowerRoll = 0f;
-                config.Save();
-            }
-            ImGui.Unindent();
-        }
-
-        if (ImGui.CollapsingHeader("Right Arm Pose##EnemyControlarm"))
-        {
-            ImGui.Indent();
-            ImGui.TextDisabled("Upper arm");
-            DrawArmPoseAxisSlider("X##rightupperx", config.EnemyControlRightArmUpperPitch, v => config.EnemyControlRightArmUpperPitch = v);
-            DrawArmPoseAxisSlider("Y##rightuppery", config.EnemyControlRightArmUpperYaw, v => config.EnemyControlRightArmUpperYaw = v);
-            DrawArmPoseAxisSlider("Z##rightupperz", config.EnemyControlRightArmUpperRoll, v => config.EnemyControlRightArmUpperRoll = v);
-            ImGui.TextDisabled("Forearm");
-            DrawArmPoseAxisSlider("X##rightlowerx", config.EnemyControlRightArmLowerPitch, v => config.EnemyControlRightArmLowerPitch = v);
-            DrawArmPoseAxisSlider("Y##rightlowery", config.EnemyControlRightArmLowerYaw, v => config.EnemyControlRightArmLowerYaw = v);
-            DrawArmPoseAxisSlider("Z##rightlowerz", config.EnemyControlRightArmLowerRoll, v => config.EnemyControlRightArmLowerRoll = v);
-            if (ImGui.Button("Reset##EnemyControlRightArmPoseReset"))
-            {
-                config.EnemyControlRightArmUpperPitch = 0f; config.EnemyControlRightArmUpperYaw = 0f; config.EnemyControlRightArmUpperRoll = 0f;
-                config.EnemyControlRightArmLowerPitch = 0f; config.EnemyControlRightArmLowerYaw = 0f; config.EnemyControlRightArmLowerRoll = 0f;
-                config.Save();
-            }
-            ImGui.Unindent();
-        }
-    }
-
-    private void DrawArmPoseAxisSlider(string label, float current, Action<float> setter)
-    {
-        ImGui.SetNextItemWidth(120);
-        var v = current;
-        if (ImGui.SliderFloat(label, ref v, -90f, 90f, "%.0f°"))
-        { setter(v); config.Save(); }
     }
 
     /// <summary>

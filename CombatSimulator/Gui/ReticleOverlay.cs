@@ -25,21 +25,16 @@ public sealed class ReticleOverlay
     private readonly PlayerHitboxResolver hitbox;
     private readonly CombatEngine combatEngine;
     private readonly IGameGui gameGui;
-    private readonly Configuration config;
 
-    public ReticleOverlay(PlayerHitboxResolver hitbox, CombatEngine combatEngine, IGameGui gameGui, Configuration config)
+    public ReticleOverlay(PlayerHitboxResolver hitbox, CombatEngine combatEngine, IGameGui gameGui)
     {
         this.hitbox = hitbox;
         this.combatEngine = combatEngine;
         this.gameGui = gameGui;
-        this.config = config;
     }
 
     public void Draw()
     {
-        if (!config.ActionMode)
-            return;
-
         var primary = hitbox.ResolveBasicAttackPrimary();
         if (primary == null)
             return;

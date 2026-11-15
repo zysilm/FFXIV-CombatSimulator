@@ -8,7 +8,6 @@ using System.Numerics;
 using CombatSimulator.Animation;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
-using CombatSimulator.Targeting;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 using GameCameraManager = FFXIVClientStructs.FFXIV.Client.Game.Control.CameraManager;
@@ -97,7 +96,6 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
     private readonly CameraModeCoordinator coordinator;
     private readonly CombatEngine combatEngine;
     private readonly NpcSelector npcSelector;
-    private readonly PlayerTargetController playerTargetController;
     private readonly BoneTransformService boneService;
     private readonly RagdollController playerRagdoll;
     private readonly IPluginLog log;
@@ -319,6 +317,7 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
     private long nextLookAtLog;
     private long lookAtOverrides;
     private float lastLookAtRenderedChi;
+    private float lastLookAtSceneChi;
 
     /// <summary>Keep native yaw and camera position, but remove the distance-dependent
     /// vertical aim offset for the owned death shot. No pitch feedback or matrix writes.</summary>
@@ -339,7 +338,7 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
             nextLookAtLog = now + 5000;
             log.Info($"DynamicCam look-at override: nativeY={nativeLookAt.Y:F4}, ownedY={owned.Y:F4}, " +
                 $"cameraY={cameraPosition.Y:F4}, horizontal={horizontal:F3}, commandedChi={-enforceDirV:F4}, " +
-                $"renderedChi={lastLookAtRenderedChi:F4}, calls={lookAtOverrides}");
+                $"sceneChi={lastLookAtSceneChi:F4}, renderedChi={lastLookAtRenderedChi:F4}, calls={lookAtOverrides}");
         }
         return owned;
     }
@@ -361,7 +360,6 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
         CameraModeCoordinator coordinator,
         CombatEngine combatEngine,
         NpcSelector npcSelector,
-        PlayerTargetController playerTargetController,
         BoneTransformService boneService,
         RagdollController playerRagdoll,
         ISigScanner sigScanner,
@@ -371,7 +369,6 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
         this.coordinator = coordinator;
         this.combatEngine = combatEngine;
         this.npcSelector = npcSelector;
-        this.playerTargetController = playerTargetController;
         this.boneService = boneService;
         this.playerRagdoll = playerRagdoll;
         this.log = log;
@@ -521,9 +518,42 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
         }
     }
 
+    private bool cutsceneHold;
+
+    /// <summary>
+    /// A cutscene follow shot takes the camera (CutsceneShotDirector): the death framing waits, without solving
+    /// against a view it does not own. When the shot hands the camera back, a death shot that was armed starts its
+    /// translate again from where the cutscene camera left off, instead of from the camera before the death.
+    /// Independent of <see cref="SuspendForExternalControl"/>, which other scenes use.
+    /// </summary>
+    public void HoldForCutscene(bool hold)
+    {
+        if (cutsceneHold == hold) return;
+        cutsceneHold = hold;
+        if (hold)
+        {
+            RestoreMinDistance();
+            coordinator.Release(CameraOwner.DynamicCam);
+            coordinator.Release(CameraOwner.DynamicDeath);
+            return;
+        }
+        // The camera the shot leaves behind must not be mistaken for player scroll input.
+        prevObservedDistance = 0f;
+        wroteDistance = false;
+        pendingWheel = 0f;
+        if (phase is Phase.DeathTranslate or Phase.DeathHold)
+        {
+            hasCurState = false;
+            CaptureTranslateStart();
+            phase = Phase.DeathTranslate;
+            translateElapsed = 0f;
+            log.Info("DynamicCam: death framing resumes after the cutscene shot.");
+        }
+    }
+
     public void Tick(float dt)
     {
-        if (externalControlSuspended) return;
+        if (externalControlSuspended || cutsceneHold) return;
         try
         {
             TickCore(dt);
@@ -1067,14 +1097,6 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
 
     private SimulatedNpc? FindFocusEnemy(nint playerAddress)
     {
-        var locked = playerTargetController.LockedTargetEntityId;
-        if (locked != 0)
-        {
-            var target = npcSelector.GetSelectedNpc(locked);
-            if (target is { BattleChara: not null } && target.IsAlive)
-                return target;
-        }
-
         var playerPos = ReadObjectPosition(playerAddress);
         SimulatedNpc? bestEngaged = null;
         SimulatedNpc? bestAlive = null;
@@ -1106,7 +1128,7 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
     private void TickDeath(nint playerAddress, FFXIVClientStructs.FFXIV.Client.Game.Camera* gameCam,
         in GameCameraView view, float dt)
     {
-        // Soft yield to anything that still outranks the death shot (fighting cameras, the
+        // Soft yield to anything that still outranks the death shot (a cutscene shot, an external provider, the
         // user's Active Cam): keep declaring presence so we resume the instant they release,
         // but take none of the direct actions — pinning the zoom or consuming inputs for a
         // camera someone else is driving would corrupt THEIR frame.
@@ -1180,6 +1202,7 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
         // we take whatever it currently is and solve around it.
         DynamicCameraSolver.MeasureAngles(view.Forward, out var yawReal, out var chiReal);
         lastLookAtRenderedChi = chiReal;
+        DynamicCameraSolver.MeasureAngles(view.LookDirection, out _, out lastLookAtSceneChi);
 
         // Measure the game's orbit direction: where it put the camera relative to the pivot
         // we handed it last frame. This is the exact mapping the pivot decomposition needs.

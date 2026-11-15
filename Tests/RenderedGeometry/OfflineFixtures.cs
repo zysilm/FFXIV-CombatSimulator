@@ -10,7 +10,9 @@ internal static class OfflineFixtures
     internal static void Run(string sqpack)
     {
         string root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
-        string pluginDirectory = Path.Combine(root, "CombatSimulator/bin/Release");
+        // COMBATSIM_PLUGIN_DIR: a plugin built elsewhere (a build into bin/Release is hot-reloaded by a running game).
+        string pluginDirectory = Environment.GetEnvironmentVariable("COMBATSIM_PLUGIN_DIR") is { Length: > 0 } custom
+            ? custom : Path.Combine(root, "CombatSimulator/bin/Release");
         string devDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "XIVLauncher/addon/Hooks/dev");
         AssemblyLoadContext.Default.Resolving += (_, name) =>
         {
@@ -74,5 +76,16 @@ internal static class OfflineFixtures
         }
         if (models < 4) throw new Exception($"Expected installed body models from at least four races, found {models}");
         Console.WriteLine($"Installed fixtures: {models} actual MDLs, {faces} triangles, {routes} PBD routes; production raw parser invoked from built plugin. No live process access.");
+
+        ModelGeometryData? Parse(byte[] raw)
+        {
+            object?[] arguments = { raw, null };
+            if (!(bool)parse.Invoke(null, arguments)!) return null;
+            var parsed = new ModelGeometryData();
+            foreach (var field in typeof(ModelGeometryData).GetFields())
+                field.SetValue(parsed, arguments[1]!.GetType().GetField(field.Name)!.GetValue(arguments[1]));
+            return parsed;
+        }
+        GrabAnchorCrossRace.Run(game, Parse);
     }
 }

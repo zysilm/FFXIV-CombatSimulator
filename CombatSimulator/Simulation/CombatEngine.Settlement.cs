@@ -15,18 +15,18 @@ public partial class CombatEngine
 {
     /// <summary>
     /// The battle's rule parts (the allies' controller holds them), asked when an enemy's blow would fell one of
-    /// the player's side (<see cref="IBattleRule.OnLethalBlow"/>). Set by the plugin after construction.
+    /// the player's side (<see cref="IBattleRule.OnLethalBlow"/>). Given by constructor (built before the engine,
+    /// bound to its context by the allies' controller).
     /// </summary>
-    public BattleRuleSet? RuleParts { get; set; }
+    public BattleRuleSet RuleParts { get; }
 
     private sealed class SettlementHost(CombatEngine engine) : IHitSettlementHost
     {
         public SimulationState State => engine.State;
-        public BattleRuleSet? RuleParts => engine.RuleParts;
+        // The engine is given the set before the allies' controller binds its context: until then (no hit is
+        // settled in that window today) a lethal blow is not put to the rules, rather than to unbound parts.
+        public BattleRuleSet? RuleParts => engine.RuleParts.IsBound ? engine.RuleParts : null;
         public ActionData? GetActionData(uint actionId) => engine.actionDataProvider.GetActionData(actionId);
-        public bool EnableCriticalHits => engine.EnableCriticalHits;
-        public bool EnableDirectHits => engine.EnableDirectHits;
-        public float DamageMultiplier => engine.DamageMultiplier;
 
         public List<SimulatedEntityState> GetHostileTargets(SimulatedEntityState source) => engine.GetHostileTargets(source);
         public Vector3 GetEntityPosition(SimulatedEntityState entity) => engine.GetEntityPosition(entity);
@@ -36,7 +36,7 @@ public partial class CombatEngine
         public void DeferHit(float delay, Action resolve) => engine.DeferHit(delay, resolve);
 
         public void LandDamage(SimulatedEntityState target, DamageResult damage, SimulatedEntityState? source) => engine.LandDamage(target, damage, source);
-        public void RaiseHit(SimulatedEntityState source, SimulatedEntityState target, int damage) => engine.OnHit?.Invoke(source, target, damage);
+        public void RaiseHit(SimulatedEntityState source, SimulatedEntityState target, int damage) => engine.targeting.RegisterHit(source, target, damage);
         public void RaiseDamageLanded(SimulatedEntityState target, DamageResult damage, SimulatedEntityState? source) => engine.OnDamageLanded?.Invoke(target, damage, source);
         public void RaisePlayerDamagedByNpc() => engine.OnPlayerDamagedByNpc?.Invoke();
         public void RaisePlayerHitByNpc(uint npcId) => engine.OnPlayerHitByNpc?.Invoke(npcId);

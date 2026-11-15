@@ -4,14 +4,15 @@
 
 using System.Numerics;
 
-namespace CombatSimulator.Composition;
+namespace CombatSimulator.Combat;
 
 /// <summary>
-/// What the fight asks about bodies on the ground (docs/PLUGIN_ARCHITECTURE.md §6.5), answered by
-/// <see cref="CorpseModule"/> from the ragdolls. Given to the allies, the enemies' feet and the battle
-/// rules in place of the plugin's methods they were handed before.
+/// What the fight asks about bodies on the ground (docs/PLUGIN_ARCHITECTURE.md §6.5), answered by the
+/// plugin's corpse module (<c>Composition/CorpseModule.cs</c>) from the ragdolls. Given to the allies'
+/// controller by constructor (and through it to the battle rules), and to the enemies' feet, in place of
+/// the plugin's methods they were handed before.
 /// </summary>
-internal interface ICorpseQuery
+public interface ICorpseQuery
 {
     /// <summary>Where a fallen actor's body lies: its ragdoll's pelvis, or null without one.</summary>
     Vector3? BodyPositionOf(nint address);

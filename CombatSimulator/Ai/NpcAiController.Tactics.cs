@@ -103,16 +103,18 @@ public unsafe partial class NpcAiController
     /// <summary>
     /// Once per frame: every enemy that has just entered the fight wakes idle allies within its aggro
     /// range (NpcBehavior.AggroRange). Woken allies do not call further, so a call reaches one hop, not
-    /// the whole map.
+    /// the whole map. Only an enemy its own AI drives calls or answers (an enemy under control does
+    /// neither: <see cref="EnemyLayer.Controlled"/>).
     /// </summary>
-    private void TickCallForHelp(IReadOnlyList<SimulatedNpc> npcs)
+    private void TickCallForHelp(IReadOnlyList<SimulatedNpc> npcs,
+        Dictionary<uint, (SimulatedEntityState State, Vector3 Position)> targetByNpcId)
     {
         if (!config.EnhancedEnemyTactics)
             return;
 
         foreach (var caller in npcs)
         {
-            if (!caller.IsSpawned || !caller.State.IsAlive || !caller.IsEngaged)
+            if (!caller.IsEngaged || !RaisesAlarm(caller, targetByNpcId))
                 continue;
 
             var tactics = Tactics(caller);
@@ -124,7 +126,8 @@ public unsafe partial class NpcAiController
             var callerPos = GetNpcPosition(caller);
             foreach (var ally in npcs)
             {
-                if (ally == caller || !ally.IsSpawned || !ally.State.IsAlive || ally.AiState != CombatantAiState.Idle)
+                if (ally == caller || !ally.IsSpawned || !ally.State.IsAlive || ally.AiState != CombatantAiState.Idle ||
+                    !EnemyLayers.CanBeWoken(LayerOf(ally)))
                     continue;
                 if (FlatDistance(GetNpcPosition(ally), callerPos) > radius)
                     continue;
@@ -221,7 +224,7 @@ public unsafe partial class NpcAiController
             tactics.FleeTimeLeft = FleeMaxDuration;
             tactics.FleeAllyId = best?.SimulatedEntityId ?? 0;
             tactics.FleeFallback = npc.SpawnPosition;
-            ClearNpcActionState(npc);
+            ClearActionState(npc);
             combatEngine.AddLogEntry($"{npc.Name} flees!", CombatLogType.Info);
         }
 
@@ -489,5 +492,5 @@ public unsafe partial class NpcAiController
         => StrafeIntervalMin + RandomSource.NextSingle() * (StrafeIntervalMax - StrafeIntervalMin);
 
     private bool IsNpcBusyAttacking(SimulatedNpc npc)
-        => npc.State.IsCasting || npc.State.AnimationLock > 0f || isTelegraphBusy(npc.SimulatedEntityId);
+        => npc.State.AnimationLock > 0f || isTelegraphBusy(npc.SimulatedEntityId);
 }

@@ -88,14 +88,15 @@ public unsafe partial class CombatCompanionManager
             return false;
 
         var speed = MoveSpeedOf(companion);
-        if (!crowd.Drive(companion.Address, world.PositionOf(companion), HitboxOf(companion), speed, goal))
+        if (!crowd.Drive(companion.Address, world.PositionOf(companion), HitboxOf(companion), speed, goal, newToBattle: !companion.JoinedCrowd))
             return false;
+        companion.JoinedCrowd = true;
         if (!crowd.TryGetMotion(companion.Address, out var position, out var velocity))
             return true;
 
         // Standing on a corpse: up onto it when it is low enough to step on.
         if (config.NpcCollisionActive &&
-            CorpseSupportHeightProvider?.Invoke(companion.Address, position) is { } support &&
+            corpses.ResolveCorpseTraversalHeight(companion.Address, position) is { } support &&
             support > position.Y && support - position.Y <= CorpseStepLimit)
             position.Y = support;
 

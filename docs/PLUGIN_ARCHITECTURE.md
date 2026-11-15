@@ -151,7 +151,7 @@ public sealed record MovePolicy(
 
 两边已经相同、不进策略的：MP 回复 134/秒、普攻回 600 MP、技能 MP 按自身蓝池同比例（`CombatBudgetModel.cs:128-129`、`:168`）；出手节奏 `ActionPace()`（`ActionMode` 时为 `ActionEnemyAttackSpeed`，现为 1.2 / 1.6 / 2.0 三档，`Configuration.cs:610`）；移动动画阈值 0.3 m/s。
 
-`ActionMode` 现在是计算属性 `!FightingMode`（`Configuration.cs:515`），所以敌人的引擎读条分支（`:849-864`）只在 Fighting Mode 下走得到。
+`ActionMode` 原是计算属性 `!FightingMode`；Fighting Mode 于 2026-11-15 删除后它恒为 true，敌人的引擎读条分支（`:849-864`）走不到了。
 
 ## 3. 共享出手步骤
 
@@ -255,7 +255,7 @@ public static class AggroModel                     // 纯函数，Tests 直接�
 
 public sealed class TargetingService               // 有状态：威胁表、每人的 AggroState、敌人当前目标、换目标计数
 {
-    public TargetingService(CombatRoster roster, ITargetingSettings settings, Func<float> now, BattleRuleSet rules);
+    public TargetingService(Func<float> now);   // 2026-11-15 实际实现：名册与规则不进构造，玩家近期伤害/DPS 也在这里
     public Random SeedSource { private get; set; }                      // 即今天的 AggroSeedSource
     public SimulatedEntityState? EnemyTarget(SimulatedNpc enemy);       // 今天的 SelectEnemyTarget（CombatCompanionManager.cs:406）
     public uint TargetIdOf(uint fighterId);                             // 双方通用的读取
@@ -435,6 +435,8 @@ public static class BattleRuleFactory
 
 ## 6. 组合根
 
+> **2026-11-15**：Fighting Mode 整体删除（用户裁决：不再使用），`FightingModule` 随之删除，Enemy Control 移到 `ActorsModule`（`CreateEnemyControl`）。下文提到 Fighting 的地方（表格、图、§6.3/§6.4 清单）是当时的设计。
+>
 > **B7 之后（`c90980d`）**：模块在 `CombatSimulator/Composition/`（World、Actors、Corpse、Camera、Combat、Fighting、Battle、Presentation、SafetyDev），由插件构造函数按原顺序逐个建造；每帧清单仍是 `OnFrameworkUpdate` 一处；引擎通知在 `Simulation/CombatEvents.cs`（可赋值委托属性而非 `event`，保留旧的 `=` 语义）；订阅留在原位置并在注释里按 §6.3 编号，没有集中。私有模块用到的插件成员保留为同名转发。下面是设计时的文字。
 
 ### 6.1 模块与字段
@@ -445,9 +447,9 @@ public static class BattleRuleFactory
 | `ActorsModule` | `npcSelector`、`npcSpawner`、`actionDataProvider`、`npcActionProfileProvider`、`mapEnemyController`、`spectatorController`、`npcScaleController`、`companionManager`（生成与名单部分）、`pendingGlamourerApplies` | `CombatRoster` |
 | `CombatModule` | `damageCalculator`、`combatEngine`、`npcAiController`、`npcCorpseFootIkSolver`、`combatModeRouter`、`telegraphSystem`、`enemyAreaMarkers`、`playerGuardController`、`actionComboSink`、`actionModeController`、`hitFeedbackController`、`playerTargetController`、`useActionHook`、`virtualEnemyLookAt` | `TargetingService`、`CombatEvents` |
 | `BattleModule` | `Plugin.War.cs` 的全部字段（`warBanner`、夺尸进度与名单、抓取重试）、`victoryCelebration` | `BattleRuleSet` |
-| `CorpseModule` | `ragdollController`、`npcRagdolls`、`pendingNpcRagdolls`、`pendingNpcRagdollAddresses`、`npcRagdollStaggerBudget`、`weaponDropController`、`dismembermentController`、`armorDetachmentController`、`arrowImpactController`、`playerWeaponVisibilityController` | `ICorpseQuery` |
+| `CorpseModule` | `ragdollController`、`npcRagdolls`、`pendingNpcRagdolls`、`pendingNpcRagdollAddresses`、`npcRagdollStaggerBudget`、`weaponDropController`、`dismembermentController`、`armorDetachmentController`、`arrowImpactController`、`playerWeaponVisibilityController` | `ICorpseQuery（2026-11-15 起在 `Combat/ICorpseQuery.cs`，public，由构造注入队友管理器）` |
 | `CameraModule` | `cameraModeCoordinator`、`gameCameraUpdateHook`、`activeCameraController`、`dynamicCameraController` | — |
-| `FightingModule` | `fightingModeController`、`fightingCombatController`、`enemyControlController` | `ICorpseGrab`、“谁被外部接管”的查询 |
+| `FightingModule`（2026-11-15 删除） | `fightingModeController`、`fightingCombatController`、`enemyControlController`（后者已移到 `ActorsModule`） | `ICorpseGrab`、“谁被外部接管”的查询 |
 | `PresentationModule` | `mainWindow`、`hpBarOverlay`、`damageNumbers`、`combatLogWindow`、各 overlay、`enemyOmenVfx`、`voiceDirector`、`updateLogPopupController` | — |
 | `SafetyDevModule` | `hookSafetyChecker`、`devExperimental`、`Plugin.cs:80-96` 的 partial 钩子 | — |
 
@@ -613,10 +615,10 @@ public interface IBattleRuleSettings             // 属性名与 Configuration �
     uint CaptiveEmoteId { get; }                 // WarCaptiveEmoteId
     bool ShowResultBanner { get; }  bool EnableRagdoll { get; }
 }
-public interface ITargetingSettings { bool EnableCombatCompanions { get; } }   // 选目标的权重都是代码常量，不是设置
+public interface ICombatRosterSettings { bool EnableCombatCompanions { get; } }   // 名册读它；选目标的权重都是代码常量，不是设置（2026-11-15 由 ITargetingSettings 改名，见 Configuration.SettingsViews.cs）
 ```
 
-`Configuration : IPluginConfiguration, ICombatAiSettings, IBattleRuleSettings, ITargetingSettings`。接口只读；`EnableCombatCompanions` 由生成队友时写（`Plugin.cs:372`），那一处继续直接写 `Configuration`。
+`Configuration : IPluginConfiguration, ICombatAiSettings, IBattleRuleSettings, ICombatRosterSettings`（另有各系统、各模块的窄接口，见 `Configuration.SettingsViews.cs`、`Composition/ModuleSettings.cs`）。接口只读；`EnableCombatCompanions` 由生成队友时写（`Plugin.cs:372`），那一处继续直接写 `Configuration`。
 
 存储结构不动（JSON 保持平铺）的理由：
 

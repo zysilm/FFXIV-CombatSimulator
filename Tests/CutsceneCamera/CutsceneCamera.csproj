@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Lumina" Version="7.6.0" />
+    <PackageReference Include="Lumina.Excel" Version="7.5.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Reference-pose reader for .sklb (Havok tagfile without Havok), shared with the ragdoll hull test. -->
+    <Compile Include="../RagdollHullFit/Skeleton.cs" Link="Shared/Skeleton.cs" />
+    <!-- The plugin's cutscene camera code (parser, default sequence, shot list, playback, anchoring, roles). Every
+         file in that folder is game-free by rule, so this tool and the plugin run one parser. -->
+    <Compile Include="../../CombatSimulator/Camera/Cutscene/*.cs" Link="Plugin/%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

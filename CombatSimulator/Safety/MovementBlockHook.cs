@@ -11,8 +11,14 @@ using FFXIVClientStructs.FFXIV.Client.Game.Object;
 namespace CombatSimulator.Safety;
 
 /// <summary>
-/// Hooks GameObject.SetPosition and SetRotation to freeze the local player's
-/// position when they are dead in the combat simulator.
+/// Hooks GameObject.SetPosition and SetRotation for two jobs:
+/// 1. <see cref="IsBlocking"/>: freeze the local player's position/rotation while they are dead or
+///    captured in the simulation. Enemy Control drives the killer with WASD in that state, and the same
+///    keys also move the player through SetPosition; this freeze is what keeps the player still.
+///    Trade-off: while frozen, server corrections to the local player (knockback, position sync) are
+///    ignored too.
+/// 2. Approach-controlled NPCs (enemies, allies, spectators, Enemy Control's creature) ignore the game's
+///    own updates; the plugin moves them through <see cref="SetApproachPosition"/> / <see cref="SetApproachRotation"/>.
 /// Unlike input-based blocking, this prevents the position from ever changing,
 /// so there is no shaking or fighting between the game engine and the plugin.
 /// </summary>

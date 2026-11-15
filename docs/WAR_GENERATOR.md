@@ -7,7 +7,7 @@
 插件玩法单调的原因不是缺机制，而是没有东西把现有机制串成一场有起伏的战斗：
 
 - 野外：很难同时凑到理想的地图、友军和敌人；会被真实小怪袭击；行为怪异可能被举报。
-- Hyperborea 地图：只能 1 对多，地图空荡，没有队友。
+- 用第三方插件 Hyperborea 进入的空地图：只能 1 对多，地图空荡，没有队友。（本插件不检测、也不依赖 Hyperborea。）
 - 死亡方式：击倒即结束，没有处刑之类的特殊事件。
 
 ## 2. 需求（用户原话整理，已逐条确认）
@@ -99,10 +99,15 @@
 
 **哨兵与巡逻**：地图生成或开了巡逻的敌人是“哨兵”（`SimulatedNpc.IsSentry`）：
 - 不参与“全员自动开战”，待在 `Idle`；
-- 我方任何人进入感知范围，或附近有同伴已开战，才 `EngageNpc`；被打也会开战（已有逻辑）；
+- 我方任何人进入感知范围，或附近（10 m）有同伴**正在和活着的目标交战**，才 `EngageNpc`；被打也会开战（已有逻辑）。被 Enemy Control 接管的敌人、以及没有活目标却被强制开战的敌人都不算“正在交战”（2026-11-15，见下面“行为层”）；
 - 目标死了回到 `Idle` 后继续当哨兵；
-- `Patrols`：待机时用走路动作（时间线 13）在岗位附近的随机点之间来回，点与点之间停几秒；
+- `Patrols`：待机时用走路动作（时间线 13）在岗位附近的随机点之间来回，点与点之间停几秒；巡逻点只取我方走得到的地面（导航网格上与玩家相连的那块，抽不到就站一会儿再抽）。不巡逻的哨兵离岗位超过 3 m 时走回岗位（2026-11-15）；
+- 岗位（`SpawnPosition`）在网格建好后检查一次：不在我方走得到的地面上（墙后、崖顶、地下、封闭院子）就挪到最近的可达点，日志 `Patrol: <名字>'s post moved N m onto ground the party can reach.`（2026-11-15）；
 - 队友不主动挑没开战的哨兵；玩家无目标出招也不会自动打到没开战的哨兵。
+
+**行为层**（2026-11-15，`Ai/EnemyLayer.cs`）：每个敌人每帧只归一层管，按顺序取第一层：被控制（Enemy Control / 私有导演）→ 死亡 → 抢尸 → 交战 → 巡逻 → 守岗 → 待机。被控制的敌人 AI 不移动、不改它的状态，也不让它影响别人（不叫醒哨兵、不呼救、不被呼救叫醒）；放开后它从原来那层接着走。巡逻是每个敌人自己的状态，没有任何东西会一次性关掉所有人的巡逻。Enemy Control 只接管一个敌人，而且只在**战斗已经输掉之后**（结果判定为失败）：玩家倒下本身不算输，我方还能赢或还能把玩家救起来时什么都不做；输了以后，尸体被抢走就接管抢尸者，否则接管仍然活着、对象仍然有效（EntityId 核对）的凶手，都不满足就不接管并记日志；玩家活着、或 On death 不是 Control killer 时一律不接管。普通、春秋、战国同一条规则，代码在 `Battle/KillerPossession.cs`（2026-11-15，用户裁决）。“生成一只怪来控制”的功能已删除（用户裁决，旧设置 `EnemyControlSpawnOnDeath` / `EnemyControlModelId` / `EnemyControlModelNameId` 进退役键列表）。离线检查：`Tests/CombatReplay`（`PatrolReplay.cs`，`-- --patrol-metrics` 打印数字）、`Tests/AiMovement`。
+
+**生成位置只取我方走得到的地方**（2026-11-15）：`NavMeshBuild.NearestOnPiece` 从候选点向外逐圈（1.5 m 起每次加倍）找导航网格上与玩家相连那块的最近点。用在：生成时（`NpcSpawner.ReachableSpot`，网格已覆盖该点时）、第一次进人群时（`CrowdMover.Drive`，新来者不在可达地面上就放到最近的可达点，最远找 96 m；网格没覆盖到时不判断，等网格建到那里）、哨兵岗位和巡逻点。离线检查：`Tests/Navigation`（封闭院子、崖顶、地下、墙里、网格外）。
 
 **battle profile 接管**：`CombatRecipe` 就是战争生成器的 JSON 定义，扩展字段：`allies`（目录条目组）、敌人组的 `placement / patrol / strength / level`，以及后续的 `modes`。旧字段原样兼容（`companions` 的可见玩家/自己克隆、`mapEnemies` 的地图感知）。用户 profile 存为配置目录下 `BattleProfiles/<name>.json`，与内置的一起列出。战争生成器顶部：选 profile、Start/Stop、把“当前场上的阵容”存为 profile、删除自己存的。
 
@@ -115,7 +120,7 @@ UI：War Generator tab → 折叠标题 "Battle Rules" → 卡片 "The fallen"�
 - **待戮**（`SimulatedEntityState.IsCaptive`）：战国且勾选 Hostages 时，`CombatEngine.ApplyNpcHit` 把我方的致死一击截到 1 HP 并 `TakeCaptive`。玩家：`MovementBlockHook.IsBlocking` 锁移动，技能/自动攻击被拒，播放所选表情；队友：`CombatCompanionManager.TickCaptive`。敌人选目标时，只要还有非待戮目标就把待戮者剔除（`SelectEnemyTargetInternal`）。处刑前敌人第一次出手只起手（`ExecutionReady`，1.5 秒）；溅射伤害不会处刑。处刑一击置 `Executed` → 玩家走 0 延迟布娃娃，队友在 `Plugin.OnCompanionDeathRagdoll` 用 0 延迟。全歼敌人时释放所有待戮者。表情只对人形有效（非人形生物只是站着）。
 - **春秋**（`CombatCompanionManager.Rescue.cs`）：每帧给倒下/待戮的我方成员（玩家优先）分配最近的空闲队友；跑过去、跪地（Kneel）8 秒，期间 `IncomingDamageScale = 4`；离开或被打倒则中断、清零。完成后：死亡者 50% HP 复活（玩家 `RevivePlayerInPlace(0.5)`，队友 `ReviveCompanion` 并移除其布娃娃/掉落武器）；待戮者 25% HP 释放。进入 1.6 m 复活判定范围（不变）后，先走到尸体旁边的跪点再跪下读条（见下面“跪点”）。
 - **跪点**（2026-11-15，`Battle/Rules/KneelSpot.cs`，`CombatCompanionManager.Rescue.cs` 的 `TryKneelSpot` / `KneelAt`）：复活者和祈祷者都跪在尸体（布娃娃骨盆）旁边：从尸体中心朝来的方向偏 0.25 m，必须在导航网格上、离尸体不超过 0.3 m（正好那点不可走就取 0.3 m 内最近的可走点）；朝来的方向不行就绕尸体每 45° 试一个；离别的跪着的人至少 0.8 m（所以一具尸体只会有一个人跪在旁边），尽量离其他倒下的人至少 0.45 m（先前跪在这里死掉的祈祷者），都挤满了就取离他们最远的。走最后一段（2 m 内且网格上直线可走）时和跪着的时候不归人群移动，而是作为障碍物钉在原地：别人绕开它，谁也推不走它。找不到跪点、2 s 内走不到，就照旧原地跪下。何时算开始复活/祈祷、复活进度规则、守卫 3 m 圈都没变。
-- **战国**（`CombatCompanionManager.Lord.cs`、`Plugin.War.cs`）：没有任何复活。主公（玩家）死亡：Retreat 关 → 所有队友 `TakeCaptive`（不论 Hostages 是否勾选）；Retreat 开 → 最近的队友跑到主公身体正前方 1.3 m（按玩家朝向），到了这个站位（判定不变）再走到尸体旁边跪下（跪点见下面“跪点”），播放 Pray（58），不攻击，受伤 ×4；死了由下一个接替。守尸（2026-11-13 起，原来“其他队友正常战斗即守护”在游戏里等于没人管主公）：其他队友的指挥锚点改为尸体、范围 10 m，空闲时站到尸体周围 3 m 的一圈；选目标时去抢尸的敌人 +400、离尸体越近的敌人越优先（12 m 内最多 +200）。夺尸：存活敌人中离尸体最近的一半（至少 1 个）组成抢尸队（`SimulatedNpc.SeizeGoal`，闲着的哨兵也会被叫醒），一直往尸体走，射程内有守卫就停下打（优先打祈祷者，其次离尸体近的守卫）；死了由下一个补上。尸体 3.5 m 内能战斗的队友不少于同范围内的抢尸者时，就抢不走（以多打少能抢，不必杀光守卫，2026-11-13 改）；布娃娃还没启动（死后等身体停下那几秒）时进度最多到 95%，抢到后 Enemy Control 的 grab 若没抓住会每 0.4 s 重试、最多 8 s（日志 `War: the seizer has the lord’s body in hand.`）；尸体位置取玩家布娃娃的骨盆（没开布娃娃才用死亡位置）。没人守住时，只要任一抢尸队员身体边缘离尸体 ≤1.5 m，共用的夺尸进度（0–100%）按人数差累积：每秒 (3.5 m 内抢尸者 − 3.5 m 内队友) / 4 s（2026-11-15 改，原来是只要人多就 2 秒抢走）；离开或被守住则每秒回落 25%（不清零）；3.5 m 内的抢尸者每挨一下打，进度退 10%（不低于 0）；常量都在 `Battle/CorpseSeizure.cs` 顶部，离线调参见 `Tests/TargetingSim` README 的 Seize 一节；进度 > 0 且尸体还没被抢走时，尸体上方显示进度条 "Seizing"（按视线显示，匿名模式只显示条不显示字）；dalamud.log 每 2 秒一行 `War:` 记录最近的抢尸者距离、守住者、进度及这 2 秒内的挨打次数；满 100% 即夺尸：剩余队友全部待戮，`ForceEnemyVictory`，并由 Enemy Control 接管该敌人、按当前设置 grab（需布娃娃已激活）。此模式下玩家死亡时不再触发 Enemy Control 的 "control killer / spawn on death"。
+- **战国**（`CombatCompanionManager.Lord.cs`、`Plugin.War.cs`）：没有任何复活。主公（玩家）死亡：Retreat 关 → 所有队友 `TakeCaptive`（不论 Hostages 是否勾选）；Retreat 开 → 最近的队友跑到主公身体正前方 1.3 m（按玩家朝向），到了这个站位（判定不变）再走到尸体旁边跪下（跪点见下面“跪点”），播放 Pray（58），不攻击，受伤 ×4；死了由下一个接替。守尸（2026-11-13 起，原来“其他队友正常战斗即守护”在游戏里等于没人管主公）：其他队友的指挥锚点改为尸体、范围 10 m，空闲时站到尸体周围 3 m 的一圈；选目标时去抢尸的敌人 +400、离尸体越近的敌人越优先（12 m 内最多 +200）。夺尸：存活敌人中离尸体最近的一半（至少 1 个）组成抢尸队（`SimulatedNpc.SeizeGoal`，闲着的哨兵也会被叫醒），一直往尸体走，射程内有守卫就停下打（优先打祈祷者，其次离尸体近的守卫）；死了由下一个补上。尸体 3.5 m 内能战斗的队友不少于同范围内的抢尸者时，就抢不走（以多打少能抢，不必杀光守卫，2026-11-13 改）；布娃娃还没启动（死后等身体停下那几秒）时进度最多到 95%，抢到后 Enemy Control 的 grab 若没抓住会每 0.4 s 重试、最多 8 s（日志 `War: the seizer has the lord’s body in hand.`）；尸体位置取玩家布娃娃的骨盆（没开布娃娃才用死亡位置）。没人守住时，只要任一抢尸队员身体边缘离尸体 ≤1.5 m，共用的夺尸进度（0–100%）按人数差累积：每秒 (3.5 m 内抢尸者 − 3.5 m 内队友) / 4 s（2026-11-15 改，原来是只要人多就 2 秒抢走）；离开或被守住则每秒回落 25%（不清零）；3.5 m 内的抢尸者每挨一下打，进度退 10%（不低于 0）；常量都在 `Battle/CorpseSeizure.cs` 顶部，离线调参见 `Tests/TargetingSim` README 的 Seize 一节；进度 > 0 且尸体还没被抢走时，尸体上方显示进度条 "Seizing"（按视线显示，匿名模式只显示条不显示字）；dalamud.log 每 2 秒一行 `War:` 记录最近的抢尸者距离、守住者、进度及这 2 秒内的挨打次数；满 100% 即夺尸：剩余队友全部待戮，`ForceEnemyVictory`，并由 Enemy Control 接管该敌人、按当前设置 grab（需布娃娃已激活）。Enemy Control 只在战斗输掉后接管（见上面“行为层”）：尸体被抢走即判负，接管抢尸者（On death 为 Nothing 时不接管）；主公孤身或队友全灭判负时接管凶手（2026-11-15：此前一对一时谁都不接管）。
 - **显示**：`Gui/WarBanner.cs` 结果大字 VICTORY / DEFEAT / BODY RECOVERED（战国且主公已死时取胜），下面一行小字写原因（`Plugin.War.cs` 的 `DescribeOutcome`，新模式在这里加分支）；一直显示到战斗重置，Settings 页 GUI Settings 的 Show Battle Result Banner 可关（默认开）。第一个结果为准。HP 条名字前缀固定为状态（`CombatCompanionManager.StatusOf`）：Fighting / Raising / Guarding / Praying / Captive / Killed in battle / Executed / Corpse captured（主公尸体被抢）。名字和数字默认只在玩家本人血条上显示（Show All Names and Numbers 打开才全部显示，匿名模式最高优先级全部隐藏）；他人为小血条，友军在 10 m 内/挨打/被选中/特殊状态时显示，敌军在视线内（相机到头部的射线不被墙挡）或被选中时显示；战斗中看不到任何敌人时，玩家脚下画红圈并用箭头指向最近的敌人。Sim Label、Dead Label 输入框已删除（配置字段保留以兼容旧配置迁移，不再显示）。
 
 ### 4.4 已知限制 / 待游戏内确认

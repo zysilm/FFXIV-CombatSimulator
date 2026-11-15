@@ -1,3 +1,5 @@
+using CombatSimulator.Ai;
+using CombatSimulator.Combat;
 using CombatSimulator.Simulation;
 
 int checks = 0;
@@ -47,5 +49,37 @@ Check(Near(EnemyMovementMath.HitThreat(-5, false), 0f), "negative damage makes t
 }
 Check(Near(EnemyMovementMath.ThreatShare(50, 100), 0.5f), "share wrong");
 Check(Near(EnemyMovementMath.ThreatShare(5, 0), 0f), "share with empty table");
+
+// --- Behaviour layers (CombatSimulator/Ai/EnemyLayer.cs, 2026-11-15) ----------------------------
+// One layer per enemy: controlled > dead > seizing > fighting > patrolling / holding its post > idle.
+{
+    var states = Enum.GetValues<CombatantAiState>();
+    foreach (var state in states)
+    foreach (var alive in new[] { false, true })
+    foreach (var seizing in new[] { false, true })
+    foreach (var sentry in new[] { false, true })
+    foreach (var patrols in new[] { false, true })
+    {
+        // Controlled wins over everything: Enemy Control's enemy is never the AI's, whatever it was doing.
+        Check(EnemyLayers.Of(true, alive, seizing, state, sentry, patrols) == EnemyLayer.Controlled, "control does not win");
+        var layer = EnemyLayers.Of(false, alive, seizing, state, sentry, patrols);
+        var expected = !alive || state == CombatantAiState.Dead ? EnemyLayer.Dead
+            : seizing ? EnemyLayer.Seizing
+            : state is CombatantAiState.Engaging or CombatantAiState.Combat or CombatantAiState.Chasing ? EnemyLayer.Fighting
+            : sentry && state == CombatantAiState.Idle ? (patrols ? EnemyLayer.Patrolling : EnemyLayer.HoldingPost)
+            : EnemyLayer.Idle;
+        Check(layer == expected, $"layer of {state} alive {alive} seizing {seizing} sentry {sentry} patrols {patrols}: {layer}, expected {expected}");
+    }
+    // Only one fighting someone alive raises the alarm; a controlled enemy never does, whatever its stale state.
+    foreach (var layer in Enum.GetValues<EnemyLayer>())
+    {
+        Check(!EnemyLayers.RaisesAlarm(layer, targetAlive: false), $"{layer} with nobody alive raises the alarm");
+        Check(EnemyLayers.RaisesAlarm(layer, targetAlive: true) == layer is EnemyLayer.Fighting or EnemyLayer.Seizing, $"{layer} alarm");
+        Check(EnemyLayers.CanBeWoken(layer) == layer is not (EnemyLayer.Controlled or EnemyLayer.Dead), $"{layer} wake");
+        Check(EnemyLayers.IsUnaware(layer) == layer is EnemyLayer.Patrolling or EnemyLayer.HoldingPost, $"{layer} unaware");
+    }
+    Check(!EnemyLayers.RaisesAlarm(EnemyLayers.Of(true, true, false, CombatantAiState.Combat, true, true), true),
+        "a controlled enemy left in combat wakes the sentries (the 2026-11-15 'nobody patrols' bug)");
+}
 
 Console.WriteLine($"AiMovement: {checks} checks passed.");

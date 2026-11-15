@@ -78,11 +78,6 @@ public sealed unsafe class MapEnemyController
         if (!combatEngine.IsActive)
             return;
 
-        // Fighting Mode is opt-in 1v1: do not auto-sense the map and pull a group.
-        // The selected enemy is force-registered by FightingModeController on player attack.
-        if (config.FightingMode)
-            return;
-
         var settings = CurrentSettings();
         if (settings is not { Enabled: true })
             return;
@@ -93,41 +88,6 @@ public sealed unsafe class MapEnemyController
         senseTimer = SenseInterval;
 
         SenseMapEnemies(settings);
-    }
-
-    public SimulatedNpc? TryRegisterByEntityId(ulong targetId, bool force = false)
-    {
-        if (targetId == 0 || targetId == 0xE0000000)
-            return null;
-
-        if (!combatEngine.IsActive)
-            return null;
-
-        var settings = force
-            ? new MapEnemySettings
-            {
-                Enabled = true,
-                IncludeBattleNpcs = true,
-                IncludePlayers = false,
-                MaxCount = Math.Max(1, config.MaxTargets),
-                SenseRange = Math.Max(0.1f, config.MapEnemySenseRange),
-                Tier = CombatBudgetModel.TierForChoice(config.EnemyStrength),
-                Level = config.EnemyLevel,
-            }
-            : CurrentSettings();
-        if (settings is not { Enabled: true })
-            return null;
-
-        foreach (var obj in objectTable)
-        {
-            if (obj.EntityId != (uint)targetId)
-                continue;
-
-            var friendly = NearestFriendly(obj.Position);
-            return RegisterObject(obj, settings, friendly.EntityId);
-        }
-
-        return null;
     }
 
     private MapEnemySettings? CurrentSettings()

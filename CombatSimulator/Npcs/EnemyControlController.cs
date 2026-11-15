@@ -5,7 +5,6 @@ using System.Numerics;
 using System.Text;
 using CombatSimulator.Animation;
 using CombatSimulator.Camera;
-using CombatSimulator.Fighting;
 using CombatSimulator.Integration;
 using CombatSimulator.Safety;
 using Dalamud.Bindings.ImGui;
@@ -20,10 +19,15 @@ using GameCameraManager = FFXIVClientStructs.FFXIV.Client.Game.Control.CameraMan
 namespace CombatSimulator.Npcs;
 
 /// <summary>
-/// Hidden dev mode: "EnemyControl". On player death, spawns a controllable creature (default Bat,
-/// a BNpc model) with no HP. The player flies it around with the keyboard; the camera follows
-/// the creature (active-camera-style free orbit centered on it); and the attack input (keyboard
-/// or gamepad — routed via the UseAction hook) toggles a grab (see config.EnemyControlGrabPairs).
+/// Enemy Control: on the player's death it takes over ONE enemy (the killer, or under Warring States the
+/// one that carries off the lord's body). The player walks it with the keyboard; the camera may follow
+/// it (active-camera-style free orbit centered on it); and the attack input (keyboard or gamepad —
+/// routed via the UseAction hook) toggles a grab (see config.EnemyControlGrabPairs).
+///
+/// Scope: only the possessed enemy. The enemy AI
+/// skips whatever <see cref="ControlsNpc"/> names (its behaviour layer is "controlled") and treats it as
+/// absent for everyone else's decisions; this class never writes the enemy's own state (its AI state,
+/// patrol, identity flags), so on release it picks up where it left off.
 ///
 /// Controls:
 ///   W / S — forward / back along facing,  A / D — turn,  Q / E — ascend / descend (ground-clamped)
@@ -44,8 +48,6 @@ public unsafe partial class EnemyControlController : IDisposable
     private readonly MovementBlockHook movementBlock;
     private readonly ActiveCameraController activeCamera;
     private readonly VNavmeshIpc vnavmesh;
-    private readonly Npcs.NpcSelector npcSelector;
-    private readonly Func<IReadOnlyList<RagdollController>> corpseRagdollProvider;
     private readonly Configuration config;
     private readonly IPluginLog log;
 
@@ -58,30 +60,41 @@ public unsafe partial class EnemyControlController : IDisposable
     // Bookkeeping for whichever grab pairs (see config.EnemyControlGrabPairs) are currently held. Two
     // independent id spaces per pair: the ragdoll's own constraint slot, and the conform solver's —
     // they're allocated by different owners, so there's no reason to force them to match.
+    // NpcAnchor/PlayerAnchor are the picked points this hold uses (null = the bone, as before anchors; an enemy anchor
+    // whose bone this creature lacks is already dropped to null here). PlayerBone/Index are for the log only.
     private readonly struct ActiveGrabPair
     {
         public readonly int RagdollSlotId;
         public readonly int ConformSlotId;
         public readonly string NpcBone;
-        public ActiveGrabPair(int ragdollSlotId, int conformSlotId, string npcBone)
+        public readonly EnemyControlGrabAnchor? NpcAnchor;
+        public readonly EnemyControlGrabAnchor? PlayerAnchor;
+        public readonly string PlayerBone;
+        public readonly int Index;
+        public readonly float StartGap;
+        public ActiveGrabPair(int ragdollSlotId, int conformSlotId, string npcBone, EnemyControlGrabAnchor? npcAnchor = null,
+            EnemyControlGrabAnchor? playerAnchor = null, string playerBone = "", int index = 0, float startGap = 0f)
         {
             RagdollSlotId = ragdollSlotId;
             ConformSlotId = conformSlotId;
             NpcBone = npcBone;
+            NpcAnchor = npcAnchor;
+            PlayerAnchor = playerAnchor;
+            PlayerBone = playerBone;
+            Index = index;
+            StartGap = startGap;
         }
     }
     private readonly List<ActiveGrabPair> activeGrabPairs = new();
+    // GrabAnchor: one follow-up log line this long after an anchored grab starts (how close the points got).
+    private const float GrabAnchorReportSeconds = 1f;
+    private float grabAnchorReportTimer = -1f;
+    private readonly EnemyControlGrabAnchorPicker anchorPicker;
 
-    private int EnemyControlIndex = -1;       // ClientObjectManager index (only when we spawned the object)
     private uint EnemyControlEntityId;
-    private uint nextSpawnedEnemyControlEntityId = 0xF4000001;
     private nint controlledAddress;
-    private bool ownsObject;              // true = we spawned it (delete on despawn); false = controlling an existing enemy
-    private Npcs.SimulatedNpc? controlledNpc; // the killer we took over (so we can release its AI)
+    private Npcs.SimulatedNpc? controlledNpc; // the enemy taken over (its AI skips it while held)
     private bool corpseTraversalSupportActive;
-    private bool pendingDraw;
-    private int framesWaited;
-    private const int MaxPendingFrames = 60;
 
     private float yaw;
     private float posX, posY, posZ;
@@ -89,7 +102,6 @@ public unsafe partial class EnemyControlController : IDisposable
     private bool colliderRegistered;
     private bool lastMovementActive;
     private readonly ActorVisualState visualState = new();
-    public IFightingModeLaneConstraint? FightingLane { get; set; }
     // Same per-leg solver NpcAiController uses. When it has bones resolved for the controlled
     // creature, it owns bending the affected leg(s) onto a corpse and root height below skips its
     // own corpse query entirely — otherwise both would react to the same contact and the whole
@@ -111,56 +123,16 @@ public unsafe partial class EnemyControlController : IDisposable
     private ushort grabAttackSavedBaseOverride;
     private float grabAttackRestoreTimer;
 
-    private sealed class SwarmFollowerState
-    {
-        public required Npcs.SimulatedNpc Npc;
-        public float Angle;
-        public float RadiusFactor;
-        public float WanderPhase;
-        public float WanderRate;
-        public float FloorRefreshTimer;
-        public float FloorY;
-        public bool HasFloor;
-        public bool ColliderEnsured;
-        public int CorpseSlotId = -1;
-        public int PreviousCorpseSlotId = -1;
-        public float CorpseSlotTimer;
-        public Vector2 CorpseSlotOffset;
-        public int CorpseSlotEpoch;
-        public RagdollController? ColliderRagdoll;
-        public bool OnCorpseSupport;
-        public bool TraversalGhosted;
-        public bool TraversalProxyActive;
-    }
-
-    private readonly Dictionary<nint, SwarmFollowerState> swarmFollowers = new();
-    private readonly HashSet<nint> desiredSwarmAddresses = new();
-    private readonly List<nint> staleSwarmAddresses = new();
-    private readonly List<RagdollController.CorpseTraversalSlot> swarmCorpseSlots = new();
-    private readonly Dictionary<int, nint> swarmCorpseReservations = new();
-    private Vector3 swarmCorpseCenter;
-    private float swarmCorpseExclusionRadius;
-    private float swarmElapsed;
-    private float swarmClimbDelayRemaining;
-    private float swarmStompMassHoldRemaining;
-    private RagdollController? swarmCorpseRagdoll;
-
     public bool IsActive => controlledAddress != nint.Zero;
-    public int SwarmFollowerCount => swarmFollowers.Count;
-    public int SwarmCorpseOccupantCount => swarmFollowers.Values.Count(f => f.CorpseSlotId >= 0);
 
     /// <summary>True while we're controlling an existing enemy at this address (suppresses its AI).</summary>
     public bool ControlsNpc(nint address)
-        => (controlledNpc != null && controlledNpc.Address == address) || swarmFollowers.ContainsKey(address);
-
-    /// <summary>Only the possessed actor itself, not the pack following it.</summary>
-    public bool PossessesNpc(nint address) => controlledNpc != null && controlledNpc.Address == address;
+        => controlledNpc != null && controlledNpc.Address == address;
 
     public EnemyControlController(IKeyState keyState, IGamepadState gamepad, IFramework framework,
         RagdollController playerRagdoll, AnimationController animation, BoneTransformService boneService,
         MovementBlockHook movementBlock, ActiveCameraController activeCamera,
-        VNavmeshIpc vnavmesh, Npcs.NpcSelector npcSelector,
-        Func<IReadOnlyList<RagdollController>> corpseRagdollProvider,
+        VNavmeshIpc vnavmesh,
         Configuration config, IPluginLog log)
     {
         this.keyState = keyState;
@@ -172,15 +144,11 @@ public unsafe partial class EnemyControlController : IDisposable
         this.movementBlock = movementBlock;
         this.activeCamera = activeCamera;
         this.vnavmesh = vnavmesh;
-        this.npcSelector = npcSelector;
-        this.corpseRagdollProvider = corpseRagdollProvider;
         this.config = config;
         this.log = log;
         defaultGrabConform = new EnemyControlGrabConformSolver(boneService, playerRagdoll, config, log);
-        if (config.EnemyControlSwarmEnabled && config.EnemyControlSwarmClimbCorpses)
-            swarmClimbDelayRemaining = Math.Clamp(config.EnemyControlSwarmClimbDelay, 0f, 5f);
+        anchorPicker = new EnemyControlGrabAnchorPicker(boneService, log);
         framework.Update += OnUpdate;
-        boneService.OnRenderFrame += ApplyArmPoseOverrides;
         boneService.OnPosePrepared += UpdatePreparedGrabTargets;
     }
 
@@ -202,10 +170,6 @@ public unsafe partial class EnemyControlController : IDisposable
 
     /// <summary>True when the active camera is orbiting the creature; false = orbiting the player.</summary>
     public bool CameraFollowsControlledTarget => config.EnemyControlCameraFollowsControlledTarget;
-
-    /// <summary>Creature body-center for external framing (Fighting Mode's KO camera):
-    /// non-null only while active with camera-follow on.</summary>
-    public Vector3? FollowCenter => IsActive && config.EnemyControlCameraFollowsControlledTarget ? CameraCenter() : null;
 
     /// <summary>Toggle the camera between following the EnemyControl and the player (character cam).
     /// The choice is remembered (config) — spawn/despawn/reset never auto-switch it.
@@ -242,99 +206,26 @@ public unsafe partial class EnemyControlController : IDisposable
         return pos;
     }
 
-    public void Spawn()
-    {
-        if (IsActive || pendingDraw) { log.Info("EnemyControlMode: already active — despawn first"); return; }
-
-        var player = Core.Services.ObjectTable.LocalPlayer;
-        if (player == null) { log.Warning("EnemyControlMode: no local player"); return; }
-
-        var mgr = ClientObjectManager.Instance();
-        if (mgr == null) { log.Warning("EnemyControlMode: ClientObjectManager null"); return; }
-
-        var hint = Core.ClientActorSlotAllocator.FindFreeAscending(mgr, 100);
-        if (hint == uint.MaxValue) { log.Warning("EnemyControlMode: no free shared client actor slot"); return; }
-        var createResult = mgr->CreateBattleCharacter(hint);
-        if (createResult == 0xFFFFFFFF) { log.Warning("EnemyControlMode: CreateBattleCharacter failed (no slot)"); return; }
-
-        var index = (int)createResult;
-        if (index < 0 || index >= Core.ClientActorSlotAllocator.SharedSlotLimit)
-        {
-            if (index >= 0 && index < Core.ClientActorSlotAllocator.TotalSlotCount)
-                mgr->DeleteObjectByIndex((ushort)index, 0);
-            log.Warning($"EnemyControlMode: CreateBattleCharacter returned unsafe index {index}");
-            return;
-        }
-        var obj = mgr->GetObjectByIndex((ushort)index);
-        if (obj == null)
-        {
-            mgr->DeleteObjectByIndex((ushort)index, 0);
-            log.Warning($"EnemyControlMode: object null at index {index}");
-            return;
-        }
-
-        var chara = (BattleChara*)obj;
-        var character = (Character*)chara;
-
-        obj->ObjectKind = ObjectKind.BattleNpc;
-        obj->SubKind = (byte)BattleNpcSubKind.Combatant;
-        obj->TargetableStatus = 0;
-        obj->RenderFlags = VisibilityFlags.None;
-
-        var spawnPos = player.Position;
-        yaw = player.Rotation;
-        posX = spawnPos.X; posY = spawnPos.Y; posZ = spawnPos.Z;
-        obj->Position = spawnPos;
-        obj->Rotation = yaw;
-
-        var nameBytes = Encoding.UTF8.GetBytes("EnemyControl");
-        for (int j = 0; j < 64; j++)
-            obj->Name[j] = j < nameBytes.Length && j < 63 ? nameBytes[j] : (byte)0;
-
-        character->CharacterSetup.SetupBNpc(config.EnemyControlModelId, config.EnemyControlModelNameId);
-        character->CharacterSetup.CopyFromCharacter(character, CharacterSetupContainer.CopyFlags.None);
-
-        obj->ObjectKind = ObjectKind.BattleNpc;
-        obj->SubKind = (byte)BattleNpcSubKind.Combatant;
-        character->SetMode(CharacterModes.Normal, 0);
-
-        // A valid EntityId lets it be the caster of a fabricated attack ActionEffect
-        // (so the swing animation + sound play).
-        // Keep standalone EnemyControl actors out of the virtual-enemy (0xF0), companion (0xF1),
-        // dismemberment (0xF2), and spectator (0xF3) synthetic identity ranges.
-        EnemyControlEntityId = nextSpawnedEnemyControlEntityId++;
-        obj->EntityId = EnemyControlEntityId;
-
-        EnemyControlIndex = index;
-        controlledAddress = (nint)obj;
-        ownsObject = true;
-        pendingDraw = true;
-        framesWaited = 0;
-        BeginControl(spawnPos, yaw);
-
-        log.Info($"EnemyControlMode: spawned model={config.EnemyControlModelId} at index {index} (0x{controlledAddress:X})");
-    }
-
     /// <summary>
-    /// Take control of an existing enemy (the one that just defeated the player) instead of
-    /// spawning a creature. Same controls; we don't own the object (no delete on release).
+    /// Take control of one existing enemy (the one that just defeated the player, or the one carrying
+    /// off the lord's body). We don't own the object (no delete on release), and we don't write its
+    /// state: the enemy AI leaves it alone while <see cref="ControlsNpc"/> names it.
     /// </summary>
     public void ControlKiller(Npcs.SimulatedNpc killer)
     {
         if (IsActive) { log.Info("EnemyControlMode: already active"); return; }
         if (killer.BattleChara == null || killer.Address == nint.Zero) { log.Warning("EnemyControlMode: killer invalid"); return; }
+        // A despawned enemy's address dangles (reading its DrawObject would crash) and may already belong to
+        // another object: only an object the table still lists, with this enemy's entity id.
+        if (!IsLiveObject(killer.Address, killer.SimulatedEntityId)) { log.Warning($"EnemyControlMode: '{killer.Name}' is no longer in the object table (despawned or reused)"); return; }
 
         var obj = (GameObject*)killer.Address;
         if (obj->DrawObject == null) { log.Warning("EnemyControlMode: killer not drawn"); return; }
         var character = (Character*)killer.Address;
 
         controlledNpc = killer;
-        killer.IsClientControlled = true; // suppress its AI behaviours
-        EnemyControlIndex = -1;
-        ownsObject = false;
         controlledAddress = killer.Address;
         EnemyControlEntityId = obj->EntityId;
-        pendingDraw = false; // already drawn
         var pos = new Vector3(obj->Position.X, obj->Position.Y, obj->Position.Z);
         posX = pos.X; posY = pos.Y; posZ = pos.Z;
         yaw = obj->Rotation;
@@ -358,20 +249,6 @@ public unsafe partial class EnemyControlController : IDisposable
     {
         try
         {
-            if (pendingDraw)
-            {
-                if (controlledAddress == nint.Zero) { pendingDraw = false; return; }
-                var chara = (BattleChara*)controlledAddress;
-                framesWaited++;
-                if (chara->IsReadyToDraw() || framesWaited >= MaxPendingFrames)
-                {
-                    chara->EnableDraw();
-                    pendingDraw = false;
-                    log.Info($"EnemyControlMode: draw enabled after {framesWaited} frames — controls live");
-                }
-                return;
-            }
-
             if (!IsActive || controlledAddress == nint.Zero) return;
 
             // The controlled killer is a real map enemy the game can despawn at any time; its
@@ -412,7 +289,6 @@ public unsafe partial class EnemyControlController : IDisposable
             if (dt <= 0f || dt > 0.25f) dt = 1f / 60f;
 
             TickMovement(dt);
-            if (!ExternalControlActive) TickSwarm(dt);
             if (!ExternalControlActive || ExternalManualControlActive) TickAttackKey();
             TickGrabAttack(dt);
         }
@@ -420,20 +296,6 @@ public unsafe partial class EnemyControlController : IDisposable
         {
             log.Error(ex, "EnemyControlMode: error in update");
         }
-    }
-
-    private static Vector2 BuildCorpseSlotOffset(
-        nint address,
-        RagdollController.CorpseTraversalSlot slot,
-        int epoch)
-    {
-        if (slot.WanderRadius <= 0.0001f)
-            return Vector2.Zero;
-        var angleNoise = StableSlotNoise(address, slot.Id ^ unchecked(epoch * 0x45d9f3b), epoch * 0.37f);
-        var radiusNoise = StableSlotNoise(address, slot.Id ^ unchecked(epoch * 0x27d4eb2d), epoch * 0.71f);
-        var angle = angleNoise * MathF.Tau;
-        var radius = MathF.Sqrt(Math.Clamp(radiusNoise, 0f, 1f)) * slot.WanderRadius;
-        return new Vector2(MathF.Cos(angle) * radius, MathF.Sin(angle) * radius);
     }
 
     private void TickMovement(float dt)
@@ -477,13 +339,6 @@ public unsafe partial class EnemyControlController : IDisposable
         var forward = new Vector3(-MathF.Sin(dirH), 0f, -MathF.Cos(dirH));
         var right = new Vector3(MathF.Cos(dirH), 0f, -MathF.Sin(dirH));
         var move = forward * fwd + right * strafe;
-        if (!ExternalControlActive && FightingLane is { IsLaneActive: true })
-        {
-            var scalar = Vector3.Dot(move, FightingLane.LaneAxis);
-            if (MathF.Abs(scalar) < 0.001f && (MathF.Abs(strafe) > 0.001f || MathF.Abs(fwd) > 0.001f))
-                scalar = MathF.Abs(strafe) > 0.001f ? strafe : fwd;
-            move = FightingLane.LaneAxis * scalar;
-        }
 
         OverrideExternalMovement(ref move, ref fwd, ref strafe);
         var inputMoving = move.LengthSquared() > 0.0001f;
@@ -579,14 +434,6 @@ public unsafe partial class EnemyControlController : IDisposable
             // No ground clamp — the creature may sink below the floor (unlimited), by request.
         }
 
-        if (!ExternalControlActive && FightingLane is { IsLaneActive: true })
-        {
-            var constrained = FightingLane.ConstrainToLane(new Vector3(posX, posY, posZ));
-            posX = constrained.X;
-            posY = constrained.Y;
-            posZ = constrained.Z;
-        }
-
         var actualMove = new Vector3(posX - oldPos.X, 0f, posZ - oldPos.Z);
         var inputIntentMoving = MathF.Abs(strafe) > 0.001f || MathF.Abs(fwd) > 0.001f;
         var moving = inputIntentMoving || actualMove.LengthSquared() > 0.000001f;
@@ -609,692 +456,6 @@ public unsafe partial class EnemyControlController : IDisposable
         movementBlock.SetApproachRotation(obj, yaw);
     }
 
-    /// <summary>Drive selected living enemies into stable randomized slots around the controlled
-    /// EnemyControl. Slots are persistent (no per-frame dice jitter); a small slow wander supplies the
-    /// requested organic variation, and Compactness damps both wander and slot error.</summary>
-    private void TickSwarm(float dt)
-    {
-        if (!config.EnemyControlSwarmEnabled)
-        {
-            ReleaseSwarmFollowers();
-            return;
-        }
-
-        swarmElapsed += dt;
-        desiredSwarmAddresses.Clear();
-        foreach (var npc in npcSelector.SelectedNpcs)
-        {
-            var address = npc.Address;
-            if (address == nint.Zero || address == controlledAddress || npc.BattleChara == null ||
-                !npc.IsAlive || !IsObjectAddressLive(address))
-                continue;
-
-            desiredSwarmAddresses.Add(address);
-            if (swarmFollowers.ContainsKey(address))
-                continue;
-
-            var go = (GameObject*)address;
-            swarmFollowers[address] = new SwarmFollowerState
-            {
-                Npc = npc,
-                // Golden-angle spacing prevents accidental piles while the small random phase keeps
-                // the ring from reading as a military formation.
-                Angle = swarmFollowers.Count * 2.39996323f + (Random.Shared.NextSingle() - 0.5f) * 0.7f,
-                RadiusFactor = Random.Shared.NextSingle(),
-                WanderPhase = Random.Shared.NextSingle() * MathF.Tau,
-                WanderRate = 0.35f + Random.Shared.NextSingle() * 0.45f,
-                FloorRefreshTimer = Random.Shared.NextSingle() * 0.2f,
-                FloorY = go->Position.Y,
-                HasFloor = false,
-            };
-            log.Info($"EnemyControlMode: swarm follower joined '{npc.Name}' (0x{address:X}).");
-        }
-
-        staleSwarmAddresses.Clear();
-        foreach (var (address, _) in swarmFollowers)
-            if (!desiredSwarmAddresses.Contains(address) || !IsObjectAddressLive(address))
-                staleSwarmAddresses.Add(address);
-        foreach (var address in staleSwarmAddresses)
-            ReleaseSwarmFollower(address);
-
-        var compactness = Math.Clamp(config.EnemyControlSwarmCompactness, 0f, 1f);
-        var followDistance = Math.Clamp(config.EnemyControlSwarmFollowDistance, 0.35f, 12f);
-        var leaderPosition = new Vector3(posX, posY, posZ);
-        SetSwarmCorpseRagdoll(config.EnemyControlSwarmClimbCorpses
-            ? FindNearestSwarmCorpse()
-            : null);
-        var waitingToClimb = config.EnemyControlSwarmClimbCorpses && swarmClimbDelayRemaining > 0f;
-        if (waitingToClimb)
-        {
-            swarmClimbDelayRemaining = MathF.Max(0f, swarmClimbDelayRemaining - dt);
-            ClearAllSwarmCorpseSlots();
-        }
-        var corpseOccupationActive = !waitingToClimb && swarmCorpseRagdoll != null &&
-                                     PrepareSwarmCorpseSlots(swarmCorpseRagdoll, dt);
-        var enhancedStompTracking = corpseOccupationActive && config.EnemyControlSwarmEnhancedStompTracking;
-        var corpseFace = Vector3.Zero;
-        var hasCorpseFace = corpseOccupationActive && TryGetCorpseFacePoint(out corpseFace);
-        // A crowd should read as several feet loading the body, not N copies of the same full-force
-        // stomp. RagdollController uses this count to cap aggregate gait impulses for large swarms.
-        var concurrentStompers = Math.Max(1, swarmFollowers.Values.Count(f => f.CorpseSlotId >= 0));
-        foreach (var (address, follower) in swarmFollowers)
-        {
-            var go = (GameObject*)address;
-            var character = (Character*)address;
-            movementBlock.AddApproachNpc(address);
-
-            var collisionRagdoll = swarmCorpseRagdoll ?? playerRagdoll;
-            EnsureSwarmFollowerCollider(address, follower, collisionRagdoll);
-            SetSwarmFollowerTraversalGhost(address, follower, corpseOccupationActive);
-            follower.OnCorpseSupport = false;
-
-            var wanderAmount = (1f - compactness) * 0.28f;
-            var angle = yaw + follower.Angle +
-                        MathF.Sin(swarmElapsed * follower.WanderRate + follower.WanderPhase) * wanderAmount;
-            var radiusVariation = (follower.RadiusFactor - 0.5f) * (1f - compactness) * 0.7f;
-            var radius = followDistance * MathF.Max(0.35f, 1f + radiusVariation);
-            var target = leaderPosition + new Vector3(MathF.Sin(angle) * radius, 0f, MathF.Cos(angle) * radius);
-            var current = new Vector3(go->Position.X, go->Position.Y, go->Position.Z);
-
-            RagdollController.CorpseTraversalSlot? corpseSlot = null;
-            if (corpseOccupationActive && TryReserveCorpseSlot(
-                    address, follower, current, out var reservedSlot))
-            {
-                corpseSlot = reservedSlot;
-                target.X = reservedSlot.Position.X + follower.CorpseSlotOffset.X;
-                target.Z = reservedSlot.Position.Z + follower.CorpseSlotOffset.Y;
-            }
-            else if (corpseOccupationActive)
-            {
-                // No free surface lane yet: circulate around the boundary instead of freezing at
-                // one formation point. The follower retries reservations every frame and can enter
-                // as soon as a lane moves/releases, while the exclusion radius still prevents the
-                // old all-at-once corpse shove.
-                var orbitDirection = (address.ToInt64() & 1) == 0 ? 1f : -1f;
-                var stagingAngle = angle + orbitDirection * swarmElapsed *
-                    (0.16f + follower.WanderRate * 0.12f);
-                var stagingRadius = swarmCorpseExclusionRadius + 0.10f +
-                                    follower.RadiusFactor * 0.22f;
-                target.X = swarmCorpseCenter.X + MathF.Sin(stagingAngle) * stagingRadius;
-                target.Z = swarmCorpseCenter.Z + MathF.Cos(stagingAngle) * stagingRadius;
-            }
-
-            follower.FloorRefreshTimer -= dt;
-            if (config.EnemyControlGroundWalk)
-            {
-                if (!follower.HasFloor || follower.FloorRefreshTimer <= 0f)
-                {
-                    follower.FloorY = SnapToFloor(target.X, go->Position.Y, target.Z);
-                    follower.HasFloor = true;
-                    follower.FloorRefreshTimer = enhancedStompTracking && corpseSlot.HasValue
-                        ? 0.045f + follower.RadiusFactor * 0.03f
-                        : 0.18f + follower.RadiusFactor * 0.14f;
-                }
-                target.Y = follower.FloorY;
-            }
-            else
-            {
-                target.Y = posY + MathF.Sin(follower.WanderPhase) * followDistance * 0.08f;
-            }
-
-            if (FightingLane is { IsLaneActive: true })
-                target = FightingLane.ConstrainToLane(target);
-
-            var horizontal = new Vector3(target.X - current.X, 0f, target.Z - current.Z);
-            var horizontalDistance = horizontal.Length();
-            // Normal formation following intentionally has a broad dead zone.  Reusing that dead
-            // zone for a moving corpse landmark makes sub-half-metre bone motion invisible and was
-            // the main reason occupied followers still looked like rigid ring followers.
-            var stopDistance = corpseSlot.HasValue
-                ? Math.Clamp(corpseSlot.Value.Clearance * 0.42f, 0.035f, 0.11f)
-                : 0.55f + (0.10f - 0.55f) * compactness;
-            var next = current;
-            var moving = horizontalDistance > stopDistance;
-            var followerYaw = yaw;
-            var resolvedMoveSpeed = config.EnemyControlMoveSpeed;
-            if (moving && horizontalDistance > 1e-5f)
-            {
-                var catchup = corpseSlot.HasValue
-                    ? MathF.Max(1.15f, 0.75f + compactness * 0.75f)
-                    : 0.75f + compactness * 0.75f;
-                if (horizontalDistance > followDistance * 1.75f)
-                    catchup *= 1.65f;
-                resolvedMoveSpeed *= catchup;
-                var step = MathF.Min(horizontalDistance, resolvedMoveSpeed * dt);
-                var direction = horizontal / horizontalDistance;
-                next += direction * step;
-                followerYaw = MathF.Atan2(direction.X, direction.Z);
-                character->SetMode(CharacterModes.Normal, 0);
-                ActorVisualStateController.ApplyMoving(character, follower.Npc.VisualState, dt);
-            }
-            else
-            {
-                ActorVisualStateController.ClearMovement(character, follower.Npc.VisualState);
-            }
-
-            // Corpse occupation is staged as a stomp/stand interaction rather than a formation
-            // march. Every assigned climber therefore watches the current ragdoll face while it
-            // approaches and after it reaches its body landmark.
-            if (corpseSlot.HasValue && hasCorpseFace)
-            {
-                var faceDirection = new Vector2(corpseFace.X - next.X, corpseFace.Z - next.Z);
-                if (faceDirection.LengthSquared() > 0.0001f)
-                    followerYaw = MathF.Atan2(faceDirection.X, faceDirection.Y);
-            }
-            movementBlock.SetApproachRotation(go, followerYaw);
-
-            var dynamicTraversal = false;
-            if (corpseSlot.HasValue && swarmCorpseRagdoll != null && config.EnemyControlGroundWalk &&
-                config.NpcCollisionActive)
-            {
-                var visualScale = GetVisualScale(go);
-                // Let ordinary navigation cover long distances. Once the follower reaches the
-                // corpse neighbourhood, one finite-mass foot carrier becomes authoritative for
-                // all three axes; no sampled height is ever written directly to the actor root.
-                var proxyEngageDistance = MathF.Max(
-                    0.9f, visualScale * 1.15f + corpseSlot.Value.Clearance * 2f);
-                dynamicTraversal = follower.TraversalProxyActive ||
-                                   horizontalDistance <= proxyEngageDistance;
-                if (dynamicTraversal)
-                {
-                    var maxClimb = 0.65f * MathF.Max(1f, visualScale);
-                    swarmCorpseRagdoll.DriveNpcTraversalProxy(
-                        address,
-                        current,
-                        new Vector3(target.X, follower.FloorY, target.Z),
-                        follower.FloorY,
-                        visualScale,
-                        resolvedMoveSpeed,
-                        maxClimb,
-                        config.EnemyControlSwarmStompResponse,
-                        concurrentStompers,
-                        moving);
-                    follower.TraversalProxyActive = true;
-                    if (swarmCorpseRagdoll.TryGetNpcTraversalProxyRoot(
-                            address, out var proxyRoot, out var proxyOnCorpse))
-                    {
-                        next = proxyRoot;
-                        follower.OnCorpseSupport = proxyOnCorpse;
-                    }
-                }
-            }
-
-            if (!dynamicTraversal)
-            {
-                if (follower.TraversalProxyActive)
-                    swarmCorpseRagdoll?.ReleaseNpcTraversalProxy(address);
-                follower.TraversalProxyActive = false;
-                var desiredRootY = target.Y;
-                var verticalSpeed = config.EnemyControlGroundWalk
-                    ? 6f
-                    : MathF.Max(1f, config.EnemyControlVerticalSpeed);
-                next.Y = MoveTowards(current.Y, desiredRootY, verticalSpeed * dt);
-            }
-            movementBlock.SetApproachPosition(go, next.X, next.Y, next.Z);
-        }
-
-        var anyStompSupport = corpseOccupationActive &&
-                              swarmFollowers.Values.Any(f => f.OnCorpseSupport);
-        swarmStompMassHoldRemaining = anyStompSupport
-            ? 0.45f
-            : MathF.Max(0f, swarmStompMassHoldRemaining - dt);
-        swarmCorpseRagdoll?.SetTraversalMassMultiplier(swarmStompMassHoldRemaining > 0f
-            ? Math.Clamp(config.EnemyControlSwarmStompCorpseMassMultiplier, 1f, 12f)
-            : 1f);
-    }
-
-    private RagdollController? FindNearestSwarmCorpse()
-    {
-        if (swarmFollowers.Count == 0)
-            return null;
-
-        var reference = Vector3.Zero;
-        var count = 0;
-        foreach (var address in swarmFollowers.Keys)
-        {
-            if (!IsObjectAddressLive(address))
-                continue;
-            var go = (GameObject*)address;
-            reference += new Vector3(go->Position.X, go->Position.Y, go->Position.Z);
-            count++;
-        }
-        if (count == 0)
-            return null;
-        reference /= count;
-
-        RagdollController? best = null;
-        var bestDistance = float.MaxValue;
-        if (swarmCorpseRagdoll is { IsActive: true })
-        {
-            var retainedDistance = swarmCorpseRagdoll.NearestBodyDistance(reference);
-            if (retainedDistance.HasValue)
-            {
-                best = swarmCorpseRagdoll;
-                bestDistance = retainedDistance.Value;
-            }
-        }
-
-        IReadOnlyList<RagdollController> candidates;
-        try { candidates = corpseRagdollProvider(); }
-        catch { return null; }
-        foreach (var candidate in candidates)
-        {
-            if (!candidate.IsActive)
-                continue;
-            var distance = candidate.NearestBodyDistance(reference);
-            if (!distance.HasValue || distance.Value >= bestDistance)
-                continue;
-
-            // Two nearby moving ragdolls can exchange the exact "nearest" result every frame.
-            // Migrating every follower's colliders and clearing all support anchors on each flip is
-            // visible as a whole-pack flash. Keep the current corpse until another is meaningfully
-            // closer; inactive/despawned targets still switch immediately.
-            if (best != null && ReferenceEquals(best, swarmCorpseRagdoll) &&
-                !ReferenceEquals(candidate, swarmCorpseRagdoll))
-            {
-                var switchMargin = MathF.Max(0.35f, bestDistance * 0.12f);
-                if (distance.Value + switchMargin >= bestDistance)
-                    continue;
-            }
-            best = candidate;
-            bestDistance = distance.Value;
-        }
-        return best;
-    }
-
-    private void SetSwarmCorpseRagdoll(RagdollController? next)
-    {
-        if (ReferenceEquals(swarmCorpseRagdoll, next))
-            return;
-
-        var previous = swarmCorpseRagdoll;
-        previous?.SetTraversalMassMultiplier(1f);
-        ClearAllSwarmCorpseSlots();
-        foreach (var (address, follower) in swarmFollowers)
-        {
-            previous?.ReleaseNpcTraversalProxy(address);
-            follower.TraversalProxyActive = false;
-            if (follower.ColliderRagdoll == null || ReferenceEquals(follower.ColliderRagdoll, next))
-                continue;
-            follower.ColliderRagdoll.SetLiveColliderLightweight(address, false);
-            follower.ColliderRagdoll.SetLiveColliderTraversalGhost(address, false);
-            follower.ColliderRagdoll.RemoveLiveCollider(address);
-            follower.ColliderRagdoll = null;
-            follower.ColliderEnsured = false;
-            follower.TraversalGhosted = false;
-        }
-
-        swarmCorpseRagdoll = next;
-        swarmStompMassHoldRemaining = 0f;
-        if (next != null)
-            log.Info($"EnemyControlMode: swarm selected nearest corpse 0x{next.TargetCharacterAddress:X}.");
-    }
-
-    private static void EnsureSwarmFollowerCollider(
-        nint address,
-        SwarmFollowerState follower,
-        RagdollController owner)
-    {
-        if (!ReferenceEquals(follower.ColliderRagdoll, owner))
-        {
-            if (follower.ColliderRagdoll != null)
-            {
-                follower.ColliderRagdoll.ReleaseNpcTraversalProxy(address);
-                follower.ColliderRagdoll.SetLiveColliderTraversalGhost(address, false);
-                follower.ColliderRagdoll.SetLiveColliderLightweight(address, false);
-                follower.ColliderRagdoll.RemoveLiveCollider(address);
-            }
-            follower.ColliderRagdoll = owner;
-            follower.ColliderEnsured = false;
-            follower.TraversalGhosted = false;
-            follower.TraversalProxyActive = false;
-        }
-
-        owner.SetLiveColliderLightweight(address, true);
-        if (!follower.ColliderEnsured)
-        {
-            follower.ColliderEnsured = owner.AddLiveCollider(address);
-            if (follower.ColliderEnsured)
-                follower.TraversalGhosted = false;
-        }
-    }
-
-    private static void SetSwarmFollowerTraversalGhost(
-        nint address,
-        SwarmFollowerState follower,
-        bool ghost)
-    {
-        if (follower.TraversalGhosted == ghost)
-            return;
-        follower.ColliderRagdoll?.SetLiveColliderTraversalGhost(address, ghost);
-        follower.TraversalGhosted = ghost;
-    }
-
-    private bool PrepareSwarmCorpseSlots(RagdollController corpseRagdoll, float dt)
-    {
-        swarmCorpseReservations.Clear();
-        swarmCorpseSlots.Clear();
-        if (!config.EnemyControlSwarmClimbCorpses || !config.EnemyControlGroundWalk ||
-            !config.NpcCollisionActive ||
-            corpseRagdoll.CollectCorpseTraversalSlots(swarmCorpseSlots) == 0)
-        {
-            ClearAllSwarmCorpseSlots();
-            return false;
-        }
-
-        swarmCorpseCenter = Vector3.Zero;
-        foreach (var slot in swarmCorpseSlots)
-            swarmCorpseCenter += slot.Position;
-        swarmCorpseCenter /= swarmCorpseSlots.Count;
-        swarmCorpseExclusionRadius = 0.25f;
-        foreach (var slot in swarmCorpseSlots)
-        {
-            var radial = new Vector2(slot.Position.X - swarmCorpseCenter.X,
-                slot.Position.Z - swarmCorpseCenter.Z).Length();
-            swarmCorpseExclusionRadius = MathF.Max(
-                swarmCorpseExclusionRadius, radial + MathF.Max(0.12f, slot.Clearance * 1.8f));
-        }
-
-        var retainedFaceOccupants = 0;
-
-        foreach (var (address, follower) in swarmFollowers)
-        {
-            if (config.EnemyControlSwarmRepositionOnCorpse)
-                follower.CorpseSlotTimer -= dt;
-
-            var timerExpired = config.EnemyControlSwarmRepositionOnCorpse && follower.CorpseSlotTimer <= 0f;
-            if (follower.CorpseSlotId < 0 ||
-                !TryFindCorpseSlot(follower.CorpseSlotId, out var slot))
-            {
-                ClearFollowerCorpseSlot(address, follower);
-                continue;
-            }
-
-            var release = timerExpired;
-            if (!release)
-            {
-                release = slot.IsFace && retainedFaceOccupants >= 2 ||
-                          !swarmCorpseReservations.TryAdd(slot.Id, address);
-                if (!release && slot.IsFace)
-                    retainedFaceOccupants++;
-            }
-
-            if (release)
-            {
-                ClearFollowerCorpseSlot(address, follower);
-            }
-        }
-
-        return true;
-    }
-
-    private bool TryGetCorpseFacePoint(out Vector3 facePoint)
-    {
-        facePoint = Vector3.Zero;
-        var count = 0;
-        foreach (var slot in swarmCorpseSlots)
-        {
-            if (!slot.IsFace)
-                continue;
-            facePoint += slot.Position;
-            count++;
-        }
-
-        if (count == 0)
-            return false;
-        facePoint /= count;
-        return true;
-    }
-
-    private bool TryReserveCorpseSlot(
-        nint address,
-        SwarmFollowerState follower,
-        Vector3 current,
-        out RagdollController.CorpseTraversalSlot slot)
-    {
-        if (follower.CorpseSlotId >= 0 && TryFindCorpseSlot(follower.CorpseSlotId, out slot))
-            return true;
-
-        var bestScore = float.MaxValue;
-        var found = false;
-        var best = default(RagdollController.CorpseTraversalSlot);
-        foreach (var candidate in swarmCorpseSlots)
-        {
-            if (swarmCorpseReservations.ContainsKey(candidate.Id))
-                continue;
-            if (candidate.IsFace && ReservedFaceOccupantCount() >= 2)
-                continue;
-
-            var distanceFromFollower = Vector2.Distance(
-                new Vector2(current.X, current.Z), new Vector2(candidate.Position.X, candidate.Position.Z));
-
-            var randomBias = StableSlotNoise(address, candidate.Id, follower.WanderPhase) *
-                             MathF.Max(0.12f, candidate.Clearance * 1.5f);
-            var previousPenalty = candidate.Id == follower.PreviousCorpseSlotId ? 0.55f : 0f;
-            // A logarithmic bonus strongly prefers torso/groin landmarks without making hands,
-            // feet or the precisely sampled face impossible once the central slots are occupied.
-            var priorityBonus = MathF.Log2(MathF.Max(1f, candidate.SelectionWeight)) * 0.32f;
-            var score = distanceFromFollower + randomBias + previousPenalty - priorityBonus;
-            if (score >= bestScore)
-                continue;
-            bestScore = score;
-            best = candidate;
-            found = true;
-        }
-
-        if (!found)
-        {
-            slot = default;
-            return false;
-        }
-
-        follower.CorpseSlotId = best.Id;
-        follower.CorpseSlotEpoch++;
-        follower.CorpseSlotOffset = BuildCorpseSlotOffset(address, best, follower.CorpseSlotEpoch);
-        var landmarkChangeFrequency = Math.Clamp(config.EnemyControlSwarmLandmarkChangeFrequency, 0.25f, 4f);
-        follower.CorpseSlotTimer = config.EnemyControlSwarmRepositionOnCorpse
-            ? (5f + StableSlotNoise(address, best.Id ^ 0x5f3759df,
-                follower.WanderPhase + follower.CorpseSlotEpoch * 0.73f) * 7f) /
-              landmarkChangeFrequency
-            : 0f;
-        follower.FloorRefreshTimer = 0f;
-        swarmCorpseReservations[best.Id] = address;
-        slot = best;
-        return true;
-    }
-
-    private int ReservedFaceOccupantCount()
-    {
-        var count = 0;
-        foreach (var slotId in swarmCorpseReservations.Keys)
-            if (TryFindCorpseSlot(slotId, out var slot) && slot.IsFace)
-                count++;
-        return count;
-    }
-
-    private bool TryFindCorpseSlot(int id, out RagdollController.CorpseTraversalSlot slot)
-    {
-        foreach (var candidate in swarmCorpseSlots)
-        {
-            if (candidate.Id != id)
-                continue;
-            slot = candidate;
-            return true;
-        }
-        slot = default;
-        return false;
-    }
-
-    private void ClearFollowerCorpseSlot(nint address, SwarmFollowerState follower)
-    {
-        if (follower.CorpseSlotId >= 0)
-            follower.PreviousCorpseSlotId = follower.CorpseSlotId;
-        follower.CorpseSlotId = -1;
-        follower.CorpseSlotTimer = 0f;
-        follower.CorpseSlotOffset = Vector2.Zero;
-        follower.FloorRefreshTimer = 0f;
-        follower.OnCorpseSupport = false;
-        follower.ColliderRagdoll?.ClearNpcTraversalSupport(address);
-    }
-
-    private void ClearAllSwarmCorpseSlots()
-    {
-        foreach (var (address, follower) in swarmFollowers)
-            ClearFollowerCorpseSlot(address, follower);
-        swarmCorpseReservations.Clear();
-        swarmCorpseSlots.Clear();
-        swarmCorpseExclusionRadius = 0f;
-    }
-
-    private static float StableSlotNoise(nint address, int slotId, float phase)
-    {
-        var seed = unchecked((uint)address.ToInt64()) ^ unchecked((uint)slotId * 0x9e3779b9u);
-        seed ^= seed >> 16;
-        seed *= 0x7feb352du;
-        seed ^= seed >> 15;
-        var normalized = (seed & 0x00ffffffu) / 16777215f;
-        return (normalized + MathF.Abs(MathF.Sin(phase + slotId * 0.017f))) * 0.5f;
-    }
-
-    public void OnSwarmSettingChanged(bool enabled)
-    {
-        if (!enabled)
-        {
-            swarmClimbDelayRemaining = 0f;
-            ReleaseSwarmFollowers();
-        }
-        else if (config.EnemyControlSwarmClimbCorpses)
-        {
-            swarmClimbDelayRemaining = Math.Clamp(config.EnemyControlSwarmClimbDelay, 0f, 5f);
-        }
-    }
-
-    public void ResetSwarm()
-    {
-        swarmCorpseRagdoll?.SetTraversalMassMultiplier(1f);
-        swarmStompMassHoldRemaining = 0f;
-        ClearAllSwarmCorpseSlots();
-        swarmElapsed = 0f;
-        swarmClimbDelayRemaining = config.EnemyControlSwarmClimbCorpses
-            ? Math.Clamp(config.EnemyControlSwarmClimbDelay, 0f, 5f)
-            : 0f;
-        var followDistance = Math.Clamp(config.EnemyControlSwarmFollowDistance, 0.35f, 12f);
-        var formationCenter = new Vector3(posX, posY, posZ);
-        var index = 0;
-        foreach (var (address, follower) in swarmFollowers)
-        {
-            follower.ColliderRagdoll?.ReleaseNpcTraversalProxy(address);
-            follower.TraversalProxyActive = false;
-            SetSwarmFollowerTraversalGhost(address, follower, false);
-            follower.Angle = index++ * 2.39996323f +
-                             (Random.Shared.NextSingle() - 0.5f) * 0.7f;
-            follower.RadiusFactor = Random.Shared.NextSingle();
-            follower.WanderPhase = Random.Shared.NextSingle() * MathF.Tau;
-            follower.WanderRate = 0.35f + Random.Shared.NextSingle() * 0.45f;
-            follower.FloorRefreshTimer = 0f;
-            follower.HasFloor = false;
-            follower.PreviousCorpseSlotId = -1;
-            follower.CorpseSlotEpoch++;
-            follower.ColliderRagdoll?.ClearNpcTraversalSupport(address);
-            if (!IsObjectAddressLive(address))
-                continue;
-
-            // Reset is an explicit recovery operation, so make it immediately observable: move
-            // every follower out of stale corpse/contact state and distribute it around the leader
-            // in one frame. The normal smooth controller resumes from these fresh slots next tick.
-            var go = (GameObject*)address;
-            var angle = yaw + follower.Angle;
-            var radius = followDistance * (0.78f + follower.RadiusFactor * 0.38f);
-            var resetPosition = formationCenter +
-                                new Vector3(MathF.Sin(angle) * radius, 0f, MathF.Cos(angle) * radius);
-            if (config.EnemyControlGroundWalk)
-                resetPosition.Y = SnapToFloor(resetPosition.X, formationCenter.Y, resetPosition.Z);
-            if (FightingLane is { IsLaneActive: true })
-                resetPosition = FightingLane.ConstrainToLane(resetPosition);
-
-            follower.FloorY = resetPosition.Y;
-            follower.HasFloor = config.EnemyControlGroundWalk;
-            movementBlock.AddApproachNpc(address);
-            movementBlock.SetApproachPosition(go, resetPosition.X, resetPosition.Y, resetPosition.Z);
-            movementBlock.SetApproachRotation(go, yaw);
-            ActorVisualStateController.ClearMovement((Character*)address, follower.Npc.VisualState);
-        }
-        log.Info($"EnemyControlMode: swarm hard reset ({swarmFollowers.Count} follower(s)).");
-    }
-
-    public void OnSwarmRepositionSettingChanged(bool enabled)
-    {
-        if (!enabled)
-            return;
-        foreach (var follower in swarmFollowers.Values)
-            follower.CorpseSlotTimer = 0f;
-    }
-
-    public void OnSwarmLandmarkChangeFrequencyChanged(float previous, float current)
-    {
-        var oldFrequency = Math.Clamp(previous, 0.25f, 4f);
-        var newFrequency = Math.Clamp(current, 0.25f, 4f);
-        var remainingScale = oldFrequency / newFrequency;
-        foreach (var follower in swarmFollowers.Values)
-            if (follower.CorpseSlotTimer > 0f)
-                follower.CorpseSlotTimer *= remainingScale;
-    }
-
-    public void OnSwarmClimbSettingChanged(bool enabled)
-    {
-        if (!enabled)
-        {
-            swarmClimbDelayRemaining = 0f;
-            SetSwarmCorpseRagdoll(null);
-        }
-        else
-        {
-            swarmClimbDelayRemaining = Math.Clamp(config.EnemyControlSwarmClimbDelay, 0f, 5f);
-        }
-    }
-
-    private void ReleaseSwarmFollowers()
-    {
-        if (swarmFollowers.Count == 0)
-        {
-            SetSwarmCorpseRagdoll(null);
-            return;
-        }
-        staleSwarmAddresses.Clear();
-        foreach (var address in swarmFollowers.Keys)
-            staleSwarmAddresses.Add(address);
-        foreach (var address in staleSwarmAddresses)
-            ReleaseSwarmFollower(address);
-        desiredSwarmAddresses.Clear();
-        SetSwarmCorpseRagdoll(null);
-    }
-
-    private void ReleaseSwarmFollower(nint address)
-    {
-        if (!swarmFollowers.Remove(address, out var follower)) return;
-        ClearFollowerCorpseSlot(address, follower);
-        if (follower.ColliderRagdoll != null)
-        {
-            follower.ColliderRagdoll.ReleaseNpcTraversalProxy(address);
-            follower.ColliderRagdoll.SetLiveColliderTraversalGhost(address, false);
-            follower.ColliderRagdoll.SetLiveColliderLightweight(address, false);
-            follower.ColliderRagdoll.RemoveLiveCollider(address);
-            follower.ColliderRagdoll = null;
-            follower.TraversalGhosted = false;
-        }
-        movementBlock.RemoveApproachNpc(address);
-        if (Core.Services.ObjectTable.LocalPlayer != null && IsObjectAddressLive(address))
-            ActorVisualStateController.ClearMovement((Character*)address, follower.Npc.VisualState);
-        log.Info($"EnemyControlMode: swarm follower released '{follower.Npc.Name}' (0x{address:X}).");
-    }
-
-    private static float MoveTowards(float current, float target, float maxDelta)
-    {
-        var delta = target - current;
-        if (MathF.Abs(delta) <= maxDelta) return target;
-        return current + MathF.CopySign(maxDelta, delta);
-    }
-
     private void TickAttackKey()
     {
         // Keyboard attack key (configurable) + gamepad Cross/South button.
@@ -1305,6 +466,10 @@ public unsafe partial class EnemyControlController : IDisposable
 
     /// <summary>Whether the controlled enemy's grab holds the body now.</summary>
     public bool IsHoldingGrab => grabAttackActive;
+
+    /// <summary>Raised once each time a grab takes hold (every pair armed). The Enemy Control window hides its
+    /// grab-point markers on it (docs/ENEMY_CONTROL_GRAB.md §3.2).</summary>
+    public event Action? GrabStarted;
 
     /// <summary>Attack input starts/releases the configured grab pairs.</summary>
     public void OnAttackInput()
@@ -1399,6 +564,7 @@ public unsafe partial class EnemyControlController : IDisposable
         playerRagdoll.GrabRigid = config.EnemyControlGrabRigid;
 
         activeGrabPairs.Clear();
+        grabAnchorReportTimer = -1f;
         var resolvedPairs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var duplicateResolvedPairs = 0;
 
@@ -1408,26 +574,66 @@ public unsafe partial class EnemyControlController : IDisposable
             if (string.IsNullOrWhiteSpace(pair.NpcBone) || string.IsNullOrWhiteSpace(pair.PlayerBone))
                 continue;
 
+            // The picked points, if any (docs/ENEMY_CONTROL_GRAB.md §3). An enemy anchor names a bone of the creature
+            // it was picked on; another creature may not have it, and then the grab falls back to the hand chain below
+            // and the point is dropped (user decision 2026-11-15).
+            var npcAnchor = pair.NpcAnchor;
+            if (npcAnchor != null && !CreatureHasBone(npcAnchor.Bone))
+            {
+                log.Info($"GrabAnchor: pair {i}: this creature has no '{npcAnchor.Bone}' — the enemy point is dropped, grabbing with the fallback bone");
+                npcAnchor = null;
+            }
+            var playerAnchor = pair.PlayerAnchor;
+            var bodyAddress = GrabbedBodyAddress();
+            if (playerAnchor != null &&
+                GrabAnchorSkeleton.IsUnderAny(boneService, bodyAddress, playerAnchor.Bone, config.DismemberPocBones))
+            {
+                log.Info($"GrabAnchor: pair {i}: '{playerAnchor.Bone}' is on a severed part — pair skipped");
+                continue;
+            }
+
             // What this particular creature actually grabs WITH — a hand if it has one, and something
             // it does have if it does not. See ResolveGrabAttackBone.
-            var npcBone = ResolveGrabAttackBone(pair.NpcBone);
-            var playerBone = pair.PlayerBone.Trim();
+            var npcBone = npcAnchor?.Bone ?? ResolveGrabAttackBone(pair.NpcBone);
+            var playerBone = (playerAnchor?.Bone ?? pair.PlayerBone).Trim();
             // Several configured hands can legitimately collapse to the same fallback bone on a
             // handless creature. Attaching identical constraints does not improve the hold; it only
             // multiplies solver load (the supplied log created twenty j_kao->j_kubi constraints).
-            if (!resolvedPairs.Add($"{npcBone}\u001f{playerBone}"))
+            if (!resolvedPairs.Add(EnemyControlGrabPairList.Key(npcBone, playerBone, npcAnchor, playerAnchor)))
             {
                 duplicateResolvedPairs++;
                 continue;
             }
             var conformSlotId = i;
 
+            // The player's end: with a picked point, the exact point on the body (re-snapped onto its surface as it is
+            // now), held by the body that carries the picked bone; without one, the bone itself, as before.
+            Vector3? gripPoint = null;
+            var surfaceBone = playerBone;
+            var snapMm = 0f;
+            if (playerAnchor != null)
+            {
+                if (TryResolvePlayerGripPoint(playerAnchor, bodyAddress, out var point, out surfaceBone, out snapMm))
+                    gripPoint = point;
+                else
+                {
+                    log.Info($"GrabAnchor: pair {i}: the body's point on '{playerAnchor.Bone}' could not be read — grabbing the bone itself");
+                    playerAnchor = null;
+                }
+            }
+
             // Arm the conform first: it measures the grip volume from the pose the animation is
             // holding right now, and that measurement is what the pull aims at from here on. A
             // creature with no digits under that bone simply gets no conform — see EnemyControlGrabConformSolver.
-            grabConform.Begin(conformSlotId, controlledAddress, npcBone, playerBone);
+            // An enemy point only curls digits when the picked bone is itself a hand (a point on a forearm must not
+            // bend the hand), and the digits conform to the body that carries the picked player bone.
+            var conform = npcAnchor == null || grabConform.HasDigitHand(controlledAddress, npcBone);
+            if (conform)
+                grabConform.Begin(conformSlotId, controlledAddress, npcBone, surfaceBone);
 
-            var target = grabConform.GripAnchor(conformSlotId) ?? ResolveGrabAttackTarget(npcBone);
+            var target = npcAnchor != null
+                ? ResolveEnemyAnchorTarget(npcAnchor)
+                : grabConform.GripAnchor(conformSlotId) ?? ResolveGrabAttackTarget(npcBone);
             if (!target.HasValue)
             {
                 log.Warning($"EnemyControlMode: grab pair {i} ('{npcBone}'->'{playerBone}') could not resolve source bone.");
@@ -1435,10 +641,15 @@ public unsafe partial class EnemyControlController : IDisposable
                 continue;
             }
 
-            var ragdollSlotId = playerRagdoll.CreateGrabConstraint(playerBone, target.Value, suspendAddress,
-                maxForce: config.EnemyControlGrabServoForce,
-                maxSpeed: config.EnemyControlGrabServoSpeed,
-                springFreq: config.EnemyControlGrabServoFrequency);
+            var ragdollSlotId = gripPoint.HasValue
+                ? playerRagdoll.CreateGrabConstraintAt(playerBone, gripPoint.Value, target.Value, suspendAddress,
+                    maxForce: config.EnemyControlGrabServoForce,
+                    maxSpeed: config.EnemyControlGrabServoSpeed,
+                    springFreq: config.EnemyControlGrabServoFrequency)
+                : playerRagdoll.CreateGrabConstraint(playerBone, target.Value, suspendAddress,
+                    maxForce: config.EnemyControlGrabServoForce,
+                    maxSpeed: config.EnemyControlGrabServoSpeed,
+                    springFreq: config.EnemyControlGrabServoFrequency);
             if (ragdollSlotId == null)
             {
                 grabConform.End(conformSlotId);
@@ -1446,7 +657,20 @@ public unsafe partial class EnemyControlController : IDisposable
                 continue;
             }
 
-            activeGrabPairs.Add(new ActiveGrabPair(ragdollSlotId.Value, conformSlotId, npcBone));
+            var startGap = 0f;
+            if (npcAnchor != null || playerAnchor != null)
+            {
+                var held = gripPoint ?? boneService.GetBoneWorldPos(bodyAddress, playerBone) ?? target.Value;
+                startGap = Vector3.Distance(held, target.Value);
+                LogEnemyAnchorScale(i, npcBone);
+                log.Info($"GrabAnchor: pair {i} start — enemy {(npcAnchor != null ? $"point on '{npcBone}'" : $"bone '{npcBone}'")}, " +
+                         $"body {(playerAnchor != null ? $"point on '{playerBone}' (carried by '{surfaceBone}', re-snapped {snapMm:F1} mm)" : $"bone '{playerBone}'")}, " +
+                         $"finger conform {(conform ? "on" : "off")}, start distance {startGap * 1000f:F0} mm");
+                grabAnchorReportTimer = 0f;
+            }
+
+            activeGrabPairs.Add(new ActiveGrabPair(ragdollSlotId.Value, conformSlotId, npcBone, npcAnchor, playerAnchor,
+                playerBone, i, startGap));
             log.Info($"EnemyControlMode: grab pair {i} started ({npcBone}->{playerBone}).");
         }
 
@@ -1462,6 +686,7 @@ public unsafe partial class EnemyControlController : IDisposable
 
         grabAttackActive = true;
         ApplyGrabAttackTimeline();
+        GrabStarted?.Invoke();
     }
 
     private void ReleaseGrabAttack()
@@ -1486,8 +711,104 @@ public unsafe partial class EnemyControlController : IDisposable
         if (!grabAttackActive) return;
         foreach (var pair in activeGrabPairs)
         {
-            var target = grabConform.GripAnchor(pair.ConformSlotId) ?? ResolveGrabAttackTarget(pair.NpcBone);
+            var target = pair.NpcAnchor != null
+                ? ResolveEnemyAnchorTarget(pair.NpcAnchor)
+                : grabConform.GripAnchor(pair.ConformSlotId) ?? ResolveGrabAttackTarget(pair.NpcBone);
             if (target.HasValue) playerRagdoll.UpdateGrabTarget(pair.RagdollSlotId, target.Value);
+        }
+    }
+
+    // ── Anchored grab (docs/ENEMY_CONTROL_GRAB.md §3) ──
+
+    /// <summary>Turns clicks on the models into anchors (the Enemy Control window's Pick buttons).</summary>
+    public EnemyControlGrabAnchorPicker AnchorPicker => anchorPicker;
+
+    /// <summary>The controlled creature's address while it is live, for picking and markers; zero otherwise.</summary>
+    public nint ControlledActor => IsActive && EnemyControlObjectAlive() ? controlledAddress : nint.Zero;
+
+    /// <summary>Where an anchor is on a live character now (for the window's markers).</summary>
+    public bool TryResolveAnchor(nint actor, EnemyControlGrabAnchor anchor, out Vector3 point)
+        => GrabAnchorSkeleton.TryResolve(boneService, actor, anchor, out point, out _);
+
+    /// <summary>The body the grab holds: the ragdoll's own character, else the local player.</summary>
+    private nint GrabbedBodyAddress()
+    {
+        var body = playerRagdoll.TargetCharacterAddress;
+        return body != nint.Zero ? body : Core.Services.ObjectTable.LocalPlayer?.Address ?? nint.Zero;
+    }
+
+    private bool CreatureHasBone(string bone)
+    {
+        if (controlledAddress == nint.Zero || string.IsNullOrWhiteSpace(bone)) return false;
+        foreach (var name in boneService.GetBoneNames(controlledAddress))
+            if (name == bone) return true;
+        return false;
+    }
+
+    /// <summary>The enemy's picked point now, moved out along its normal by the Skin gap.</summary>
+    private Vector3? ResolveEnemyAnchorTarget(EnemyControlGrabAnchor anchor)
+    {
+        if (!IsActive || !GrabAnchorSkeleton.TryResolve(boneService, controlledAddress, anchor, out var point, out var normal))
+            return null;
+        return point + normal * config.EnemyControlGrabFingerClearance;
+    }
+
+    // The re-snap may move the point this far along its normal (times the body's scale); beyond that the surface
+    // found is not the patch that was picked, and the stored depth is kept.
+    private const float MaxGripSnap = 0.05f;
+
+    /// <summary>
+    /// The body's picked point at grab start: the stored point on its bone as posed now, then moved along its normal
+    /// onto the body's surface as it is now (gear taken off, another race), so the hand closes on skin rather than on
+    /// where the coat was. <paramref name="surfaceBone"/> is the bone whose body carries the point (the surface query
+    /// and the finger conform use it).
+    /// </summary>
+    private bool TryResolvePlayerGripPoint(EnemyControlGrabAnchor anchor, nint body, out Vector3 point,
+        out string surfaceBone, out float snapMm)
+    {
+        surfaceBone = anchor.Bone;
+        snapMm = 0f;
+        if (!GrabAnchorSkeleton.TryResolve(boneService, body, anchor, out point, out var normal)) return false;
+        var ragdoll = playerRagdoll;
+        surfaceBone = GrabAnchorSkeleton.CarryingBone(boneService, body, anchor.Bone, ragdoll.IsBoneSimulated);
+        if (ragdoll.TryGetCharacterSurface(surfaceBone, point, CharacterSurfaceUsage.Grab, out var surface))
+        {
+            var scale = GrabAnchorSkeleton.TryScaledBoneOrigin(boneService, body, anchor.Bone, out _, out _, out var s) ? s.X : 1f;
+            var raw = point;
+            var move = EnemyControlGrabAnchorMath.SnapAlongNormal(ref point, normal, surface.Point, MaxGripSnap * MathF.Max(1f, scale));
+            snapMm = move * 1000f;
+            if (move == 0f && Vector3.Distance(raw, surface.Point) > 0.001f)
+                log.Info($"GrabAnchor: re-snap on '{surfaceBone}' kept the stored depth (surface {Vector3.Dot(surface.Point - raw, normal) * 1000f:F0} mm away along the normal)");
+        }
+        return true;
+    }
+
+    /// <summary>The enemy's draw scale and how far the scaled bone origin (what anchors use, like the rendered mesh)
+    /// is from the unscaled reading the bone grab uses — verifies the anchor math on scaled creatures.</summary>
+    private void LogEnemyAnchorScale(int index, string npcBone)
+    {
+        if (GrabAnchorSkeleton.TryScaledBoneOrigin(boneService, controlledAddress, npcBone, out var scaled, out var unscaled, out var scale))
+            log.Info($"GrabAnchor: pair {index} enemy scale ({scale.X:F2},{scale.Y:F2},{scale.Z:F2}), " +
+                     $"scaled vs unscaled '{npcBone}' origin {Vector3.Distance(scaled, unscaled) * 1000f:F0} mm");
+    }
+
+    /// <summary>The GrabAnchor follow-up line: how far each anchored pair's two points still are apart.</summary>
+    private void ReportAnchoredGrab()
+    {
+        var body = GrabbedBodyAddress();
+        foreach (var pair in activeGrabPairs)
+        {
+            if (pair.NpcAnchor == null && pair.PlayerAnchor == null) continue;
+            var target = pair.NpcAnchor != null
+                ? ResolveEnemyAnchorTarget(pair.NpcAnchor)
+                : grabConform.GripAnchor(pair.ConformSlotId) ?? ResolveGrabAttackTarget(pair.NpcBone);
+            Vector3? held = null;
+            if (pair.PlayerAnchor != null && GrabAnchorSkeleton.TryResolve(boneService, body, pair.PlayerAnchor, out var p, out _))
+                held = p;
+            held ??= boneService.GetBoneWorldPos(body, pair.PlayerBone);
+            if (!target.HasValue || !held.HasValue) continue;
+            log.Info($"GrabAnchor: pair {pair.Index} after {GrabAnchorReportSeconds:F1} s — gap {Vector3.Distance(held.Value, target.Value) * 1000f:F0} mm " +
+                     $"(start {pair.StartGap * 1000f:F0} mm)");
         }
     }
 
@@ -1512,6 +833,16 @@ public unsafe partial class EnemyControlController : IDisposable
 
             if (!lastMovementActive)
                 ApplyGrabAttackTimeline();
+
+            if (grabAnchorReportTimer >= 0f)
+            {
+                grabAnchorReportTimer += dt;
+                if (grabAnchorReportTimer >= GrabAnchorReportSeconds)
+                {
+                    grabAnchorReportTimer = -1f;
+                    ReportAnchoredGrab();
+                }
+            }
         }
 
         if (!grabAttackRestorePending)
@@ -1590,63 +921,6 @@ public unsafe partial class EnemyControlController : IDisposable
         var pos = boneService.GetBoneWorldPos(controlledAddress, npcBone);
         if (pos.HasValue) return pos.Value;
         return new Vector3(posX, posY + 0.8f, posZ);
-    }
-
-    // Upper-arm / forearm bone pairs the pose sliders drive, left then right — see
-    // ApplyArmPoseOverrides. Standard FFXIV skeleton naming (j_ude_a = upper arm, j_ude_b = forearm),
-    // already used elsewhere in this file (HoldGrabPlayerBones) and in MainWindow.DevToolbars.cs.
-    private static readonly (string Upper, string Lower)[] ArmPoseBones =
-    {
-        ("j_ude_a_l", "j_ude_b_l"),
-        ("j_ude_a_r", "j_ude_b_r"),
-    };
-
-    /// <summary>
-    /// Manual arm-pose override (see config.EnemyControlArmPoseEnabled and the twelve slider fields):
-    /// bends the creature's own upper arm / forearm bones independent of whatever the grab animation
-    /// is doing, so the reach can be lined up with wherever a grab pair actually targets. Runs in the
-    /// render pass, same as EnemyControlGrabConformSolver, so it isn't immediately overwritten by that frame's
-    /// animation re-drive.
-    ///
-    /// Only applied while a grab is held — the creature walks around on its own animation otherwise.
-    /// The release window counts as held: the grab loop keeps playing until RestoreGrabAttackTimeline
-    /// fires (see TickGrabAttack), so dropping the pose at release instead would snap the arms back
-    /// into the canned grab pose for a second before that pose itself is released — two pops where
-    /// there should be one.
-    /// </summary>
-    private void ApplyArmPoseOverrides()
-    {
-        if (!IsActive || !config.EnemyControlArmPoseEnabled) return;
-        if (!grabAttackActive && !grabAttackRestorePending) return;
-
-        var skelN = boneService.TryGetSkeleton(controlledAddress);
-        if (skelN == null) return;
-        var skel = skelN.Value;
-
-        var deltas = new Dictionary<int, Quaternion>();
-        AddArmPoseDelta(skel, deltas, ArmPoseBones[0].Upper,
-            config.EnemyControlLeftArmUpperPitch, config.EnemyControlLeftArmUpperYaw, config.EnemyControlLeftArmUpperRoll);
-        AddArmPoseDelta(skel, deltas, ArmPoseBones[0].Lower,
-            config.EnemyControlLeftArmLowerPitch, config.EnemyControlLeftArmLowerYaw, config.EnemyControlLeftArmLowerRoll);
-        AddArmPoseDelta(skel, deltas, ArmPoseBones[1].Upper,
-            config.EnemyControlRightArmUpperPitch, config.EnemyControlRightArmUpperYaw, config.EnemyControlRightArmUpperRoll);
-        AddArmPoseDelta(skel, deltas, ArmPoseBones[1].Lower,
-            config.EnemyControlRightArmLowerPitch, config.EnemyControlRightArmLowerYaw, config.EnemyControlRightArmLowerRoll);
-
-        if (deltas.Count > 0)
-            boneService.ApplyRotationDeltas(skel, deltas);
-    }
-
-    private void AddArmPoseDelta(SkeletonAccess skel, Dictionary<int, Quaternion> deltas, string bone,
-        float pitchDeg, float yawDeg, float rollDeg)
-    {
-        if (pitchDeg == 0f && yawDeg == 0f && rollDeg == 0f) return;
-
-        var index = boneService.ResolveBoneIndex(skel, bone);
-        if (index < 0) return;
-
-        deltas[index] = Quaternion.CreateFromYawPitchRoll(
-            float.DegreesToRadians(yawDeg), float.DegreesToRadians(pitchDeg), float.DegreesToRadians(rollDeg));
     }
 
     private void CaptureGrabAttackTimeline()
@@ -1780,6 +1054,15 @@ public unsafe partial class EnemyControlController : IDisposable
         return false;
     }
 
+    /// <summary>An object the table still lists at this address, with this entity id (safe to dereference, and the same object).</summary>
+    public static bool IsLiveObject(nint address, uint entityId)
+    {
+        if (address == nint.Zero) return false;
+        foreach (var o in Core.Services.ObjectTable)
+            if (o.Address == address) return o.EntityId == entityId;
+        return false;
+    }
+
     private static bool IsObjectAddressLive(nint address)
     {
         if (address == nint.Zero) return false;
@@ -1791,11 +1074,10 @@ public unsafe partial class EnemyControlController : IDisposable
     public void Despawn()
     {
         ReleaseExternalControl();
-        if (controlledAddress == nint.Zero) { pendingDraw = false; return; }
+        if (controlledAddress == nint.Zero) return;
 
         CancelGrabAttack();
         playerRagdoll.CancelAttackStrike();
-        ReleaseSwarmFollowers();
 
         // Stop the ragdoll referencing this address BEFORE the object is deleted.
         if (colliderRegistered)
@@ -1806,40 +1088,23 @@ public unsafe partial class EnemyControlController : IDisposable
         movementBlock.RemoveApproachNpc(controlledAddress);
         cameraCoordinator?.Release(CameraOwner.EnemyControlFollow);
 
-        // Controlled killer: it's a real enemy we don't own — release its AI, never delete it.
-        if (controlledNpc != null)
-        {
-            controlledNpc.IsClientControlled = false;
-            controlledNpc = null;
-            // Reset our move-anim override only while the object is still live — this path is also
-            // reached when the killer already despawned, where its memory is freed and touching it
-            // (or on session close) would crash.
-            if (Core.Services.ObjectTable.LocalPlayer != null && EnemyControlObjectAlive())
-                ActorVisualStateController.ClearMovement((Character*)controlledAddress, visualState);
-        }
-        // Spawned creature: delete the object. Only touch game memory while the session is alive —
-        // during game shutdown the game has already freed it (DisableDraw/Delete would crash).
-        else if (ownsObject && Core.Services.ObjectTable.LocalPlayer != null)
-        {
-            // Tear down the draw object/skeleton BEFORE deleting the slot (matches NpcSpawner order),
-            // but only if the object still exists — skip the deref if the game already freed it.
-            if (EnemyControlObjectAlive())
-                ((GameObject*)controlledAddress)->DisableDraw();
-            var mgr = ClientObjectManager.Instance();
-            if (mgr != null && EnemyControlIndex >= 0) mgr->DeleteObjectByIndex((ushort)EnemyControlIndex, 0);
-        }
+        // The enemy is the game's (or the spawner's), never ours to delete: hand it back to its AI.
+        // Reset our move-anim override only while the object is still live — this path is also
+        // reached when the enemy already despawned, where its memory is freed and touching it
+        // (or on session close) would crash.
+        var releasedName = controlledNpc?.Name ?? "?";
+        controlledNpc = null;
+        if (Core.Services.ObjectTable.LocalPlayer != null && EnemyControlObjectAlive())
+            ActorVisualStateController.ClearMovement((Character*)controlledAddress, visualState);
 
-        log.Info($"EnemyControlMode: despawned (owned={ownsObject}, idx={EnemyControlIndex})");
-        EnemyControlIndex = -1;
+        log.Info($"EnemyControlMode: despawned — '{releasedName}' is back to its AI");
         controlledAddress = nint.Zero;
-        ownsObject = false;
-        pendingDraw = false;
+        EnemyControlEntityId = 0;
     }
 
     public void Dispose()
     {
         framework.Update -= OnUpdate;
-        boneService.OnRenderFrame -= ApplyArmPoseOverrides;
         boneService.OnPosePrepared -= UpdatePreparedGrabTargets;
         Despawn();
         defaultGrabConform.Dispose();
@@ -1852,6 +1117,10 @@ public unsafe partial class EnemyControlController : IDisposable
     partial void OverrideExternalSpeed(float deltaTime, ref float speed);
     partial void ReleaseExternalControl();
     partial void ResolveExternalGripPairs(ref List<EnemyControlGrabPairConfig> pairs);
+    // Declared for the Dev/Experimental partial, which still calls it before a story takes over the
+    // enemy. There is nothing to release any more (Enemy Control controls one enemy only), so it has no
+    // body and the compiler removes the calls.
+    partial void ReleaseSwarmFollowers();
     private bool ExternalControlActive
     {
         get { var active = false; GetExternalControlState(ref active); return active; }

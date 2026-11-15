@@ -6,14 +6,12 @@ using System.Linq;
 using CombatSimulator.Animation;
 using CombatSimulator.Camera;
 using CombatSimulator.Companions;
-using CombatSimulator.Fighting;
 using CombatSimulator.Gui;
 using CombatSimulator.Integration;
 using CombatSimulator.Npcs;
 using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
 using CombatSimulator.Spectators;
-using CombatSimulator.Targeting;
 using CombatSimulator.UpdateLog;
 using CombatSimulator.Voice;
 using Dalamud.Plugin.Services;
@@ -40,7 +38,6 @@ internal sealed class PresentationModule
     private CombatSimulator.ActionCombat.EnemyOmenVfx enemyOmenVfx = null!;
     private OsuParryOverlay osuParryOverlay = null!;
     private ReticleOverlay reticleOverlay = null!;
-    private FightingDebugOverlay fightingDebugOverlay = null!;
     private DynamicCameraDebugOverlay dynamicCameraDebugOverlay = null!;
     private UpdateLogPopupController updateLogPopupController = null!;
     private VoiceDirector voiceDirector = null!;
@@ -54,7 +51,7 @@ internal sealed class PresentationModule
     public CombatSimulator.ActionCombat.EnemyOmenVfx EnemyOmens => enemyOmenVfx;
     public VoiceDirector Voices => voiceDirector;
 
-    private Configuration config => m.Config;
+    private IPresentationModuleSettings config => m.Config;
     private IPluginLog log => m.Log;
     private NpcSelector npcSelector => m.Actors.Selector;
     private NpcSpawner npcSpawner => m.Actors.Spawner;
@@ -64,7 +61,6 @@ internal sealed class PresentationModule
     private ActionDataProvider actionDataProvider => m.Actors.ActionData;
     private CombatEngine combatEngine => m.Combat.Engine;
     private UseActionHook useActionHook => m.Combat.UseAction;
-    private PlayerTargetController playerTargetController => m.Combat.PlayerTarget;
     private CombatSimulator.ActionCombat.TelegraphSystem telegraphSystem => m.Combat.Telegraphs;
     private CombatSimulator.ActionCombat.EnemyAreaMarkers enemyAreaMarkers => m.Combat.AreaMarkers;
     private CombatSimulator.ActionCombat.PlayerGuardController playerGuardController => m.Combat.Guard;
@@ -79,10 +75,7 @@ internal sealed class PresentationModule
     private Dev.KoStripController armorDetachmentController => m.Corpse.ArmorDetachment;
     private ActiveCameraController activeCameraController => m.Camera.Active;
     private DynamicCameraController dynamicCameraController => m.Camera.Dynamic;
-    private EnemyControlController enemyControlController => m.Fighting.EnemyControl;
-    private FightingModeController fightingModeController => m.Fighting.Mode;
-    private FightingCombatController fightingCombatController => m.Fighting.Combat;
-    private WeaponHitboxService weaponHitboxService => m.Fighting.WeaponHitboxes;
+    private EnemyControlController enemyControlController => m.Actors.EnemyControl;
     private HookSafetyChecker hookSafetyChecker => m.SafetyDev.HookSafety;
     private Dev.IDevExperimental devExperimental => m.SafetyDev.DevExperimental;
     private Gui.WarBanner warBanner => m.Battle.Banner;
@@ -90,10 +83,13 @@ internal sealed class PresentationModule
 
     public void CreateMainWindow(IClientState clientState, IDataManager dataManager, IChatGui chatGui)
     {
-        mainWindow = new MainWindow(config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, playerTargetController, spectatorController, devExperimental, clientState, dataManager, chatGui, log);
+        mainWindow = new MainWindow(m.Config, npcSelector, npcSpawner, companionManager, combatEngine, mapEnemyController, glamourerIpc, vnavmeshIpc, animationController, ragdollController, dismembermentController, activeCameraController, dynamicCameraController, hookSafetyChecker, useActionHook, spectatorController, devExperimental, clientState, dataManager, chatGui, log);
+        mainWindow.Barriers = m.Combat.Barriers;
         mainWindow.ArrowImpacts = arrowImpactController;
         mainWindow.HideResultBanner = warBanner.Hide;
         mainWindow.ArmorDetachment = armorDetachmentController;
+        mainWindow.CutsceneShots = m.Camera.CutsceneShots;
+        enemyControlController.GrabStarted += mainWindow.HideEnemyControlAnchorMarkers;
     }
 
     /// <summary>The enemies' voices. (What it listens to and when it keeps quiet are wired by the
@@ -101,7 +97,7 @@ internal sealed class PresentationModule
     public void CreateVoice(IDataManager dataManager)
     {
         MigrateVoiceDefaults();
-        voiceDirector = new VoiceDirector(config, npcSelector, combatEngine,
+        voiceDirector = new VoiceDirector(m.Config, npcSelector, combatEngine,
             () => companionManager.HasLivingCompanions, dataManager, log);
         voiceDirector.DeadCompanionCount = () =>
             config.EnableCombatCompanions ? companionManager.Companions.Count(c => c.IsSpawned && !c.State.IsAlive) : 0;
@@ -113,12 +109,12 @@ internal sealed class PresentationModule
     /// </summary>
     private void MigrateVoiceDefaults()
     {
-        if (config.EnemyVoiceDefaultsMigrated20261024)
+        if (m.Config.EnemyVoiceDefaultsMigrated20261024)
             return;
-        config.EnableEnemyVoices = true;
-        config.EnemyVoiceBubbles = true;
-        config.EnemyVoiceDefaultsMigrated20261024 = true;
-        config.Save();
+        m.Config.EnableEnemyVoices = true;
+        m.Config.EnemyVoiceBubbles = true;
+        m.Config.EnemyVoiceDefaultsMigrated20261024 = true;
+        m.Config.Save();
     }
 
     public void TickVoice(float deltaTime) => voiceDirector.Tick(deltaTime);
@@ -136,7 +132,7 @@ internal sealed class PresentationModule
     {
         combatLogWindow = new CombatLogWindow(combatEngine);
         ragdollDebugOverlay = new RagdollDebugOverlay(ragdollController, dismembermentController, mainWindow, config, gameGui, clientState);
-        combatLinkOverlay = new CombatLinkOverlay(npcSelector, playerTargetController, combatEngine, boneTransformService, gameGui, config);
+        combatLinkOverlay = new CombatLinkOverlay(npcSelector, combatEngine, boneTransformService, gameGui, config);
         telegraphOverlay = new TelegraphOverlay(telegraphSystem, gameGui, config);
         hpBarOverlay.ExternalCast = npc =>
             telegraphSystem.TryGetCast(npc.SimulatedEntityId, out var castActionId, out var castProgress)
@@ -146,15 +142,10 @@ internal sealed class PresentationModule
         enemyOmenVfx = new CombatSimulator.ActionCombat.EnemyOmenVfx(
             enemyAreaMarkers, animationController, actionDataProvider.GetActionData, dataManager, config, log);
         enemyAreaOverlay.HasNativeOmen = enemyOmenVfx.HasOmen;
-        osuParryOverlay = new OsuParryOverlay(telegraphSystem, gameGui, config, playerGuardController)
-        {
-            AlsoEnabled = () => fightingModeController.IsEngaged,
-        };
-        reticleOverlay = new ReticleOverlay(playerHitboxResolver, combatEngine, gameGui, config);
-        fightingDebugOverlay = new FightingDebugOverlay(
-            fightingModeController, fightingCombatController, weaponHitboxService, gameGui, config);
+        osuParryOverlay = new OsuParryOverlay(telegraphSystem, gameGui, config, playerGuardController);
+        reticleOverlay = new ReticleOverlay(playerHitboxResolver, combatEngine, gameGui);
         dynamicCameraDebugOverlay = new DynamicCameraDebugOverlay(dynamicCameraController, gameGui, config);
-        updateLogPopupController = new UpdateLogPopupController(config, log, hadExistingConfig);
+        updateLogPopupController = new UpdateLogPopupController(m.Config, log, hadExistingConfig);
     }
 
     public void OnDraw(IClientState clientState)
@@ -208,17 +199,16 @@ internal sealed class PresentationModule
             if (config.ShowCombatLog)
                 combatLogWindow.Draw();
 
-            if (config.ShowCombatLinkArcs || config.ShowLockMarker)
+            if (config.ShowCombatLinkArcs)
                 combatLinkOverlay.Draw();
 
-            if ((config.ActionMode || fightingModeController.IsEngaged) && config.ShowTelegraphs)
+            if (config.ShowTelegraphs)
                 telegraphOverlay.Draw();
             // Real-shape enemy areas (any mode); empty unless an enemy-skill option registered one.
             enemyAreaOverlay.Draw();
 
             osuParryOverlay.Draw();
             reticleOverlay.Draw();
-            fightingDebugOverlay.Draw();
         }
 
         ragdollDebugOverlay.Draw();

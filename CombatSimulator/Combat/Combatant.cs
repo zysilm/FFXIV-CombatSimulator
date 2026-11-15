@@ -56,15 +56,14 @@ public abstract unsafe class Combatant
     public CombatantAiState AiState { get; set; } = CombatantAiState.Idle;
     public NpcBehavior Behavior { get; set; } = new();
     public Vector3 SpawnPosition { get; set; }
+    /// <summary>Has been on the crowd since it was spawned (its first join may move it far onto reachable ground; later ones not).</summary>
+    public bool JoinedCrowd { get; set; }
     public float AutoAttackTimer { get; set; }
     public float EngageDelayTimer { get; set; }
     /// <summary>Close enough to stand and fight (with hysteresis: see NpcAiController.TryCrowdApproach
     /// and CombatCompanionManager.Crowd).</summary>
     public bool InReach { get; set; }
     public ActorVisualState VisualState { get; set; } = new();
-
-    // Casting
-    public NpcSkill? CurrentCastSkill { get; set; }
 
     // Lifecycle
     public bool IsAlive => State.IsAlive;

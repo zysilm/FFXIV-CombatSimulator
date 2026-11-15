@@ -1,6 +1,6 @@
 <Project Sdk="Dalamud.NET.Sdk/15.0.0" TreatAsLocalProperty="DefineConstants">
   <PropertyGroup>
-    <Version>3.0.0.0</Version>
+    <Version>3.0.0.1</Version>
     <Authors>zysilm</Authors>
     <Description>A combat sandbox that makes FFXIV feel more like an action RPG, with responsive fights and advanced ragdoll physics.</Description>
     <IsPackable>false</IsPackable>
@@ -44,7 +44,7 @@
          (https://github.com/zysilm/AdvancedRagdoll); how library changes reach the plugin: CLAUDE.md. NuGet takes the
          lowest matching version and packages.lock.json pins it. Like every package dependency, its DLL is copied next
          to the plugin DLL and into the packaged zip. -->
-    <PackageReference Include="AdvancedRagdoll" Version="0.1.0-beta.2" />
+    <PackageReference Include="AdvancedRagdoll" Version="0.1.0-beta.4" />
   </ItemGroup>
   <ItemGroup>
     <!-- The offline replay (Tests/RagdollReplay) drives RagdollController through its internal host constructor. -->
@@ -63,5 +63,7 @@
     <EmbeddedResource Include="Resources\VoiceEntryLabels.json" />
     <EmbeddedResource Include="Resources\VoiceLines.json" />
     <EmbeddedResource Include="Resources\VoicePersonas.json" />
+    <!-- Curated cutscene follow shots: references and derived features only (docs/CUTSCENE_SHOTS.md). -->
+    <EmbeddedResource Include="Resources\CutsceneShots.json" />
   </ItemGroup>
 </Project>

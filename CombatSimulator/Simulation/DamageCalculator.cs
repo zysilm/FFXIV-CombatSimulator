@@ -24,8 +24,11 @@ public class DamageCalculator
     private const int DefaultAutoAttackPotency = 110;
     private readonly Random rng;
 
-    /// <summary>Whether Action Mode is on. It changes the player's reference output and the enemy threat.</summary>
-    public Func<bool> IsActionMode { get; set; } = () => false;
+    /// <summary>
+    /// Action combat (the only combat). False reproduces the retired tab-target budget, for the offline balance
+    /// comparison (Tests/CombatBalance) only; the plugin never sets it.
+    /// </summary>
+    public Func<bool> IsActionMode { get; set; } = () => true;
 
     /// <summary>The player's maximum HP, which sizes everyone's damage (0: use the attacker's own).</summary>
     public Func<float> PlayerMaxHp { get; set; } = () => 0f;

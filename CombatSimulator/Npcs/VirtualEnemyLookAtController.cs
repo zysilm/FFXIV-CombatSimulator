@@ -25,7 +25,7 @@ public sealed unsafe class VirtualEnemyLookAtController : IDisposable
     private const float ReleaseRate = 5f; // 1/s, back to the animation when not looking
 
     private readonly BoneTransformService bones;
-    private readonly Configuration config;
+    private readonly IVirtualEnemyLookAtSettings config;
     private readonly NpcSpawner spawner;
     private readonly CombatEngine engine;
     private readonly Func<nint, bool> excluded;
@@ -43,7 +43,7 @@ public sealed unsafe class VirtualEnemyLookAtController : IDisposable
     private readonly List<LookAtActor> released = new();
     private long lastRender;
 
-    public VirtualEnemyLookAtController(BoneTransformService bones, Configuration config, NpcSpawner spawner,
+    public VirtualEnemyLookAtController(BoneTransformService bones, IVirtualEnemyLookAtSettings config, NpcSpawner spawner,
         CombatEngine engine, Func<nint, bool> excluded, IPluginLog log)
     {
         this.bones = bones; this.config = config; this.spawner = spawner;

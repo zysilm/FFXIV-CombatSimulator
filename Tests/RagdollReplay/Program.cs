@@ -51,6 +51,9 @@ foreach (var file in files)
             outcome = produced == null
                 ? "SYNTHETIC RUN FAILED: " + first
                 : ReplayDriver.Run(produced, keep, false, out _) + "\n    synthetic mesh products: " + ReplayDriver.MeshProducts(produced);
+            // The first run's recording is only an input to the second; without this every synthetic run left a
+            // folder behind (37 GB in %TEMP% by 2026-11-15, which filled the disk and truncated later recordings).
+            if (produced != null && !keep) Directory.Delete(Path.GetDirectoryName(produced)!, true);
         }
     }
     catch (ReplayUnsupportedException ex)
@@ -373,6 +376,11 @@ internal static class ReplayDriver
                 controller.GrabRigid = call[8].AsBool;
                 controller.CreateGrabConstraint(call[2].AsString!, call[3].AsVector3, (nint)call[4].AsULong,
                     call[5].AsFloat, call[6].AsFloat, call[7].AsFloat);
+                break;
+            case nameof(RagdollController.CreateGrabConstraintAt):
+                controller.GrabRigid = call[9].AsBool;
+                controller.CreateGrabConstraintAt(call[2].AsString!, call[3].AsVector3, call[4].AsVector3,
+                    (nint)call[5].AsULong, call[6].AsFloat, call[7].AsFloat, call[8].AsFloat);
                 break;
             case nameof(RagdollController.SetGrabTuning):
                 controller.SetGrabTuning(call[2].AsInt, call[3].AsFloat, call[4].AsFloat, call[5].AsFloat);

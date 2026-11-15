@@ -48,8 +48,6 @@ public class SimulatedEntityState
     public float CastTimeTotal { get; set; }
     public uint CastActionId { get; set; }
     public ulong CastTargetId { get; set; }
-    /// <summary>The current cast can be stopped by an interrupt (stuns stop any cast).</summary>
-    public bool CastInterruptible { get; set; }
 
     // Combo
     public uint LastComboAction { get; set; }
@@ -98,7 +96,6 @@ public class SimulatedEntityState
         CastTimeTotal = 0;
         CastActionId = 0;
         CastTargetId = 0;
-        CastInterruptible = false;
         LastComboAction = 0;
         ComboTimer = 0;
         Cooldowns.Clear();

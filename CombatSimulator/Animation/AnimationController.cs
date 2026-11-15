@@ -8,6 +8,7 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
+using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
@@ -1710,6 +1711,49 @@ public unsafe class AnimationController : IDisposable
         }
     }
 
+    // The game's own states in which the local player's mode, stance and combat flags are the game's (and the
+    // server's), not ours to overwrite: forcing Mode = Normal or another model state there desyncs or breaks
+    // the character (a mount, a chair, an emote, an event, a real fight).
+    private static readonly (ConditionFlag Flag, string Why)[] PlayerBusyConditions =
+    {
+        (ConditionFlag.Mounted, "mounted"), (ConditionFlag.RidingPillion, "riding pillion"),
+        (ConditionFlag.Mounting, "mounting"), (ConditionFlag.Mounting71, "mounting"),
+        (ConditionFlag.MountOrOrnamentTransition, "mounting"), (ConditionFlag.InFlight, "flying"),
+        (ConditionFlag.Unconscious, "really knocked out"), (ConditionFlag.Emoting, "in an emote"),
+        (ConditionFlag.InThatPosition, "sitting"), (ConditionFlag.InCombat, "in a real fight"),
+        (ConditionFlag.Casting, "casting"), (ConditionFlag.Occupied, "occupied"), (ConditionFlag.Occupied30, "occupied"),
+        (ConditionFlag.OccupiedInEvent, "in an event"), (ConditionFlag.OccupiedInQuestEvent, "in a quest event"),
+        (ConditionFlag.Occupied33, "occupied"), (ConditionFlag.OccupiedInCutSceneEvent, "in a cutscene"),
+        (ConditionFlag.Occupied38, "occupied"), (ConditionFlag.Occupied39, "occupied"),
+        (ConditionFlag.OccupiedSummoningBell, "at a summoning bell"), (ConditionFlag.WatchingCutscene, "in a cutscene"),
+        (ConditionFlag.WatchingCutscene78, "in a cutscene"), (ConditionFlag.BetweenAreas, "changing area"),
+        (ConditionFlag.BetweenAreas51, "changing area"), (ConditionFlag.Crafting, "crafting"),
+        (ConditionFlag.PreparingToCraft, "crafting"), (ConditionFlag.ExecutingCraftingAction, "crafting"),
+        (ConditionFlag.Gathering, "gathering"), (ConditionFlag.ExecutingGatheringAction, "gathering"),
+        (ConditionFlag.Fishing, "fishing"), (ConditionFlag.Performing, "performing"),
+        (ConditionFlag.CarryingObject, "carrying something"), (ConditionFlag.CarryingItem, "carrying something"),
+        (ConditionFlag.UsingChocoboTaxi, "on a chocobo porter"), (ConditionFlag.Transformed, "transformed"),
+        (ConditionFlag.PilotingMech, "piloting"), (ConditionFlag.BeingMoved, "being moved"),
+        (ConditionFlag.Diving, "diving"), (ConditionFlag.LoggingOut, "logging out"),
+    };
+
+    /// <summary>
+    /// Why the local player's real state must not be overwritten right now (mounted, sitting, in an emote, in an
+    /// event, in a real fight, ...), from the game's conditions; null when it may be.
+    /// </summary>
+    public static string? PlayerBusyReason()
+    {
+        var conditions = Core.Services.Condition;
+        if (conditions == null)
+            return null;
+        foreach (var (flag, why) in PlayerBusyConditions)
+        {
+            if (conditions[flag])
+                return why;
+        }
+        return null;
+    }
+
     public void CapturePlayerCombatVisualState()
     {
         try
@@ -1717,6 +1761,14 @@ public unsafe class AnimationController : IDisposable
             var player = Core.Services.ObjectTable.LocalPlayer;
             if (player == null || player.Address == nint.Zero)
                 return;
+
+            // Captured only from a state the restore may write back into (see RestorePlayerCombatVisualState).
+            if (PlayerBusyReason() is { } busy)
+            {
+                playerSessionVisualCaptured = false;
+                log.Info($"Player combat visual state not captured: the player is {busy}.");
+                return;
+            }
 
             var character = (Character*)player.Address;
             playerSessionWeaponDrawn = character->Timeline.IsWeaponDrawn;
@@ -1739,7 +1791,12 @@ public unsafe class AnimationController : IDisposable
         try
         {
             var player = Core.Services.ObjectTable.LocalPlayer;
-            if (player != null && player.Address != nint.Zero)
+            if (PlayerBusyReason() is { } busy)
+            {
+                // Mounted, sitting, in an event or a real fight since the capture: the game owns these now.
+                log.Info($"Player combat visual state not restored: the player is {busy}.");
+            }
+            else if (player != null && player.Address != nint.Zero)
             {
                 var character = (Character*)player.Address;
                 character->Timeline.IsWeaponDrawn = playerSessionWeaponDrawn;
@@ -1787,15 +1844,22 @@ public unsafe class AnimationController : IDisposable
     /// <summary>
     /// Emergency cleanup for a local player stuck in a CombatSimulator-owned action/death pose.
     /// This is intentionally heavier than ClearPlayerBattleStance and should only be used from
-    /// explicit recovery flows.
+    /// explicit recovery flows. Skipped (returns why) while the game's own state owns the player's mode
+    /// (mounted, sitting, in an emote or event, in a real fight, ...); null when it ran or there is no player.
     /// </summary>
-    public void RecoverPlayerAnimationState()
+    public string? RecoverPlayerAnimationState()
     {
+        if (PlayerBusyReason() is { } busy)
+        {
+            log.Info($"Recover player animation skipped: the player is {busy}.");
+            return busy;
+        }
+
         try
         {
             var player = Core.Services.ObjectTable.LocalPlayer;
             if (player == null || player.Address == nint.Zero)
-                return;
+                return null;
 
             var character = (Character*)player.Address;
             character->Timeline.OverallSpeed = 1.0f;
@@ -1823,6 +1887,7 @@ public unsafe class AnimationController : IDisposable
         {
             log.Error(ex, "Failed to recover player animation state.");
         }
+        return null;
     }
 
     /// <summary>

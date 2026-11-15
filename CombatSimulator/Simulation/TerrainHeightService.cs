@@ -27,20 +27,4 @@ public static class TerrainHeightService
         y = hit.Point.Y;
         return float.IsFinite(y);
     }
-
-    /// <summary>One downward ray for a single actor (the fighting lane). Starts a little above
-    /// <paramref name="nearY"/> so a ceiling far overhead is not mistaken for the floor.</summary>
-    public static bool TrySampleGround(float x, float z, float nearY, out float y)
-    {
-        y = 0f;
-        if (!BGCollisionModule.RaycastMaterialFilter(
-                new Vector3(x, nearY + 3f, z),
-                new Vector3(0, -1, 0),
-                out var hit,
-                12f))
-            return false;
-
-        y = hit.Point.Y;
-        return true;
-    }
 }

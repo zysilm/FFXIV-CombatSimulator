@@ -23,9 +23,9 @@ public sealed class PlayerHitboxResolver
 
     private readonly CombatEngine combatEngine;
     private readonly NpcSelector npcSelector;
-    private readonly Configuration config;
+    private readonly IPlayerHitboxSettings config;
 
-    public PlayerHitboxResolver(CombatEngine combatEngine, NpcSelector npcSelector, Configuration config)
+    public PlayerHitboxResolver(CombatEngine combatEngine, NpcSelector npcSelector, IPlayerHitboxSettings config)
     {
         this.combatEngine = combatEngine;
         this.npcSelector = npcSelector;

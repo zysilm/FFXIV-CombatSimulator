@@ -189,6 +189,8 @@ enum Call
     SetTargetId, SetRotation, SetEntityId, SetNormalMode, AddApproach, RemoveApproach, ClearApproach, SetApproachPosition,
     SetApproachRotation, ApplyMoving, ApplyMovingTimeline, ApplyCombatIdle, ApplyActionLocked, ApplyDead, ClearMovement,
     SetBattleStance, ClearBattleStance, PlayDeathAnimation, ResetDeathAnimation, PlayEmote, HoldEmoteLoop, ResetEmote,
+    // AreaMarker: no longer raised (the enemies' cast areas went with the engine cast bar, 2026-11-15); kept so
+    // the call-count hash keeps its layout and the golden files stay comparable.
     TrackFootIk, ReportRootLift, CrowdDrive, CrowdObstacle, AreaMarker, Count,
 }
 
@@ -196,7 +198,7 @@ enum Call
 /// The flat world: bodies on a plane, read and written by address; the crowd walks each agent straight at its
 /// goal at its speed (no navigation, no avoidance, no floor); the visual states only record their kind.
 /// </summary>
-sealed unsafe class FlatWorld : ICombatWorld, ICrowdAgents, ICastAreaMarkers
+sealed unsafe class FlatWorld : ICombatWorld, ICrowdAgents
 {
     private readonly Dictionary<nint, Body> bodies = new();
     private readonly LoopLog log;
@@ -282,12 +284,6 @@ sealed unsafe class FlatWorld : ICombatWorld, ICrowdAgents, ICastAreaMarkers
     public float FootIkPelvisOffset(nint address) => 0f;
     public void ReportFootIkRootLift(nint address, float lift) => log.Note(Call.ReportRootLift);
 
-    public int Add(uint sourceSimId, uint actionId, in TelegraphShape shape, float duration, Func<bool>? stillValid = null)
-    {
-        log.Note(Call.AreaMarker);
-        return 0;
-    }
-
     // ---- the crowd: every agent walks straight at its goal, the frame after it is set ----
 
     public sealed class Agent
@@ -304,7 +300,7 @@ sealed unsafe class FlatWorld : ICombatWorld, ICrowdAgents, ICastAreaMarkers
 
     public bool Ready => true;
 
-    public bool Drive(nint address, Vector3 position, float radius, float speed, Vector3? goal)
+    public bool Drive(nint address, Vector3 position, float radius, float speed, Vector3? goal, bool newToBattle = false)
     {
         log.Note(Call.CrowdDrive);
         if (address == nint.Zero)
@@ -333,6 +329,16 @@ sealed unsafe class FlatWorld : ICombatWorld, ICrowdAgents, ICastAreaMarkers
     }
 
     public bool WalkableStraight(Vector3 from, Vector3 to) => true;
+
+    // Every point of the flat world can be walked to (unless a case says the crowd cannot tell: the player off
+    // the mesh when it was built).
+    public bool CanJudgeReach { get; set; } = true;
+
+    public bool TryReachableSpot(Vector3 point, float within, out Vector3 spot)
+    {
+        spot = point;
+        return CanJudgeReach;
+    }
 
     public void SetObstacle(nint address, Vector3 position, float radius)
     {
@@ -372,6 +378,18 @@ sealed unsafe class FlatWorld : ICombatWorld, ICrowdAgents, ICastAreaMarkers
         }
         crowdFrame++;
     }
+}
+
+/// <summary>
+/// No corpses in the flat world (the README: "No corpses to stand on"): no body lies anywhere, no surface to
+/// step on, as when the manager's corpse queries were left unset before stage R2-P2 injected them.
+/// </summary>
+sealed class NoCorpses : ICorpseQuery
+{
+    public static readonly NoCorpses Instance = new();
+    public Vector3? BodyPositionOf(nint address) => null;
+    public Vector3? LordBodyPosition() => null;
+    public float? ResolveCorpseTraversalHeight(nint actorAddress, Vector3 position) => null;
 }
 
 /// <summary>
@@ -480,7 +498,7 @@ sealed class FakeEngine : ICombatLoopEngine
 /// Where attacks land (IAttackSink). An enemy's attack is a telegraph that lands its full time later
 /// (TelegraphedAttackExecutor's windup, here a fixed <see cref="Windup"/>; the enemy is busy until then);
 /// a companion's lands at once, as CombatEngine.ProcessCompanionAction lands it. Damage is the production
-/// DamageCalculator's, threat the production TargetingService's (CombatEngine.OnHit -> RegisterHit).
+/// DamageCalculator's, threat the production TargetingService's (RegisterHit, which CombatEngine calls).
 /// </summary>
 sealed class FakeAttacks : IAttackSink
 {
@@ -509,8 +527,6 @@ sealed class FakeAttacks : IAttackSink
         log.Line($"A {log.Frame} {npc.Name} {What(request.ActionId, request.IsAutoAttack)} -> {NameOf(request.TargetId)} mp {npc.State.CurrentMp}");
         return true;
     }
-
-    public TelegraphShape SnapshotShape(SimulatedNpc npc, NpcAttackRequest request, SimulatedEntityState target) => default;
 
     /// <summary>The telegraphs whose time is up land (TelegraphSystem.Tick), in the order they began.</summary>
     public void Tick()
@@ -728,7 +744,7 @@ sealed unsafe class LoopReplay
 
         world = new FlatWorld(log);
         engine = new FakeEngine(world, log, scenario.Rules);
-        var damage = new DamageCalculator(new Random(seed + 3)) { IsActionMode = () => settings.ActionMode, PlayerMaxHp = () => 60000f };
+        var damage = new DamageCalculator(new Random(seed + 3)) { IsActionMode = () => true, PlayerMaxHp = () => 60000f };
         attacks = new FakeAttacks(engine, damage, log);
 
         // The player: a body and the engine's player state.
@@ -740,21 +756,23 @@ sealed unsafe class LoopReplay
         };
         names[playerId] = "P";
 
-        // As Plugin.cs builds and wires them (the manager first, then the enemy AI).
-        companions = new CombatCompanionManager(null!, null!, settings, engine, world, attacks, pluginLog);
+        // As Plugin.cs builds and wires them (the roster, who fights whom and the rule parts before the engine, which
+        // has the first two by constructor; the manager on them; then the enemy AI).
+        var roster = new CombatRoster(settings);
+        targeting = new TargetingService(() => engine.State.SimulationTime);
+        var ruleParts = new CombatSimulator.Battle.Rules.BattleRuleSet(CombatSimulator.Battle.Rules.BattleRuleFactory.CreateAll());
+        engine.ResolveExternalEntityAddress = roster.AddressOf;
+        engine.HasLivingCompanions = () => roster.HasLivingAllies;
+        companions = new CombatCompanionManager(null!, null!, settings, engine, roster, targeting, ruleParts, NoCorpses.Instance,
+            _ => false, world, attacks, pluginLog);
         engine.ResolveNpcTarget = companions.SelectEnemyTarget;
-        engine.ResolveExternalEntityAddress = companions.ResolveAddress;
-        engine.HasLivingCompanions = () => companions.HasLivingCompanions;
         attacks.Companions = companions;
-        enemiesAi = new NpcAiController(engine, world, attacks, settings, pluginLog, null, attacks.IsBusy);
+        enemiesAi = new NpcAiController(engine, world, attacks, settings, pluginLog, companions.CollectPartyPositions, null, attacks.IsBusy);
         enemiesAi.Crowd = world;
         companions.Crowd = world;
-        enemiesAi.CollectPartyPositions = companions.CollectPartyPositions;
         enemiesAi.RandomSource = new Random(seed);
         companions.RandomSource = new Random(seed + 1);
         companions.AggroSeedSource = new Random(seed + 2);
-        targeting = (TargetingService)typeof(CombatCompanionManager)
-            .GetField("targeting", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(companions)!;
         world.Spy = new DrawSpy(targeting, log, Name);
 
         // Enemies as the NPC spawner leaves them (client-controlled, spawned, idle), registered with the engine.

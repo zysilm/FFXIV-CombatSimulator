@@ -77,6 +77,14 @@ public unsafe class NpcSpawner : IDisposable
     /// <summary>The navigation mesh, for putting opponents on the map (<see cref="SpawnPlacement.Map"/>).</summary>
     public Integration.VNavmeshIpc? Navmesh { private get; set; }
 
+    /// <summary>
+    /// The nearest spot to a point that the party can walk to (the plugin's own navigation mesh, searched
+    /// outward from the point), or null when that cannot be told yet (no mesh there). Every spawn goes
+    /// through it, so nobody is put behind a wall, on a cliff top or under ground; one it cannot judge yet is
+    /// put on reachable ground when it first joins the crowd (CrowdMover.Drive). Null: not wired (offline).
+    /// </summary>
+    public Func<Vector3, Vector3?>? ReachableSpot { private get; set; }
+
     /// <summary>Whether opponents can be placed on the map here: it takes a navigation mesh to find ground.</summary>
     public bool CanPlaceOnMap
     {
@@ -88,6 +96,11 @@ public unsafe class NpcSpawner : IDisposable
         }
     }
     public Action<string>? OnSpawnError { get; set; }
+
+    /// <summary>False while a client-side safety barrier is down (Safety/SafetyBarriers.cs): nothing is created
+    /// then. Null (before the barriers exist) allows.</summary>
+    public Func<bool>? SpawnAllowed { get; set; }
+    private bool spawnRefusalReported;
 
     /// <summary>Dev-experimental seam: when true, every spawned humanoid virtual enemy has body + legs
     /// stripped (model id 0 — the same bare "smallclothes" result unequipping those slots in-game
@@ -101,29 +114,10 @@ public unsafe class NpcSpawner : IDisposable
     public Func<bool>? StripAccessories { private get; set; }
 
     /// <summary>
-    /// When true, spawn mode is active: all player actions are routed to spawned NPCs
-    /// and the game's target system is bypassed for combat.
+    /// When true, spawn mode is active (a battle of spawned enemies): they register as combat targets past the
+    /// usual target limit, and the map enemy controller reads it.
     /// </summary>
     public bool SpawnModeActive { get; set; }
-
-    /// <summary>
-    /// Returns the last alive spawned NPC, used as the automatic attack target in spawn mode.
-    /// </summary>
-    public SimulatedNpc? GetLastAliveSpawnedNpc()
-    {
-        // A sentry that has not noticed the party yet may be far off on the map: only when nothing
-        // else is left.
-        SimulatedNpc? unaware = null;
-        for (int i = spawnedNpcs.Count - 1; i >= 0; i--)
-        {
-            if (!spawnedNpcs[i].IsSpawned || !spawnedNpcs[i].IsAlive)
-                continue;
-            if (!spawnedNpcs[i].IsSentry || spawnedNpcs[i].AiState != CombatSimulator.Combat.CombatantAiState.Idle)
-                return spawnedNpcs[i];
-            unaware ??= spawnedNpcs[i];
-        }
-        return unaware;
-    }
 
     public NpcSpawner(
         IObjectTable objectTable,
@@ -195,6 +189,19 @@ public unsafe class NpcSpawner : IDisposable
 
     private void ProcessSpawnRequest(NpcSpawnRequest request)
     {
+        if (SpawnAllowed?.Invoke() == false)
+        {
+            // Reported once until spawning is allowed again (a queue of requests would repeat it).
+            if (!spawnRefusalReported)
+            {
+                spawnRefusalReported = true;
+                log.Warning("NPC spawn refused: a client-side safety barrier is down (Diagnose tab).");
+                OnSpawnError?.Invoke("Not spawned: a client-side safety barrier is down (see the Diagnose tab).");
+            }
+            return;
+        }
+        spawnRefusalReported = false;
+
         try
         {
             var npcName = GetNpcName(request);
@@ -216,6 +223,15 @@ public unsafe class NpcSpawner : IDisposable
             }
             else
                 spawnPos = CalculateSpawnPosition(spawnedNpcs.Count + pendingSpawns.Count, request.Placement);
+            // Only where the party can walk to: a spot behind a wall or off the walkable ground moves to the
+            // nearest one that is not.
+            if (ReachableSpot?.Invoke(spawnPos) is { } reachable)
+            {
+                var moved = Vector3.Distance(reachable, spawnPos);
+                if (moved > 1f)
+                    log.Info($"NPC '{npcName}': spawn spot moved {moved:F1} m onto ground the party can reach.");
+                spawnPos = reachable;
+            }
             var spawnRot = facing ?? CalculateSpawnRotation(spawnPos);
 
             var clientObjMgr = ClientObjectManager.Instance();

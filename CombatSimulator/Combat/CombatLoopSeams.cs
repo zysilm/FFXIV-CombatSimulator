@@ -114,15 +114,12 @@ public interface ICombatWorld
 /// Where an attack the loops commit is resolved (today the enemies' attack router and the engine's companion action).
 /// <para>Which side's game adapter supports what (<c>GameAttackSink</c>): the allies' has no attack
 /// router, so <see cref="ExecuteEnemyAttack"/> is enemy-only and throws <see cref="NotSupportedException"/>
-/// there. <see cref="SnapshotShape"/> (used by the enemies) and <see cref="ProcessCompanionAction"/> (used by
-/// the allies) only need the engine and work on both.</para>
+/// there. <see cref="ProcessCompanionAction"/> (used by the allies) only needs the engine and works on both.</para>
 /// </summary>
 public interface IAttackSink
 {
     /// <summary><c>combatModeRouter.AttackExecutor.Execute(npc, request)</c>. Enemy adapter only.</summary>
     bool ExecuteEnemyAttack(SimulatedNpc npc, NpcAttackRequest request);
-    /// <summary><c>TelegraphSystem.SnapshotShape(combatEngine, npc, request, target)</c>.</summary>
-    TelegraphShape SnapshotShape(SimulatedNpc npc, NpcAttackRequest request, SimulatedEntityState target);
     /// <summary><c>combatEngine.ProcessCompanionAction(companion, target, actionId, potency, style, radius)</c>.</summary>
     SimulatedActionResult ProcessCompanionAction(CombatCompanion companion, SimulatedNpc target, uint actionId,
         int potency = 0, NpcAttackStyle attackStyle = NpcAttackStyle.Auto, float radius = 0);
@@ -159,7 +156,10 @@ public interface ICombatLoopEngine
 public interface ICrowdAgents
 {
     bool Ready { get; }
-    bool Drive(nint address, Vector3 position, float radius, float speed, Vector3? goal);
+    /// <param name="newToBattle">First time this combatant joins the crowd since it was spawned: one off the ground the party
+    /// can reach is put on the nearest of it however far (the whole mesh); later re-joins (released from control,
+    /// revived) only from close by.</param>
+    bool Drive(nint address, Vector3 position, float radius, float speed, Vector3? goal, bool newToBattle = false);
     bool TrySnapToFloor(Vector3 point, out Vector3 floor);
     void SetObstacle(nint address, Vector3 position, float radius);
     bool TryGetMotion(nint address, out Vector3 position, out Vector3 velocity);
@@ -169,10 +169,16 @@ public interface ICrowdAgents
 
     /// <summary>Whether a straight walk between two points stays on the walkable floor (no wall or edge between).</summary>
     bool WalkableStraight(Vector3 from, Vector3 to);
-}
 
-/// <summary>Where a telegraphed cast's area is drawn (implemented by ActionCombat.EnemyAreaMarkers).</summary>
-public interface ICastAreaMarkers
-{
-    int Add(uint sourceSimId, uint actionId, in TelegraphShape shape, float duration, Func<bool>? stillValid = null);
+    /// <summary>
+    /// The nearest spot to a point within <paramref name="within"/> metres that the party can walk to (on the
+    /// ground connected to where the player stands), searched outward from it; false when there is none.
+    /// </summary>
+    bool TryReachableSpot(Vector3 point, float within, out Vector3 spot);
+
+    /// <summary>
+    /// Whether the crowd can tell what the party can reach (the player was on the mesh when it was built, or has
+    /// stood on it since); while not, <see cref="TryReachableSpot"/> finds nothing.
+    /// </summary>
+    bool CanJudgeReach { get; }
 }

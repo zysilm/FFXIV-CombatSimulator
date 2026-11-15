@@ -76,7 +76,7 @@ public sealed class TelegraphSystem
 
     private readonly CombatEngine combatEngine;
     private readonly AnimationController animationController;
-    private readonly Configuration config;
+    private readonly IEnemyAttackSettings config;
     private readonly Func<bool> playerGuardActive;
     private readonly Action playerPerfectGuard;
     private readonly IPluginLog log;
@@ -88,7 +88,7 @@ public sealed class TelegraphSystem
     public TelegraphSystem(
         CombatEngine combatEngine,
         AnimationController animationController,
-        Configuration config,
+        IEnemyAttackSettings config,
         Func<bool> playerGuardActive,
         Action playerPerfectGuard,
         IPluginLog log,
@@ -431,19 +431,6 @@ public sealed class TelegraphSystem
         }
         actionId = 0;
         progress = 0f;
-        return false;
-    }
-
-    /// <summary>Interrupt: cancel an enemy telegraph that is still in its cast lead-in (no strike).</summary>
-    public bool TryInterrupt(uint npcSimId)
-    {
-        foreach (var t in active)
-        {
-            if (t.Resolved || t.Source.SimulatedEntityId != npcSimId || t.IsApproachActive)
-                continue;
-            Finish(t, TelegraphOutcome.Dodged);
-            return true;
-        }
         return false;
     }
 

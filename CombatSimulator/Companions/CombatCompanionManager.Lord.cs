@@ -22,9 +22,6 @@ public unsafe partial class CombatCompanionManager
     public const float PrayerDamageScale = LordGuardRule.PrayerDamageScale;
     public const float LordContestRadius = LordGuardRule.LordContestRadius;
 
-    /// <summary>Where the lord's body actually lies (the ragdoll, once it falls); null: where the lord died.</summary>
-    public Func<Vector3?>? LordBodyPosition { private get; set; }
-
     /// <summary>The lord's body has been carried off by the enemy (set by the battle).</summary>
     public bool LordCorpseCaptured { get; set; }
 

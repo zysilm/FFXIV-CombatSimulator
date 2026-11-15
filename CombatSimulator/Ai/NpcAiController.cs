@@ -44,6 +44,8 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
     // Auto-engage countdown: when >= 0, every Tick decrements; on reaching
     // 0 we call EngageNpc on each selected NPC. Negative = inactive.
     private float pendingAutoEngageDelay = -1f;
+    // Enemies that were held (EnemyLayer.Controlled) when the auto-engage fired: engaged once they are let go.
+    private readonly HashSet<uint> missedAutoEngage = new();
 
     /// <summary>The controller over its seams (the plugin's constructor is in NpcAiController.Game.cs).</summary>
     public NpcAiController(
@@ -52,10 +54,12 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
         IAttackSink attackSink,
         ICombatAiSettings config,
         IPluginLog log,
+        Action<List<Vector3>>? collectPartyPositions,
         Func<nint, bool>? isExternallyControlled = null,
         Func<uint, bool>? isTelegraphBusy = null)
         : base(combatEngine, world, attackSink, config, log, isTelegraphBusy)
     {
+        this.collectPartyPositions = collectPartyPositions;
         this.isExternallyControlled = isExternallyControlled ?? (_ => false);
         stepSink = new EnemyStepSink(this);
 
@@ -65,20 +69,21 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
 
     private readonly List<SimulatedNpc> crowdDriven = new();
 
-    /// <summary>Fills a list with where the living party stands (player and companions); sentries watch for them.</summary>
-    public Action<List<Vector3>>? CollectPartyPositions { private get; set; }
-
-    /// <summary>Where telegraphed casts register their snapshotted area (null = none drawn).</summary>
-    public ICastAreaMarkers? AreaMarkers { private get; set; }
+    /// <summary>
+    /// Fills a list with where the living party stands (player and companions); sentries watch for them. Given by
+    /// constructor (the allies' controller's <c>CollectPartyPositions</c>); null: the player alone.
+    /// </summary>
+    private readonly Action<List<Vector3>>? collectPartyPositions;
 
     // What the enemies did, counted per frame and written to the log every few seconds of a fight
     // (the mirror of the allies' line in CombatCompanionManager.Crowd.cs). Counting reads what the
     // movement pass has just decided; it decides nothing.
     private const int EnemyInReach = 0, EnemyWalkingIn = 1, EnemyWaiting = 2, EnemyGoingForBody = 3, EnemyFleeing = 4,
-        EnemyCasting = 5, EnemyUnaware = 6, EnemyIdle = 7, EnemyOffMesh = 8;
+        EnemyPatrolling = 5, EnemyAtPost = 6, EnemyIdle = 7, EnemyOffMesh = 8, EnemyControlled = 9;
     private static readonly string[] EnemyActivityNames =
     {
-        "in reach", "walking in", "waiting a turn", "going for the body", "fleeing", "casting", "unaware", "idle", "off the mesh",
+        "in reach", "walking in", "waiting a turn", "going for the body", "fleeing",
+        "patrolling", "at its post", "idle", "off the mesh", "under control",
     };
     private readonly CombatActivityTally enemyActivity = new(EnemyActivityNames, listUnseen: true);
 
@@ -86,17 +91,16 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
 
     /// <summary>
     /// What an enemy on the mesh did this frame, read from what TryCrowdMove left behind, in the order
-    /// it decides: a caster stands; going for the body (or fighting its guard); an unaware sentry; no
-    /// living target; running from the fight; waiting for a melee place; in reach or walking in.
+    /// it decides: going for the body (or fighting its guard); an unaware sentry (on
+    /// patrol, or at its post); no living target; running from the fight; waiting for a melee place; in
+    /// reach or walking in.
     /// </summary>
     private int EnemyActivityOf(SimulatedNpc npc, bool fightingLiveTarget)
     {
-        if (npc.State.IsCasting)
-            return EnemyCasting;
         if (npc.SeizeGoal != null)
             return npc.InReach ? EnemyInReach : EnemyGoingForBody;
         if (IsUnawareSentry(npc))
-            return EnemyUnaware;
+            return npc.Patrols ? EnemyPatrolling : EnemyAtPost;
         if (!fightingLiveTarget)
             return EnemyIdle;
         if (npc.AiState == CombatantAiState.Combat && IsTacticsFleeing(npc))
@@ -121,6 +125,7 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
     {
         // (A fight starts or is reset: the enemies' summary starts a new 5 s window with it.)
         enemyActivity.Restart();
+        missedAutoEngage.Clear();
 
         if (!config.EnableNpcAutoEngage || combatEngine.IsEnemyInitiationSuppressed)
         {
@@ -134,6 +139,7 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
     {
         StopAllMoveAnims();
         tacticsStates.Clear();
+        missedAutoEngage.Clear();
 
         // OnSimulationReset fires from both StopSimulation and ResetState.
         // StopSimulation flips IsActive false before invoking — skip auto-engage
@@ -170,8 +176,30 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
             {
                 pendingAutoEngageDelay = -1f;
                 foreach (var npc in npcs)
-                    if (!npc.IsSentry)
+                {
+                    if (npc.IsSentry)
+                        continue;
+                    var layer = LayerOf(npc);
+                    if (EnemyLayers.CanBeWoken(layer))
                         EngageNpc(npc);
+                    // Held by someone else at the moment of the auto-engage: it joins once it is let go.
+                    else if (layer == EnemyLayer.Controlled)
+                        missedAutoEngage.Add(npc.SimulatedEntityId);
+                }
+            }
+        }
+        if (missedAutoEngage.Count > 0)
+        {
+            foreach (var npc in npcs)
+            {
+                if (!missedAutoEngage.Contains(npc.SimulatedEntityId))
+                    continue;
+                var layer = LayerOf(npc);
+                if (layer == EnemyLayer.Controlled)
+                    continue;
+                missedAutoEngage.Remove(npc.SimulatedEntityId);
+                if (EnemyLayers.CanBeWoken(layer))
+                    EngageNpc(npc);
             }
         }
 
@@ -185,7 +213,7 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
         if (partyMode && !config.TacticsRespectEngage)
         {
             foreach (var npc in npcs)
-                if (!npc.IsSentry)
+                if (!npc.IsSentry && EnemyLayers.CanBeWoken(LayerOf(npc)))
                     EngageNpc(npc);
         }
 
@@ -239,8 +267,8 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
             TickNpc(npc, deltaTime, targetPos, targetEntityId);
         }
 
-        TickCallForHelp(npcs);
-        TickSentries(npcs);
+        TickCallForHelp(npcs, targetByNpcId);
+        TickSentries(npcs, targetByNpcId);
         UpdateMeleeAdmission(npcs, targetByNpcId);
 
         // Movement: every enemy is moved by the crowd on the plugin's navigation mesh
@@ -255,8 +283,13 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
         foreach (var npc in npcs)
         {
             npc.CrowdDriven = false;
-            if (!npc.IsSpawned || npc.BattleChara == null || isExternallyControlled(npc.Address))
+            if (!npc.IsSpawned || npc.BattleChara == null)
                 continue;
+            if (isExternallyControlled(npc.Address))
+            {
+                NoteEnemyActivity(EnemyControlled);
+                continue;
+            }
             // Freshly spawned clones are pinned to their spawn placement by NpcSpawner for a moment.
             if (npc.SpawnPlacementFrames > 0 || npc.AiState == CombatantAiState.Dead)
                 continue;
@@ -301,7 +334,7 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
                 continue;
 
             npc.IsAttackingPlayer = false;
-            ClearNpcActionState(npc);
+            ClearActionState(npc);
             npc.EngageDelayTimer = 0f;
 
             if (!npc.State.IsAlive)
@@ -328,25 +361,38 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
     private static bool IsUnawareSentry(SimulatedNpc npc)
         => npc.IsSentry && npc.AiState == CombatantAiState.Idle;
 
-    // A sentry notices the party within sight, or a neighbour that is already fighting.
+    /// <summary>The layer that drives this enemy this frame (<see cref="EnemyLayer"/>).</summary>
+    private EnemyLayer LayerOf(SimulatedNpc npc)
+        => EnemyLayers.Of(isExternallyControlled(npc.Address), npc.State.IsAlive, npc.SeizeGoal != null,
+            npc.AiState, npc.IsSentry, npc.Patrols);
+
+    /// <summary>Whether this enemy wakes the unaware sentries around it (<see cref="EnemyLayers.RaisesAlarm"/>).</summary>
+    private bool RaisesAlarm(SimulatedNpc npc,
+        Dictionary<uint, (SimulatedEntityState State, Vector3 Position)> targetByNpcId)
+        => npc.IsSpawned &&
+           EnemyLayers.RaisesAlarm(LayerOf(npc),
+               targetByNpcId.TryGetValue(npc.SimulatedEntityId, out var target) && target.State.IsAlive);
+
+    // A sentry notices the party within sight, or a neighbour that is fighting someone alive.
     private const float SentrySightRange = 14f;
     private const float SentryAlertRadius = 10f;
     private const float SentrySightHeight = 8f;
     private readonly List<Vector3> partyPositions = new();
 
-    private void TickSentries(IReadOnlyList<SimulatedNpc> npcs)
+    private void TickSentries(IReadOnlyList<SimulatedNpc> npcs,
+        Dictionary<uint, (SimulatedEntityState State, Vector3 Position)> targetByNpcId)
     {
         var gathered = false;
         foreach (var npc in npcs)
         {
-            if (!IsUnawareSentry(npc) || !npc.IsSpawned || !npc.State.IsAlive || isExternallyControlled(npc.Address))
+            if (!npc.IsSpawned || !EnemyLayers.IsUnaware(LayerOf(npc)))
                 continue;
 
             if (!gathered)
             {
                 partyPositions.Clear();
-                if (CollectPartyPositions != null)
-                    CollectPartyPositions(partyPositions);
+                if (collectPartyPositions != null)
+                    collectPartyPositions(partyPositions);
                 else if (world.LocalPlayer is { } player && combatEngine.State.PlayerState.IsAlive)
                     partyPositions.Add(player.Position);
                 gathered = true;
@@ -368,7 +414,7 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
             {
                 foreach (var other in npcs)
                 {
-                    if (other == npc || !other.IsSpawned || !other.State.IsAlive || !other.IsEngaged)
+                    if (other == npc || !RaisesAlarm(other, targetByNpcId))
                         continue;
                     if (FlatDistance(GetNpcPosition(other), pos) <= SentryAlertRadius)
                     {
@@ -387,31 +433,135 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
         }
     }
 
-    // A patrol: walk to a point near the post, stand a while, walk to another.
+    // A patrol: walk to a point near the post, stand a while, walk to another. Every point is on the
+    // ground the party can reach (the crowd's reachable piece of mesh); a point behind a wall or off a
+    // ledge is not taken (another is drawn). While the crowd cannot tell what is reachable (the player was
+    // not on the mesh when it was built), any walkable floor near the point is taken. A sentry that does
+    // not patrol walks back to its post when it stands further than PostReturnDistance from it (after a
+    // fight). A point counts as reached within PatrolReach plus the walker's own radius (and, for a post
+    // others may stand around, PostCrowdSlack more); a walk that does not get there in PatrolLegSeconds stops.
     private const float PatrolWalkSpeed = 2.0f;
     private const float PatrolNearest = 4f;
     private const float PatrolFurthest = 9f;
     private const float PatrolReach = 0.6f;
     private const float PatrolLegSeconds = 25f;
+    private const int PatrolPointTries = 6;
+    private const float PatrolPointSnap = 2f;
+    private const float PostReturnDistance = 3f;
+    private const float PostCrowdSlack = 0.5f;
+    private const float PostRestSeconds = 5f;
+    // A post itself is moved onto reachable ground once, searched this far out from where it was put; posts
+    // of different sentries are kept at least PostSpacing apart (else they crowd one point for good).
+    private const float PostSearchRadius = 96f;
+    private const float PostRetrySeconds = 1f;
+    private const float PostSpacing = 1.5f;
 
-    /// <summary>Where a patrolling sentry is walking now, or null while it stands between legs.</summary>
-    private Vector3? PatrolGoal(SimulatedNpc npc, Vector3 npcPos, float deltaTime)
+    /// <summary>
+    /// Where an unaware sentry is walking now, or null while it stands. Patrolling: legs between reachable
+    /// points about its post. Holding its post: back to the post when it is away from it.
+    /// </summary>
+    private Vector3? SentryGoal(SimulatedNpc npc, ICrowdAgents crowd, Vector3 npcPos, float deltaTime)
     {
+        EnsureReachablePost(npc, crowd, deltaTime);
+        var radius = world.HitboxRadiusOf(npc);
         npc.PatrolTimer -= deltaTime;
-        if (npc.HasPatrolGoal && (FlatDistance(npcPos, npc.PatrolGoal) <= PatrolReach || npc.PatrolTimer <= 0f))
+
+        if (!npc.Patrols)
+        {
+            var away = FlatDistance(npcPos, npc.SpawnPosition);
+            if (npc.HasPatrolGoal && (away <= PatrolReach + radius + PostCrowdSlack || npc.PatrolTimer <= 0f))
+            {
+                npc.HasPatrolGoal = false;
+                npc.PatrolTimer = PostRestSeconds;
+            }
+            else if (!npc.HasPatrolGoal && away > PostReturnDistance && npc.PatrolTimer <= 0f)
+            {
+                npc.HasPatrolGoal = true;
+                npc.PatrolTimer = PatrolLegSeconds;
+            }
+            npc.PatrolGoal = npc.SpawnPosition;
+            return npc.HasPatrolGoal ? npc.PatrolGoal : null;
+        }
+
+        if (npc.HasPatrolGoal && (FlatDistance(npcPos, npc.PatrolGoal) <= PatrolReach + radius || npc.PatrolTimer <= 0f))
         {
             npc.HasPatrolGoal = false;
             npc.PatrolTimer = 2f + 4f * RandomSource.NextSingle();
         }
         if (!npc.HasPatrolGoal && npc.PatrolTimer <= 0f)
         {
-            var angle = RandomSource.NextSingle() * MathF.Tau;
-            var reach = PatrolNearest + (PatrolFurthest - PatrolNearest) * RandomSource.NextSingle();
-            npc.PatrolGoal = npc.SpawnPosition + new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle)) * reach;
-            npc.HasPatrolGoal = true;
-            npc.PatrolTimer = PatrolLegSeconds;
+            var judged = crowd.CanJudgeReach;
+            for (var attempt = 0; attempt < PatrolPointTries && !npc.HasPatrolGoal; attempt++)
+            {
+                var angle = RandomSource.NextSingle() * MathF.Tau;
+                var reach = PatrolNearest + (PatrolFurthest - PatrolNearest) * RandomSource.NextSingle();
+                var wanted = npc.SpawnPosition + new Vector3(MathF.Sin(angle), 0, MathF.Cos(angle)) * reach;
+                Vector3 point;
+                if (judged ? !crowd.TryReachableSpot(wanted, PatrolPointSnap, out point) : !crowd.TrySnapToFloor(wanted, out point))
+                    continue;
+                npc.PatrolGoal = point;
+                npc.HasPatrolGoal = true;
+            }
+            // Nowhere to go about this post this time: stand a while and draw again.
+            npc.PatrolTimer = npc.HasPatrolGoal ? PatrolLegSeconds : 2f + 4f * RandomSource.NextSingle();
         }
         return npc.HasPatrolGoal ? npc.PatrolGoal : null;
+    }
+
+    /// <summary>
+    /// Once the crowd can tell what is reachable, a sentry's post (<see cref="Combatant.SpawnPosition"/>, where
+    /// it patrols about and returns to) is put on the ground the party can reach: the nearest such spot to where
+    /// it was put, stepped aside from posts other sentries already hold. A post behind a wall, under a cliff or
+    /// on a ledge would leave it stuck there for the whole fight.
+    /// </summary>
+    private void EnsureReachablePost(SimulatedNpc npc, ICrowdAgents crowd, float deltaTime)
+    {
+        if (npc.PostOnReachableGround)
+            return;
+        npc.PostCheckTimer -= deltaTime;
+        if (npc.PostCheckTimer > 0f)
+            return;
+        // Not found (no mesh under it yet, out of the mesh's area, or the crowd cannot tell): asked again in a while.
+        if (!crowd.CanJudgeReach || !crowd.TryReachableSpot(npc.SpawnPosition, PostSearchRadius, out var post))
+        {
+            npc.PostCheckTimer = PostRetrySeconds;
+            return;
+        }
+        post = SpacedPost(npc, crowd, post);
+        npc.PostOnReachableGround = true;
+        var moved = Vector3.Distance(post, npc.SpawnPosition);
+        if (moved > 1f)
+            log.Info($"Patrol: {npc.Name}'s post moved {moved:F1} m onto ground the party can reach.");
+        npc.SpawnPosition = post;
+        npc.HasPatrolGoal = false;
+        npc.PatrolTimer = 0f;
+    }
+
+    /// <summary>
+    /// The post itself, or, when another sentry's post is within <see cref="PostSpacing"/> of it (several posts
+    /// behind one wall all come out at the same spot), the nearest reachable spot on two rings around it that is
+    /// clear of every other post; the post itself when there is none.
+    /// </summary>
+    private Vector3 SpacedPost(SimulatedNpc npc, ICrowdAgents crowd, Vector3 post)
+    {
+        bool Clear(Vector3 p)
+        {
+            foreach (var other in tickNpcs)
+                if (other != npc && other.IsSentry && other.PostOnReachableGround && FlatDistance(other.SpawnPosition, p) < PostSpacing)
+                    return false;
+            return true;
+        }
+        if (Clear(post))
+            return post;
+        for (var ring = 1; ring <= 2; ring++)
+            for (var k = 0; k < 8 * ring; k++)
+            {
+                var angle = k * MathF.Tau / (8 * ring);
+                var candidate = post + new Vector3(MathF.Sin(angle), 0f, MathF.Cos(angle)) * (PostSpacing * ring);
+                if (crowd.TryReachableSpot(candidate, PostSpacing * 0.5f, out var spot) && Clear(spot))
+                    return spot;
+            }
+        return post;
     }
 
     // --- Movement on the navigation mesh (phase B of docs/AI_MOVEMENT_REWRITE.md) --------------------
@@ -453,22 +603,22 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
         {
             // Going for the lord's body: while a retainer holds it, a guard within reach is fought where
             // it stands; with nobody holding it, straight on to the body whoever is in reach.
-            npc.InReach = npc.SeizeHeld && target is { IsAlive: true } guard && !npc.State.IsCasting &&
+            npc.InReach = npc.SeizeHeld && target is { IsAlive: true } guard &&
                           CrowdGap(npc, guard, npcPos, combatEngine.GetSimulatedEntityPosition(guard)) <= ReachNow(npc);
-            if (!npc.InReach && !npc.State.IsCasting)
+            if (!npc.InReach)
                 goal = seize;
         }
         else if (IsUnawareSentry(npc))
         {
             npc.InReach = false;
-            if (npc.Patrols && PatrolGoal(npc, npcPos, deltaTime) is { } patrol)
+            if (SentryGoal(npc, crowd, npcPos, deltaTime) is { } patrol)
             {
                 goal = patrol;
                 speed = PatrolWalkSpeed;
                 npc.WalkPace = true;
             }
         }
-        else if (fighting && target is { IsAlive: true } && !npc.State.IsCasting)
+        else if (fighting && target is { IsAlive: true })
         {
             var targetPos = combatEngine.GetSimulatedEntityPosition(target);
             var reach = ReachNow(npc);
@@ -492,8 +642,9 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
         else
             npc.InReach = false;
 
-        if (!crowd.Drive(npc.Address, npcPos, world.HitboxRadiusOf(npc), speed, goal))
+        if (!crowd.Drive(npc.Address, npcPos, world.HitboxRadiusOf(npc), speed, goal, newToBattle: !npc.JoinedCrowd))
             return false;
+        npc.JoinedCrowd = true;
         NoteEnemyActivity(EnemyActivityOf(npc, fighting && target is { IsAlive: true }));
         npc.CrowdDriven = true;
         return true;
@@ -569,17 +720,15 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
         if (!BeginTurn(npc, deltaTime))
             return;
 
-        DiscardInvalidNpcActionState(npc);
-
         var npcPos = GetNpcPosition(npc);
         float distToPlayer = Vector3.Distance(npcPos, playerPos);
 
         switch (npc.AiState)
         {
             case CombatantAiState.Idle:
-                // (A sentry walking its patrol, or an enemy going for the lord's body, keeps its
-                // stride: the approach pass owns its look.)
-                if (npc.BattleChara != null && !(npc.IsSentry && npc.Patrols && npc.HasPatrolGoal) && npc.SeizeGoal == null)
+                // (A sentry walking its patrol or back to its post, or an enemy going for the lord's
+                // body, keeps its stride: the approach pass owns its look.)
+                if (npc.BattleChara != null && !(npc.IsSentry && npc.HasPatrolGoal) && npc.SeizeGoal == null)
                     world.ApplyCombatIdle(npc);
                 break;
 
@@ -622,7 +771,7 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
     /// </summary>
     protected override void OnDeadTurn(SimulatedNpc npc)
     {
-        ClearNpcActionState(npc);
+        ClearActionState(npc);
         if (npc.AiState != CombatantAiState.Dead)
         {
             npc.AiState = CombatantAiState.Dead;
@@ -640,7 +789,7 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
         var simulatedTarget = combatEngine.GetNpcTarget(npc);
         if (simulatedTarget == null || !simulatedTarget.IsAlive)
         {
-            ClearNpcActionState(npc);
+            ClearActionState(npc);
             npc.AiState = CombatantAiState.Idle;
             return;
         }
@@ -651,59 +800,14 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
 
         var targetPos = combatEngine.GetSimulatedEntityPosition(simulatedTarget);
         var distToTarget = CrowdGap(npc, simulatedTarget, npcPos, targetPos);
-        var targetEntityId = simulatedTarget.EntityId;
-
-        if (npc.State.IsCasting && npc.State.CastTargetId != targetEntityId)
-        {
-            ClearNpcActionState(npc);
-            if (npc.BattleChara != null)
-                world.ApplyCombatIdle(npc);
-        }
 
         // The crowd pass faces the enemies it moves; one standing off the mesh faces its target here.
         if (!npc.CrowdDriven)
             ForceRotateToward(npc, targetPos, deltaTime);
 
-        // A telegraphed cast runs to completion wherever its target goes: the area is fixed, so
-        // walking out of it is the dodge. Letting the range gate below pause it would let the
-        // player freeze a cast just by stepping back.
-        if (npc.CastArea != null && TickSnapshotCast(npc, deltaTime))
-            return;
-
         // Out of reach: the crowd is walking it in.
         if (distToTarget > ReachNow(npc))
             return;
-
-        // Handle casting
-        if (npc.State.IsCasting)
-        {
-            var castTarget = combatEngine.State.GetEntity(npc.State.CastTargetId);
-            if (castTarget == null || !castTarget.IsAlive)
-            {
-                ClearNpcActionState(npc);
-                if (npc.BattleChara != null)
-                    world.ApplyCombatIdle(npc);
-                return;
-            }
-
-            if (npc.BattleChara != null)
-                world.ApplyActionLocked(npc);
-            npc.State.CastTimeElapsed += deltaTime;
-            if (npc.State.CastTimeElapsed >= npc.State.CastTimeTotal)
-            {
-                npc.State.IsCasting = false;
-                if (npc.CurrentCastSkill != null)
-                {
-                    var ok = attackSink.ExecuteEnemyAttack(npc, new CombatSimulator.ActionCombat.NpcAttackRequest(
-                        npc.CurrentCastSkill.ActionId, npc.State.CastTargetId, npc.CurrentCastSkill.Potency,
-                        npc.CurrentCastSkill.AttackStyle, npc.CurrentCastSkill.Radius, npc.CurrentCastSkill.CastTime));
-                    if (ok)
-                        npc.CurrentCastSkill.CooldownRemaining = npc.CurrentCastSkill.Cooldown / ActionPace();
-                    npc.CurrentCastSkill = null;
-                }
-            }
-            return;
-        }
 
         // Lock, telegraph still running, skills (a random ready one after a token), auto-attack:
         // the step both sides share (Combat/CombatStep.cs).
@@ -713,9 +817,8 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
     private readonly EnemyStepSink stepSink;
 
     /// <summary>
-    /// The enemies' half of the shared step: an attack goes to the attack router (an instant one, or
-    /// a telegraph); with the engine's cast bar (Fighting Mode only, ActionMode false) a skill with a
-    /// cast time starts a cast instead, paid for at once, its area snapshotted.
+    /// The enemies' half of the shared step: every attack goes to the attack router, which telegraphs it (a skill's
+    /// cast time becomes the telegraph's lead-in).
     /// </summary>
     private sealed class EnemyStepSink(NpcAiController owner) : ICombatStepSink<SimulatedNpc, SimulatedEntityState>
     {
@@ -733,31 +836,9 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
 
         public AttackCommit CommitSkill(SimulatedNpc npc, SimulatedEntityState simulatedTarget, NpcSkill skill, int mpCost)
         {
-            var targetEntityId = simulatedTarget.EntityId;
-            var castTime = owner.EffectiveCastTime(skill);
-
-            // Action Mode skips the engine cast bar — the telegraph executor owns the
-            // windup uniformly (cast time feeds the telegraph duration).
-            if (!owner.config.ActionMode && castTime > 0)
-            {
-                npc.State.IsCasting = true;
-                npc.State.CastActionId = skill.ActionId;
-                npc.State.CastTimeTotal = castTime;
-                npc.State.CastTimeElapsed = 0;
-                npc.State.CastTargetId = targetEntityId;
-                npc.State.CastInterruptible = skill.Interruptible;
-                npc.CurrentCastSkill = skill;
-                npc.State.CurrentMp = Math.Max(0, npc.State.CurrentMp - mpCost);
-                owner.BeginSnapshotCast(npc, skill, simulatedTarget, castTime);
-
-                owner.combatEngine.AddLogEntry(
-                    $"{npc.Name} begins casting {skill.Name}...",
-                    CombatLogType.Info);
-                return AttackCommit.CastStarted;
-            }
-
             var ok = owner.attackSink.ExecuteEnemyAttack(npc, new CombatSimulator.ActionCombat.NpcAttackRequest(
-                skill.ActionId, targetEntityId, skill.Potency, skill.AttackStyle, skill.Radius, castTime));
+                skill.ActionId, simulatedTarget.EntityId, skill.Potency, skill.AttackStyle, skill.Radius,
+                owner.EffectiveCastTime(skill)));
             return ok ? AttackCommit.Landed : AttackCommit.Failed;
         }
 
@@ -788,101 +869,6 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
         return hasArea
             ? MathF.Min(skill.NativeCastTime, EnemyMaxCastSeconds)
             : skill.CastTime;
-    }
-
-    /// <summary>
-    /// Real-shape option: freeze the cast's area now, the way the game places an omen when the
-    /// cast bar starts, and draw it for the length of the cast.
-    /// </summary>
-    private void BeginSnapshotCast(SimulatedNpc npc, NpcSkill skill, SimulatedEntityState target, float castTime)
-    {
-        npc.CastArea = null;
-        if (!config.EnemyTelegraphRealShapes)
-            return;
-
-        var req = new CombatSimulator.ActionCombat.NpcAttackRequest(
-            skill.ActionId, target.EntityId, skill.Potency, skill.AttackStyle, skill.Radius, castTime);
-        var shape = attackSink.SnapshotShape(npc, req, target);
-        if (!shape.IsArea)
-            return;
-
-        npc.CastArea = shape;
-        var actionId = skill.ActionId;
-        AreaMarkers?.Add(npc.SimulatedEntityId, actionId, shape, castTime,
-            () => npc.State.IsCasting && npc.State.CastActionId == actionId && npc.CastArea != null);
-    }
-
-    /// <summary>
-    /// Advance a snapshotted cast. Returns true while it owns this frame. A cast the engine
-    /// stopped (interrupt/stun) spends the skill, so it is not immediately recast.
-    /// </summary>
-    private bool TickSnapshotCast(SimulatedNpc npc, float deltaTime)
-    {
-        var skill = npc.CurrentCastSkill;
-        if (skill == null)
-        {
-            npc.CastArea = null;
-            return false;
-        }
-
-        if (!npc.State.IsCasting)
-        {
-            skill.CooldownRemaining = skill.Cooldown / ActionPace();
-            npc.CurrentCastSkill = null;
-            npc.CastArea = null;
-            combatEngine.AddLogEntry($"{npc.Name}'s {skill.Name} is interrupted.", CombatLogType.Info);
-            return false;
-        }
-
-        if (npc.BattleChara != null)
-            world.ApplyActionLocked(npc);
-        npc.State.CastTimeElapsed += deltaTime;
-        if (npc.State.CastTimeElapsed < npc.State.CastTimeTotal)
-            return true;
-
-        var area = npc.CastArea;
-        npc.State.IsCasting = false;
-        npc.CastArea = null;
-        npc.CurrentCastSkill = null;
-        // CastTime 0: the wait already happened here; a telegraphed executor (Fighting Mode)
-        // must not add the cast again as lead-in.
-        var ok = attackSink.ExecuteEnemyAttack(npc, new CombatSimulator.ActionCombat.NpcAttackRequest(
-            skill.ActionId, npc.State.CastTargetId, skill.Potency, skill.AttackStyle, skill.Radius, 0f, Area: area));
-        if (ok)
-            skill.CooldownRemaining = skill.Cooldown / ActionPace();
-        npc.State.AnimationLock = MathF.Max(npc.State.AnimationLock, 0.6f);
-        return true;
-    }
-
-    private static void ClearNpcActionState(SimulatedNpc npc)
-    {
-        ClearActionState(npc);
-        npc.CastArea = null; // its marker sees the cast end and leaves on the next tick
-    }
-
-    private void DiscardInvalidNpcActionState(SimulatedNpc npc)
-    {
-        if (!npc.State.IsCasting && npc.CurrentCastSkill == null)
-            return;
-
-        var target = combatEngine.State.GetEntity(npc.State.CastTargetId);
-        var selectedTarget = combatEngine.GetNpcTarget(npc);
-        var stateAllowsCast = npc.AiState is CombatantAiState.Combat or CombatantAiState.Chasing;
-        var invalid = npc.CurrentCastSkill == null ||
-                      npc.State.CastTargetId == 0 ||
-                      target == null ||
-                      !target.IsAlive ||
-                      selectedTarget == null ||
-                      !selectedTarget.IsAlive ||
-                      selectedTarget.EntityId != npc.State.CastTargetId ||
-                      !stateAllowsCast;
-
-        if (!invalid)
-            return;
-
-        ClearNpcActionState(npc);
-        if (npc.BattleChara != null && npc.AiState != CombatantAiState.Dead)
-            world.ApplyCombatIdle(npc);
     }
 
     private void RotateTowardPlayer(SimulatedNpc npc, Vector3 playerPos, float deltaTime)

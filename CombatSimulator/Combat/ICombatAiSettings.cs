@@ -9,9 +9,8 @@ namespace CombatSimulator.Combat;
 /// <c>Configuration</c> with its own properties, so the stored JSON does not change. Offline
 /// tests give a small fake instead of a Configuration (which needs Dalamud).
 /// </summary>
-public interface ICombatAiSettings
+public interface ICombatAiSettings : ICombatRosterSettings
 {
-    bool EnableCombatCompanions { get; }
     int CombatCompanionMaxCount { get; }
     bool SensePartyMembers { get; }
     bool EnableMapPlayerEnemySensing { get; }
@@ -22,7 +21,6 @@ public interface ICombatAiSettings
     bool EnableNpcAutoEngage { get; }
     float NpcAutoEngageDelay { get; }
     bool EnableNpcTargetPlayer { get; }
-    bool ActionMode { get; }
     float ActionEnemyAttackSpeed { get; }
     float NpcSkillRateLimit { get; }
     bool EnemyTelegraphRealShapes { get; }
@@ -39,8 +37,11 @@ public interface ICombatAiSettings
     uint WarCaptiveEmoteId { get; }
 }
 
-/// <summary>What target selection reads from the settings: the weights themselves are code constants (<see cref="AggroModel"/>).</summary>
-public interface ITargetingSettings
+/// <summary>
+/// What the roster (<c>CombatRoster</c>) reads: whether the allies take part at all. Target selection itself
+/// reads no setting (its weights are code constants, <see cref="AggroModel"/>).
+/// </summary>
+public interface ICombatRosterSettings
 {
     bool EnableCombatCompanions { get; }
 }

@@ -70,9 +70,9 @@ sealed class RecordingHost : IHitSettlementHost
         return data;
     }
 
-    public bool EnableCriticalHits => Crit;
-    public bool EnableDirectHits => DirectHit;
-    public float DamageMultiplier => Multiplier;
+    // Crit, DirectHit and Multiplier are still drawn and written on each ally event (so the event stream and its
+    // lines stay as recorded), but since Refactoring II stage R2-P2 the settlement no longer reads them: an ally's
+    // attack without a potency goes by the action's bare potency, as an enemy's does (one set of numbers).
 
     // CombatEngine.GetHostileTargets.
     public List<SimulatedEntityState> GetHostileTargets(SimulatedEntityState source)
@@ -394,7 +394,7 @@ static unsafe class SettlementReplay
         => o.Append($"r {(r.Success ? "ok" : "fail")} {r.FailReason ?? "-"} dmg {r.Damage} crit {r.IsCritical} dh {r.IsDirectHit} killed {r.TargetKilled} action {r.ActionId} src {name(r.SourceId)} tgt {name((uint)r.TargetId)}\n");
 }
 
-/// <summary>The result banner's words and whether the killer is possessed, for every combination.</summary>
+/// <summary>The result banner's words for every combination (whether the killer is possessed was here until 2026-11-15).</summary>
 static class Outcomes
 {
     /// <summary>
@@ -422,9 +422,6 @@ static class Outcomes
         return $"{title} | {reason}";
     }
 
-    /// <summary>When the player dies, Enemy Control does not take over the killer (recorded from Plugin.cs before stage B6).</summary>
-    public static bool SuppressesKillerPossession(BattleRuleSet rules) => rules.SuppressesKillerPossession();
-
     /// <summary>A corpse seizure that has carried the body off (or not).</summary>
     private static CorpseSeizure<SimulatedNpc> Seizure(BattleRules rules, bool seized)
     {
@@ -436,7 +433,7 @@ static class Outcomes
     public static string Table()
     {
         var o = new StringBuilder();
-        o.Append("# outcomes: the result banner's words for every combination; then whether the killer is possessed\n");
+        o.Append("# outcomes: the result banner's words for every combination\n");
         foreach (var fallen in new[] { WarFallenRule.StayDown, WarFallenRule.SpringAndAutumn, WarFallenRule.WarringStates })
         foreach (var hostages in new[] { false, true })
         foreach (var retreat in new[] { false, true })
@@ -459,18 +456,8 @@ static class Outcomes
             var set = RuleSetFor(settings, state, companions, Seizure(rules, seized));
             o.Append($"{settings} active {active} lord {(lordAlive ? "alive" : "dead")} executed {lordExecuted}/{allyExecuted} seized {seized} {(won ? "won" : "lost")}: {Describe(won, set)}\n");
         }
-        foreach (var fallen in new[] { WarFallenRule.StayDown, WarFallenRule.SpringAndAutumn, WarFallenRule.WarringStates })
-        foreach (var hostages in new[] { false, true })
-        foreach (var retreat in new[] { false, true })
-        foreach (var active in new[] { false, true })
-        foreach (var lordAlive in new[] { false, true })
-        {
-            var settings = new MutableRules { FallenRule = fallen, Hostages = hostages, Retreat = retreat };
-            var state = new SimulationState { IsActive = active };
-            state.PlayerState = new SimulatedEntityState { EntityId = 1, IsPlayer = true, MaxHp = 100, CurrentHp = lordAlive ? 100 : 0 };
-            var set = RuleSetFor(settings, state, new List<CombatCompanion>(), seizure: null);
-            o.Append($"killer {settings} active {active} lord {(lordAlive ? "alive" : "dead")}: suppressed {SuppressesKillerPossession(set)}\n");
-        }
+        // (Whether the killer is taken over is no longer the rules' to say since 2026-11-15: Enemy Control takes over
+        // an enemy only once the battle is lost, under every rule, Battle/KillerPossession.cs, Tests/CorpseSeizure.)
         return o.ToString();
     }
 }
@@ -548,6 +535,7 @@ static unsafe class SeizureReplay
         public void Info(string text) => L($"info {text}");
         public void Warning(string text) => L($"warning {text}");
 
+        public bool TakesOverSeizer => true;
         public bool BodyCanBeHeld => BodyReady;
         public bool IsControlling => Controlling;
         public void TakeControl(SimulatedNpc npc) { L($"control {npc.Name}"); Controlling = true; }

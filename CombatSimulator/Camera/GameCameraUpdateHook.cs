@@ -31,6 +31,12 @@ public unsafe sealed class GameCameraUpdateHook : IDisposable
     public PreCameraUpdateDelegate? PreCameraUpdate { get; set; }
     public Func<Vector3>? HitShakeProvider { get; set; }
 
+    public unsafe delegate void PostCameraUpdateDelegate(CameraBase* camera);
+
+    /// <summary>Runs after the game's camera update has produced its final pose, before the hit shake (cutscene shots:
+    /// the probe, the stalled-tick stop and the check that the game kept the pose it was handed).</summary>
+    public PostCameraUpdateDelegate? PostCameraUpdate { get; set; }
+
     public GameCameraUpdateHook(IGameInteropProvider gameInterop, IPluginLog log)
     {
         this.gameInterop = gameInterop;
@@ -89,6 +95,18 @@ public unsafe sealed class GameCameraUpdateHook : IDisposable
         }
 
         updateHook!.Original(thisPtr);
+
+        if (isMainCamera && PostCameraUpdate != null)
+        {
+            try
+            {
+                PostCameraUpdate(thisPtr);
+            }
+            catch (Exception ex)
+            {
+                log.Warning(ex, "Post-camera update callback failed.");
+            }
+        }
 
         if (isMainCamera)
             ApplyHitShake(thisPtr);

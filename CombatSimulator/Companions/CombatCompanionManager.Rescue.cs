@@ -25,9 +25,6 @@ public unsafe partial class CombatCompanionManager
     public const float RaiseSeconds = SpringAutumnRescueRule.RaiseSeconds;
     public const float RaiserDamageScale = SpringAutumnRescueRule.RaiserDamageScale;
 
-    /// <summary>Where a fallen actor's body lies (its ragdoll's pelvis); null: where it fell.</summary>
-    public Func<nint, Vector3?>? BodyPositionOf { private get; set; }
-
     /// <summary>Whether this companion is on its way to, or at, a fallen friend.</summary>
     public bool IsRescuing(uint companionId) => ruleParts.Get<SpringAutumnRescueRule>().IsRescuing(companionId);
 
@@ -148,10 +145,10 @@ public unsafe partial class CombatCompanionManager
         // The fallen lying about (one who knelt here before and fell): not knelt on.
         fallenBodies.Clear();
         if (!combatEngine.State.PlayerState.IsAlive && world.LocalPlayer is { } player)
-            fallenBodies.Add(BodyPositionOf?.Invoke(player.Address) ?? player.Position);
+            fallenBodies.Add(corpses.BodyPositionOf(player.Address) ?? player.Position);
         foreach (var fallen in companions)
             if (fallen.IsSpawned && fallen.BattleChara != null && !fallen.State.IsAlive)
-                fallenBodies.Add(BodyPositionOf?.Invoke(fallen.Address) ?? world.PositionOf(fallen));
+                fallenBodies.Add(corpses.BodyPositionOf(fallen.Address) ?? world.PositionOf(fallen));
         if (!KneelSpot.TryChoose(body, world.PositionOf(companion), takenKneelSpots, fallenBodies, crowd.TryFloorWithin, out spot))
             return false;
         kneelSpots[companion.SimulatedEntityId] = spot;

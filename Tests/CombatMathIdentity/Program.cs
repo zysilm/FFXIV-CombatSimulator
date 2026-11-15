@@ -270,7 +270,6 @@ sealed class FakeSettings(OrigConfig c) : ICombatAiSettings
     public bool EnableNpcAutoEngage => false;
     public float NpcAutoEngageDelay => 2f;
     public bool EnableNpcTargetPlayer => true;
-    public bool ActionMode => c.ActionMode;
     public float ActionEnemyAttackSpeed => c.ActionEnemyAttackSpeed;
     public float NpcSkillRateLimit => 5f;
     public bool EnemyTelegraphRealShapes => true;

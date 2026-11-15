@@ -26,7 +26,7 @@ public class HpBarOverlay : IDisposable
     private readonly BoneTransformService boneService;
     private readonly IGameGui gameGui;
     private readonly IClientState clientState;
-    private readonly Configuration config;
+    private readonly IHpBarSettings config;
 
     /// <summary>A cast that is not an engine cast (Action-Mode telegraph lead-in): name + 0..1 progress.</summary>
     public Func<SimulatedNpc, (string Name, float Progress)?>? ExternalCast { get; set; }
@@ -230,12 +230,7 @@ public class HpBarOverlay : IDisposable
             : hp > 0.25f ? new Vector4(0.8f, 0.8f, 0.1f, 1)
             : new Vector4(0.8f, 0.1f, 0.1f, 1);
 
-    private (string Name, float Progress)? CastOf(SimulatedNpc npc)
-    {
-        if (npc.State.IsCasting && npc.CurrentCastSkill != null)
-            return (npc.CurrentCastSkill.Name, npc.State.CastTimeTotal > 0 ? npc.State.CastTimeElapsed / npc.State.CastTimeTotal : 0f);
-        return ExternalCast?.Invoke(npc);
-    }
+    private (string Name, float Progress)? CastOf(SimulatedNpc npc) => ExternalCast?.Invoke(npc);
 
     // Native addon names to hide when combat sim is active
     private static readonly string[] NativeAddonNames =
@@ -247,8 +242,8 @@ public class HpBarOverlay : IDisposable
         "_TargetInfoCastBar",      // Target cast bar
     };
 
-    // Saved positions for hidden addons (to restore later)
-    private readonly Dictionary<string, (short X, short Y)> savedAddonPositions = new();
+    // The addons whose root node we hid (only those are shown again).
+    private readonly HashSet<string> hiddenAddons = new();
     private bool nativeAddonsHidden;
 
     // Reset confirmation popup state
@@ -261,7 +256,7 @@ public class HpBarOverlay : IDisposable
         BoneTransformService boneService,
         IGameGui gameGui,
         IClientState clientState,
-        Configuration config)
+        IHpBarSettings config)
     {
         this.npcSelector = npcSelector;
         this.companionManager = companionManager;
@@ -546,17 +541,10 @@ public class HpBarOverlay : IDisposable
                 hpText);
         }
 
-        // Cast bar: the engine cast, or (Action Mode) a telegraph still in its cast lead-in.
+        // Cast bar: a telegraph still in its cast lead-in.
         string? castName = null;
         float castPercent = 0f;
-        if (npc.State.IsCasting && npc.CurrentCastSkill != null)
-        {
-            castName = npc.CurrentCastSkill.Name;
-            castPercent = npc.State.CastTimeTotal > 0
-                ? npc.State.CastTimeElapsed / npc.State.CastTimeTotal
-                : 0;
-        }
-        else if (ExternalCast?.Invoke(npc) is { } external)
+        if (ExternalCast?.Invoke(npc) is { } external)
         {
             castName = external.Name;
             castPercent = external.Progress;
@@ -910,8 +898,10 @@ public class HpBarOverlay : IDisposable
     }
 
     /// <summary>
-    /// Hide native addons by moving them off-screen (robust against game re-enabling IsVisible).
-    /// Restore by moving them back to saved positions.
+    /// Hide native addons by hiding their root node (re-asserted every frame while the simulation draws, so the
+    /// game showing the addon again does not bring it back). Only the runtime node flag changes: the addon keeps
+    /// its position, so nothing the game saves into the HUD layout differs even if the game crashes while they
+    /// are hidden (moving them off-screen did risk that). Restore shows the root nodes this hid.
     /// </summary>
     private unsafe void SetNativeAddonsHidden(bool hide)
     {
@@ -924,23 +914,22 @@ public class HpBarOverlay : IDisposable
             foreach (var name in NativeAddonNames)
             {
                 var addon = stage->RaptureAtkUnitManager->GetAddonByName(name);
-                if (addon == null)
+                if (addon == null || addon->RootNode == null)
                     continue;
 
                 if (hide)
                 {
-                    // Only save position if we haven't already hidden it
-                    if (!savedAddonPositions.ContainsKey(name))
-                        savedAddonPositions[name] = (addon->X, addon->Y);
-
-                    addon->SetPosition(-9999, -9999);
-                }
-                else
-                {
-                    if (savedAddonPositions.TryGetValue(name, out var pos))
+                    // Only an addon this actually hid is recorded (and shown again on restore): one the
+                    // game had hidden itself (no target, no cast) stays as the game left it.
+                    if (addon->RootNode->IsVisible())
                     {
-                        addon->SetPosition(pos.X, pos.Y);
+                        addon->RootNode->ToggleVisibility(false);
+                        hiddenAddons.Add(name);
                     }
+                }
+                else if (hiddenAddons.Contains(name))
+                {
+                    addon->RootNode->ToggleVisibility(true);
                 }
             }
 
@@ -949,7 +938,7 @@ public class HpBarOverlay : IDisposable
             else
             {
                 nativeAddonsHidden = false;
-                savedAddonPositions.Clear();
+                hiddenAddons.Clear();
             }
         }
         catch

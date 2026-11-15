@@ -43,7 +43,7 @@ public sealed unsafe class DamageNumberOverlay
     private const float ChestDrop = 0.75f;
 
     private readonly IGameGui gameGui;
-    private readonly Configuration config;
+    private readonly IDamageNumberSettings config;
     private readonly Func<SimulatedEntityState, nint> resolveAddress;
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly List<Number> numbers = new();
@@ -62,7 +62,7 @@ public sealed unsafe class DamageNumberOverlay
         public float Lower;         // metres below the head it starts (the player's chest)
     }
 
-    public DamageNumberOverlay(IGameGui gameGui, Configuration config, Func<SimulatedEntityState, nint> resolveAddress)
+    public DamageNumberOverlay(IGameGui gameGui, IDamageNumberSettings config, Func<SimulatedEntityState, nint> resolveAddress)
     {
         this.gameGui = gameGui;
         this.config = config;

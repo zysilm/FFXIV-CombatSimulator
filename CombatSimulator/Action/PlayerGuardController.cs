@@ -18,7 +18,7 @@ public sealed class PlayerGuardController
 {
     private readonly AnimationController animationController;
     private readonly IPluginLog log;
-    private readonly Configuration config;
+    private readonly IPlayerGuardSettings config;
     private readonly Func<bool> playerCanGuard;
 
     private float activeTimer;
@@ -36,7 +36,7 @@ public sealed class PlayerGuardController
 
     public PlayerGuardController(
         AnimationController animationController,
-        Configuration config,
+        IPlayerGuardSettings config,
         Func<bool> playerCanGuard,
         IPluginLog log)
     {
