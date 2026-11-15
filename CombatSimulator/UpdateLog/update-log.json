@@ -1,5 +1,19 @@
 [
   {
+    "version": "3.0.0.1",
+    "date": "2026-11-15",
+    "title": "Combat Simulator 3.0.0.1",
+    "changes": [
+      "Cutscene shots: pick a victory and a death shot from the game's cutscenes",
+      "Enemy Control: anchored grab, pick any point on either body",
+      "Enemy Control takes over only after the battle is lost",
+      "Patrol fixed; enemies spawn only where you can reach them",
+      "Safer: more server barriers and clearer conflict diagnostics",
+      "Removed: Fighting Mode, swarm following, arm pose override",
+      "Ragdoll library rebuilt inside, same behaviour"
+    ]
+  },
+  {
     "version": "3.0.0.0",
     "date": "2026-11-15",
     "title": "Combat Simulator 3.0.0.0",
