@@ -62,17 +62,17 @@ dotnet run -c Release -- curate out.json   # 写到别处
 
 ### 6.1 代码落点
 
-- `CombatSimulator/Camera/Cutscene/`：解析器（`CutbFile`、`TmbTimeline`、`CameraShot`、`Eid`、`CutsceneSequence`）和播放用的纯计算（`CutsceneShotCatalog` 清单、`CutsceneShotLoader` 读游戏文件、`CutscenePlayback` 采样、`CutsceneAnchoring` 挂点、`CutsceneRoles` 角色、`CutsceneView` 视图矩阵）。**这个目录里的文件一律不碰游戏**（只吃字节数组和读文件的委托），`Tests/CutsceneCamera` 直接链接编译它们——只有一份解析器。
+- `CombatSimulator/Camera/Cutscene/`：解析器（`CutbFile`、`TmbTimeline`、`CameraShot`、`Eid`、`CutsceneSequence`）和播放用的纯计算（`CutsceneShotCatalog` 清单、`CutsceneShotLoader` 读游戏文件、`CutscenePlayback` 采样、`CutsceneAnchoring` 挂点、`CutsceneRoles` 角色、`CutsceneView` 镜头视角换算与交接检查）。**这个目录里的文件一律不碰游戏**（只吃字节数组和读文件的委托），`Tests/CutsceneCamera` 直接链接编译它们——只有一份解析器。
 - `Camera/CutsceneShotDirector.cs`：触发、角色解析、相机写入、日志；`Camera/CutsceneProbe.cs`：被动定标探针；`Camera/Configuration.CutsceneShots.cs`：两个设置；`Gui/MainWindow.CutsceneShots.cs`：界面。
 - 清单作为嵌入资源进 DLL；镜头曲线和种族 `.eid` 在运行时用 Dalamud 的 `IDataManager` 从用户本机游戏读（`.cutb` 按条目缓存，`.eid` 按种族缓存），不落盘。
 
 ### 6.2 播放
 
 - 一段 = 清单里的几个镜头首尾相接；按 30 帧/秒的时间轴帧换算，每帧用曲线连续采样（Hermite），到 span 边界立即切到下一个镜头（硬切，不混合）。
-- 相机：播放期间是 `CameraModeCoordinator` 里优先级最高的 `CutsceneShot`（60）；它向协调者要与目标视角匹配的游戏 FoV、冻结鼠标/手柄转视角；真正的位姿在游戏相机更新**之后**写（`GameCameraUpdateHook.PostCameraUpdate`，与受击震屏同一处，震屏仍叠在上面）：眼位、注视点、视图矩阵（场景相机和渲染相机）、投影矩阵（只改 M11/M22，保持宽高比和深度项）。视图矩阵的布局不靠猜：每帧用游戏自己刚算出的矩阵比对四种布局，取能复现它的那种（日志 `CutShot: view matrix layout …`）。
+- 相机：播放期间是 `CameraModeCoordinator` 里优先级最高的 `CutsceneShot`（60）；它向协调者要与目标视角匹配的游戏 FoV（游戏 FoV 字段与实际渲染视角的比例在开播时从投影矩阵量出）、冻结鼠标/手柄转视角。眼位和注视点在游戏相机更新**之中**交给游戏：`ActiveCameraController` 早已挂着的 `SetCameraLookAt` 钩子在原函数返回后，把镜头的注视点和眼位写进调用方的两个缓冲区——反汇编确认（7.x，`Camera::Update` 里 `call [vtbl+78h]` 之后），游戏紧接着把这两个缓冲区存为场景相机的 `Position`/`LookAtVector`（只做有限值检查），并由它们自己生成视图和投影矩阵。插件不写任何矩阵。**不做滚转**（c117）：游戏相机没有插件已知可用的滚转字段。受击震屏仍在更新之后叠加。日志：开播约 1 s 后一行 `CutShot: camera check over 60 frames — scene eye off by … m, look-at by … m, lens by …°`（眼位或注视点差超过 5 cm 时为警告），结束行带 `pose handed to the game in N camera update(s)`。
 - 进入时从当时的画面 0.3 s 平滑过渡；结束时先把相机还给原来的主人（协调者），再用 0.3 s 过渡到游戏此刻自己的相机。
 - Directed 相机的死亡构图：镜头播放期间暂停（`DynamicCameraController.HoldForCutscene`），交还时从镜头最后的画面重新开始它的平移。Enemy Control、Follow-bone 相机在镜头期间被压住，结束后照常。Fighting Mode 下不播；私有场景占用相机时不播。
-- 保护：游戏自己的过场（`OccupiedInCutSceneEvent` / `WatchingCutscene` / `WatchingCutscene78`）或 GPose 开始时立即交还相机（不过渡），这时也不开播；`Tick` 超过 0.5 s 没跑（且已过不止一次相机更新）时停止写相机（`tick stalled`）；视图或投影矩阵有非有限元素时跳过该帧，写入的 FOV 夹在 1°–170°；镜头的绑定父链在读取时检查（最多 16 层、不许成环），坏的条目跳过。
+- 保护：游戏自己的过场（`OccupiedInCutSceneEvent` / `WatchingCutscene` / `WatchingCutscene78`）或 GPose 开始时立即交还相机（不过渡），这时也不开播；`Tick` 超过 0.5 s 没跑（且已过不止一次相机更新）时停止写相机（`tick stalled`）；眼位/注视点非有限或相距不足 0.1 m 时该帧不交接，要的 FOV 夹在 1°–170°；镜头的绑定父链在读取时检查（最多 16 层、不许成环），坏的条目跳过。
 - 选定胜利/死亡镜头时（以及插件加载后的第一帧，针对已保存的选择）预读 `.cutb` 和参考种族 `.eid`，第一次触发不再卡一帧；都在主线程。
 
 ### 6.3 挂点（`CutsceneAnchoring`）
@@ -104,8 +104,8 @@ Camera 页签 → 折叠栏 **Cutscene Shots**：一个可搜索的下拉菜单�
 
 ### 6.7 假设与局限（待游戏内定标）
 
-- c116 按**垂直** FOV（度）、c117 按绕视线的滚转（度、正号）处理；各是 `CutsceneLens` 里的一个常量（`FovIsVertical`、`RollSign`），探针数据出来后可翻转。
-- 相机位姿在游戏更新后整体覆盖；若游戏的剔除用的是覆盖前的视锥，画面边缘或身后的物体可能缺失；穿墙/穿地不做碰撞检测，只有眼位不低于地面一条。
+- c116 按**垂直** FOV（度）处理，是 `CutsceneLens.FovIsVertical` 一个常量，探针数据出来后可翻转。c117 不播放（见 §6.2）。
+- 眼位交给游戏后，游戏自己的近景淡出、剔除都按镜头眼位算；播放期间强制开着 ShouldDrawGameObject 钩子（与 Active Camera 的“防淡出”同一个），镜头贴近时角色应不会被淡出（待游戏内验证）。穿墙/穿地不做碰撞检测，只有眼位不低于地面一条。镜头结束时协调者立即还原 FoV，未跟随 0.3 s 的位置过渡（Directed 死亡构图自己从镜头的 FoV 开始过渡，不受影响）。
 - 倒地时为站姿构图的镜头会被地面限制压低：离线检查中躺地尸体的采样有约 42%（适合尸体的条目也约 42%）需要抬到地面以上。
 - 布娃娃只有主要骨骼的刚体，布娃娃生效时骨骼挂点的小偏移（≤0.15 m）不再按骨骼旋转。
-- 离线检查：`Tests/CutsceneCamera -- verify`（解析器回归哈希、149 条全部可读、首/中/尾采样有限、站姿平移旋转不变性、躺姿重映射、五种角色情形、视图矩阵布局识别、FOV 夹取、坏绑定父链被拒）。
+- 离线检查：`Tests/CutsceneCamera -- verify`（解析器回归哈希、149 条全部可读、首/中/尾采样有限、站姿平移旋转不变性、躺姿重映射、五种角色情形、FoV 字段换算往返、FOV 夹取、交接位姿检查、坏绑定父链被拒）。

@@ -30,11 +30,13 @@ namespace CombatSimulator.Camera;
 /// attach slots resolved on our actors (<see cref="CutsceneAnchoring"/>, roles by <see cref="CutsceneRoles"/>).
 ///
 /// Camera: while a shot plays this is the highest-priority owner in the coordinator (<see cref="CameraOwner.CutsceneShot"/>;
-/// it asks for the matching game FOV and freezes the orbit input), and after the game's camera update it writes the whole
-/// pose — eye, look-at, view matrix, projection — the way the hit shake writes its offset. It blends in from the camera
-/// it found over <see cref="BlendSeconds"/>, and at the end releases the coordinator and blends back over the same time to
-/// whatever camera the game then produces (the Directed camera's death framing, which waits while the shot plays, Enemy
-/// Control's follow, ...). Not in Fighting Mode, not while a private scene runs.
+/// it asks for the matching game FOV and freezes the orbit input), and inside the game's camera update it hands the game
+/// the shot's eye and look-at point (<see cref="OverridePose"/>, from the SetCameraLookAt detour the plugin already
+/// hooks), so the game builds its own view and projection from them. No roll (the game camera has no roll field the
+/// plugin knows to work). It blends in from the camera it found over <see cref="BlendSeconds"/>, and at the end releases
+/// the coordinator and blends back over the same time to whatever camera the game then produces (the Directed camera's
+/// death framing, which waits while the shot plays, Enemy Control's follow, ...). Not in Fighting Mode, not while a
+/// private scene runs.
 ///
 /// Log: one <c>CutShot:</c> line when a shot starts (shot, roles, actors, duration) and one when it ends (time, reason,
 /// remaps and fallbacks used).
@@ -43,10 +45,8 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
 {
     public const float BlendSeconds = 0.3f;
     private const float EyeFloorMargin = 0.15f;
-    /// <summary>A view-matrix layout is trusted when it reproduces the game's own matrix within this error (sum over the
-    /// 16 elements). The right layout gives ~0 (a little more if the game adds a tilt to its look-at); a wrong one at
-    /// least ~4 (two axes flip sign) or the world translation in the wrong row.</summary>
-    private const float ConventionTolerance = 1.0f;
+    /// <summary>Overridden camera updates checked (once per shot) against the scene camera the game ended with.</summary>
+    private const int CheckFrames = 60;
     /// <summary>j_kao height of the reference race above its root (for non-human height scaling).</summary>
     private const float ReferenceHeadHeight = 1.55f;
     /// <summary>The camera writes stop when Tick has not run for this long (and over more than one camera update).</summary>
@@ -89,13 +89,12 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
     private long lastWrittenAt;
     private float fovRatio = 1f;
     private bool haveFovRatio;
-    private ViewConvention convention;
-    private bool haveConvention;
-    private bool loggedConvention;
-    private bool loggedNoConvention;
-    private bool loggedLooseConvention;
-    private bool rcFovIsVertical;
     private float aspect = 16f / 9f;
+    private bool wroteThisUpdate;
+    private bool loggedOverrideError;
+    private int checkCount;
+    private int overrideCount;
+    private float checkEye, checkLook, checkFov;
     private bool heldDynamic;
     private readonly HashSet<string> notes = new(StringComparer.Ordinal);
     private readonly Dictionary<nint, float> heightScales = new();
@@ -269,8 +268,11 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
         blendOutTime = 0f;
         endReason = null;
         haveCut = false;
-        haveSnapshot = false;
-        haveFovRatio = false;
+        CaptureStart(replacing);
+        checkCount = 0;
+        overrideCount = 0;
+        checkEye = checkLook = checkFov = 0f;
+        loggedOverrideError = false;
         notes.Clear();
         heightScales.Clear();
         phase = Phase.Playing;
@@ -351,7 +353,8 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
         ReleaseDynamic();
         phase = Phase.Idle;
         if (entry != null)
-            log.Info($"CutShot: end {entry.Id} ({trigger}) after {time:0.00} s ({endReason ?? reason})" +
+            log.Info($"CutShot: end {entry.Id} ({trigger}) after {time:0.00} s ({endReason ?? reason}); " +
+                     $"pose handed to the game in {overrideCount} camera update(s)" +
                      (notes.Count > 0 ? $"; remaps/fallbacks: {string.Join("; ", notes)}" : "; no remaps") + ".");
         shot = null;
         haveCut = false;
@@ -418,8 +421,7 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
                 {
                     var w = CutPose.Ease(time / BlendSeconds);
                     var target = haveSnapshot ? snapshot.VerticalFov + (cut.VerticalFov - snapshot.VerticalFov) * w : cut.VerticalFov;
-                    fov = 2f * MathF.Atan(MathF.Tan(CutsceneView.ClampFov(target) / 2f) / fovRatio);
-                    if (!float.IsFinite(fov.Value) || fov.Value <= 0.01f) fov = null;
+                    fov = CutsceneView.GameFovFor(target, fovRatio);
                 }
                 coordinator.Submit(CameraOwner.CutsceneShot, new CameraRequest { Fov = fov, ClearInputH = true, ClearInputV = true });
             }
@@ -475,16 +477,104 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
         haveCut = true;
     }
 
-    /// <summary>After the game's camera update (GameCameraUpdateHook.PostCameraUpdate): record for the probe, then
-    /// write the shot's pose over the game's.</summary>
+
+    /// <summary>
+    /// Inside the game's camera update, right after it chose its eye and look-at point (ActiveCameraController's
+    /// SetCameraLookAt detour, main camera only): replace them with the shot's. The game then stores them as the scene
+    /// camera's position and look-at point and builds its own view from them; the FoV goes through the coordinator.
+    /// Blends in from the camera found at the start, and out to whatever the game produces now.
+    /// </summary>
+    public bool OverridePose(ref Vector3 lookAt, ref Vector3 eye)
+    {
+        if (phase == Phase.Idle || !haveCut) return false;
+        try
+        {
+            CutPose pose;
+            if (phase == Phase.Playing)
+            {
+                pose = haveSnapshot ? CutPose.Lerp(snapshot, cut, CutPose.Ease(time / BlendSeconds)) : cut;
+            }
+            else
+            {
+                var native = new CutPose(eye, lookAt, cut.VerticalFov);
+                pose = CutPose.Lerp(cut, native, CutPose.Ease(blendOutTime / BlendSeconds));
+            }
+            if (!CutsceneView.CanHandOver(pose.Eye, pose.Target))
+            {
+                notes.Add("unusable pose (frame skipped)");
+                return false;
+            }
+            lookAt = pose.Target;
+            eye = pose.Eye;
+            lastWritten = pose;
+            lastWrittenAt = Environment.TickCount64;
+            wroteThisUpdate = true;
+            overrideCount++;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (!loggedOverrideError)
+            {
+                loggedOverrideError = true;
+                log.Warning(ex, "CutShot: pose override failed; leaving the game's camera alone this frame.");
+            }
+            return false;
+        }
+    }
+
+    /// <summary>The camera the shot starts from, read at the start (framework tick): what the shot it replaces last
+    /// handed the game, otherwise the game camera as it was last rendered. Also measures how the game's FoV field maps
+    /// to the vertical FOV it renders.</summary>
+    private void CaptureStart(bool replacing)
+    {
+        haveSnapshot = false;
+        haveFovRatio = false;
+        var camMgr = FFXIVClientStructs.FFXIV.Client.Game.Control.CameraManager.Instance();
+        if (camMgr == null || camMgr->Camera == null) return;
+        var game = camMgr->Camera;
+        var sc = &game->CameraBase.SceneCamera;
+        var rc = sc->RenderCamera;
+        if (rc == null) return;
+
+        var projection = ToNumerics(rc->ProjectionMatrix);
+        if (MathF.Abs(projection.M11) > 1e-6f)
+            aspect = MathF.Abs(projection.M22 / projection.M11);
+        var renderedFov = CutsceneView.VerticalFovOf(projection);
+        if (CutsceneView.FovRatio(renderedFov, game->FoV) is { } ratio)
+        {
+            fovRatio = ratio;
+            haveFovRatio = true;
+        }
+
+        if (replacing && Environment.TickCount64 - lastWrittenAt < 200)
+        {
+            snapshot = lastWritten;
+            haveSnapshot = true;
+            return;
+        }
+        var eye = new Vector3(sc->Position.X, sc->Position.Y, sc->Position.Z);
+        var look = new Vector3(sc->LookAtVector.X, sc->LookAtVector.Y, sc->LookAtVector.Z);
+        var start = new CutPose(eye, look, float.IsFinite(renderedFov) ? renderedFov : 0.8f);
+        if (start.IsFinite)
+        {
+            snapshot = start;
+            haveSnapshot = true;
+        }
+    }
+
+    /// <summary>After the game's camera update (GameCameraUpdateHook.PostCameraUpdate): record for the probe, stop a
+    /// shot whose Tick no longer runs, and check once per shot that the game took the pose it was handed.</summary>
     public void OnPostCameraUpdate(CameraBase* camera)
     {
         if (camera == null) return;
         Probe.Record(camera);
+        var wrote = wroteThisUpdate;
+        wroteThisUpdate = false;
         if (phase == Phase.Idle) return;
 
         // Tick drives the shot; if it stops running (an earlier step of the framework update throwing every frame, ...)
-        // nothing would ever end the shot, so stop writing and hand the camera back.
+        // nothing would ever end the shot, so stop overriding and hand the camera back.
         updatesSinceTick++;
         if (updatesSinceTick > 1 && Environment.TickCount64 - lastTickAt > TickStallMs)
         {
@@ -493,105 +583,41 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
             return;
         }
 
-        var sc = &camera->SceneCamera;
-        var rc = sc->RenderCamera;
-        if (rc == null) return;
-
-        var eye = new Vector3(rc->Origin.X, rc->Origin.Y, rc->Origin.Z);
-        var look = new Vector3(sc->LookAtVector.X, sc->LookAtVector.Y, sc->LookAtVector.Z);
-        var view = ToNumerics(rc->ViewMatrix);
-        var projection = ToNumerics(rc->ProjectionMatrix);
-        var nativeFov = CutsceneView.VerticalFovOf(projection);
-        if (!float.IsFinite(nativeFov)) return;
-        if (MathF.Abs(projection.M11) > 1e-6f)
-            aspect = MathF.Abs(projection.M22 / projection.M11);
-
-        // The game's own matrix tells which layout to write ours in.
-        if (Vector3.DistanceSquared(eye, look) > 1e-6f)
-        {
-            var (c, err) = CutsceneView.Detect(view, eye, look);
-            if (err <= ConventionTolerance)
-            {
-                if (!loggedConvention || c != convention || (err > 0.05f && !loggedLooseConvention))
-                {
-                    log.Info($"CutShot: view matrix layout {c} (error {err:0.0000}); render FOV field {rc->FoV:0.0000} vs projection {nativeFov:0.0000}.");
-                    loggedConvention = true;
-                    loggedLooseConvention |= err > 0.05f;
-                }
-                convention = c;
-                haveConvention = true;
-                rcFovIsVertical = MathF.Abs(rc->FoV - nativeFov) < 0.02f;
-            }
-            else if (!haveConvention && !loggedNoConvention)
-            {
-                log.Warning($"CutShot: no view matrix layout matches the game's (best {c}, error {err:0.000}); not writing until one does.");
-                loggedNoConvention = true;
-            }
-        }
-        if (!haveConvention) return;
-
-        var native = new CutPose(eye, look, Vector3.UnitY, nativeFov);
-        if (!haveSnapshot)
-        {
-            // The camera we found: what we last wrote when a shot is handed over, otherwise the game's.
-            snapshot = Environment.TickCount64 - lastWrittenAt < 200 ? lastWritten : native;
-            haveSnapshot = true;
-            var game = (FFXIVClientStructs.FFXIV.Client.Game.Camera*)camera;
-            var gameFov = game->FoV;
-            if (gameFov > 0.01f && float.IsFinite(gameFov))
-            {
-                fovRatio = MathF.Tan(nativeFov / 2f) / MathF.Tan(gameFov / 2f);
-                if (!float.IsFinite(fovRatio) || fovRatio <= 0f) fovRatio = 1f;
-            }
-            haveFovRatio = true;
-        }
-        if (!haveCut) return;
-
-        var pose = phase == Phase.Playing
-            ? CutPose.Lerp(snapshot, cut, CutPose.Ease(time / BlendSeconds))
-            : CutPose.Lerp(cut, native, CutPose.Ease(blendOutTime / BlendSeconds));
-        if (!pose.IsFinite) return;
-        if (!Write(sc, rc, pose, projection)) return;
-        lastWritten = pose;
-        lastWrittenAt = Environment.TickCount64;
+        if (wrote && phase == Phase.Playing)
+            CheckTaken(camera);
     }
 
-    /// <summary>Writes the pose; false (nothing written) when the view or projection matrix would not be finite.</summary>
-    private bool Write(FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Camera* sc,
-        FFXIVClientStructs.FFXIV.Client.Graphics.Render.Camera* rc, in CutPose pose, in Matrix4x4 projection)
+    /// <summary>Over the first <see cref="CheckFrames"/> overridden updates, the largest gap between the pose handed to
+    /// the game and the scene camera it ended with, and between the rendered lens and the shot's; logged once.</summary>
+    private void CheckTaken(CameraBase* camera)
     {
-        var fov = CutsceneView.ClampFov(pose.VerticalFov);
-        var view = CutsceneView.Build(convention, pose.Eye, pose.Target, pose.Up);
-        var proj = CutsceneView.WithVerticalFov(projection, fov);
-        if (!CutsceneView.IsFinite(view) || !CutsceneView.IsFinite(proj))
+        if (checkCount >= CheckFrames) return;
+        var sc = &camera->SceneCamera;
+        var eyeErr = Vector3.Distance(new Vector3(sc->Position.X, sc->Position.Y, sc->Position.Z), lastWritten.Eye);
+        var lookErr = Vector3.Distance(new Vector3(sc->LookAtVector.X, sc->LookAtVector.Y, sc->LookAtVector.Z), lastWritten.Target);
+        var rc = sc->RenderCamera;
+        var fovErr = 0f;
+        if (rc != null && haveFovRatio && time > BlendSeconds + 0.1f)
         {
-            notes.Add("non-finite camera matrix (frame skipped)");
-            return false;
+            var rendered = CutsceneView.VerticalFovOf(ToNumerics(rc->ProjectionMatrix));
+            if (float.IsFinite(rendered)) fovErr = MathF.Abs(rendered - CutsceneView.ClampFov(cut.VerticalFov)) * 180f / MathF.PI;
         }
-        sc->Position = pose.Eye;
-        sc->LookAtVector = pose.Target;
-        sc->ViewMatrix = ToGame(view);
-        rc->Origin = pose.Eye;
-        rc->ViewMatrix = ToGame(view);
-        rc->ProjectionMatrix = ToGame(proj);
-        if (rcFovIsVertical)
-            rc->FoV = fov;
-        return true;
+        if (float.IsFinite(eyeErr)) checkEye = MathF.Max(checkEye, eyeErr);
+        if (float.IsFinite(lookErr)) checkLook = MathF.Max(checkLook, lookErr);
+        checkFov = MathF.Max(checkFov, fovErr);
+        if (++checkCount < CheckFrames) return;
+
+        var text = $"CutShot: camera check over {CheckFrames} frames — scene eye off by up to {checkEye:0.000} m, look-at by {checkLook:0.000} m" +
+                   (haveFovRatio ? $", lens by {checkFov:0.0}° after the blend-in" : ", lens not measured (no FoV ratio)") + ".";
+        if (checkEye > 0.05f || checkLook > 0.05f)
+            log.Warning(text + " The game did not keep the pose it was handed.");
+        else
+            log.Info(text);
     }
 
     private static Matrix4x4 ToNumerics(in FFXIVClientStructs.FFXIV.Common.Math.Matrix4x4 m) => new(
         m.M11, m.M12, m.M13, m.M14, m.M21, m.M22, m.M23, m.M24,
         m.M31, m.M32, m.M33, m.M34, m.M41, m.M42, m.M43, m.M44);
-
-    private static FFXIVClientStructs.FFXIV.Common.Math.Matrix4x4 ToGame(in Matrix4x4 m)
-    {
-        var r = new FFXIVClientStructs.FFXIV.Common.Math.Matrix4x4();
-        r.M11 = m.M11; r.M12 = m.M12; r.M13 = m.M13; r.M14 = m.M14;
-        r.M21 = m.M21; r.M22 = m.M22; r.M23 = m.M23; r.M24 = m.M24;
-        r.M31 = m.M31; r.M32 = m.M32; r.M33 = m.M33; r.M34 = m.M34;
-        r.M41 = m.M41; r.M42 = m.M42; r.M43 = m.M43; r.M44 = m.M44;
-        return r;
-    }
 
     // ------------------------------------------------------------------
     // Actors

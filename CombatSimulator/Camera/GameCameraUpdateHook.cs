@@ -33,8 +33,8 @@ public unsafe sealed class GameCameraUpdateHook : IDisposable
 
     public unsafe delegate void PostCameraUpdateDelegate(CameraBase* camera);
 
-    /// <summary>Runs after the game's camera update has produced its final pose, before the hit shake: a layer that
-    /// replaces the whole pose (cutscene shots) writes here, and the shake still lands on top of it.</summary>
+    /// <summary>Runs after the game's camera update has produced its final pose, before the hit shake (cutscene shots:
+    /// the probe, the stalled-tick stop and the check that the game kept the pose it was handed).</summary>
     public PostCameraUpdateDelegate? PostCameraUpdate { get; set; }
 
     public GameCameraUpdateHook(IGameInteropProvider gameInterop, IPluginLog log)

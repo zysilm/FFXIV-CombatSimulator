@@ -76,7 +76,8 @@ internal sealed unsafe class CameraModule
 
     /// <summary>
     /// Cutscene follow shots (docs/CUTSCENE_SHOTS.md): the game's own cutscene camera work on our characters at victory
-    /// and death. Writes the camera after the game's update, through the same hook as the hit shake.
+    /// and death. Hands the game the shot's eye and look-at point inside its camera update (the active camera's
+    /// SetCameraLookAt detour) and its FoV through the coordinator; the post-update hook stops a stalled shot and checks the result.
     /// </summary>
     public void CreateCutsceneShots(ITargetManager targetManager, IDataManager dataManager, ICondition condition, IClientState clientState,
         string configDirectory, System.Func<bool> sceneActive)
@@ -94,6 +95,8 @@ internal sealed unsafe class CameraModule
             clientState,
             log);
         gameCameraUpdateHook.PostCameraUpdate = cutsceneShotDirector.OnPostCameraUpdate;
+        activeCameraController.PoseOverride = cutsceneShotDirector.OverridePose;
+        activeCameraController.PoseOverrideActive = () => cutsceneShotDirector.IsPlaying;
     }
 
     /// <summary>The ragdoll of a body: the player's, or an enemy's / ally's death ragdoll.</summary>

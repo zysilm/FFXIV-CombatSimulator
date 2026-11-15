@@ -43,6 +43,15 @@ public unsafe class ActiveCameraController : IDisposable
     private delegate void SetCameraLookAtDelegate(nint camera, Vector3* lookAt, Vector3* cameraPosition, Vector3* scratch);
     private Hook<SetCameraLookAtDelegate>? setCameraLookAtHook;
     public Func<Vector3, Vector3, Vector3?>? ModeLookAtOverride { get; set; }
+
+    public delegate bool CameraPoseOverride(ref Vector3 lookAt, ref Vector3 eye);
+
+    /// <summary>Replaces the main camera's eye and look-at point inside the game's camera update, whether or not this
+    /// controller is active (cutscene shots). Returns true when it changed them; must not throw.</summary>
+    public CameraPoseOverride? PoseOverride { get; set; }
+
+    /// <summary>True while <see cref="PoseOverride"/> may move the eye close to a character: models are kept drawn.</summary>
+    public Func<bool>? PoseOverrideActive { get; set; }
     // Hypostasis-known signature for Camera::SetCameraLookAt — getCameraPosition lives at vtable[setLookAtIdx + 1]
     private const string SetCameraLookAtSig = "40 53 48 83 EC 30 44 8B 89 ?? ?? ?? ?? 48 8B DA";
 
@@ -301,14 +310,20 @@ public unsafe class ActiveCameraController : IDisposable
 
     private void SetCameraLookAtDetour(nint camera, Vector3* lookAt, Vector3* cameraPosition, Vector3* scratch)
     {
+        var isMain = false;
+        try
+        {
+            var manager = GameCameraManager.Instance();
+            isMain = manager != null && (nint)manager->Camera == camera && lookAt != null && cameraPosition != null;
+        }
+        catch { }
+
         Vector3? ownedLookAt = null;
-        if (IsActive && lookAt != null && cameraPosition != null && ModeLookAtOverride != null)
+        if (isMain && IsActive && ModeLookAtOverride != null)
         {
             try
             {
-                var manager = GameCameraManager.Instance();
-                if (manager != null && (nint)manager->Camera == camera)
-                    ownedLookAt = ModeLookAtOverride(*lookAt, *cameraPosition);
+                ownedLookAt = ModeLookAtOverride(*lookAt, *cameraPosition);
             }
             catch (Exception ex) { log.Warning(ex, "Mode look-at override failed; using native target."); }
         }
@@ -318,6 +333,19 @@ public unsafe class ActiveCameraController : IDisposable
             setCameraLookAtHook!.Original(camera, &point, cameraPosition, scratch);
         }
         else setCameraLookAtHook!.Original(camera, lookAt, cameraPosition, scratch);
+
+        // The camera update stores these two buffers (its locals) as the scene camera's position and look-at
+        // point right after this call, and builds its view from them: a pose written here is the one rendered.
+        if (isMain && PoseOverride != null)
+        {
+            var target = *lookAt;
+            var eye = *cameraPosition;
+            if (PoseOverride(ref target, ref eye))
+            {
+                *lookAt = target;
+                *cameraPosition = eye;
+            }
+        }
     }
 
     private Vector3 ApplyActiveCameraSideOffset(Vector3 pos)
@@ -356,7 +384,7 @@ public unsafe class ActiveCameraController : IDisposable
         UpdateCollisionPolicy();
 
         // ShouldDrawGameObject hook: enable when prevent fade is wanted
-        bool wantPreventFade = IsActive && config.ActiveCameraPreventFade;
+        bool wantPreventFade = (IsActive && config.ActiveCameraPreventFade) || (PoseOverrideActive?.Invoke() ?? false);
         if (wantPreventFade && !shouldDrawHookActive && shouldDrawHook != null)
         {
             shouldDrawHook.Enable();

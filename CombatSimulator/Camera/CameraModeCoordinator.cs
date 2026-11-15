@@ -34,7 +34,7 @@ public enum CameraOwner
     /// <summary>User-enabled Active Camera. Always wins.</summary>
     UserActiveCam = 50,
     /// <summary>A cutscene follow shot (victory / death / Play Now), only while it plays. Above everything: the
-    /// shot replaces the whole camera pose after the game's update (CutsceneShotDirector), and whoever owned the
+    /// shot hands the game its eye and look-at point inside the camera update (CutsceneShotDirector), and whoever owned the
     /// camera before gets it back when the shot ends.</summary>
     CutsceneShot = 60,
 }

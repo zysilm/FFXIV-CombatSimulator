@@ -204,23 +204,27 @@ internal static class Verify
               && CutsceneRoles.ActorFor(followSubject, followSubject.FollowActor, roles) == P && CutsceneRoles.ActorFor(followSubject, followSubject.LookActor!.Value, roles) == K,
             "two-person: the followed cutscene actor takes the entry's follow role, the looked-at one its lookAt role");
 
-        Console.WriteLine("7. view matrix, projection, blend");
-        var eye = new Vector3(3, 2, 1); var tgt = new Vector3(-1, 1.5f, 4);
-        Check(Enum.GetValues<ViewConvention>().All(c => CutsceneView.Detect(CutsceneView.Build(c, eye, tgt, Vector3.UnitY), eye, tgt) is var d && d.Convention == c && d.Error < 1e-4f),
-            "each view layout is recognised from its own matrix");
+        Console.WriteLine("7. lens, pose hand-over, blend");
         var proj = Matrix4x4.CreatePerspectiveFieldOfView(0.8f, 16f / 9f, 0.1f, 1000f);
-        var proj2 = CutsceneView.WithVerticalFov(proj, 0.5f);
-        Check(MathF.Abs(CutsceneView.VerticalFovOf(proj2) - 0.5f) < 1e-5f && MathF.Abs(proj2.M22 / proj2.M11 - proj.M22 / proj.M11) < 1e-4f && proj2.M33 == proj.M33,
-            "projection FOV rewrite keeps aspect and depth terms");
-        var pa = new CutPose(Vector3.Zero, Vector3.UnitZ, Vector3.UnitY, 0.5f);
-        var pb = new CutPose(Vector3.One, Vector3.One + Vector3.UnitX, Vector3.UnitY, 1f);
+        Check(MathF.Abs(CutsceneView.VerticalFovOf(proj) - 0.8f) < 1e-5f, "vertical FOV read off a projection matrix");
+        // The game's FoV field renders some lens; the measured ratio maps a wanted lens back to the field value.
+        var ratio = CutsceneView.FovRatio(0.9f, 0.78f);
+        var field = ratio is { } r0 ? CutsceneView.GameFovFor(0.5f, r0) : null;
+        Check(ratio is { } r1 && field is { } f1 && MathF.Abs(2f * MathF.Atan(MathF.Tan(f1 / 2f) * r1) - 0.5f) < 1e-5f
+              && CutsceneView.FovRatio(float.NaN, 0.78f) == null && CutsceneView.FovRatio(0.9f, 0f) == null,
+            $"FoV field for a wanted lens round-trips through the measured ratio ({field ?? float.NaN:0.0000})");
+        Check(CutsceneView.GameFovFor(3.1f, 1f) is { } wide && MathF.Abs(wide - CutsceneView.MaxFov) < 1e-4f
+              && CutsceneView.GameFovFor(1e-4f, 1f) is { } narrow && MathF.Abs(narrow - CutsceneView.MinFov) < 1e-5f
+              && CutsceneView.GameFovFor(float.NaN, 1f) == null && CutsceneView.GameFovFor(0.5f, float.NaN) == null,
+            "asked-for lens clamped to [1°, 170°]; non-finite input gives no FoV request");
+        Check(CutsceneView.CanHandOver(new Vector3(3, 2, 1), new Vector3(-1, 1.5f, 4))
+              && !CutsceneView.CanHandOver(Vector3.Zero, new Vector3(0.05f, 0, 0))
+              && !CutsceneView.CanHandOver(new Vector3(float.NaN, 0, 0), Vector3.UnitZ)
+              && !CutsceneView.CanHandOver(Vector3.Zero, new Vector3(0, float.PositiveInfinity, 0)),
+            "only finite eye / look-at pairs at least 0.1 m apart are handed to the game");
+        var pa = new CutPose(Vector3.Zero, Vector3.UnitZ, 0.5f);
+        var pb = new CutPose(Vector3.One, Vector3.One + Vector3.UnitX, 1f);
         Check(CutPose.Lerp(pa, pb, 0) == pa && CutPose.Lerp(pa, pb, 1).Eye == pb.Eye && CutPose.Ease(0.5f) == 0.5f, "blend endpoints");
-        var rolled = CutscenePlayback.ApplyRoll(Vector3.Zero, Vector3.UnitZ, Vector3.UnitY, 90f);
-        Check(MathF.Abs(rolled.Y) < 1e-5f && MathF.Abs(MathF.Abs(rolled.X) - 1f) < 1e-5f, $"roll 90° turns up sideways ({rolled.X:0.00}, {rolled.Y:0.00}, {rolled.Z:0.00})");
-        Check(MathF.Abs(CutsceneView.VerticalFovOf(CutsceneView.WithVerticalFov(proj, 3.1f)) - CutsceneView.MaxFov) < 1e-4f
-              && MathF.Abs(CutsceneView.VerticalFovOf(CutsceneView.WithVerticalFov(proj, 1e-4f)) - CutsceneView.MinFov) < 1e-5f
-              && !CutsceneView.IsFinite(new Matrix4x4 { M43 = float.NaN }) && CutsceneView.IsFinite(proj),
-            "projection FOV clamped to [1°, 170°]; non-finite matrices detected");
 
         Console.WriteLine("8. bad camera rigs");
         // (node, code, parent): the eye chain (code 128) ends on a node whose ancestors are a rig level (code 64).
