@@ -1,0 +1,8262 @@
+{
+  "version": 1,
+  "source": "Tests/CutsceneCamera: dotnet run -c Release -- curate (see docs/CUTSCENE_SHOTS.md)",
+  "note": "References into the game's own cutscenes plus derived features only; the camera curves are read from the user's game install at runtime.",
+  "shots": [
+    {
+      "id": "kingmg10110-t7-s6",
+      "name": "Slow crane down, close-up",
+      "category": "single/close-up/crane-down",
+      "tags": [
+        "single",
+        "close-up",
+        "crane-down",
+        "slow",
+        "eye-level",
+        "front",
+        "DT"
+      ],
+      "cutscene": "ex5/kingmg/kingmg10110/kingmg10110",
+      "timeline": 7,
+      "firstShot": 6,
+      "lastShot": 6,
+      "shots": [
+        {
+          "shot": 6,
+          "from": 640,
+          "to": 780
+        }
+      ],
+      "startFrame": 640,
+      "endFrame": 780,
+      "duration": 4.67,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 11,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "crane-down",
+        "slow": true,
+        "motions": [
+          "crane-down"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 40,
+        "fovMax": 40,
+        "distance": 0.96,
+        "quality": 1.22
+      }
+    },
+    {
+      "id": "rolcst05020-t3-s9",
+      "name": "Slow crane down, low close-up",
+      "category": "single/close-up/crane-down",
+      "tags": [
+        "single",
+        "close-up",
+        "crane-down",
+        "slow",
+        "low",
+        "front",
+        "cuts",
+        "ShB"
+      ],
+      "cutscene": "ex3/rolcst/rolcst05020/rolcst05020",
+      "timeline": 3,
+      "firstShot": 9,
+      "lastShot": 10,
+      "shots": [
+        {
+          "shot": 9,
+          "from": 780,
+          "to": 830
+        },
+        {
+          "shot": 10,
+          "from": 830,
+          "to": 985
+        }
+      ],
+      "startFrame": 780,
+      "endFrame": 985,
+      "duration": 6.83,
+      "cuts": 1,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 3,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "low",
+        "side": "front",
+        "motion": "crane-down",
+        "slow": true,
+        "motions": [
+          "static",
+          "crane-down"
+        ],
+        "roll": false,
+        "maxRoll": 0.89,
+        "fovMin": 35,
+        "fovMax": 38,
+        "distance": 1.06,
+        "quality": 1.18
+      }
+    },
+    {
+      "id": "stmact06170-t4-s0",
+      "name": "Slow crane up, low close-up",
+      "category": "single/close-up/crane-up",
+      "tags": [
+        "single",
+        "close-up",
+        "crane-up",
+        "slow",
+        "low",
+        "front",
+        "SB"
+      ],
+      "cutscene": "ex2/stmact/stmact06170/stmact06170",
+      "timeline": 4,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 130
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 130,
+      "duration": 4.33,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 3,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "low",
+        "side": "front",
+        "motion": "crane-up",
+        "slow": true,
+        "motions": [
+          "crane-up"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 1.19,
+        "quality": 1.15
+      }
+    },
+    {
+      "id": "heavne10940-t4-s5",
+      "name": "Slow crane up, high close-up",
+      "category": "single/close-up/crane-up",
+      "tags": [
+        "single",
+        "close-up",
+        "crane-up",
+        "slow",
+        "high",
+        "back",
+        "cuts",
+        "HW"
+      ],
+      "cutscene": "ex1/heavne/heavne10940/heavne10940",
+      "timeline": 4,
+      "firstShot": 5,
+      "lastShot": 5,
+      "shots": [
+        {
+          "shot": 5,
+          "from": 180,
+          "to": 270
+        },
+        {
+          "shot": 6,
+          "from": 270,
+          "to": 395
+        },
+        {
+          "shot": 5,
+          "from": 395,
+          "to": 471
+        }
+      ],
+      "startFrame": 180,
+      "endFrame": 471,
+      "duration": 9.7,
+      "cuts": 2,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 9,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "high",
+        "side": "back",
+        "motion": "crane-up",
+        "slow": true,
+        "motions": [
+          "static",
+          "crane-up",
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 28,
+        "fovMax": 35,
+        "distance": 1.17,
+        "quality": 1.15
+      }
+    },
+    {
+      "id": "kingmi11050-t5-s0",
+      "name": "Slow orbit left, low close-up, profile",
+      "category": "single/close-up/orbit-left",
+      "tags": [
+        "single",
+        "close-up",
+        "orbit-left",
+        "slow",
+        "low",
+        "side",
+        "cuts",
+        "DT"
+      ],
+      "cutscene": "ex5/kingmi/kingmi11050/kingmi11050",
+      "timeline": 5,
+      "firstShot": 0,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 100
+        },
+        {
+          "shot": 1,
+          "from": 100,
+          "to": 340
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 340,
+      "duration": 11.33,
+      "cuts": 1,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 5,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "low",
+        "side": "side",
+        "motion": "orbit-left",
+        "slow": true,
+        "motions": [
+          "static",
+          "orbit-left"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 0.85,
+        "quality": 1.27
+      }
+    },
+    {
+      "id": "wedfst00200-t8-s5",
+      "name": "Slow orbit left, close-up, profile",
+      "category": "single/close-up/orbit-left",
+      "tags": [
+        "single",
+        "close-up",
+        "orbit-left",
+        "slow",
+        "eye-level",
+        "side",
+        "corpse",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/wedfst/wedfst00200/wedfst00200",
+      "timeline": 8,
+      "firstShot": 5,
+      "lastShot": 5,
+      "shots": [
+        {
+          "shot": 5,
+          "from": 575,
+          "to": 730
+        }
+      ],
+      "startFrame": 575,
+      "endFrame": 730,
+      "duration": 5.17,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 6,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        26
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "orbit-left",
+        "slow": true,
+        "motions": [
+          "orbit-left"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 30.51,
+        "fovMax": 30.51,
+        "distance": 1.03,
+        "quality": 1.22
+      }
+    },
+    {
+      "id": "manfst40810-t2-s0",
+      "name": "Orbit left, low close-up, profile",
+      "category": "single/close-up/orbit-left",
+      "tags": [
+        "single",
+        "close-up",
+        "orbit-left",
+        "low",
+        "side",
+        "roll",
+        "corpse",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/manfst/manfst40810/manfst40810",
+      "timeline": 2,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 120
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 120,
+      "duration": 4,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 8,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        26
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "low",
+        "side": "side",
+        "motion": "orbit-left",
+        "slow": false,
+        "motions": [
+          "orbit-left"
+        ],
+        "roll": true,
+        "maxRoll": 6,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 1.21,
+        "quality": 1.05
+      }
+    },
+    {
+      "id": "kinact03150-t6-s4",
+      "name": "Slow orbit right, close-up (DT 1)",
+      "category": "single/close-up/orbit-right",
+      "tags": [
+        "single",
+        "close-up",
+        "orbit-right",
+        "slow",
+        "eye-level",
+        "front",
+        "DT"
+      ],
+      "cutscene": "ex5/kinact/kinact03150/kinact03150",
+      "timeline": 6,
+      "firstShot": 4,
+      "lastShot": 4,
+      "shots": [
+        {
+          "shot": 4,
+          "from": 530,
+          "to": 710
+        }
+      ],
+      "startFrame": 530,
+      "endFrame": 710,
+      "duration": 6,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 3,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "orbit-right",
+        "slow": true,
+        "motions": [
+          "orbit-right"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 40,
+        "fovMax": 40,
+        "distance": 1.1,
+        "quality": 1.28
+      }
+    },
+    {
+      "id": "kinact03100-t8-s4",
+      "name": "Slow orbit right, close-up (DT 2)",
+      "category": "single/close-up/orbit-right",
+      "tags": [
+        "single",
+        "close-up",
+        "orbit-right",
+        "slow",
+        "eye-level",
+        "front",
+        "DT"
+      ],
+      "cutscene": "ex5/kinact/kinact03100/kinact03100",
+      "timeline": 8,
+      "firstShot": 4,
+      "lastShot": 4,
+      "shots": [
+        {
+          "shot": 4,
+          "from": 310,
+          "to": 520
+        }
+      ],
+      "startFrame": 310,
+      "endFrame": 520,
+      "duration": 7,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 8,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "orbit-right",
+        "slow": true,
+        "motions": [
+          "orbit-right"
+        ],
+        "roll": false,
+        "maxRoll": 0.17,
+        "fovMin": 40,
+        "fovMax": 40,
+        "distance": 1.05,
+        "quality": 1.23
+      }
+    },
+    {
+      "id": "kingmk10330-t2-s1",
+      "name": "Slow pan, low close-up (DT 1)",
+      "category": "single/close-up/pan",
+      "tags": [
+        "single",
+        "close-up",
+        "pan",
+        "slow",
+        "low",
+        "front",
+        "DT"
+      ],
+      "cutscene": "ex5/kingmk/kingmk10330/kingmk10330",
+      "timeline": 2,
+      "firstShot": 1,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 0,
+          "to": 135
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 135,
+      "duration": 4.5,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 3,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "low",
+        "side": "front",
+        "motion": "pan",
+        "slow": true,
+        "motions": [
+          "pan"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 30,
+        "fovMax": 30,
+        "distance": 1.47,
+        "quality": 1.17
+      }
+    },
+    {
+      "id": "kingml10230-t5-s5",
+      "name": "Slow pan, low close-up (DT 2)",
+      "category": "single/close-up/pan",
+      "tags": [
+        "single",
+        "close-up",
+        "pan",
+        "slow",
+        "low",
+        "front",
+        "cuts",
+        "DT"
+      ],
+      "cutscene": "ex5/kingml/kingml10230/kingml10230",
+      "timeline": 5,
+      "firstShot": 5,
+      "lastShot": 6,
+      "shots": [
+        {
+          "shot": 5,
+          "from": 615,
+          "to": 730
+        },
+        {
+          "shot": 6,
+          "from": 730,
+          "to": 855
+        }
+      ],
+      "startFrame": 615,
+      "endFrame": 855,
+      "duration": 8,
+      "cuts": 1,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 6,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "low",
+        "side": "front",
+        "motion": "pan",
+        "slow": true,
+        "motions": [
+          "static",
+          "pan"
+        ],
+        "roll": false,
+        "maxRoll": 1,
+        "fovMin": 30,
+        "fovMax": 50,
+        "distance": 0.85,
+        "quality": 1.17
+      }
+    },
+    {
+      "id": "kingmk10220-t6-s4",
+      "name": "Slow pull-out, high close-up",
+      "category": "single/close-up/pull-out",
+      "tags": [
+        "single",
+        "close-up",
+        "pull-out",
+        "slow",
+        "high",
+        "front",
+        "DT"
+      ],
+      "cutscene": "ex5/kingmk/kingmk10220/kingmk10220",
+      "timeline": 6,
+      "firstShot": 4,
+      "lastShot": 4,
+      "shots": [
+        {
+          "shot": 4,
+          "from": 250,
+          "to": 420
+        }
+      ],
+      "startFrame": 250,
+      "endFrame": 420,
+      "duration": 5.67,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 10,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "high",
+        "side": "front",
+        "motion": "pull-out",
+        "slow": true,
+        "motions": [
+          "pull-out"
+        ],
+        "roll": false,
+        "maxRoll": 2,
+        "fovMin": 38,
+        "fovMax": 45,
+        "distance": 0.87,
+        "quality": 1.35
+      }
+    },
+    {
+      "id": "stmact01070-t7-s5",
+      "name": "Slow pull-out, close-up",
+      "category": "single/close-up/pull-out",
+      "tags": [
+        "single",
+        "close-up",
+        "pull-out",
+        "slow",
+        "eye-level",
+        "front",
+        "SB"
+      ],
+      "cutscene": "ex2/stmact/stmact01070/stmact01070",
+      "timeline": 7,
+      "firstShot": 5,
+      "lastShot": 5,
+      "shots": [
+        {
+          "shot": 5,
+          "from": 460,
+          "to": 650
+        }
+      ],
+      "startFrame": 460,
+      "endFrame": 650,
+      "duration": 6.33,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 7,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "pull-out",
+        "slow": true,
+        "motions": [
+          "pull-out"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 45.06,
+        "fovMax": 55,
+        "distance": 0.57,
+        "quality": 1.33
+      }
+    },
+    {
+      "id": "gaiuse50240-t3-s0",
+      "name": "Pull-out, low close-up, from behind",
+      "category": "single/close-up/pull-out",
+      "tags": [
+        "single",
+        "close-up",
+        "pull-out",
+        "low",
+        "back",
+        "corpse",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/gaiuse/gaiuse50240/gaiuse50240",
+      "timeline": 3,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 90
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 90,
+      "duration": 3,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 5,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        26
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "low",
+        "side": "back",
+        "motion": "pull-out",
+        "slow": false,
+        "motions": [
+          "pull-out"
+        ],
+        "roll": false,
+        "maxRoll": 0.24,
+        "fovMin": 40,
+        "fovMax": 40,
+        "distance": 0.89,
+        "quality": 1.08
+      }
+    },
+    {
+      "id": "stmact01180-t5-s6",
+      "name": "Pull-out, close-up",
+      "category": "single/close-up/pull-out",
+      "tags": [
+        "single",
+        "close-up",
+        "pull-out",
+        "eye-level",
+        "front",
+        "corpse",
+        "SB"
+      ],
+      "cutscene": "ex2/stmact/stmact01180/stmact01180",
+      "timeline": 5,
+      "firstShot": 6,
+      "lastShot": 6,
+      "shots": [
+        {
+          "shot": 6,
+          "from": 435,
+          "to": 550
+        }
+      ],
+      "startFrame": 435,
+      "endFrame": 550,
+      "duration": 3.83,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 3,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        26
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "pull-out",
+        "slow": false,
+        "motions": [
+          "pull-out"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 1.13,
+        "quality": 1.08
+      }
+    },
+    {
+      "id": "anvxiv01130-t3-s1",
+      "name": "Push-in, close-up",
+      "category": "single/close-up/push-in",
+      "tags": [
+        "single",
+        "close-up",
+        "push-in",
+        "eye-level",
+        "front",
+        "cuts",
+        "corpse",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/anvxiv/anvxiv01130/anvxiv01130",
+      "timeline": 3,
+      "firstShot": 1,
+      "lastShot": 2,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 0,
+          "to": 160
+        },
+        {
+          "shot": 2,
+          "from": 160,
+          "to": 300
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 300,
+      "duration": 10,
+      "cuts": 1,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 3,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        26
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "push-in",
+        "slow": false,
+        "motions": [
+          "push-in",
+          "push-in"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 80,
+        "distance": 0.68,
+        "quality": 1.31
+      }
+    },
+    {
+      "id": "luckmi11110-t6-s6",
+      "name": "Slow push-in, low close-up",
+      "category": "single/close-up/push-in",
+      "tags": [
+        "single",
+        "close-up",
+        "push-in",
+        "slow",
+        "low",
+        "front",
+        "ShB"
+      ],
+      "cutscene": "ex3/luckmi/luckmi11110/luckmi11110",
+      "timeline": 6,
+      "firstShot": 6,
+      "lastShot": 6,
+      "shots": [
+        {
+          "shot": 6,
+          "from": 380,
+          "to": 590
+        }
+      ],
+      "startFrame": 380,
+      "endFrame": 590,
+      "duration": 7,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        1,
+        76
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "low",
+        "side": "front",
+        "motion": "push-in",
+        "slow": true,
+        "motions": [
+          "push-in"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 1.06,
+        "quality": 1.31
+      }
+    },
+    {
+      "id": "aktkma10810-t10-s7",
+      "name": "Slow push-in, close-up",
+      "category": "single/close-up/push-in",
+      "tags": [
+        "single",
+        "close-up",
+        "push-in",
+        "slow",
+        "eye-level",
+        "front",
+        "corpse",
+        "EW"
+      ],
+      "cutscene": "ex4/aktkma/aktkma10810/aktkma10810",
+      "timeline": 10,
+      "firstShot": 7,
+      "lastShot": 7,
+      "shots": [
+        {
+          "shot": 7,
+          "from": 640,
+          "to": 790
+        }
+      ],
+      "startFrame": 640,
+      "endFrame": 790,
+      "duration": 5,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 16,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        1
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "push-in",
+        "slow": true,
+        "motions": [
+          "push-in"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 0.75,
+        "quality": 1.28
+      }
+    },
+    {
+      "id": "gaiuse20810-t8-s3",
+      "name": "Slow push-in, close-up, from behind",
+      "category": "single/close-up/push-in",
+      "tags": [
+        "single",
+        "close-up",
+        "push-in",
+        "slow",
+        "eye-level",
+        "back",
+        "corpse",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/gaiuse/gaiuse20810/gaiuse20810",
+      "timeline": 8,
+      "firstShot": 3,
+      "lastShot": 3,
+      "shots": [
+        {
+          "shot": 3,
+          "from": 165,
+          "to": 285
+        }
+      ],
+      "startFrame": 165,
+      "endFrame": 285,
+      "duration": 4,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 14,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        26
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "push-in",
+        "slow": true,
+        "motions": [
+          "push-in"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 31.81,
+        "fovMax": 32,
+        "distance": 0.84,
+        "quality": 1.25
+      }
+    },
+    {
+      "id": "kinact04260-t11-s5",
+      "name": "Still, low close-up",
+      "category": "single/close-up/static",
+      "tags": [
+        "single",
+        "close-up",
+        "static",
+        "low",
+        "front",
+        "DT"
+      ],
+      "cutscene": "ex5/kinact/kinact04260/kinact04260",
+      "timeline": 11,
+      "firstShot": 5,
+      "lastShot": 5,
+      "shots": [
+        {
+          "shot": 5,
+          "from": 740,
+          "to": 890
+        }
+      ],
+      "startFrame": 740,
+      "endFrame": 890,
+      "duration": 5,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 16,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "low",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 40,
+        "fovMax": 40,
+        "distance": 0.95,
+        "quality": 1.2
+      }
+    },
+    {
+      "id": "aktkml10610-t10-s3",
+      "name": "Still, close-up (EW 1)",
+      "category": "single/close-up/static",
+      "tags": [
+        "single",
+        "close-up",
+        "static",
+        "eye-level",
+        "front",
+        "corpse",
+        "EW"
+      ],
+      "cutscene": "ex4/aktkml/aktkml10610/aktkml10610",
+      "timeline": 10,
+      "firstShot": 3,
+      "lastShot": 3,
+      "shots": [
+        {
+          "shot": 3,
+          "from": 380,
+          "to": 500
+        }
+      ],
+      "startFrame": 380,
+      "endFrame": 500,
+      "duration": 4,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        27
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 40,
+        "fovMax": 40,
+        "distance": 1.05,
+        "quality": 1.19
+      }
+    },
+    {
+      "id": "aktkmg11540-t12-s7",
+      "name": "Still, close-up (EW 2)",
+      "category": "single/close-up/static",
+      "tags": [
+        "single",
+        "close-up",
+        "static",
+        "eye-level",
+        "front",
+        "corpse",
+        "EW"
+      ],
+      "cutscene": "ex4/aktkmg/aktkmg11540/aktkmg11540",
+      "timeline": 12,
+      "firstShot": 7,
+      "lastShot": 7,
+      "shots": [
+        {
+          "shot": 7,
+          "from": 180,
+          "to": 390
+        }
+      ],
+      "startFrame": 180,
+      "endFrame": 390,
+      "duration": 7,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        26
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 0.91,
+        "quality": 1.17
+      }
+    },
+    {
+      "id": "aktkmi10920-t15-s3",
+      "name": "Still, low close-up, profile",
+      "category": "single/close-up/static",
+      "tags": [
+        "single",
+        "close-up",
+        "static",
+        "low",
+        "side",
+        "corpse",
+        "EW"
+      ],
+      "cutscene": "ex4/aktkmi/aktkmi10920/aktkmi10920",
+      "timeline": 15,
+      "firstShot": 3,
+      "lastShot": 3,
+      "shots": [
+        {
+          "shot": 3,
+          "from": 150,
+          "to": 320
+        }
+      ],
+      "startFrame": 150,
+      "endFrame": 320,
+      "duration": 5.67,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 7,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        27
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "low",
+        "side": "side",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 40,
+        "fovMax": 40,
+        "distance": 0.91,
+        "quality": 1.17
+      }
+    },
+    {
+      "id": "stmact07050-t2-s0",
+      "name": "Slow crane down, high medium shot (SB)",
+      "category": "single/medium/crane-down",
+      "tags": [
+        "single",
+        "medium",
+        "crane-down",
+        "slow",
+        "high",
+        "front",
+        "roll",
+        "cuts",
+        "SB"
+      ],
+      "cutscene": "ex2/stmact/stmact07050/stmact07050",
+      "timeline": 2,
+      "firstShot": 0,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 120
+        },
+        {
+          "shot": 1,
+          "from": 120,
+          "to": 155
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 155,
+      "duration": 5.17,
+      "cuts": 1,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 6,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        71,
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "high",
+        "side": "front",
+        "motion": "crane-down",
+        "slow": true,
+        "motions": [
+          "crane-down",
+          "static"
+        ],
+        "roll": true,
+        "maxRoll": 14,
+        "fovMin": 21,
+        "fovMax": 50,
+        "distance": 4.1,
+        "quality": 1.15
+      }
+    },
+    {
+      "id": "rolall07070-t5-s0",
+      "name": "Slow crane down, high medium shot (DT)",
+      "category": "single/medium/crane-down",
+      "tags": [
+        "single",
+        "medium",
+        "crane-down",
+        "slow",
+        "high",
+        "front",
+        "DT"
+      ],
+      "cutscene": "ex5/rolall/rolall07070/rolall07070",
+      "timeline": 5,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 200
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 200,
+      "duration": 6.67,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        42
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "high",
+        "side": "front",
+        "motion": "crane-down",
+        "slow": true,
+        "motions": [
+          "crane-down"
+        ],
+        "roll": false,
+        "maxRoll": 2.29,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 2.17,
+        "quality": 1.15
+      }
+    },
+    {
+      "id": "subcts68110-t2-s1",
+      "name": "Slow crane up, high medium shot",
+      "category": "single/medium/crane-up",
+      "tags": [
+        "single",
+        "medium",
+        "crane-up",
+        "slow",
+        "high",
+        "front",
+        "cuts",
+        "EW"
+      ],
+      "cutscene": "ex4/subcts/subcts68110/subcts68110",
+      "timeline": 2,
+      "firstShot": 1,
+      "lastShot": 2,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 120,
+          "to": 240
+        },
+        {
+          "shot": 2,
+          "from": 240,
+          "to": 380
+        }
+      ],
+      "startFrame": 120,
+      "endFrame": 380,
+      "duration": 8.67,
+      "cuts": 1,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 3,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        1,
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "high",
+        "side": "front",
+        "motion": "crane-up",
+        "slow": true,
+        "motions": [
+          "static",
+          "crane-up"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 25,
+        "fovMax": 45,
+        "distance": 2.51,
+        "quality": 1.29
+      }
+    },
+    {
+      "id": "aktkmm10230-t4-s2",
+      "name": "Slow crane up, medium shot (EW)",
+      "category": "single/medium/crane-up",
+      "tags": [
+        "single",
+        "medium",
+        "crane-up",
+        "slow",
+        "eye-level",
+        "front",
+        "EW"
+      ],
+      "cutscene": "ex4/aktkmm/aktkmm10230/aktkmm10230",
+      "timeline": 4,
+      "firstShot": 2,
+      "lastShot": 2,
+      "shots": [
+        {
+          "shot": 2,
+          "from": 210,
+          "to": 350
+        }
+      ],
+      "startFrame": 210,
+      "endFrame": 350,
+      "duration": 4.67,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 8,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "crane-up",
+        "slow": true,
+        "motions": [
+          "crane-up"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 45,
+        "fovMax": 45,
+        "distance": 2.03,
+        "quality": 1.27
+      }
+    },
+    {
+      "id": "qstomg00020-t26-s2",
+      "name": "Slow crane up, low medium shot",
+      "category": "single/medium/crane-up",
+      "tags": [
+        "single",
+        "medium",
+        "crane-up",
+        "slow",
+        "low",
+        "side",
+        "corpse",
+        "SB"
+      ],
+      "cutscene": "ex2/qstomg/qstomg00020/qstomg00020",
+      "timeline": 26,
+      "firstShot": 2,
+      "lastShot": 2,
+      "shots": [
+        {
+          "shot": 2,
+          "from": 170,
+          "to": 290
+        }
+      ],
+      "startFrame": 170,
+      "endFrame": 290,
+      "duration": 4,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 5,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        26
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "low",
+        "side": "side",
+        "motion": "crane-up",
+        "slow": true,
+        "motions": [
+          "crane-up"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 30.38,
+        "fovMax": 30.38,
+        "distance": 1.5,
+        "quality": 1.15
+      }
+    },
+    {
+      "id": "dunmyc05420-t3-s9",
+      "name": "Slow crane up, medium shot (ShB)",
+      "category": "single/medium/crane-up",
+      "tags": [
+        "single",
+        "medium",
+        "crane-up",
+        "slow",
+        "eye-level",
+        "front",
+        "cuts",
+        "corpse",
+        "ShB"
+      ],
+      "cutscene": "ex3/dunmyc/dunmyc05420/dunmyc05420",
+      "timeline": 3,
+      "firstShot": 9,
+      "lastShot": 10,
+      "shots": [
+        {
+          "shot": 9,
+          "from": 1024,
+          "to": 1157
+        },
+        {
+          "shot": 10,
+          "from": 1157,
+          "to": 1285
+        }
+      ],
+      "startFrame": 1024,
+      "endFrame": 1285,
+      "duration": 8.7,
+      "cuts": 1,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 5,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        28
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "crane-up",
+        "slow": true,
+        "motions": [
+          "crane-up",
+          "pull-out"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 43,
+        "fovMax": 43,
+        "distance": 1.61,
+        "quality": 1.15
+      }
+    },
+    {
+      "id": "qstmyc00350-t6-s1",
+      "name": "Slow orbit left, medium shot",
+      "category": "single/medium/orbit-left",
+      "tags": [
+        "single",
+        "medium",
+        "orbit-left",
+        "slow",
+        "eye-level",
+        "front",
+        "ShB"
+      ],
+      "cutscene": "ex3/qstmyc/qstmyc00350/qstmyc00350",
+      "timeline": 6,
+      "firstShot": 1,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 90,
+          "to": 250
+        }
+      ],
+      "startFrame": 90,
+      "endFrame": 250,
+      "duration": 5.33,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 17,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "orbit-left",
+        "slow": true,
+        "motions": [
+          "orbit-left"
+        ],
+        "roll": false,
+        "maxRoll": 0.01,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 1.79,
+        "quality": 1.27
+      }
+    },
+    {
+      "id": "subwil03520-t2-s3",
+      "name": "Slow orbit left, low medium shot (ARR)",
+      "category": "single/medium/orbit-left",
+      "tags": [
+        "single",
+        "medium",
+        "orbit-left",
+        "slow",
+        "low",
+        "front",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/subwil/subwil03520/subwil03520",
+      "timeline": 2,
+      "firstShot": 3,
+      "lastShot": 3,
+      "shots": [
+        {
+          "shot": 3,
+          "from": 310,
+          "to": 430
+        }
+      ],
+      "startFrame": 310,
+      "endFrame": 430,
+      "duration": 4,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 2,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        26,
+        71
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "low",
+        "side": "front",
+        "motion": "orbit-left",
+        "slow": true,
+        "motions": [
+          "orbit-left"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 1.52,
+        "quality": 1.25
+      }
+    },
+    {
+      "id": "stmbdf10320-t5-s3",
+      "name": "Slow orbit left, low medium shot (SB)",
+      "category": "single/medium/orbit-left",
+      "tags": [
+        "single",
+        "medium",
+        "orbit-left",
+        "slow",
+        "low",
+        "side",
+        "roll",
+        "corpse",
+        "SB"
+      ],
+      "cutscene": "ex2/stmbdf/stmbdf10320/stmbdf10320",
+      "timeline": 5,
+      "firstShot": 3,
+      "lastShot": 3,
+      "shots": [
+        {
+          "shot": 3,
+          "from": 345,
+          "to": 470
+        }
+      ],
+      "startFrame": 345,
+      "endFrame": 470,
+      "duration": 4.17,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        31
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "low",
+        "side": "side",
+        "motion": "orbit-left",
+        "slow": true,
+        "motions": [
+          "orbit-left"
+        ],
+        "roll": true,
+        "maxRoll": 6.3,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 1.21,
+        "quality": 1.15
+      }
+    },
+    {
+      "id": "kinact06070-t8-s1",
+      "name": "Slow orbit right, medium shot",
+      "category": "single/medium/orbit-right",
+      "tags": [
+        "single",
+        "medium",
+        "orbit-right",
+        "slow",
+        "eye-level",
+        "front",
+        "DT"
+      ],
+      "cutscene": "ex5/kinact/kinact06070/kinact06070",
+      "timeline": 8,
+      "firstShot": 1,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 130,
+          "to": 480
+        }
+      ],
+      "startFrame": 130,
+      "endFrame": 480,
+      "duration": 11.67,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 8,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "orbit-right",
+        "slow": true,
+        "motions": [
+          "orbit-right"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 0.95,
+        "quality": 1.3
+      }
+    },
+    {
+      "id": "anvxiv01220-t2-s0",
+      "name": "Slow orbit right, low medium shot (ARR)",
+      "category": "single/medium/orbit-right",
+      "tags": [
+        "single",
+        "medium",
+        "orbit-right",
+        "slow",
+        "low",
+        "front",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/anvxiv/anvxiv01220/anvxiv01220",
+      "timeline": 2,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 250
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 250,
+      "duration": 8.33,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 3,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "low",
+        "side": "front",
+        "motion": "orbit-right",
+        "slow": true,
+        "motions": [
+          "orbit-right"
+        ],
+        "roll": false,
+        "maxRoll": 2.6,
+        "fovMin": 45,
+        "fovMax": 45,
+        "distance": 1.7,
+        "quality": 1.29
+      }
+    },
+    {
+      "id": "qstpdn00310-t10-s0",
+      "name": "Slow orbit right, low medium shot (EW)",
+      "category": "single/medium/orbit-right",
+      "tags": [
+        "single",
+        "medium",
+        "orbit-right",
+        "slow",
+        "low",
+        "back",
+        "corpse",
+        "EW"
+      ],
+      "cutscene": "ex4/qstpdn/qstpdn00310/qstpdn00310",
+      "timeline": 10,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 275
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 275,
+      "duration": 9.17,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 5,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        26
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "low",
+        "side": "back",
+        "motion": "orbit-right",
+        "slow": true,
+        "motions": [
+          "orbit-right"
+        ],
+        "roll": false,
+        "maxRoll": 0.87,
+        "fovMin": 44.6,
+        "fovMax": 44.6,
+        "distance": 2.13,
+        "quality": 1.28
+      }
+    },
+    {
+      "id": "dunmoe00110-t2-s0",
+      "name": "Slow orbit right, medium shot, profile",
+      "category": "single/medium/orbit-right",
+      "tags": [
+        "single",
+        "medium",
+        "orbit-right",
+        "slow",
+        "eye-level",
+        "side",
+        "roll",
+        "corpse",
+        "EW"
+      ],
+      "cutscene": "ex4/dunmoe/dunmoe00110/dunmoe00110",
+      "timeline": 2,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 250
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 250,
+      "duration": 8.33,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        26
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "orbit-right",
+        "slow": true,
+        "motions": [
+          "orbit-right"
+        ],
+        "roll": true,
+        "maxRoll": 5.45,
+        "fovMin": 30.22,
+        "fovMax": 35.48,
+        "distance": 1.68,
+        "quality": 1.07
+      }
+    },
+    {
+      "id": "heavnm20120-t4-s2",
+      "name": "Slow pan, medium shot",
+      "category": "single/medium/pan",
+      "tags": [
+        "single",
+        "medium",
+        "pan",
+        "slow",
+        "eye-level",
+        "front",
+        "HW"
+      ],
+      "cutscene": "ex1/heavnm/heavnm20120/heavnm20120",
+      "timeline": 4,
+      "firstShot": 2,
+      "lastShot": 2,
+      "shots": [
+        {
+          "shot": 2,
+          "from": 95,
+          "to": 215
+        }
+      ],
+      "startFrame": 95,
+      "endFrame": 215,
+      "duration": 4,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 10,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "pan",
+        "slow": true,
+        "motions": [
+          "pan"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 1.22,
+        "quality": 1.26
+      }
+    },
+    {
+      "id": "aktkmj10215-t5-s0",
+      "name": "Pan, medium shot",
+      "category": "single/medium/pan",
+      "tags": [
+        "single",
+        "medium",
+        "pan",
+        "eye-level",
+        "front",
+        "cuts",
+        "EW"
+      ],
+      "cutscene": "ex4/aktkmj/aktkmj10215/aktkmj10215",
+      "timeline": 5,
+      "firstShot": 0,
+      "lastShot": 2,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 90
+        },
+        {
+          "shot": 1,
+          "from": 90,
+          "to": 170
+        },
+        {
+          "shot": 2,
+          "from": 170,
+          "to": 230
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 230,
+      "duration": 7.67,
+      "cuts": 2,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 7,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        71,
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "pan",
+        "slow": false,
+        "motions": [
+          "pan",
+          "static",
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0.56,
+        "fovMin": 27,
+        "fovMax": 50,
+        "distance": 2.93,
+        "quality": 1.21
+      }
+    },
+    {
+      "id": "dunerk2a120-t2-s0",
+      "name": "Pan, low medium shot, profile",
+      "category": "single/medium/pan",
+      "tags": [
+        "single",
+        "medium",
+        "pan",
+        "low",
+        "side",
+        "corpse",
+        "SB"
+      ],
+      "cutscene": "ex2/dunerk/dunerk2a120/dunerk2a120",
+      "timeline": 2,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 360
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 360,
+      "duration": 12,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 3,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        1
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "low",
+        "side": "side",
+        "motion": "pan",
+        "slow": false,
+        "motions": [
+          "pan"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 1.48,
+        "quality": 1.15
+      }
+    },
+    {
+      "id": "qstpdn00030-t4-s4",
+      "name": "Slow pan, low medium shot",
+      "category": "single/medium/pan",
+      "tags": [
+        "single",
+        "medium",
+        "pan",
+        "slow",
+        "low",
+        "back",
+        "corpse",
+        "EW"
+      ],
+      "cutscene": "ex4/qstpdn/qstpdn00030/qstpdn00030",
+      "timeline": 4,
+      "firstShot": 4,
+      "lastShot": 4,
+      "shots": [
+        {
+          "shot": 4,
+          "from": 485,
+          "to": 649
+        }
+      ],
+      "startFrame": 485,
+      "endFrame": 649,
+      "duration": 5.47,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 6,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        27
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "low",
+        "side": "back",
+        "motion": "pan",
+        "slow": true,
+        "motions": [
+          "pan"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 1.07,
+        "quality": 1.1
+      }
+    },
+    {
+      "id": "lucact05160-t13-s3",
+      "name": "Slow pull-out, low medium shot",
+      "category": "single/medium/pull-out",
+      "tags": [
+        "single",
+        "medium",
+        "pull-out",
+        "slow",
+        "low",
+        "front",
+        "ShB"
+      ],
+      "cutscene": "ex3/lucact/lucact05160/lucact05160",
+      "timeline": 13,
+      "firstShot": 3,
+      "lastShot": 3,
+      "shots": [
+        {
+          "shot": 3,
+          "from": 240,
+          "to": 600
+        }
+      ],
+      "startFrame": 240,
+      "endFrame": 600,
+      "duration": 12,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 10,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "low",
+        "side": "front",
+        "motion": "pull-out",
+        "slow": true,
+        "motions": [
+          "pull-out"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 40,
+        "fovMax": 49.1,
+        "distance": 1.13,
+        "quality": 1.31
+      }
+    },
+    {
+      "id": "anvxiv01120-t9-s0",
+      "name": "Slow pull-out, medium shot",
+      "category": "single/medium/pull-out",
+      "tags": [
+        "single",
+        "medium",
+        "pull-out",
+        "slow",
+        "eye-level",
+        "front",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/anvxiv/anvxiv01120/anvxiv01120",
+      "timeline": 9,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 210
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 210,
+      "duration": 7,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 3,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "pull-out",
+        "slow": true,
+        "motions": [
+          "pull-out"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 40,
+        "fovMax": 50,
+        "distance": 1.35,
+        "quality": 1.31
+      }
+    },
+    {
+      "id": "luckmj00110-t8-s6",
+      "name": "Slow pull-out, medium shot, from behind",
+      "category": "single/medium/pull-out",
+      "tags": [
+        "single",
+        "medium",
+        "pull-out",
+        "slow",
+        "eye-level",
+        "back",
+        "corpse",
+        "ShB"
+      ],
+      "cutscene": "ex3/luckmj/luckmj00110/luckmj00110",
+      "timeline": 8,
+      "firstShot": 6,
+      "lastShot": 6,
+      "shots": [
+        {
+          "shot": 6,
+          "from": 630,
+          "to": 760
+        }
+      ],
+      "startFrame": 630,
+      "endFrame": 760,
+      "duration": 4.33,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 5,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        1
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "pull-out",
+        "slow": true,
+        "motions": [
+          "pull-out"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 1.11,
+        "quality": 1.26
+      }
+    },
+    {
+      "id": "aktkmh10705-t5-s5",
+      "name": "Pull-out, medium shot",
+      "category": "single/medium/pull-out",
+      "tags": [
+        "single",
+        "medium",
+        "pull-out",
+        "eye-level",
+        "front",
+        "corpse",
+        "EW"
+      ],
+      "cutscene": "ex4/aktkmh/aktkmh10705/aktkmh10705",
+      "timeline": 5,
+      "firstShot": 5,
+      "lastShot": 5,
+      "shots": [
+        {
+          "shot": 5,
+          "from": 318,
+          "to": 450
+        }
+      ],
+      "startFrame": 318,
+      "endFrame": 450,
+      "duration": 4.4,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 7,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        26
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "pull-out",
+        "slow": false,
+        "motions": [
+          "pull-out"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 50.77,
+        "distance": 1.45,
+        "quality": 1.22
+      }
+    },
+    {
+      "id": "kingmg10320-t9-s9",
+      "name": "Slow push-in, low medium shot (DT)",
+      "category": "single/medium/push-in",
+      "tags": [
+        "single",
+        "medium",
+        "push-in",
+        "slow",
+        "low",
+        "back",
+        "DT"
+      ],
+      "cutscene": "ex5/kingmg/kingmg10320/kingmg10320",
+      "timeline": 9,
+      "firstShot": 9,
+      "lastShot": 9,
+      "shots": [
+        {
+          "shot": 9,
+          "from": 0,
+          "to": 120
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 120,
+      "duration": 4,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "low",
+        "side": "back",
+        "motion": "push-in",
+        "slow": true,
+        "motions": [
+          "push-in"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50.01,
+        "fovMax": 60,
+        "distance": 1.45,
+        "quality": 1.32
+      }
+    },
+    {
+      "id": "manfst20940-t4-s0",
+      "name": "Slow push-in, low medium shot (ARR)",
+      "category": "single/medium/push-in",
+      "tags": [
+        "single",
+        "medium",
+        "push-in",
+        "slow",
+        "low",
+        "front",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/manfst/manfst20940/manfst20940",
+      "timeline": 4,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 230
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 230,
+      "duration": 7.67,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "low",
+        "side": "front",
+        "motion": "push-in",
+        "slow": true,
+        "motions": [
+          "push-in"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 50,
+        "distance": 2.02,
+        "quality": 1.3
+      }
+    },
+    {
+      "id": "stmbdc10520-t4-s1",
+      "name": "Slow push-in, medium shot, from behind",
+      "category": "single/medium/push-in",
+      "tags": [
+        "single",
+        "medium",
+        "push-in",
+        "slow",
+        "eye-level",
+        "back",
+        "corpse",
+        "SB"
+      ],
+      "cutscene": "ex2/stmbdc/stmbdc10520/stmbdc10520",
+      "timeline": 4,
+      "firstShot": 1,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 90,
+          "to": 270
+        }
+      ],
+      "startFrame": 90,
+      "endFrame": 270,
+      "duration": 6,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 8,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        1
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "push-in",
+        "slow": true,
+        "motions": [
+          "push-in"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 0.95,
+        "quality": 1.3
+      }
+    },
+    {
+      "id": "jobgff00030-t6-s3",
+      "name": "Slow push-in, medium shot, profile",
+      "category": "single/medium/push-in",
+      "tags": [
+        "single",
+        "medium",
+        "push-in",
+        "slow",
+        "eye-level",
+        "side",
+        "corpse",
+        "EW"
+      ],
+      "cutscene": "ex4/jobgff/jobgff00030/jobgff00030",
+      "timeline": 6,
+      "firstShot": 3,
+      "lastShot": 3,
+      "shots": [
+        {
+          "shot": 3,
+          "from": 385,
+          "to": 715
+        }
+      ],
+      "startFrame": 385,
+      "endFrame": 715,
+      "duration": 11,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 7,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        1
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "push-in",
+        "slow": true,
+        "motions": [
+          "push-in"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 60,
+        "fovMax": 60,
+        "distance": 1.25,
+        "quality": 1.27
+      }
+    },
+    {
+      "id": "qstarc01010-t12-s0",
+      "name": "Still, medium shot, from behind",
+      "category": "single/medium/static",
+      "tags": [
+        "single",
+        "medium",
+        "static",
+        "eye-level",
+        "back",
+        "DT"
+      ],
+      "cutscene": "ex5/qstarc/qstarc01010/qstarc01010",
+      "timeline": 12,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 180
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 180,
+      "duration": 6,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 3,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 2.49,
+        "quality": 1.19
+      }
+    },
+    {
+      "id": "fesgrn00620-t2-s8",
+      "name": "Still, high medium shot",
+      "category": "single/medium/static",
+      "tags": [
+        "single",
+        "medium",
+        "static",
+        "high",
+        "front",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/fesgrn/fesgrn00620/fesgrn00620",
+      "timeline": 2,
+      "firstShot": 8,
+      "lastShot": 8,
+      "shots": [
+        {
+          "shot": 8,
+          "from": 240,
+          "to": 390
+        }
+      ],
+      "startFrame": 240,
+      "endFrame": 390,
+      "duration": 5,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 3,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "high",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 45,
+        "fovMax": 45,
+        "distance": 1.94,
+        "quality": 1.19
+      }
+    },
+    {
+      "id": "aktkmg10220-t4-s2",
+      "name": "Still, medium shot (EW 1)",
+      "category": "single/medium/static",
+      "tags": [
+        "single",
+        "medium",
+        "static",
+        "eye-level",
+        "front",
+        "corpse",
+        "EW"
+      ],
+      "cutscene": "ex4/aktkmg/aktkmg10220/aktkmg10220",
+      "timeline": 4,
+      "firstShot": 2,
+      "lastShot": 2,
+      "shots": [
+        {
+          "shot": 2,
+          "from": 160,
+          "to": 425
+        }
+      ],
+      "startFrame": 160,
+      "endFrame": 425,
+      "duration": 8.83,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 9,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        26
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 45,
+        "fovMax": 45,
+        "distance": 1.17,
+        "quality": 1.18
+      }
+    },
+    {
+      "id": "aktkma10120-t5-s7",
+      "name": "Still, medium shot (EW 2)",
+      "category": "single/medium/static",
+      "tags": [
+        "single",
+        "medium",
+        "static",
+        "eye-level",
+        "front",
+        "corpse",
+        "EW"
+      ],
+      "cutscene": "ex4/aktkma/aktkma10120/aktkma10120",
+      "timeline": 5,
+      "firstShot": 7,
+      "lastShot": 7,
+      "shots": [
+        {
+          "shot": 7,
+          "from": 1504,
+          "to": 1638
+        }
+      ],
+      "startFrame": 1504,
+      "endFrame": 1638,
+      "duration": 4.47,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 5,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        26
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 45,
+        "fovMax": 45,
+        "distance": 1.29,
+        "quality": 1.17
+      }
+    },
+    {
+      "id": "luckmh00010-t6-s3",
+      "name": "Tracking, medium shot, profile",
+      "category": "single/medium/tracking",
+      "tags": [
+        "single",
+        "medium",
+        "tracking",
+        "eye-level",
+        "side",
+        "cuts",
+        "ShB"
+      ],
+      "cutscene": "ex3/luckmh/luckmh00010/luckmh00010",
+      "timeline": 6,
+      "firstShot": 3,
+      "lastShot": 4,
+      "shots": [
+        {
+          "shot": 3,
+          "from": 260,
+          "to": 320
+        },
+        {
+          "shot": 4,
+          "from": 320,
+          "to": 430
+        }
+      ],
+      "startFrame": 260,
+      "endFrame": 430,
+      "duration": 5.67,
+      "cuts": 1,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 5,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "tracking",
+        "slow": false,
+        "motions": [
+          "static",
+          "tracking"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 32,
+        "fovMax": 40,
+        "distance": 2.79,
+        "quality": 1.26
+      }
+    },
+    {
+      "id": "banpel00120-t3-s6",
+      "name": "Tracking, low medium shot",
+      "category": "single/medium/tracking",
+      "tags": [
+        "single",
+        "medium",
+        "tracking",
+        "low",
+        "front",
+        "DT"
+      ],
+      "cutscene": "ex5/banpel/banpel00120/banpel00120",
+      "timeline": 3,
+      "firstShot": 6,
+      "lastShot": 6,
+      "shots": [
+        {
+          "shot": 6,
+          "from": 605,
+          "to": 730
+        }
+      ],
+      "startFrame": 605,
+      "endFrame": 730,
+      "duration": 4.17,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 3,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "low",
+        "side": "front",
+        "motion": "tracking",
+        "slow": false,
+        "motions": [
+          "tracking"
+        ],
+        "roll": false,
+        "maxRoll": 1.58,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 1.42,
+        "quality": 1.19
+      }
+    },
+    {
+      "id": "dunzon5d220-t5-s4",
+      "name": "Slow crane down, full body",
+      "category": "single/full/crane-down",
+      "tags": [
+        "single",
+        "full",
+        "crane-down",
+        "slow",
+        "eye-level",
+        "front",
+        "EW"
+      ],
+      "cutscene": "ex4/dunzon/dunzon5d220/dunzon5d220",
+      "timeline": 5,
+      "firstShot": 4,
+      "lastShot": 4,
+      "shots": [
+        {
+          "shot": 4,
+          "from": 510,
+          "to": 840
+        }
+      ],
+      "startFrame": 510,
+      "endFrame": 840,
+      "duration": 11,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "crane-down",
+        "slow": true,
+        "motions": [
+          "crane-down"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 40,
+        "fovMax": 40,
+        "distance": 3.9,
+        "quality": 1.27
+      }
+    },
+    {
+      "id": "kinact06020-t4-s1",
+      "name": "Crane down, full body",
+      "category": "single/full/crane-down",
+      "tags": [
+        "single",
+        "full",
+        "crane-down",
+        "eye-level",
+        "front",
+        "cuts",
+        "DT"
+      ],
+      "cutscene": "ex5/kinact/kinact06020/kinact06020",
+      "timeline": 4,
+      "firstShot": 1,
+      "lastShot": 2,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 50,
+          "to": 180
+        },
+        {
+          "shot": 2,
+          "from": 180,
+          "to": 230
+        }
+      ],
+      "startFrame": 50,
+      "endFrame": 230,
+      "duration": 6,
+      "cuts": 1,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        42
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "crane-down",
+        "slow": false,
+        "motions": [
+          "crane-down",
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0.18,
+        "fovMin": 60,
+        "fovMax": 80,
+        "distance": 2.53,
+        "quality": 1.19
+      }
+    },
+    {
+      "id": "qstomg06110-t14-s6",
+      "name": "Slow crane up, high full body",
+      "category": "single/full/crane-up",
+      "tags": [
+        "single",
+        "full",
+        "crane-up",
+        "slow",
+        "high",
+        "front",
+        "EW"
+      ],
+      "cutscene": "ex4/qstomg/qstomg06110/qstomg06110",
+      "timeline": 14,
+      "firstShot": 6,
+      "lastShot": 6,
+      "shots": [
+        {
+          "shot": 6,
+          "from": 435,
+          "to": 645
+        }
+      ],
+      "startFrame": 435,
+      "endFrame": 645,
+      "duration": 7,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "high",
+        "side": "front",
+        "motion": "crane-up",
+        "slow": true,
+        "motions": [
+          "crane-up"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 45.07,
+        "fovMax": 49.97,
+        "distance": 2.12,
+        "quality": 1.28
+      }
+    },
+    {
+      "id": "manfst00000-t7-s0",
+      "name": "Slow crane up, low full body",
+      "category": "single/full/crane-up",
+      "tags": [
+        "single",
+        "full",
+        "crane-up",
+        "slow",
+        "low",
+        "front",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/manfst/manfst00000/manfst00000",
+      "timeline": 7,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 130
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 130,
+      "duration": 4.33,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "low",
+        "side": "front",
+        "motion": "crane-up",
+        "slow": true,
+        "motions": [
+          "crane-up"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 2.55,
+        "quality": 1.27
+      }
+    },
+    {
+      "id": "aktkmg11520-t12-s1",
+      "name": "Slow orbit left, low full body",
+      "category": "single/full/orbit-left",
+      "tags": [
+        "single",
+        "full",
+        "orbit-left",
+        "slow",
+        "low",
+        "front",
+        "EW"
+      ],
+      "cutscene": "ex4/aktkmg/aktkmg11520/aktkmg11520",
+      "timeline": 12,
+      "firstShot": 1,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 307,
+          "to": 480
+        }
+      ],
+      "startFrame": 307,
+      "endFrame": 480,
+      "duration": 5.77,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        27,
+        42
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "low",
+        "side": "front",
+        "motion": "orbit-left",
+        "slow": true,
+        "motions": [
+          "orbit-left"
+        ],
+        "roll": false,
+        "maxRoll": 3,
+        "fovMin": 60,
+        "fovMax": 60,
+        "distance": 1.82,
+        "quality": 1.29
+      }
+    },
+    {
+      "id": "kinact03110-t11-s0",
+      "name": "Slow orbit left, full body, profile",
+      "category": "single/full/orbit-left",
+      "tags": [
+        "single",
+        "full",
+        "orbit-left",
+        "slow",
+        "eye-level",
+        "side",
+        "DT"
+      ],
+      "cutscene": "ex5/kinact/kinact03110/kinact03110",
+      "timeline": 11,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 290
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 290,
+      "duration": 9.67,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 12,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        42
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "orbit-left",
+        "slow": true,
+        "motions": [
+          "orbit-left"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 3.33,
+        "quality": 1.25
+      }
+    },
+    {
+      "id": "clscnj00430-t14-s0",
+      "name": "Slow orbit left, full body",
+      "category": "single/full/orbit-left",
+      "tags": [
+        "single",
+        "full",
+        "orbit-left",
+        "slow",
+        "eye-level",
+        "back",
+        "roll",
+        "corpse",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/clscnj/clscnj00430/clscnj00430",
+      "timeline": 14,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 210
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 210,
+      "duration": 7,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 6,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        31
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "orbit-left",
+        "slow": true,
+        "motions": [
+          "orbit-left"
+        ],
+        "roll": true,
+        "maxRoll": 9.73,
+        "fovMin": 65.27,
+        "fovMax": 65.27,
+        "distance": 2.34,
+        "quality": 1.16
+      }
+    },
+    {
+      "id": "chrhdb65120-t24-s0",
+      "name": "Slow orbit right, high full body",
+      "category": "single/full/orbit-right",
+      "tags": [
+        "single",
+        "full",
+        "orbit-right",
+        "slow",
+        "high",
+        "back",
+        "HW"
+      ],
+      "cutscene": "ex1/chrhdb/chrhdb65120/chrhdb65120",
+      "timeline": 24,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 150
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 150,
+      "duration": 5,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 5,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        71
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "high",
+        "side": "back",
+        "motion": "orbit-right",
+        "slow": true,
+        "motions": [
+          "orbit-right"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 3.93,
+        "quality": 1.34
+      }
+    },
+    {
+      "id": "jobbrd00010-t3-s0",
+      "name": "Slow orbit right, full body",
+      "category": "single/full/orbit-right",
+      "tags": [
+        "single",
+        "full",
+        "orbit-right",
+        "slow",
+        "eye-level",
+        "front",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/jobbrd/jobbrd00010/jobbrd00010",
+      "timeline": 3,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 171
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 171,
+      "duration": 5.7,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 5,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        71,
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "orbit-right",
+        "slow": true,
+        "motions": [
+          "orbit-right"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 3.02,
+        "quality": 1.28
+      }
+    },
+    {
+      "id": "manfst40210-t5-s1",
+      "name": "Orbit right, full body",
+      "category": "single/full/orbit-right",
+      "tags": [
+        "single",
+        "full",
+        "orbit-right",
+        "eye-level",
+        "front",
+        "roll",
+        "corpse",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/manfst/manfst40210/manfst40210",
+      "timeline": 5,
+      "firstShot": 1,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 90,
+          "to": 200
+        }
+      ],
+      "startFrame": 90,
+      "endFrame": 200,
+      "duration": 3.67,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 3,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        26
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "orbit-right",
+        "slow": false,
+        "motions": [
+          "orbit-right"
+        ],
+        "roll": true,
+        "maxRoll": 11.5,
+        "fovMin": 65,
+        "fovMax": 65,
+        "distance": 3.05,
+        "quality": 0.95
+      }
+    },
+    {
+      "id": "dunarc3a410-t2-s3",
+      "name": "Slow pan, full body",
+      "category": "single/full/pan",
+      "tags": [
+        "single",
+        "full",
+        "pan",
+        "slow",
+        "eye-level",
+        "front",
+        "DT"
+      ],
+      "cutscene": "ex5/dunarc/dunarc3a410/dunarc3a410",
+      "timeline": 2,
+      "firstShot": 3,
+      "lastShot": 3,
+      "shots": [
+        {
+          "shot": 3,
+          "from": 730,
+          "to": 890
+        }
+      ],
+      "startFrame": 730,
+      "endFrame": 890,
+      "duration": 5.33,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "pan",
+        "slow": true,
+        "motions": [
+          "pan"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 4.41,
+        "quality": 1.24
+      }
+    },
+    {
+      "id": "heavna32810-t2-s4",
+      "name": "Slow pan, low full body",
+      "category": "single/full/pan",
+      "tags": [
+        "single",
+        "full",
+        "pan",
+        "slow",
+        "low",
+        "front",
+        "HW"
+      ],
+      "cutscene": "ex1/heavna/heavna32810/heavna32810",
+      "timeline": 2,
+      "firstShot": 4,
+      "lastShot": 4,
+      "shots": [
+        {
+          "shot": 4,
+          "from": 220,
+          "to": 360
+        }
+      ],
+      "startFrame": 220,
+      "endFrame": 360,
+      "duration": 4.67,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "low",
+        "side": "front",
+        "motion": "pan",
+        "slow": true,
+        "motions": [
+          "pan"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 60,
+        "fovMax": 60,
+        "distance": 1.85,
+        "quality": 1.23
+      }
+    },
+    {
+      "id": "aktkmb11540-t11-s8",
+      "name": "Slow pull-out, low full body",
+      "category": "single/full/pull-out",
+      "tags": [
+        "single",
+        "full",
+        "pull-out",
+        "slow",
+        "low",
+        "front",
+        "EW"
+      ],
+      "cutscene": "ex4/aktkmb/aktkmb11540/aktkmb11540",
+      "timeline": 11,
+      "firstShot": 8,
+      "lastShot": 8,
+      "shots": [
+        {
+          "shot": 8,
+          "from": 597,
+          "to": 829
+        }
+      ],
+      "startFrame": 597,
+      "endFrame": 829,
+      "duration": 7.73,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        27,
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "low",
+        "side": "front",
+        "motion": "pull-out",
+        "slow": true,
+        "motions": [
+          "pull-out"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 54,
+        "fovMax": 62.45,
+        "distance": 2.17,
+        "quality": 1.33
+      }
+    },
+    {
+      "id": "gaiuse60315-t6-s7",
+      "name": "Slow pull-out, full body",
+      "category": "single/full/pull-out",
+      "tags": [
+        "single",
+        "full",
+        "pull-out",
+        "slow",
+        "eye-level",
+        "front",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/gaiuse/gaiuse60315/gaiuse60315",
+      "timeline": 6,
+      "firstShot": 7,
+      "lastShot": 7,
+      "shots": [
+        {
+          "shot": 7,
+          "from": 430,
+          "to": 610
+        }
+      ],
+      "startFrame": 430,
+      "endFrame": 610,
+      "duration": 6,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 11,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "pull-out",
+        "slow": true,
+        "motions": [
+          "pull-out"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 65,
+        "fovMax": 75,
+        "distance": 1.76,
+        "quality": 1.33
+      }
+    },
+    {
+      "id": "lucact05120-t10-s1",
+      "name": "Slow pull-out, full body, from behind",
+      "category": "single/full/pull-out",
+      "tags": [
+        "single",
+        "full",
+        "pull-out",
+        "slow",
+        "eye-level",
+        "back",
+        "roll",
+        "corpse",
+        "ShB"
+      ],
+      "cutscene": "ex3/lucact/lucact05120/lucact05120",
+      "timeline": 10,
+      "firstShot": 1,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 45,
+          "to": 165
+        }
+      ],
+      "startFrame": 45,
+      "endFrame": 165,
+      "duration": 4,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 112,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        26
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "pull-out",
+        "slow": true,
+        "motions": [
+          "pull-out"
+        ],
+        "roll": true,
+        "maxRoll": 7.52,
+        "fovMin": 57.1,
+        "fovMax": 68.77,
+        "distance": 1.93,
+        "quality": 1.23
+      }
+    },
+    {
+      "id": "anvwil00940-t8-s0",
+      "name": "Pull-out, full body",
+      "category": "single/full/pull-out",
+      "tags": [
+        "single",
+        "full",
+        "pull-out",
+        "eye-level",
+        "front",
+        "corpse",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/anvwil/anvwil00940/anvwil00940",
+      "timeline": 8,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 160
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 160,
+      "duration": 5.33,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 3,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        28
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "pull-out",
+        "slow": false,
+        "motions": [
+          "pull-out"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 3.7,
+        "quality": 1.16
+      }
+    },
+    {
+      "id": "lucact01020-t10-s7",
+      "name": "Slow push-in, low full body (ShB)",
+      "category": "single/full/push-in",
+      "tags": [
+        "single",
+        "full",
+        "push-in",
+        "slow",
+        "low",
+        "front",
+        "ShB"
+      ],
+      "cutscene": "ex3/lucact/lucact01020/lucact01020",
+      "timeline": 10,
+      "firstShot": 7,
+      "lastShot": 7,
+      "shots": [
+        {
+          "shot": 7,
+          "from": 690,
+          "to": 825
+        }
+      ],
+      "startFrame": 690,
+      "endFrame": 825,
+      "duration": 4.5,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        26,
+        71
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "low",
+        "side": "front",
+        "motion": "push-in",
+        "slow": true,
+        "motions": [
+          "push-in"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 46.73,
+        "fovMax": 56.73,
+        "distance": 2.33,
+        "quality": 1.34
+      }
+    },
+    {
+      "id": "wedfst00110-t2-s5",
+      "name": "Slow push-in, full body",
+      "category": "single/full/push-in",
+      "tags": [
+        "single",
+        "full",
+        "push-in",
+        "slow",
+        "eye-level",
+        "front",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/wedfst/wedfst00110/wedfst00110",
+      "timeline": 2,
+      "firstShot": 5,
+      "lastShot": 5,
+      "shots": [
+        {
+          "shot": 5,
+          "from": 860,
+          "to": 1000
+        }
+      ],
+      "startFrame": 860,
+      "endFrame": 1000,
+      "duration": 4.67,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "push-in",
+        "slow": true,
+        "motions": [
+          "push-in"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 30,
+        "fovMax": 35,
+        "distance": 3.96,
+        "quality": 1.33
+      }
+    },
+    {
+      "id": "chrhdb93110-t13-s2",
+      "name": "Slow push-in, low full body (DT)",
+      "category": "single/full/push-in",
+      "tags": [
+        "single",
+        "full",
+        "push-in",
+        "slow",
+        "low",
+        "front",
+        "cuts",
+        "corpse",
+        "DT"
+      ],
+      "cutscene": "ex5/chrhdb/chrhdb93110/chrhdb93110",
+      "timeline": 13,
+      "firstShot": 2,
+      "lastShot": 3,
+      "shots": [
+        {
+          "shot": 2,
+          "from": 300,
+          "to": 450
+        },
+        {
+          "shot": 3,
+          "from": 450,
+          "to": 570
+        }
+      ],
+      "startFrame": 300,
+      "endFrame": 570,
+      "duration": 9,
+      "cuts": 1,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        27
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "low",
+        "side": "front",
+        "motion": "push-in",
+        "slow": true,
+        "motions": [
+          "push-in",
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 60,
+        "fovMax": 80,
+        "distance": 1.82,
+        "quality": 1.3
+      }
+    },
+    {
+      "id": "qstarc02310-t6-s1",
+      "name": "Slow push-in, full body, from behind",
+      "category": "single/full/push-in",
+      "tags": [
+        "single",
+        "full",
+        "push-in",
+        "slow",
+        "eye-level",
+        "back",
+        "corpse",
+        "DT"
+      ],
+      "cutscene": "ex5/qstarc/qstarc02310/qstarc02310",
+      "timeline": 6,
+      "firstShot": 1,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 55,
+          "to": 180
+        }
+      ],
+      "startFrame": 55,
+      "endFrame": 180,
+      "duration": 4.17,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 3,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        27
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "push-in",
+        "slow": true,
+        "motions": [
+          "push-in"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 2.31,
+        "quality": 1.27
+      }
+    },
+    {
+      "id": "chrhdb64220-t9-s2",
+      "name": "Still, full body, from behind",
+      "category": "single/full/static",
+      "tags": [
+        "single",
+        "full",
+        "static",
+        "eye-level",
+        "back",
+        "HW"
+      ],
+      "cutscene": "ex1/chrhdb/chrhdb64220/chrhdb64220",
+      "timeline": 9,
+      "firstShot": 2,
+      "lastShot": 2,
+      "shots": [
+        {
+          "shot": 2,
+          "from": 390,
+          "to": 510
+        }
+      ],
+      "startFrame": 390,
+      "endFrame": 510,
+      "duration": 4,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 11,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 3.68,
+        "quality": 1.2
+      }
+    },
+    {
+      "id": "lucact01070-t4-s1",
+      "name": "Still, full body (ShB 1)",
+      "category": "single/full/static",
+      "tags": [
+        "single",
+        "full",
+        "static",
+        "eye-level",
+        "front",
+        "ShB"
+      ],
+      "cutscene": "ex3/lucact/lucact01070/lucact01070",
+      "timeline": 4,
+      "firstShot": 1,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 100,
+          "to": 225
+        }
+      ],
+      "startFrame": 100,
+      "endFrame": 225,
+      "duration": 4.17,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 26,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 6.02,
+        "quality": 1.2
+      }
+    },
+    {
+      "id": "rolhel05050-t7-s2",
+      "name": "Still, full body (ShB 2)",
+      "category": "single/full/static",
+      "tags": [
+        "single",
+        "full",
+        "static",
+        "eye-level",
+        "front",
+        "corpse",
+        "ShB"
+      ],
+      "cutscene": "ex3/rolhel/rolhel05050/rolhel05050",
+      "timeline": 7,
+      "firstShot": 2,
+      "lastShot": 2,
+      "shots": [
+        {
+          "shot": 2,
+          "from": 350,
+          "to": 470
+        }
+      ],
+      "startFrame": 350,
+      "endFrame": 470,
+      "duration": 4,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 3,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        1
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 3.31,
+        "quality": 1.18
+      }
+    },
+    {
+      "id": "kingmk10520-t11-s5",
+      "name": "Still, full body (DT)",
+      "category": "single/full/static",
+      "tags": [
+        "single",
+        "full",
+        "static",
+        "eye-level",
+        "front",
+        "corpse",
+        "DT"
+      ],
+      "cutscene": "ex5/kingmk/kingmk10520/kingmk10520",
+      "timeline": 11,
+      "firstShot": 5,
+      "lastShot": 5,
+      "shots": [
+        {
+          "shot": 5,
+          "from": 320,
+          "to": 440
+        }
+      ],
+      "startFrame": 320,
+      "endFrame": 440,
+      "duration": 4,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 3,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        27
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 2.9,
+        "fovMin": 75,
+        "fovMax": 80,
+        "distance": 1.53,
+        "quality": 1.17
+      }
+    },
+    {
+      "id": "banixa00810-t6-s3",
+      "name": "Slow crane down, high wide shot",
+      "category": "single/wide/crane-down",
+      "tags": [
+        "single",
+        "wide",
+        "crane-down",
+        "slow",
+        "high",
+        "front",
+        "cuts",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/banixa/banixa00810/banixa00810",
+      "timeline": 6,
+      "firstShot": 3,
+      "lastShot": 4,
+      "shots": [
+        {
+          "shot": 3,
+          "from": 315,
+          "to": 380
+        },
+        {
+          "shot": 4,
+          "from": 380,
+          "to": 510
+        }
+      ],
+      "startFrame": 315,
+      "endFrame": 510,
+      "duration": 6.5,
+      "cuts": 1,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 15,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        71
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "high",
+        "side": "front",
+        "motion": "crane-down",
+        "slow": true,
+        "motions": [
+          "static",
+          "crane-down"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 27,
+        "fovMax": 54.8,
+        "distance": 6.85,
+        "quality": 1.21
+      }
+    },
+    {
+      "id": "chocmn00010-t2-s0",
+      "name": "Crane down, wide shot",
+      "category": "single/wide/crane-down",
+      "tags": [
+        "single",
+        "wide",
+        "crane-down",
+        "eye-level",
+        "front",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/chocmn/chocmn00010/chocmn00010",
+      "timeline": 2,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 270
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 270,
+      "duration": 9,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 3,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        29,
+        71
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "crane-down",
+        "slow": false,
+        "motions": [
+          "crane-down"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 30,
+        "fovMax": 30,
+        "distance": 8.28,
+        "quality": 1.12
+      }
+    },
+    {
+      "id": "manfst20004-t6-s0",
+      "name": "Crane up, high wide shot",
+      "category": "single/wide/crane-up",
+      "tags": [
+        "single",
+        "wide",
+        "crane-up",
+        "high",
+        "front",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/manfst/manfst20004/manfst20004",
+      "timeline": 6,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 140
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 140,
+      "duration": 4.67,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 10,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "high",
+        "side": "front",
+        "motion": "crane-up",
+        "slow": false,
+        "motions": [
+          "crane-up"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 6.74,
+        "quality": 1.09
+      }
+    },
+    {
+      "id": "fessxt10160-t18-s0",
+      "name": "Crane up, high wide shot, profile",
+      "category": "single/wide/crane-up",
+      "tags": [
+        "single",
+        "wide",
+        "crane-up",
+        "high",
+        "side",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/fessxt/fessxt10160/fessxt10160",
+      "timeline": 18,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 110
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 110,
+      "duration": 3.67,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 6,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "high",
+        "side": "side",
+        "motion": "crane-up",
+        "slow": false,
+        "motions": [
+          "crane-up"
+        ],
+        "roll": false,
+        "maxRoll": 0.49,
+        "fovMin": 40,
+        "fovMax": 40,
+        "distance": 5.63,
+        "quality": 1.08
+      }
+    },
+    {
+      "id": "aktkmf10320-t5-s0",
+      "name": "Slow orbit left, wide shot (EW)",
+      "category": "single/wide/orbit-left",
+      "tags": [
+        "single",
+        "wide",
+        "orbit-left",
+        "slow",
+        "eye-level",
+        "front",
+        "EW"
+      ],
+      "cutscene": "ex4/aktkmf/aktkmf10320/aktkmf10320",
+      "timeline": 5,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 360
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 360,
+      "duration": 12,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "orbit-left",
+        "slow": true,
+        "motions": [
+          "orbit-left"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 75,
+        "fovMax": 75,
+        "distance": 5.66,
+        "quality": 1.32
+      }
+    },
+    {
+      "id": "chrhdb10120-t24-s0",
+      "name": "Slow orbit left, wide shot (ARR)",
+      "category": "single/wide/orbit-left",
+      "tags": [
+        "single",
+        "wide",
+        "orbit-left",
+        "slow",
+        "eye-level",
+        "front",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/chrhdb/chrhdb10120/chrhdb10120",
+      "timeline": 24,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 150
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 150,
+      "duration": 5,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 5,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "orbit-left",
+        "slow": true,
+        "motions": [
+          "orbit-left"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 6.97,
+        "quality": 1.29
+      }
+    },
+    {
+      "id": "stmbdb10810-t4-s4",
+      "name": "Slow orbit right, high wide shot",
+      "category": "single/wide/orbit-right",
+      "tags": [
+        "single",
+        "wide",
+        "orbit-right",
+        "slow",
+        "high",
+        "side",
+        "SB"
+      ],
+      "cutscene": "ex2/stmbdb/stmbdb10810/stmbdb10810",
+      "timeline": 4,
+      "firstShot": 4,
+      "lastShot": 4,
+      "shots": [
+        {
+          "shot": 4,
+          "from": 223,
+          "to": 384
+        }
+      ],
+      "startFrame": 223,
+      "endFrame": 384,
+      "duration": 5.37,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 11,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        71
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "high",
+        "side": "side",
+        "motion": "orbit-right",
+        "slow": true,
+        "motions": [
+          "orbit-right"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 7.93,
+        "quality": 1.22
+      }
+    },
+    {
+      "id": "rolmle07070-t2-s1",
+      "name": "Slow orbit right, low wide shot",
+      "category": "single/wide/orbit-right",
+      "tags": [
+        "single",
+        "wide",
+        "orbit-right",
+        "slow",
+        "low",
+        "back",
+        "cuts",
+        "DT"
+      ],
+      "cutscene": "ex5/rolmle/rolmle07070/rolmle07070",
+      "timeline": 2,
+      "firstShot": 1,
+      "lastShot": 2,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 260,
+          "to": 460
+        },
+        {
+          "shot": 2,
+          "from": 460,
+          "to": 550
+        }
+      ],
+      "startFrame": 260,
+      "endFrame": 550,
+      "duration": 9.67,
+      "cuts": 1,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 6,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        42
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "low",
+        "side": "back",
+        "motion": "orbit-right",
+        "slow": true,
+        "motions": [
+          "orbit-right",
+          "pan"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 5.05,
+        "quality": 1.11
+      }
+    },
+    {
+      "id": "kinact06270-t2-s6",
+      "name": "Slow pan, wide shot, from behind",
+      "category": "single/wide/pan",
+      "tags": [
+        "single",
+        "wide",
+        "pan",
+        "slow",
+        "eye-level",
+        "back",
+        "DT"
+      ],
+      "cutscene": "ex5/kinact/kinact06270/kinact06270",
+      "timeline": 2,
+      "firstShot": 6,
+      "lastShot": 6,
+      "shots": [
+        {
+          "shot": 6,
+          "from": 890,
+          "to": 1240
+        }
+      ],
+      "startFrame": 890,
+      "endFrame": 1240,
+      "duration": 11.67,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 6,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        42
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "pan",
+        "slow": true,
+        "motions": [
+          "pan"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 80,
+        "fovMax": 80,
+        "distance": 2.45,
+        "quality": 1.32
+      }
+    },
+    {
+      "id": "chrhdb20410-t12-s2",
+      "name": "Pan, wide shot",
+      "category": "single/wide/pan",
+      "tags": [
+        "single",
+        "wide",
+        "pan",
+        "eye-level",
+        "front",
+        "roll",
+        "cuts",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/chrhdb/chrhdb20410/chrhdb20410",
+      "timeline": 12,
+      "firstShot": 2,
+      "lastShot": 4,
+      "shots": [
+        {
+          "shot": 2,
+          "from": 70,
+          "to": 120
+        },
+        {
+          "shot": 3,
+          "from": 120,
+          "to": 160
+        },
+        {
+          "shot": 4,
+          "from": 160,
+          "to": 195
+        }
+      ],
+      "startFrame": 70,
+      "endFrame": 195,
+      "duration": 4.17,
+      "cuts": 2,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 8,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        71
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "pan",
+        "slow": false,
+        "motions": [
+          "pan",
+          "static",
+          "pan"
+        ],
+        "roll": true,
+        "maxRoll": 15,
+        "fovMin": 70,
+        "fovMax": 80,
+        "distance": 5.67,
+        "quality": 1.02
+      }
+    },
+    {
+      "id": "boshds00020-t3-s0",
+      "name": "Slow pull-out, wide shot",
+      "category": "single/wide/pull-out",
+      "tags": [
+        "single",
+        "wide",
+        "pull-out",
+        "slow",
+        "eye-level",
+        "front",
+        "cuts",
+        "ShB"
+      ],
+      "cutscene": "ex3/boshds/boshds00020/boshds00020",
+      "timeline": 3,
+      "firstShot": 0,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 100
+        },
+        {
+          "shot": 1,
+          "from": 100,
+          "to": 260
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 260,
+      "duration": 8.67,
+      "cuts": 1,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "pull-out",
+        "slow": true,
+        "motions": [
+          "static",
+          "pull-out"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 30,
+        "fovMax": 70,
+        "distance": 4.08,
+        "quality": 1.29
+      }
+    },
+    {
+      "id": "manwil00750-t2-s0",
+      "name": "Slow pull-out, low wide shot",
+      "category": "single/wide/pull-out",
+      "tags": [
+        "single",
+        "wide",
+        "pull-out",
+        "slow",
+        "low",
+        "back",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/manwil/manwil00750/manwil00750",
+      "timeline": 2,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 165
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 165,
+      "duration": 5.5,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 8,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        53
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "low",
+        "side": "back",
+        "motion": "pull-out",
+        "slow": true,
+        "motions": [
+          "pull-out"
+        ],
+        "roll": false,
+        "maxRoll": 0.23,
+        "fovMin": 65,
+        "fovMax": 65,
+        "distance": 3.96,
+        "quality": 1.28
+      }
+    },
+    {
+      "id": "gaiuse21610-t20-s1",
+      "name": "Slow push-in, wide shot (ARR)",
+      "category": "single/wide/push-in",
+      "tags": [
+        "single",
+        "wide",
+        "push-in",
+        "slow",
+        "eye-level",
+        "front",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/gaiuse/gaiuse21610/gaiuse21610",
+      "timeline": 20,
+      "firstShot": 1,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 180,
+          "to": 300
+        }
+      ],
+      "startFrame": 180,
+      "endFrame": 300,
+      "duration": 4,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "push-in",
+        "slow": true,
+        "motions": [
+          "push-in"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 60,
+        "fovMax": 60,
+        "distance": 3.69,
+        "quality": 1.3
+      }
+    },
+    {
+      "id": "rolmle06010-t4-s7",
+      "name": "Slow push-in, wide shot (EW)",
+      "category": "single/wide/push-in",
+      "tags": [
+        "single",
+        "wide",
+        "push-in",
+        "slow",
+        "eye-level",
+        "front",
+        "EW"
+      ],
+      "cutscene": "ex4/rolmle/rolmle06010/rolmle06010",
+      "timeline": 4,
+      "firstShot": 7,
+      "lastShot": 7,
+      "shots": [
+        {
+          "shot": 7,
+          "from": 605,
+          "to": 755
+        }
+      ],
+      "startFrame": 605,
+      "endFrame": 755,
+      "duration": 5,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 7,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        71
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "push-in",
+        "slow": true,
+        "motions": [
+          "push-in"
+        ],
+        "roll": false,
+        "maxRoll": 0.04,
+        "fovMin": 40,
+        "fovMax": 40,
+        "distance": 6.92,
+        "quality": 1.3
+      }
+    },
+    {
+      "id": "kingmh10210-t5-s0",
+      "name": "Still, wide shot (DT)",
+      "category": "single/wide/static",
+      "tags": [
+        "single",
+        "wide",
+        "static",
+        "eye-level",
+        "front",
+        "DT"
+      ],
+      "cutscene": "ex5/kingmh/kingmh10210/kingmh10210",
+      "timeline": 5,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 120
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 120,
+      "duration": 4,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 6,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        42
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 60,
+        "fovMax": 60,
+        "distance": 4.04,
+        "quality": 1.2
+      }
+    },
+    {
+      "id": "qstomg00260-t11-s1",
+      "name": "Still, wide shot (SB 1)",
+      "category": "single/wide/static",
+      "tags": [
+        "single",
+        "wide",
+        "static",
+        "eye-level",
+        "front",
+        "SB"
+      ],
+      "cutscene": "ex2/qstomg/qstomg00260/qstomg00260",
+      "timeline": 11,
+      "firstShot": 1,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 0,
+          "to": 120
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 120,
+      "duration": 4,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 12,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 70,
+        "fovMax": 70,
+        "distance": 2.96,
+        "quality": 1.19
+      }
+    },
+    {
+      "id": "gaiuse10510-t10-s5",
+      "name": "Still, wide shot (ARR)",
+      "category": "single/wide/static",
+      "tags": [
+        "single",
+        "wide",
+        "static",
+        "eye-level",
+        "front",
+        "corpse",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/gaiuse/gaiuse10510/gaiuse10510",
+      "timeline": 10,
+      "firstShot": 5,
+      "lastShot": 5,
+      "shots": [
+        {
+          "shot": 5,
+          "from": 630,
+          "to": 770
+        }
+      ],
+      "startFrame": 630,
+      "endFrame": 770,
+      "duration": 4.67,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        26
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 80,
+        "fovMax": 80,
+        "distance": 2.98,
+        "quality": 1.18
+      }
+    },
+    {
+      "id": "stmbde10610-t9-s0",
+      "name": "Still, wide shot (SB 2)",
+      "category": "single/wide/static",
+      "tags": [
+        "single",
+        "wide",
+        "static",
+        "eye-level",
+        "front",
+        "corpse",
+        "SB"
+      ],
+      "cutscene": "ex2/stmbde/stmbde10610/stmbde10610",
+      "timeline": 9,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 220
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 220,
+      "duration": 7.33,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 3,
+      "lookActor": null,
+      "corpseSuitable": true,
+      "attachPoints": [
+        1
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 65,
+        "fovMax": 65,
+        "distance": 3.35,
+        "quality": 1.16
+      }
+    },
+    {
+      "id": "stmbde10450-t2-s11",
+      "name": "Tracking, wide shot",
+      "category": "single/wide/tracking",
+      "tags": [
+        "single",
+        "wide",
+        "tracking",
+        "eye-level",
+        "front",
+        "SB"
+      ],
+      "cutscene": "ex2/stmbde/stmbde10450/stmbde10450",
+      "timeline": 2,
+      "firstShot": 11,
+      "lastShot": 11,
+      "shots": [
+        {
+          "shot": 11,
+          "from": 260,
+          "to": 455
+        }
+      ],
+      "startFrame": 260,
+      "endFrame": 455,
+      "duration": 6.5,
+      "cuts": 0,
+      "kind": "single",
+      "follow": "subject",
+      "lookAt": null,
+      "followActor": 4,
+      "lookActor": null,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "tracking",
+        "slow": false,
+        "motions": [
+          "tracking"
+        ],
+        "roll": false,
+        "maxRoll": 0.02,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 5.03,
+        "quality": 1.33
+      }
+    },
+    {
+      "id": "manwil00910-t5-s0",
+      "name": "Follow other, see subject, close-up (ARR 1)",
+      "category": "two-person/close-up/static",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "close-up",
+        "static",
+        "low",
+        "front",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/manwil/manwil00910/manwil00910",
+      "timeline": 5,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 150
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 150,
+      "duration": 5,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 7,
+      "lookActor": 5,
+      "corpseSuitable": false,
+      "attachPoints": [
+        42
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "low",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 1.16,
+        "quality": 1.2
+      }
+    },
+    {
+      "id": "gaiuse30410-t4-s2",
+      "name": "Follow other, see subject, close-up (ARR 2)",
+      "category": "two-person/close-up/static",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "close-up",
+        "static",
+        "eye-level",
+        "front",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/gaiuse/gaiuse30410/gaiuse30410",
+      "timeline": 4,
+      "firstShot": 2,
+      "lastShot": 2,
+      "shots": [
+        {
+          "shot": 2,
+          "from": 75,
+          "to": 200
+        }
+      ],
+      "startFrame": 75,
+      "endFrame": 200,
+      "duration": 4.17,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 3,
+      "lookActor": 4,
+      "corpseSuitable": false,
+      "attachPoints": [
+        71,
+        76
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 28,
+        "fovMax": 28,
+        "distance": 1.29,
+        "quality": 1.08
+      }
+    },
+    {
+      "id": "jobrdm70010-t12-s0",
+      "name": "Follow other, see subject, close-up (SB)",
+      "category": "two-person/close-up/static",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "close-up",
+        "static",
+        "eye-level",
+        "side",
+        "corpse",
+        "SB"
+      ],
+      "cutscene": "ex2/jobrdm/jobrdm70010/jobrdm70010",
+      "timeline": 12,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 120
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 120,
+      "duration": 4,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 6,
+      "lookActor": 4,
+      "corpseSuitable": true,
+      "attachPoints": [
+        26
+      ],
+      "features": {
+        "framing": "close-up",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 30,
+        "fovMax": 30,
+        "distance": 1.41,
+        "quality": 1.06
+      }
+    },
+    {
+      "id": "mansea00020-t13-s0",
+      "name": "Follow other, see subject, orbit left medium (ARR)",
+      "category": "two-person/medium/orbit-left",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "medium",
+        "orbit-left",
+        "slow",
+        "eye-level",
+        "side",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/mansea/mansea00020/mansea00020",
+      "timeline": 13,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 150
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 150,
+      "duration": 5,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 6,
+      "lookActor": 8,
+      "corpseSuitable": false,
+      "attachPoints": [
+        7,
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "orbit-left",
+        "slow": true,
+        "motions": [
+          "orbit-left"
+        ],
+        "roll": false,
+        "maxRoll": 1.62,
+        "fovMin": 30,
+        "fovMax": 30,
+        "distance": 2.13,
+        "quality": 1.17
+      }
+    },
+    {
+      "id": "aktkmg10230-t2-s0",
+      "name": "Follow other, see subject, orbit left medium (EW)",
+      "category": "two-person/medium/orbit-left",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "medium",
+        "orbit-left",
+        "slow",
+        "high",
+        "front",
+        "cuts",
+        "EW"
+      ],
+      "cutscene": "ex4/aktkmg/aktkmg10230/aktkmg10230",
+      "timeline": 2,
+      "firstShot": 0,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 140
+        },
+        {
+          "shot": 1,
+          "from": 140,
+          "to": 205
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 205,
+      "duration": 6.83,
+      "cuts": 1,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 3,
+      "lookActor": 4,
+      "corpseSuitable": false,
+      "attachPoints": [
+        42,
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "high",
+        "side": "front",
+        "motion": "orbit-left",
+        "slow": true,
+        "motions": [
+          "orbit-left",
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 40,
+        "fovMax": 50,
+        "distance": 2.15,
+        "quality": 0.91
+      }
+    },
+    {
+      "id": "manfst40110-t12-s0",
+      "name": "Follow other, see subject, pan medium (ARR 1)",
+      "category": "two-person/medium/pan",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "medium",
+        "pan",
+        "slow",
+        "eye-level",
+        "back",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/manfst/manfst40110/manfst40110",
+      "timeline": 12,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 120
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 120,
+      "duration": 4,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 9,
+      "lookActor": 8,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "pan",
+        "slow": true,
+        "motions": [
+          "pan"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 2.04,
+        "quality": 1.07
+      }
+    },
+    {
+      "id": "gaiuse11910-t3-s51",
+      "name": "Follow other, see subject, pan medium (ARR 2)",
+      "category": "two-person/medium/pan",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "medium",
+        "pan",
+        "slow",
+        "eye-level",
+        "front",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/gaiuse/gaiuse11910/gaiuse11910",
+      "timeline": 3,
+      "firstShot": 51,
+      "lastShot": 51,
+      "shots": [
+        {
+          "shot": 51,
+          "from": 3877,
+          "to": 4011
+        }
+      ],
+      "startFrame": 3877,
+      "endFrame": 4011,
+      "duration": 4.47,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 3,
+      "lookActor": 4,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "pan",
+        "slow": true,
+        "motions": [
+          "pan"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 30,
+        "fovMax": 30,
+        "distance": 2.06,
+        "quality": 1.05
+      }
+    },
+    {
+      "id": "dunwil1b350-t9-s1",
+      "name": "Follow other, see subject, push-in medium",
+      "category": "two-person/medium/push-in",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "medium",
+        "push-in",
+        "low",
+        "back",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/dunwil/dunwil1b350/dunwil1b350",
+      "timeline": 9,
+      "firstShot": 1,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 300,
+          "to": 560
+        }
+      ],
+      "startFrame": 300,
+      "endFrame": 560,
+      "duration": 8.67,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 5,
+      "lookActor": 6,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "low",
+        "side": "back",
+        "motion": "push-in",
+        "slow": false,
+        "motions": [
+          "push-in"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 28,
+        "fovMax": 28,
+        "distance": 2.6,
+        "quality": 0.98
+      }
+    },
+    {
+      "id": "manfst00910-t30-s0",
+      "name": "Follow other, see subject, medium (ARR)",
+      "category": "two-person/medium/static",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "medium",
+        "static",
+        "eye-level",
+        "front",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/manfst/manfst00910/manfst00910",
+      "timeline": 30,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 130
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 130,
+      "duration": 4.33,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 6,
+      "lookActor": 9,
+      "corpseSuitable": false,
+      "attachPoints": [
+        71,
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 60,
+        "fovMax": 60,
+        "distance": 1.07,
+        "quality": 1.16
+      }
+    },
+    {
+      "id": "kinact04130-t3-s5",
+      "name": "Follow other, see subject, medium (DT)",
+      "category": "two-person/medium/static",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "medium",
+        "static",
+        "eye-level",
+        "side",
+        "DT"
+      ],
+      "cutscene": "ex5/kinact/kinact04130/kinact04130",
+      "timeline": 3,
+      "firstShot": 5,
+      "lastShot": 5,
+      "shots": [
+        {
+          "shot": 5,
+          "from": 1190,
+          "to": 1360
+        }
+      ],
+      "startFrame": 1190,
+      "endFrame": 1360,
+      "duration": 5.67,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 3,
+      "lookActor": 8,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 32,
+        "fovMax": 32,
+        "distance": 2.01,
+        "quality": 1.15
+      }
+    },
+    {
+      "id": "gaiuse41410-t3-s1",
+      "name": "Follow other, see subject, orbit left full (ARR)",
+      "category": "two-person/full/orbit-left",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "full",
+        "orbit-left",
+        "slow",
+        "eye-level",
+        "side",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/gaiuse/gaiuse41410/gaiuse41410",
+      "timeline": 3,
+      "firstShot": 1,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 110,
+          "to": 335
+        }
+      ],
+      "startFrame": 110,
+      "endFrame": 335,
+      "duration": 7.5,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 4,
+      "lookActor": 3,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "orbit-left",
+        "slow": true,
+        "motions": [
+          "orbit-left"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 5.5,
+        "quality": 1.15
+      }
+    },
+    {
+      "id": "jobbgb00300-t2-s0",
+      "name": "Follow other, see subject, orbit left full (ShB)",
+      "category": "two-person/full/orbit-left",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "full",
+        "orbit-left",
+        "slow",
+        "eye-level",
+        "front",
+        "ShB"
+      ],
+      "cutscene": "ex3/jobbgb/jobbgb00300/jobbgb00300",
+      "timeline": 2,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 170
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 170,
+      "duration": 5.67,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 3,
+      "lookActor": 6,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "orbit-left",
+        "slow": true,
+        "motions": [
+          "orbit-left"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 3.14,
+        "quality": 1.07
+      }
+    },
+    {
+      "id": "aktkmk10510-t2-s6",
+      "name": "Follow other, see subject, pan full (EW)",
+      "category": "two-person/full/pan",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "full",
+        "pan",
+        "slow",
+        "eye-level",
+        "back",
+        "EW"
+      ],
+      "cutscene": "ex4/aktkmk/aktkmk10510/aktkmk10510",
+      "timeline": 2,
+      "firstShot": 6,
+      "lastShot": 6,
+      "shots": [
+        {
+          "shot": 6,
+          "from": 626,
+          "to": 778
+        }
+      ],
+      "startFrame": 626,
+      "endFrame": 778,
+      "duration": 5.07,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 8,
+      "lookActor": 3,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "pan",
+        "slow": true,
+        "motions": [
+          "pan"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 31,
+        "fovMax": 31,
+        "distance": 4.65,
+        "quality": 1.14
+      }
+    },
+    {
+      "id": "gaiuse31130-t3-s1",
+      "name": "Follow other, see subject, pan full (ARR)",
+      "category": "two-person/full/pan",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "full",
+        "pan",
+        "eye-level",
+        "front",
+        "corpse",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/gaiuse/gaiuse31130/gaiuse31130",
+      "timeline": 3,
+      "firstShot": 1,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 140,
+          "to": 230
+        }
+      ],
+      "startFrame": 140,
+      "endFrame": 230,
+      "duration": 3,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 3,
+      "lookActor": 15,
+      "corpseSuitable": true,
+      "attachPoints": [
+        26,
+        31
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "pan",
+        "slow": false,
+        "motions": [
+          "pan"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 45,
+        "fovMax": 45,
+        "distance": 2.68,
+        "quality": 0.87
+      }
+    },
+    {
+      "id": "aktkmg11570-t5-s0",
+      "name": "Follow other, see subject, pull-out full (EW)",
+      "category": "two-person/full/pull-out",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "full",
+        "pull-out",
+        "slow",
+        "eye-level",
+        "back",
+        "EW"
+      ],
+      "cutscene": "ex4/aktkmg/aktkmg11570/aktkmg11570",
+      "timeline": 5,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 280,
+          "to": 493
+        }
+      ],
+      "startFrame": 280,
+      "endFrame": 493,
+      "duration": 7.1,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 3,
+      "lookActor": 4,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "pull-out",
+        "slow": true,
+        "motions": [
+          "pull-out"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 70,
+        "fovMax": 79.84,
+        "distance": 2.14,
+        "quality": 1.27
+      }
+    },
+    {
+      "id": "luckmi10905-t6-s6",
+      "name": "Follow other, see subject, pull-out full (ShB)",
+      "category": "two-person/full/pull-out",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "full",
+        "pull-out",
+        "slow",
+        "eye-level",
+        "side",
+        "ShB"
+      ],
+      "cutscene": "ex3/luckmi/luckmi10905/luckmi10905",
+      "timeline": 6,
+      "firstShot": 6,
+      "lastShot": 6,
+      "shots": [
+        {
+          "shot": 6,
+          "from": 315,
+          "to": 465
+        }
+      ],
+      "startFrame": 315,
+      "endFrame": 465,
+      "duration": 5,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 10,
+      "lookActor": 12,
+      "corpseSuitable": false,
+      "attachPoints": [
+        26,
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "pull-out",
+        "slow": true,
+        "motions": [
+          "pull-out"
+        ],
+        "roll": false,
+        "maxRoll": 1.82,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 4.9,
+        "quality": 1.05
+      }
+    },
+    {
+      "id": "chrhdb10105-t8-s0",
+      "name": "Follow other, see subject, push-in full (ARR)",
+      "category": "two-person/full/push-in",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "full",
+        "push-in",
+        "eye-level",
+        "back",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/chrhdb/chrhdb10105/chrhdb10105",
+      "timeline": 8,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 170
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 170,
+      "duration": 5.67,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 3,
+      "lookActor": 4,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "push-in",
+        "slow": false,
+        "motions": [
+          "push-in"
+        ],
+        "roll": false,
+        "maxRoll": 1.17,
+        "fovMin": 29.53,
+        "fovMax": 32.13,
+        "distance": 4.14,
+        "quality": 0.99
+      }
+    },
+    {
+      "id": "kinact06120-t3-s0",
+      "name": "Follow other, see subject, push-in full (DT)",
+      "category": "two-person/full/push-in",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "full",
+        "push-in",
+        "eye-level",
+        "front",
+        "DT"
+      ],
+      "cutscene": "ex5/kinact/kinact06120/kinact06120",
+      "timeline": 3,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 210
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 210,
+      "duration": 7,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 4,
+      "lookActor": 6,
+      "corpseSuitable": false,
+      "attachPoints": [
+        42
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "push-in",
+        "slow": false,
+        "motions": [
+          "push-in"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 4.87,
+        "quality": 0.96
+      }
+    },
+    {
+      "id": "luckha00310-t6-s21",
+      "name": "Follow other, see subject, full (HW)",
+      "category": "two-person/full/static",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "full",
+        "static",
+        "eye-level",
+        "back",
+        "HW"
+      ],
+      "cutscene": "ex1/luckha/luckha00310/luckha00310",
+      "timeline": 6,
+      "firstShot": 21,
+      "lastShot": 21,
+      "shots": [
+        {
+          "shot": 21,
+          "from": 1060,
+          "to": 1180
+        }
+      ],
+      "startFrame": 1060,
+      "endFrame": 1180,
+      "duration": 4,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 3,
+      "lookActor": 5,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 60,
+        "fovMax": 60,
+        "distance": 1.94,
+        "quality": 1.19
+      }
+    },
+    {
+      "id": "luckmi10110-t8-s27",
+      "name": "Follow other, see subject, full (ShB)",
+      "category": "two-person/full/static",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "full",
+        "static",
+        "eye-level",
+        "back",
+        "ShB"
+      ],
+      "cutscene": "ex3/luckmi/luckmi10110/luckmi10110",
+      "timeline": 8,
+      "firstShot": 27,
+      "lastShot": 27,
+      "shots": [
+        {
+          "shot": 27,
+          "from": 2062,
+          "to": 2200
+        }
+      ],
+      "startFrame": 2062,
+      "endFrame": 2200,
+      "duration": 4.6,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 8,
+      "lookActor": 17,
+      "corpseSuitable": false,
+      "attachPoints": [
+        42,
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 56,
+        "distance": 1.84,
+        "quality": 1.18
+      }
+    },
+    {
+      "id": "mansea30210-t4-s0",
+      "name": "Follow other, see subject, full (ARR)",
+      "category": "two-person/full/static",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "full",
+        "static",
+        "eye-level",
+        "back",
+        "corpse",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/mansea/mansea30210/mansea30210",
+      "timeline": 4,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 850,
+          "to": 985
+        }
+      ],
+      "startFrame": 850,
+      "endFrame": 985,
+      "duration": 4.5,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 6,
+      "lookActor": 17,
+      "corpseSuitable": true,
+      "attachPoints": [
+        1
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 4.04,
+        "quality": 1.13
+      }
+    },
+    {
+      "id": "stmbde10520-t3-s4",
+      "name": "Follow other, see subject, full (SB)",
+      "category": "two-person/full/static",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "full",
+        "static",
+        "eye-level",
+        "back",
+        "corpse",
+        "SB"
+      ],
+      "cutscene": "ex2/stmbde/stmbde10520/stmbde10520",
+      "timeline": 3,
+      "firstShot": 4,
+      "lastShot": 4,
+      "shots": [
+        {
+          "shot": 4,
+          "from": 610,
+          "to": 740
+        }
+      ],
+      "startFrame": 610,
+      "endFrame": 740,
+      "duration": 4.33,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 6,
+      "lookActor": 3,
+      "corpseSuitable": true,
+      "attachPoints": [
+        1
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 3.07,
+        "quality": 1.12
+      }
+    },
+    {
+      "id": "stmact06145-t6-s4",
+      "name": "Follow other, see subject, orbit left wide",
+      "category": "two-person/wide/orbit-left",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "wide",
+        "orbit-left",
+        "eye-level",
+        "back",
+        "SB"
+      ],
+      "cutscene": "ex2/stmact/stmact06145/stmact06145",
+      "timeline": 6,
+      "firstShot": 4,
+      "lastShot": 4,
+      "shots": [
+        {
+          "shot": 4,
+          "from": 370,
+          "to": 530
+        }
+      ],
+      "startFrame": 370,
+      "endFrame": 530,
+      "duration": 5.33,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 5,
+      "lookActor": 6,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "orbit-left",
+        "slow": false,
+        "motions": [
+          "orbit-left"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 8.53,
+        "quality": 1.21
+      }
+    },
+    {
+      "id": "wedfst00220-t8-s0",
+      "name": "Follow other, see subject, orbit right wide",
+      "category": "two-person/wide/orbit-right",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "wide",
+        "orbit-right",
+        "eye-level",
+        "back",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/wedfst/wedfst00220/wedfst00220",
+      "timeline": 8,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 90
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 90,
+      "duration": 3,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 3,
+      "lookActor": 2,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "orbit-right",
+        "slow": false,
+        "motions": [
+          "orbit-right"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 80,
+        "fovMax": 80,
+        "distance": 3.55,
+        "quality": 0.98
+      }
+    },
+    {
+      "id": "qstxbm00050-t19-s4",
+      "name": "Follow other, see subject, pan wide",
+      "category": "two-person/wide/pan",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "wide",
+        "pan",
+        "slow",
+        "eye-level",
+        "back",
+        "DT"
+      ],
+      "cutscene": "ex5/qstxbm/qstxbm00050/qstxbm00050",
+      "timeline": 19,
+      "firstShot": 4,
+      "lastShot": 4,
+      "shots": [
+        {
+          "shot": 4,
+          "from": 0,
+          "to": 215
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 215,
+      "duration": 7.17,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 5,
+      "lookActor": 3,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "pan",
+        "slow": true,
+        "motions": [
+          "pan"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 60,
+        "fovMax": 63,
+        "distance": 9.7,
+        "quality": 1.13
+      }
+    },
+    {
+      "id": "kingmk10320-t4-s0",
+      "name": "Follow other, see subject, pull-out wide (DT 1)",
+      "category": "two-person/wide/pull-out",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "wide",
+        "pull-out",
+        "slow",
+        "eye-level",
+        "side",
+        "DT"
+      ],
+      "cutscene": "ex5/kingmk/kingmk10320/kingmk10320",
+      "timeline": 4,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 160
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 160,
+      "duration": 5.33,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 13,
+      "lookActor": 4,
+      "corpseSuitable": false,
+      "attachPoints": [
+        71,
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "pull-out",
+        "slow": true,
+        "motions": [
+          "pull-out"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 40,
+        "fovMax": 40,
+        "distance": 5.9,
+        "quality": 1.22
+      }
+    },
+    {
+      "id": "kinact03040-t8-s13",
+      "name": "Follow other, see subject, pull-out wide (DT 2)",
+      "category": "two-person/wide/pull-out",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "wide",
+        "pull-out",
+        "eye-level",
+        "side",
+        "DT"
+      ],
+      "cutscene": "ex5/kinact/kinact03040/kinact03040",
+      "timeline": 8,
+      "firstShot": 13,
+      "lastShot": 13,
+      "shots": [
+        {
+          "shot": 13,
+          "from": 950,
+          "to": 1040
+        }
+      ],
+      "startFrame": 950,
+      "endFrame": 1040,
+      "duration": 3,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 3,
+      "lookActor": 15,
+      "corpseSuitable": false,
+      "attachPoints": [
+        42,
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "pull-out",
+        "slow": false,
+        "motions": [
+          "pull-out"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 70,
+        "fovMax": 80,
+        "distance": 4.38,
+        "quality": 1.12
+      }
+    },
+    {
+      "id": "gaiuse40120-t2-s1",
+      "name": "Follow other, see subject, push-in wide (ARR)",
+      "category": "two-person/wide/push-in",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "wide",
+        "push-in",
+        "eye-level",
+        "back",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/gaiuse/gaiuse40120/gaiuse40120",
+      "timeline": 2,
+      "firstShot": 1,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 120,
+          "to": 210
+        }
+      ],
+      "startFrame": 120,
+      "endFrame": 210,
+      "duration": 3,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 2,
+      "lookActor": 3,
+      "corpseSuitable": false,
+      "attachPoints": [
+        42,
+        71,
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "push-in",
+        "slow": false,
+        "motions": [
+          "push-in"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 6.47,
+        "quality": 1.03
+      }
+    },
+    {
+      "id": "bannam00010-t4-s0",
+      "name": "Follow other, see subject, push-in wide (SB)",
+      "category": "two-person/wide/push-in",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "wide",
+        "push-in",
+        "slow",
+        "high",
+        "side",
+        "roll",
+        "SB"
+      ],
+      "cutscene": "ex2/bannam/bannam00010/bannam00010",
+      "timeline": 4,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 130
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 130,
+      "duration": 4.33,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 5,
+      "lookActor": 3,
+      "corpseSuitable": false,
+      "attachPoints": [
+        42,
+        71
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "high",
+        "side": "side",
+        "motion": "push-in",
+        "slow": true,
+        "motions": [
+          "push-in"
+        ],
+        "roll": true,
+        "maxRoll": 16.44,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 6.68,
+        "quality": 0.81
+      }
+    },
+    {
+      "id": "aktkml10510-t3-s2",
+      "name": "Follow other, see subject, wide (EW)",
+      "category": "two-person/wide/static",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "wide",
+        "static",
+        "eye-level",
+        "front",
+        "EW"
+      ],
+      "cutscene": "ex4/aktkml/aktkml10510/aktkml10510",
+      "timeline": 3,
+      "firstShot": 2,
+      "lastShot": 2,
+      "shots": [
+        {
+          "shot": 2,
+          "from": 150,
+          "to": 280
+        }
+      ],
+      "startFrame": 150,
+      "endFrame": 280,
+      "duration": 4.33,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 4,
+      "lookActor": 16,
+      "corpseSuitable": false,
+      "attachPoints": [
+        26,
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 3,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 5.58,
+        "quality": 1.19
+      }
+    },
+    {
+      "id": "luckmg00010-t10-s1",
+      "name": "Follow other, see subject, wide (ShB)",
+      "category": "two-person/wide/static",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "wide",
+        "static",
+        "eye-level",
+        "front",
+        "corpse",
+        "ShB"
+      ],
+      "cutscene": "ex3/luckmg/luckmg00010/luckmg00010",
+      "timeline": 10,
+      "firstShot": 1,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 195,
+          "to": 320
+        }
+      ],
+      "startFrame": 195,
+      "endFrame": 320,
+      "duration": 4.17,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 6,
+      "lookActor": 3,
+      "corpseSuitable": true,
+      "attachPoints": [
+        1
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 2,
+        "fovMin": 45,
+        "fovMax": 48,
+        "distance": 7.93,
+        "quality": 1.19
+      }
+    },
+    {
+      "id": "manwil00110-t15-s0",
+      "name": "Follow other, see subject, wide (ARR)",
+      "category": "two-person/wide/static",
+      "tags": [
+        "two-person",
+        "follow-other",
+        "wide",
+        "static",
+        "eye-level",
+        "back",
+        "corpse",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/manwil/manwil00110/manwil00110",
+      "timeline": 15,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 130,
+          "to": 330
+        }
+      ],
+      "startFrame": 130,
+      "endFrame": 330,
+      "duration": 6.67,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "other",
+      "lookAt": "subject",
+      "followActor": 24,
+      "lookActor": 25,
+      "corpseSuitable": true,
+      "attachPoints": [
+        1
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "back",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 45,
+        "fovMax": 45,
+        "distance": 5.48,
+        "quality": 1.06
+      }
+    },
+    {
+      "id": "stmbdd10210-t17-s3",
+      "name": "Follow subject, see other, medium (SB)",
+      "category": "two-person/medium/static",
+      "tags": [
+        "two-person",
+        "follow-subject",
+        "medium",
+        "static",
+        "eye-level",
+        "side",
+        "SB"
+      ],
+      "cutscene": "ex2/stmbdd/stmbdd10210/stmbdd10210",
+      "timeline": 17,
+      "firstShot": 3,
+      "lastShot": 3,
+      "shots": [
+        {
+          "shot": 3,
+          "from": 270,
+          "to": 450
+        }
+      ],
+      "startFrame": 270,
+      "endFrame": 450,
+      "duration": 6,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "subject",
+      "lookAt": "other",
+      "followActor": 7,
+      "lookActor": 3,
+      "corpseSuitable": false,
+      "attachPoints": [
+        1,
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 2.77,
+        "quality": 1.07
+      }
+    },
+    {
+      "id": "aktkmk10230-t7-s10",
+      "name": "Follow subject, see other, medium (EW)",
+      "category": "two-person/medium/static",
+      "tags": [
+        "two-person",
+        "follow-subject",
+        "medium",
+        "static",
+        "eye-level",
+        "side",
+        "EW"
+      ],
+      "cutscene": "ex4/aktkmk/aktkmk10230/aktkmk10230",
+      "timeline": 7,
+      "firstShot": 10,
+      "lastShot": 10,
+      "shots": [
+        {
+          "shot": 10,
+          "from": 755,
+          "to": 905
+        }
+      ],
+      "startFrame": 755,
+      "endFrame": 905,
+      "duration": 5,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "subject",
+      "lookAt": "other",
+      "followActor": 5,
+      "lookActor": 4,
+      "corpseSuitable": false,
+      "attachPoints": [
+        42,
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 2.68,
+        "quality": 1.01
+      }
+    },
+    {
+      "id": "kingmh10220-t10-s1",
+      "name": "Follow subject, see other, medium (DT)",
+      "category": "two-person/medium/static",
+      "tags": [
+        "two-person",
+        "follow-subject",
+        "medium",
+        "static",
+        "eye-level",
+        "front",
+        "DT"
+      ],
+      "cutscene": "ex5/kingmh/kingmh10220/kingmh10220",
+      "timeline": 10,
+      "firstShot": 1,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 115,
+          "to": 265
+        }
+      ],
+      "startFrame": 115,
+      "endFrame": 265,
+      "duration": 5,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "subject",
+      "lookAt": "other",
+      "followActor": 6,
+      "lookActor": 5,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 2.45,
+        "quality": 1.01
+      }
+    },
+    {
+      "id": "banqiq00130-t7-s1",
+      "name": "Follow subject, see other, medium (ShB)",
+      "category": "two-person/medium/static",
+      "tags": [
+        "two-person",
+        "follow-subject",
+        "medium",
+        "static",
+        "eye-level",
+        "front",
+        "ShB"
+      ],
+      "cutscene": "ex3/banqiq/banqiq00130/banqiq00130",
+      "timeline": 7,
+      "firstShot": 1,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 96,
+          "to": 227
+        }
+      ],
+      "startFrame": 96,
+      "endFrame": 227,
+      "duration": 4.37,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "subject",
+      "lookAt": "other",
+      "followActor": 4,
+      "lookActor": 3,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "medium",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 2.8,
+        "quality": 0.96
+      }
+    },
+    {
+      "id": "kingmj10110-t12-s4",
+      "name": "Follow subject, see other, pan full (DT)",
+      "category": "two-person/full/pan",
+      "tags": [
+        "two-person",
+        "follow-subject",
+        "full",
+        "pan",
+        "eye-level",
+        "side",
+        "cuts",
+        "DT"
+      ],
+      "cutscene": "ex5/kingmj/kingmj10110/kingmj10110",
+      "timeline": 12,
+      "firstShot": 4,
+      "lastShot": 5,
+      "shots": [
+        {
+          "shot": 4,
+          "from": 275,
+          "to": 330
+        },
+        {
+          "shot": 5,
+          "from": 330,
+          "to": 440
+        }
+      ],
+      "startFrame": 275,
+      "endFrame": 440,
+      "duration": 5.5,
+      "cuts": 1,
+      "kind": "two-person",
+      "follow": "subject",
+      "lookAt": "other",
+      "followActor": 8,
+      "lookActor": 11,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "pan",
+        "slow": false,
+        "motions": [
+          "static",
+          "pan"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 45,
+        "fovMax": 45,
+        "distance": 3.92,
+        "quality": 1.05
+      }
+    },
+    {
+      "id": "qstmoe00120-t2-s4",
+      "name": "Follow subject, see other, pan full (EW)",
+      "category": "two-person/full/pan",
+      "tags": [
+        "two-person",
+        "follow-subject",
+        "full",
+        "pan",
+        "slow",
+        "eye-level",
+        "front",
+        "EW"
+      ],
+      "cutscene": "ex4/qstmoe/qstmoe00120/qstmoe00120",
+      "timeline": 2,
+      "firstShot": 4,
+      "lastShot": 4,
+      "shots": [
+        {
+          "shot": 4,
+          "from": 575,
+          "to": 725
+        }
+      ],
+      "startFrame": 575,
+      "endFrame": 725,
+      "duration": 5,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "subject",
+      "lookAt": "other",
+      "followActor": 4,
+      "lookActor": 5,
+      "corpseSuitable": false,
+      "attachPoints": [
+        42
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "pan",
+        "slow": true,
+        "motions": [
+          "pan"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 3.86,
+        "quality": 0.97
+      }
+    },
+    {
+      "id": "manfst30910-t27-s0",
+      "name": "Follow subject, see other, pan full (ARR)",
+      "category": "two-person/full/pan",
+      "tags": [
+        "two-person",
+        "follow-subject",
+        "full",
+        "pan",
+        "eye-level",
+        "side",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/manfst/manfst30910/manfst30910",
+      "timeline": 27,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 55,
+          "to": 160
+        }
+      ],
+      "startFrame": 55,
+      "endFrame": 160,
+      "duration": 3.5,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "subject",
+      "lookAt": "other",
+      "followActor": 4,
+      "lookActor": 7,
+      "corpseSuitable": false,
+      "attachPoints": [
+        71,
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "pan",
+        "slow": false,
+        "motions": [
+          "pan"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 4.81,
+        "quality": 0.84
+      }
+    },
+    {
+      "id": "lucact05050-t7-s8",
+      "name": "Follow subject, see other, pan full (ShB)",
+      "category": "two-person/full/pan",
+      "tags": [
+        "two-person",
+        "follow-subject",
+        "full",
+        "pan",
+        "eye-level",
+        "front",
+        "ShB"
+      ],
+      "cutscene": "ex3/lucact/lucact05050/lucact05050",
+      "timeline": 7,
+      "firstShot": 8,
+      "lastShot": 8,
+      "shots": [
+        {
+          "shot": 8,
+          "from": 780,
+          "to": 885
+        }
+      ],
+      "startFrame": 780,
+      "endFrame": 885,
+      "duration": 3.5,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "subject",
+      "lookAt": "other",
+      "followActor": 3,
+      "lookActor": 5,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "pan",
+        "slow": false,
+        "motions": [
+          "pan"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 4.43,
+        "quality": 0.82
+      }
+    },
+    {
+      "id": "clsthm15010-t21-s0",
+      "name": "Follow subject, see other, pull-out full",
+      "category": "two-person/full/pull-out",
+      "tags": [
+        "two-person",
+        "follow-subject",
+        "full",
+        "pull-out",
+        "eye-level",
+        "front",
+        "ARR"
+      ],
+      "cutscene": "ffxiv/clsthm/clsthm15010/clsthm15010",
+      "timeline": 21,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 90
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 90,
+      "duration": 3,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "subject",
+      "lookAt": "other",
+      "followActor": 3,
+      "lookActor": 4,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "pull-out",
+        "slow": false,
+        "motions": [
+          "pull-out"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 35,
+        "fovMax": 35,
+        "distance": 5.41,
+        "quality": 0.99
+      }
+    },
+    {
+      "id": "kinact06180-t10-s4",
+      "name": "Follow subject, see other, push-in full",
+      "category": "two-person/full/push-in",
+      "tags": [
+        "two-person",
+        "follow-subject",
+        "full",
+        "push-in",
+        "eye-level",
+        "side",
+        "corpse",
+        "DT"
+      ],
+      "cutscene": "ex5/kinact/kinact06180/kinact06180",
+      "timeline": 10,
+      "firstShot": 4,
+      "lastShot": 4,
+      "shots": [
+        {
+          "shot": 4,
+          "from": 320,
+          "to": 420
+        }
+      ],
+      "startFrame": 320,
+      "endFrame": 420,
+      "duration": 3.33,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "subject",
+      "lookAt": "other",
+      "followActor": 7,
+      "lookActor": 3,
+      "corpseSuitable": true,
+      "attachPoints": [
+        27
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "push-in",
+        "slow": false,
+        "motions": [
+          "push-in"
+        ],
+        "roll": false,
+        "maxRoll": 0.04,
+        "fovMin": 50,
+        "fovMax": 60,
+        "distance": 2.43,
+        "quality": 1.07
+      }
+    },
+    {
+      "id": "heavny21110-t3-s5",
+      "name": "Follow subject, see other, full (HW)",
+      "category": "two-person/full/static",
+      "tags": [
+        "two-person",
+        "follow-subject",
+        "full",
+        "static",
+        "eye-level",
+        "front",
+        "HW"
+      ],
+      "cutscene": "ex1/heavny/heavny21110/heavny21110",
+      "timeline": 3,
+      "firstShot": 5,
+      "lastShot": 5,
+      "shots": [
+        {
+          "shot": 5,
+          "from": 620,
+          "to": 810
+        }
+      ],
+      "startFrame": 620,
+      "endFrame": 810,
+      "duration": 6.33,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "subject",
+      "lookAt": "other",
+      "followActor": 5,
+      "lookActor": 6,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 45,
+        "fovMax": 45,
+        "distance": 3.72,
+        "quality": 1.16
+      }
+    },
+    {
+      "id": "rolall07030-t3-s2",
+      "name": "Follow subject, see other, full (DT)",
+      "category": "two-person/full/static",
+      "tags": [
+        "two-person",
+        "follow-subject",
+        "full",
+        "static",
+        "eye-level",
+        "side",
+        "DT"
+      ],
+      "cutscene": "ex5/rolall/rolall07030/rolall07030",
+      "timeline": 3,
+      "firstShot": 2,
+      "lastShot": 2,
+      "shots": [
+        {
+          "shot": 2,
+          "from": 230,
+          "to": 400
+        }
+      ],
+      "startFrame": 230,
+      "endFrame": 400,
+      "duration": 5.67,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "subject",
+      "lookAt": "other",
+      "followActor": 3,
+      "lookActor": 6,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 2.19,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 3.94,
+        "quality": 1.15
+      }
+    },
+    {
+      "id": "aktkmh10110-t20-s1",
+      "name": "Follow subject, see other, full (EW 1)",
+      "category": "two-person/full/static",
+      "tags": [
+        "two-person",
+        "follow-subject",
+        "full",
+        "static",
+        "eye-level",
+        "side",
+        "EW"
+      ],
+      "cutscene": "ex4/aktkmh/aktkmh10110/aktkmh10110",
+      "timeline": 20,
+      "firstShot": 1,
+      "lastShot": 1,
+      "shots": [
+        {
+          "shot": 1,
+          "from": 60,
+          "to": 240
+        }
+      ],
+      "startFrame": 60,
+      "endFrame": 240,
+      "duration": 6,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "subject",
+      "lookAt": "other",
+      "followActor": 5,
+      "lookActor": 4,
+      "corpseSuitable": false,
+      "attachPoints": [
+        1,
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 3.54,
+        "quality": 1.13
+      }
+    },
+    {
+      "id": "aktkmj10120-t9-s2",
+      "name": "Follow subject, see other, full (EW 2)",
+      "category": "two-person/full/static",
+      "tags": [
+        "two-person",
+        "follow-subject",
+        "full",
+        "static",
+        "eye-level",
+        "side",
+        "cuts",
+        "EW"
+      ],
+      "cutscene": "ex4/aktkmj/aktkmj10120/aktkmj10120",
+      "timeline": 9,
+      "firstShot": 2,
+      "lastShot": 3,
+      "shots": [
+        {
+          "shot": 2,
+          "from": 200,
+          "to": 270
+        },
+        {
+          "shot": 3,
+          "from": 270,
+          "to": 360
+        }
+      ],
+      "startFrame": 200,
+      "endFrame": 360,
+      "duration": 5.33,
+      "cuts": 1,
+      "kind": "two-person",
+      "follow": "subject",
+      "lookAt": "other",
+      "followActor": 6,
+      "lookActor": 4,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "full",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static",
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 3.32,
+        "quality": 1.12
+      }
+    },
+    {
+      "id": "aktkmb11510-t17-s8",
+      "name": "Follow subject, see other, push-in wide (EW)",
+      "category": "two-person/wide/push-in",
+      "tags": [
+        "two-person",
+        "follow-subject",
+        "wide",
+        "push-in",
+        "slow",
+        "eye-level",
+        "front",
+        "roll",
+        "EW"
+      ],
+      "cutscene": "ex4/aktkmb/aktkmb11510/aktkmb11510",
+      "timeline": 17,
+      "firstShot": 8,
+      "lastShot": 8,
+      "shots": [
+        {
+          "shot": 8,
+          "from": 506,
+          "to": 632
+        }
+      ],
+      "startFrame": 506,
+      "endFrame": 632,
+      "duration": 4.2,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "subject",
+      "lookAt": "other",
+      "followActor": 17,
+      "lookActor": 19,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "push-in",
+        "slow": true,
+        "motions": [
+          "push-in"
+        ],
+        "roll": true,
+        "maxRoll": 10,
+        "fovMin": 60,
+        "fovMax": 60,
+        "distance": 5.92,
+        "quality": 1.17
+      }
+    },
+    {
+      "id": "jobsch60020-t5-s11",
+      "name": "Follow subject, see other, push-in wide (HW)",
+      "category": "two-person/wide/push-in",
+      "tags": [
+        "two-person",
+        "follow-subject",
+        "wide",
+        "push-in",
+        "eye-level",
+        "front",
+        "HW"
+      ],
+      "cutscene": "ex1/jobsch/jobsch60020/jobsch60020",
+      "timeline": 5,
+      "firstShot": 11,
+      "lastShot": 11,
+      "shots": [
+        {
+          "shot": 11,
+          "from": 760,
+          "to": 870
+        }
+      ],
+      "startFrame": 760,
+      "endFrame": 870,
+      "duration": 3.67,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "subject",
+      "lookAt": "other",
+      "followActor": 3,
+      "lookActor": 4,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "push-in",
+        "slow": false,
+        "motions": [
+          "push-in"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 50,
+        "fovMax": 50,
+        "distance": 6.13,
+        "quality": 0.95
+      }
+    },
+    {
+      "id": "qstmyc00380-t16-s0",
+      "name": "Follow subject, see other, wide (ShB)",
+      "category": "two-person/wide/static",
+      "tags": [
+        "two-person",
+        "follow-subject",
+        "wide",
+        "static",
+        "eye-level",
+        "side",
+        "ShB"
+      ],
+      "cutscene": "ex3/qstmyc/qstmyc00380/qstmyc00380",
+      "timeline": 16,
+      "firstShot": 0,
+      "lastShot": 0,
+      "shots": [
+        {
+          "shot": 0,
+          "from": 0,
+          "to": 120
+        }
+      ],
+      "startFrame": 0,
+      "endFrame": 120,
+      "duration": 4,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "subject",
+      "lookAt": "other",
+      "followActor": 5,
+      "lookActor": 6,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 70,
+        "fovMax": 70,
+        "distance": 10.54,
+        "quality": 1.17
+      }
+    },
+    {
+      "id": "jobrdb07060-t2-s17",
+      "name": "Follow subject, see other, wide (DT 1)",
+      "category": "two-person/wide/static",
+      "tags": [
+        "two-person",
+        "follow-subject",
+        "wide",
+        "static",
+        "eye-level",
+        "side",
+        "DT"
+      ],
+      "cutscene": "ex5/jobrdb/jobrdb07060/jobrdb07060",
+      "timeline": 2,
+      "firstShot": 17,
+      "lastShot": 17,
+      "shots": [
+        {
+          "shot": 17,
+          "from": 2090,
+          "to": 2220
+        }
+      ],
+      "startFrame": 2090,
+      "endFrame": 2220,
+      "duration": 4.33,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "subject",
+      "lookAt": "other",
+      "followActor": 3,
+      "lookActor": 4,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 60,
+        "fovMax": 60,
+        "distance": 3.61,
+        "quality": 1.15
+      }
+    },
+    {
+      "id": "kinact05120-t4-s7",
+      "name": "Follow subject, see other, wide (DT 2)",
+      "category": "two-person/wide/static",
+      "tags": [
+        "two-person",
+        "follow-subject",
+        "wide",
+        "static",
+        "eye-level",
+        "front",
+        "DT"
+      ],
+      "cutscene": "ex5/kinact/kinact05120/kinact05120",
+      "timeline": 4,
+      "firstShot": 7,
+      "lastShot": 7,
+      "shots": [
+        {
+          "shot": 7,
+          "from": 930,
+          "to": 1050
+        }
+      ],
+      "startFrame": 930,
+      "endFrame": 1050,
+      "duration": 4,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "subject",
+      "lookAt": "other",
+      "followActor": 4,
+      "lookActor": 3,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "front",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 70,
+        "fovMax": 70,
+        "distance": 4.17,
+        "quality": 1.15
+      }
+    },
+    {
+      "id": "kinact06080-t4-s9",
+      "name": "Follow subject, see other, wide (DT 3)",
+      "category": "two-person/wide/static",
+      "tags": [
+        "two-person",
+        "follow-subject",
+        "wide",
+        "static",
+        "eye-level",
+        "side",
+        "DT"
+      ],
+      "cutscene": "ex5/kinact/kinact06080/kinact06080",
+      "timeline": 4,
+      "firstShot": 9,
+      "lastShot": 9,
+      "shots": [
+        {
+          "shot": 9,
+          "from": 895,
+          "to": 1015
+        }
+      ],
+      "startFrame": 895,
+      "endFrame": 1015,
+      "duration": 4,
+      "cuts": 0,
+      "kind": "two-person",
+      "follow": "subject",
+      "lookAt": "other",
+      "followActor": 3,
+      "lookActor": 4,
+      "corpseSuitable": false,
+      "attachPoints": [
+        76
+      ],
+      "features": {
+        "framing": "wide",
+        "angle": "eye-level",
+        "side": "side",
+        "motion": "static",
+        "slow": false,
+        "motions": [
+          "static"
+        ],
+        "roll": false,
+        "maxRoll": 0,
+        "fovMin": 60,
+        "fovMax": 60,
+        "distance": 4.33,
+        "quality": 1.15
+      }
+    }
+  ]
+}

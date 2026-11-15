@@ -36,6 +36,8 @@ public sealed class CameraShot
     public static float RotationSign = 1f;
 
     public int Timeline, Start, Duration, TmfcId, EntrySize, Key;
+    /// <summary>Position of this C004 entry among the timeline's C004 entries, in file order (the curated list's shot index).</summary>
+    public int Index;
     public float Near, Far;
     public Attach Root, Eye, Aim;
     public bool IsOverlay;
@@ -58,6 +60,7 @@ public sealed class CameraShot
             var s = new CameraShot
             {
                 Timeline = tl.Index,
+                Index = list.Count,
                 Start = it.Time,
                 EntrySize = it.Size,
                 Duration = it.Word(d, 0),

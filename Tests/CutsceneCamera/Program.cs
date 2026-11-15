@@ -2,6 +2,7 @@
 //   dotnet run -c Release                 → report on the three sample cutscenes + BMP plots
 //   dotnet run -c Release -- census [N]   → channel statistics over N cutscenes from the Cutscene sheet
 //   dotnet run -c Release -- shot <path> <cttl>  → dump every camera shot of one CTTL
+//   dotnet run -c Release -- curate [out.json]   → curated follow-shot list (default CombatSimulator/Resources/CutsceneShots.json)
 
 using CutsceneCamera;
 using Lumina;
@@ -55,6 +56,26 @@ if (mode == "bind")
     if (args.Length > 2 && args[2] == "lens") Lens.Run(sample, body);
     else if (args.Length > 2 && args[2] == "seq") Sequence.Run(sample, body);
     else Bind.Run(sample, body);
+    return;
+}
+if (mode == "curate")
+{
+    // Curated follow-shot list for the plugin (docs/CUTSCENE_SHOTS.md). Default output: the plugin's Resources folder.
+    var body = new Bind.Body
+    {
+        Skel = Skeleton.Read(gd.GetFile("chara/human/c0101/skeleton/base/b0001/skl_c0101b0001.sklb")!.Data),
+        Eid = Eid.Read(gd.GetFile("chara/human/c0101/skeleton/base/b0001/eid_c0101b0001.eid")!.Data).GroupBy(b => b.Id).ToDictionary(g => g.Key, g => g.First()),
+    };
+    string outPath;
+    if (args.Length > 1) outPath = Path.GetFullPath(args[1]);
+    else
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "CombatSimulator.sln"))) dir = dir.Parent;
+        if (dir == null) { Console.WriteLine("repository root not found; pass the output path"); return; }
+        outPath = Path.Combine(dir.FullName, "CombatSimulator", "Resources", "CutsceneShots.json");
+    }
+    Curate.Run(gd, Load, body, outPath);
     return;
 }
 if (mode == "shot")
