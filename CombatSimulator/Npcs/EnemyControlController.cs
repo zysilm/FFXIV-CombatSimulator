@@ -20,10 +20,15 @@ using GameCameraManager = FFXIVClientStructs.FFXIV.Client.Game.Control.CameraMan
 namespace CombatSimulator.Npcs;
 
 /// <summary>
-/// Hidden dev mode: "EnemyControl". On player death, spawns a controllable creature (default Bat,
-/// a BNpc model) with no HP. The player flies it around with the keyboard; the camera follows
-/// the creature (active-camera-style free orbit centered on it); and the attack input (keyboard
-/// or gamepad — routed via the UseAction hook) toggles a grab (see config.EnemyControlGrabPairs).
+/// Enemy Control: on the player's death it takes over ONE enemy (the killer, or under Warring States the
+/// one that carries off the lord's body). The player walks it with the keyboard; the camera may follow
+/// it (active-camera-style free orbit centered on it); and the attack input (keyboard or gamepad —
+/// routed via the UseAction hook) toggles a grab (see config.EnemyControlGrabPairs).
+///
+/// Scope: only the possessed enemy (and, with the opt-in swarm, the enemies it gathers). The enemy AI
+/// skips whatever <see cref="ControlsNpc"/> names (its behaviour layer is "controlled") and treats it as
+/// absent for everyone else's decisions; this class never writes the enemy's own state (its AI state,
+/// patrol, identity flags), so on release it picks up where it left off.
 ///
 /// Controls:
 ///   W / S — forward / back along facing,  A / D — turn,  Q / E — ascend / descend (ground-clamped)
@@ -72,16 +77,10 @@ public unsafe partial class EnemyControlController : IDisposable
     }
     private readonly List<ActiveGrabPair> activeGrabPairs = new();
 
-    private int EnemyControlIndex = -1;       // ClientObjectManager index (only when we spawned the object)
     private uint EnemyControlEntityId;
-    private uint nextSpawnedEnemyControlEntityId = 0xF4000001;
     private nint controlledAddress;
-    private bool ownsObject;              // true = we spawned it (delete on despawn); false = controlling an existing enemy
-    private Npcs.SimulatedNpc? controlledNpc; // the killer we took over (so we can release its AI)
+    private Npcs.SimulatedNpc? controlledNpc; // the enemy taken over (its AI skips it while held)
     private bool corpseTraversalSupportActive;
-    private bool pendingDraw;
-    private int framesWaited;
-    private const int MaxPendingFrames = 60;
 
     private float yaw;
     private float posX, posY, posZ;
@@ -242,99 +241,26 @@ public unsafe partial class EnemyControlController : IDisposable
         return pos;
     }
 
-    public void Spawn()
-    {
-        if (IsActive || pendingDraw) { log.Info("EnemyControlMode: already active — despawn first"); return; }
-
-        var player = Core.Services.ObjectTable.LocalPlayer;
-        if (player == null) { log.Warning("EnemyControlMode: no local player"); return; }
-
-        var mgr = ClientObjectManager.Instance();
-        if (mgr == null) { log.Warning("EnemyControlMode: ClientObjectManager null"); return; }
-
-        var hint = Core.ClientActorSlotAllocator.FindFreeAscending(mgr, 100);
-        if (hint == uint.MaxValue) { log.Warning("EnemyControlMode: no free shared client actor slot"); return; }
-        var createResult = mgr->CreateBattleCharacter(hint);
-        if (createResult == 0xFFFFFFFF) { log.Warning("EnemyControlMode: CreateBattleCharacter failed (no slot)"); return; }
-
-        var index = (int)createResult;
-        if (index < 0 || index >= Core.ClientActorSlotAllocator.SharedSlotLimit)
-        {
-            if (index >= 0 && index < Core.ClientActorSlotAllocator.TotalSlotCount)
-                mgr->DeleteObjectByIndex((ushort)index, 0);
-            log.Warning($"EnemyControlMode: CreateBattleCharacter returned unsafe index {index}");
-            return;
-        }
-        var obj = mgr->GetObjectByIndex((ushort)index);
-        if (obj == null)
-        {
-            mgr->DeleteObjectByIndex((ushort)index, 0);
-            log.Warning($"EnemyControlMode: object null at index {index}");
-            return;
-        }
-
-        var chara = (BattleChara*)obj;
-        var character = (Character*)chara;
-
-        obj->ObjectKind = ObjectKind.BattleNpc;
-        obj->SubKind = (byte)BattleNpcSubKind.Combatant;
-        obj->TargetableStatus = 0;
-        obj->RenderFlags = VisibilityFlags.None;
-
-        var spawnPos = player.Position;
-        yaw = player.Rotation;
-        posX = spawnPos.X; posY = spawnPos.Y; posZ = spawnPos.Z;
-        obj->Position = spawnPos;
-        obj->Rotation = yaw;
-
-        var nameBytes = Encoding.UTF8.GetBytes("EnemyControl");
-        for (int j = 0; j < 64; j++)
-            obj->Name[j] = j < nameBytes.Length && j < 63 ? nameBytes[j] : (byte)0;
-
-        character->CharacterSetup.SetupBNpc(config.EnemyControlModelId, config.EnemyControlModelNameId);
-        character->CharacterSetup.CopyFromCharacter(character, CharacterSetupContainer.CopyFlags.None);
-
-        obj->ObjectKind = ObjectKind.BattleNpc;
-        obj->SubKind = (byte)BattleNpcSubKind.Combatant;
-        character->SetMode(CharacterModes.Normal, 0);
-
-        // A valid EntityId lets it be the caster of a fabricated attack ActionEffect
-        // (so the swing animation + sound play).
-        // Keep standalone EnemyControl actors out of the virtual-enemy (0xF0), companion (0xF1),
-        // dismemberment (0xF2), and spectator (0xF3) synthetic identity ranges.
-        EnemyControlEntityId = nextSpawnedEnemyControlEntityId++;
-        obj->EntityId = EnemyControlEntityId;
-
-        EnemyControlIndex = index;
-        controlledAddress = (nint)obj;
-        ownsObject = true;
-        pendingDraw = true;
-        framesWaited = 0;
-        BeginControl(spawnPos, yaw);
-
-        log.Info($"EnemyControlMode: spawned model={config.EnemyControlModelId} at index {index} (0x{controlledAddress:X})");
-    }
-
     /// <summary>
-    /// Take control of an existing enemy (the one that just defeated the player) instead of
-    /// spawning a creature. Same controls; we don't own the object (no delete on release).
+    /// Take control of one existing enemy (the one that just defeated the player, or the one carrying
+    /// off the lord's body). We don't own the object (no delete on release), and we don't write its
+    /// state: the enemy AI leaves it alone while <see cref="ControlsNpc"/> names it.
     /// </summary>
     public void ControlKiller(Npcs.SimulatedNpc killer)
     {
         if (IsActive) { log.Info("EnemyControlMode: already active"); return; }
         if (killer.BattleChara == null || killer.Address == nint.Zero) { log.Warning("EnemyControlMode: killer invalid"); return; }
+        // A despawned enemy's address dangles (reading its DrawObject would crash) and may already belong to
+        // another object: only an object the table still lists, with this enemy's entity id.
+        if (!IsLiveObject(killer.Address, killer.SimulatedEntityId)) { log.Warning($"EnemyControlMode: '{killer.Name}' is no longer in the object table (despawned or reused)"); return; }
 
         var obj = (GameObject*)killer.Address;
         if (obj->DrawObject == null) { log.Warning("EnemyControlMode: killer not drawn"); return; }
         var character = (Character*)killer.Address;
 
         controlledNpc = killer;
-        killer.IsClientControlled = true; // suppress its AI behaviours
-        EnemyControlIndex = -1;
-        ownsObject = false;
         controlledAddress = killer.Address;
         EnemyControlEntityId = obj->EntityId;
-        pendingDraw = false; // already drawn
         var pos = new Vector3(obj->Position.X, obj->Position.Y, obj->Position.Z);
         posX = pos.X; posY = pos.Y; posZ = pos.Z;
         yaw = obj->Rotation;
@@ -358,20 +284,6 @@ public unsafe partial class EnemyControlController : IDisposable
     {
         try
         {
-            if (pendingDraw)
-            {
-                if (controlledAddress == nint.Zero) { pendingDraw = false; return; }
-                var chara = (BattleChara*)controlledAddress;
-                framesWaited++;
-                if (chara->IsReadyToDraw() || framesWaited >= MaxPendingFrames)
-                {
-                    chara->EnableDraw();
-                    pendingDraw = false;
-                    log.Info($"EnemyControlMode: draw enabled after {framesWaited} frames — controls live");
-                }
-                return;
-            }
-
             if (!IsActive || controlledAddress == nint.Zero) return;
 
             // The controlled killer is a real map enemy the game can despawn at any time; its
@@ -1780,6 +1692,15 @@ public unsafe partial class EnemyControlController : IDisposable
         return false;
     }
 
+    /// <summary>An object the table still lists at this address, with this entity id (safe to dereference, and the same object).</summary>
+    public static bool IsLiveObject(nint address, uint entityId)
+    {
+        if (address == nint.Zero) return false;
+        foreach (var o in Core.Services.ObjectTable)
+            if (o.Address == address) return o.EntityId == entityId;
+        return false;
+    }
+
     private static bool IsObjectAddressLive(nint address)
     {
         if (address == nint.Zero) return false;
@@ -1791,7 +1712,7 @@ public unsafe partial class EnemyControlController : IDisposable
     public void Despawn()
     {
         ReleaseExternalControl();
-        if (controlledAddress == nint.Zero) { pendingDraw = false; return; }
+        if (controlledAddress == nint.Zero) return;
 
         CancelGrabAttack();
         playerRagdoll.CancelAttackStrike();
@@ -1806,34 +1727,18 @@ public unsafe partial class EnemyControlController : IDisposable
         movementBlock.RemoveApproachNpc(controlledAddress);
         cameraCoordinator?.Release(CameraOwner.EnemyControlFollow);
 
-        // Controlled killer: it's a real enemy we don't own — release its AI, never delete it.
-        if (controlledNpc != null)
-        {
-            controlledNpc.IsClientControlled = false;
-            controlledNpc = null;
-            // Reset our move-anim override only while the object is still live — this path is also
-            // reached when the killer already despawned, where its memory is freed and touching it
-            // (or on session close) would crash.
-            if (Core.Services.ObjectTable.LocalPlayer != null && EnemyControlObjectAlive())
-                ActorVisualStateController.ClearMovement((Character*)controlledAddress, visualState);
-        }
-        // Spawned creature: delete the object. Only touch game memory while the session is alive —
-        // during game shutdown the game has already freed it (DisableDraw/Delete would crash).
-        else if (ownsObject && Core.Services.ObjectTable.LocalPlayer != null)
-        {
-            // Tear down the draw object/skeleton BEFORE deleting the slot (matches NpcSpawner order),
-            // but only if the object still exists — skip the deref if the game already freed it.
-            if (EnemyControlObjectAlive())
-                ((GameObject*)controlledAddress)->DisableDraw();
-            var mgr = ClientObjectManager.Instance();
-            if (mgr != null && EnemyControlIndex >= 0) mgr->DeleteObjectByIndex((ushort)EnemyControlIndex, 0);
-        }
+        // The enemy is the game's (or the spawner's), never ours to delete: hand it back to its AI.
+        // Reset our move-anim override only while the object is still live — this path is also
+        // reached when the enemy already despawned, where its memory is freed and touching it
+        // (or on session close) would crash.
+        var releasedName = controlledNpc?.Name ?? "?";
+        controlledNpc = null;
+        if (Core.Services.ObjectTable.LocalPlayer != null && EnemyControlObjectAlive())
+            ActorVisualStateController.ClearMovement((Character*)controlledAddress, visualState);
 
-        log.Info($"EnemyControlMode: despawned (owned={ownsObject}, idx={EnemyControlIndex})");
-        EnemyControlIndex = -1;
+        log.Info($"EnemyControlMode: despawned — '{releasedName}' is back to its AI");
         controlledAddress = nint.Zero;
-        ownsObject = false;
-        pendingDraw = false;
+        EnemyControlEntityId = 0;
     }
 
     public void Dispose()

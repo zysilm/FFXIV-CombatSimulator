@@ -69,6 +69,8 @@ internal interface IBattleModuleSettings : IBattleRuleSettings
 {
     bool EnableVictoryCelebration { get; }
     float VictoryCelebrationStagger { get; }
+    /// <summary>Enemy Control's "On death: Control killer".</summary>
+    bool EnemyControlControlKiller { get; }
 }
 
 /// <summary>The presentation module: the overlays it builds and which windows, toolbars and overlays it draws.</summary>

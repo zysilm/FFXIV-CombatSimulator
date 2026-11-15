@@ -1,4 +1,4 @@
-# outcomes: the result banner's words for every combination; then whether the killer is possessed
+# outcomes: the result banner's words for every combination
 StayDown hostages False retreat False active False lord dead executed False/-1 seized False lost: ANNIHILATED | Every member of your party lies dead on the field.
 StayDown hostages False retreat False active False lord dead executed False/-1 seized False won: VICTORY | Every enemy has been slain, though you fell in the battle.
 StayDown hostages False retreat False active False lord dead executed False/-1 seized True lost: DISGRACED | Your corpse has been dragged off as a trophy. Your army is executed.
@@ -1151,51 +1151,3 @@ WarringStates hostages True retreat True active True lord alive executed True/1 
 WarringStates hostages True retreat True active True lord alive executed True/1 seized False won: VICTORY | Every enemy has been slain. Your army is victorious.
 WarringStates hostages True retreat True active True lord alive executed True/1 seized True lost: DISGRACED | Your corpse has been dragged off as a trophy. Your army is executed.
 WarringStates hostages True retreat True active True lord alive executed True/1 seized True won: VICTORY | Every enemy has been slain. Your army is victorious.
-killer StayDown hostages False retreat False active False lord dead: suppressed False
-killer StayDown hostages False retreat False active False lord alive: suppressed False
-killer StayDown hostages False retreat False active True lord dead: suppressed False
-killer StayDown hostages False retreat False active True lord alive: suppressed False
-killer StayDown hostages False retreat True active False lord dead: suppressed False
-killer StayDown hostages False retreat True active False lord alive: suppressed False
-killer StayDown hostages False retreat True active True lord dead: suppressed False
-killer StayDown hostages False retreat True active True lord alive: suppressed False
-killer StayDown hostages True retreat False active False lord dead: suppressed False
-killer StayDown hostages True retreat False active False lord alive: suppressed False
-killer StayDown hostages True retreat False active True lord dead: suppressed False
-killer StayDown hostages True retreat False active True lord alive: suppressed False
-killer StayDown hostages True retreat True active False lord dead: suppressed False
-killer StayDown hostages True retreat True active False lord alive: suppressed False
-killer StayDown hostages True retreat True active True lord dead: suppressed False
-killer StayDown hostages True retreat True active True lord alive: suppressed False
-killer SpringAndAutumn hostages False retreat False active False lord dead: suppressed False
-killer SpringAndAutumn hostages False retreat False active False lord alive: suppressed False
-killer SpringAndAutumn hostages False retreat False active True lord dead: suppressed False
-killer SpringAndAutumn hostages False retreat False active True lord alive: suppressed False
-killer SpringAndAutumn hostages False retreat True active False lord dead: suppressed False
-killer SpringAndAutumn hostages False retreat True active False lord alive: suppressed False
-killer SpringAndAutumn hostages False retreat True active True lord dead: suppressed False
-killer SpringAndAutumn hostages False retreat True active True lord alive: suppressed False
-killer SpringAndAutumn hostages True retreat False active False lord dead: suppressed False
-killer SpringAndAutumn hostages True retreat False active False lord alive: suppressed False
-killer SpringAndAutumn hostages True retreat False active True lord dead: suppressed False
-killer SpringAndAutumn hostages True retreat False active True lord alive: suppressed False
-killer SpringAndAutumn hostages True retreat True active False lord dead: suppressed False
-killer SpringAndAutumn hostages True retreat True active False lord alive: suppressed False
-killer SpringAndAutumn hostages True retreat True active True lord dead: suppressed False
-killer SpringAndAutumn hostages True retreat True active True lord alive: suppressed False
-killer WarringStates hostages False retreat False active False lord dead: suppressed False
-killer WarringStates hostages False retreat False active False lord alive: suppressed False
-killer WarringStates hostages False retreat False active True lord dead: suppressed False
-killer WarringStates hostages False retreat False active True lord alive: suppressed False
-killer WarringStates hostages False retreat True active False lord dead: suppressed True
-killer WarringStates hostages False retreat True active False lord alive: suppressed True
-killer WarringStates hostages False retreat True active True lord dead: suppressed True
-killer WarringStates hostages False retreat True active True lord alive: suppressed True
-killer WarringStates hostages True retreat False active False lord dead: suppressed False
-killer WarringStates hostages True retreat False active False lord alive: suppressed False
-killer WarringStates hostages True retreat False active True lord dead: suppressed False
-killer WarringStates hostages True retreat False active True lord alive: suppressed False
-killer WarringStates hostages True retreat True active False lord dead: suppressed True
-killer WarringStates hostages True retreat True active False lord alive: suppressed True
-killer WarringStates hostages True retreat True active True lord dead: suppressed True
-killer WarringStates hostages True retreat True active True lord alive: suppressed True

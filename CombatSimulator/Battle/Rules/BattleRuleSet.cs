@@ -249,15 +249,6 @@ public sealed class BattleRuleSet
         return LethalBlow.Default;
     }
 
-    /// <summary>When the player dies, whether Enemy Control leaves the killer alone: any composed part says so.</summary>
-    public bool SuppressesKillerPossession()
-    {
-        foreach (var part in parts)
-            if (Composed(part) && part.SuppressesKillerPossession(Context))
-                return true;
-        return false;
-    }
-
     /// <summary>
     /// The result banner's title and reason: every part is asked in order and the last answer stands (the base
     /// part words every battle; a part that ends a battle its own way speaks after it). Every part, not only the

@@ -32,6 +32,15 @@ if (args.Contains("--kneel-metrics"))
     return 0;
 }
 
+// `-- --patrol-metrics`: no golden files; how the sentries patrol after a lost fight, with the killer under
+// Enemy Control or forced engaging around them (PatrolReplay.cs; to compare with the code before a change).
+if (args.Contains("--patrol-metrics"))
+{
+    foreach (var result in PatrolReplay.RunAll())
+        Console.Write(result.Text);
+    return 0;
+}
+
 var write = args.Contains("--write");
 var writeMissing = args.Contains("--write-missing");
 var dir = Path.Combine(Here(), "golden");
@@ -102,6 +111,9 @@ foreach (var (file, text) in outputs)
     Console.WriteLine($"  golden: {(line < a.Length ? a[line] : "<end>")}");
     Console.WriteLine($"  now:    {(line < b.Length ? b[line] : "<end>")}");
 }
+// Patrol and Enemy Control after a lost fight: checked, not compared with a golden file (PatrolReplay.cs).
+if (!PatrolReplay.Check())
+    failed = true;
 return failed ? 1 : 0;
 
 static string Here([CallerFilePath] string path = "") => Path.GetDirectoryName(path)!;

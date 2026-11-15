@@ -714,6 +714,9 @@ public partial class Configuration : IPluginConfiguration
         "DynCamPivotBoneName", "DynCamHeightOffset", "DynCamInputHold", "DynCamDeathMaximizeBody",
         "DynCamDeathCloseUpDistance", "DynCamDeathTranslateDuration", "MigratedDynCamPivotBone",
         "ShowSimLabel", "ShowDeadLabel", "ShowDeathNameAlias",
+        // Enemy Control's "spawn a creature on death", removed (2026-11-15, user's decision): Enemy
+        // Control only ever takes over one enemy of the fight.
+        "EnemyControlSpawnOnDeath", "EnemyControlModelId", "EnemyControlModelNameId",
     };
 
     // The Show*Label switches merged into their text: an empty text now means "off". A switch that was

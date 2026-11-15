@@ -77,6 +77,14 @@ public unsafe class NpcSpawner : IDisposable
     /// <summary>The navigation mesh, for putting opponents on the map (<see cref="SpawnPlacement.Map"/>).</summary>
     public Integration.VNavmeshIpc? Navmesh { private get; set; }
 
+    /// <summary>
+    /// The nearest spot to a point that the party can walk to (the plugin's own navigation mesh, searched
+    /// outward from the point), or null when that cannot be told yet (no mesh there). Every spawn goes
+    /// through it, so nobody is put behind a wall, on a cliff top or under ground; one it cannot judge yet is
+    /// put on reachable ground when it first joins the crowd (CrowdMover.Drive). Null: not wired (offline).
+    /// </summary>
+    public Func<Vector3, Vector3?>? ReachableSpot { private get; set; }
+
     /// <summary>Whether opponents can be placed on the map here: it takes a navigation mesh to find ground.</summary>
     public bool CanPlaceOnMap
     {
@@ -216,6 +224,15 @@ public unsafe class NpcSpawner : IDisposable
             }
             else
                 spawnPos = CalculateSpawnPosition(spawnedNpcs.Count + pendingSpawns.Count, request.Placement);
+            // Only where the party can walk to: a spot behind a wall or off the walkable ground moves to the
+            // nearest one that is not.
+            if (ReachableSpot?.Invoke(spawnPos) is { } reachable)
+            {
+                var moved = Vector3.Distance(reachable, spawnPos);
+                if (moved > 1f)
+                    log.Info($"NPC '{npcName}': spawn spot moved {moved:F1} m onto ground the party can reach.");
+                spawnPos = reachable;
+            }
             var spawnRot = facing ?? CalculateSpawnRotation(spawnPos);
 
             var clientObjMgr = ClientObjectManager.Instance();

@@ -232,6 +232,58 @@ public static class NavMeshBuild
         return result;
     }
 
+    // The outward search for a reachable spot: the first box is this wide each way, then twice as wide
+    // each step, up to the radius asked for; it always looks at least this far up and down.
+    private const float ReachableSearchStart = 1.5f;
+    private const float ReachableSearchMinVertical = 3f;
+
+    /// <summary>
+    /// The nearest point to <paramref name="wanted"/> on the polygons <paramref name="piece"/> lets through
+    /// (one connected piece: the ground the player can walk to), searched outward from it: boxes growing from
+    /// 1.5 m each way, doubling, to <paramref name="maxRadius"/> (as high and low as they are wide, at least
+    /// 3 m). The first box with any such ground in it gives the answer, so a point behind a wall, inside a
+    /// walled-off yard, on top of a cliff or under a ledge comes out at the nearest spot that can be walked to.
+    /// A point already on that ground comes back where it is (on the floor). The search never looks further up
+    /// or down than <paramref name="maxVertical"/>. False when there is none within <paramref name="maxRadius"/>.
+    /// </summary>
+    public static bool NearestOnPiece(DtNavMeshQuery query, IDtQueryFilter piece, Vector3 wanted, float maxRadius, out Vector3 spot,
+        float maxVertical = float.PositiveInfinity)
+    {
+        spot = wanted;
+        if (!(maxRadius > 0f) || !float.IsFinite(wanted.X + wanted.Y + wanted.Z))
+            return false;
+        var radius = MathF.Min(ReachableSearchStart, maxRadius);
+        while (true)
+        {
+            var vertical = MathF.Min(MathF.Max(ReachableSearchMinVertical, radius), maxVertical);
+            var status = query.FindNearestPoly(ToRc(wanted), new RcVec3f(radius, vertical, radius), piece,
+                out var polyRef, out var nearest, out _);
+            // (The polygons' search bounds are looser than the box in height: a floor found further up or down
+            // than maxVertical is not taken.)
+            if (status.Succeeded() && polyRef != 0 && MathF.Abs(nearest.Y - wanted.Y) <= maxVertical)
+            {
+                spot = ToVector(nearest);
+                return true;
+            }
+            if (radius >= maxRadius)
+                return false;
+            radius = MathF.Min(radius * 2f, maxRadius);
+        }
+    }
+
+    /// <summary>
+    /// The connected piece under a point (someone standing there: within 1.5 m sideways and
+    /// <paramref name="vertical"/> metres up or down, any polygon, switched on or not), or -1 when there is none
+    /// (the point is in the air: mounted, jumping, flying).
+    /// </summary>
+    public static int PieceUnder(DtNavMeshQuery query, Pieces pieces, IDtQueryFilter anyPolygon, Vector3 point, float vertical)
+    {
+        if (!float.IsFinite(point.X + point.Y + point.Z))
+            return -1;
+        var status = query.FindNearestPoly(ToRc(point), new RcVec3f(1.5f, vertical, 1.5f), anyPolygon, out var polyRef, out _, out _);
+        return status.Succeeded() && polyRef != 0 && pieces.PieceOf.TryGetValue(polyRef, out var piece) ? piece : -1;
+    }
+
     /// <summary>Make a piece walkable (queries and paths use it) or not.</summary>
     public static void SetPieceEnabled(DtNavMesh nav, List<long> members, bool enabled)
     {

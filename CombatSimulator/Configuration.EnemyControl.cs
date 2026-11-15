@@ -16,10 +16,7 @@ public partial class Configuration
     // else lives in the window this opens, and every feature inside it defaults off.
     public bool ShowEnemyControlGui { get; set; } = false;
 
-    public bool EnemyControlSpawnOnDeath { get; set; } = false;
     public bool EnemyControlControlKiller { get; set; } = false;
-    public uint EnemyControlModelId { get; set; } = 38;
-    public uint EnemyControlModelNameId { get; set; } = 38;
     public float EnemyControlMoveSpeed { get; set; } = 6f;
     [Newtonsoft.Json.JsonIgnore] public float EnemyControlVerticalSpeed => 2.5f;
     public int EnemyControlAttackKey { get; set; } = 0x59;

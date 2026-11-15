@@ -385,21 +385,9 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             }
             devExperimental.OnPlayerDeath(addr);
 
-            // Under Warring States with Retreat the lord's body is fought over: an enemy takes it with
-            // Enemy Control's grab only if it reaches it (the corpse seizure rule), not the moment the lord falls.
-            var bodyFoughtOver = companionManager.RuleParts.SuppressesKillerPossession();
-            if (bodyFoughtOver)
-                log.Info("EnemyControl: the lord's body is fought over; nobody takes it yet.");
-            else if (config.EnemyControlControlKiller)
-            {
-                var killer = actorsModule.FindNpcByAddress(combatEngine.LastPlayerKillerAddress);
-                if (killer != null) enemyControlController.ControlKiller(killer);
-                else log.Info("EnemyControl: no valid killer to control.");
-            }
-            else if (config.EnemyControlSpawnOnDeath)
-            {
-                enemyControlController.Spawn();
-            }
+            // Remember the killer: Enemy Control takes over one enemy only once the battle is lost
+            // (Battle/KillerPossession.cs, the war tick), never while the fight is undecided.
+            battleModule.OnLordFell(combatEngine.LastPlayerKillerEntityId);
         };
 
         safetyDevModule.CreateHookSafetyChecker(pluginInterface);
@@ -832,7 +820,12 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
                 return;
             }
 
-            if (PrivateDirectorActive) return;
+            if (PrivateDirectorActive)
+            {
+                // A director drives the battle now: no killer is taken over after it ends.
+                battleModule.CancelKillerPossession();
+                return;
+            }
             mapEnemyController.Tick(deltaTime);
             combatEngine.Tick(deltaTime);
             corpseModule.ProcessPendingNpcRagdolls(deltaTime);

@@ -153,6 +153,12 @@ Quad(new(10, 0, -4), new(10, 0, 4), new(20, 3, 4), new(20, 3, -4));
 Box(new(20, 0, -4), new(30, 3, 4));
 // An island raised 10 m, unreachable (sheer sides).
 Box(new(-30, 0, 20), new(-20, 10, 30));
+// A yard walled off on every side (walls 6 m, no gate), north-east: its floor cannot be walked to (2026-11-15:
+// "enemies spawned behind walls get stuck").
+Box(new(24, 0, 16), new(36, 6, 16.4f));     // south wall
+Box(new(24, 0, 27.6f), new(36, 6, 28));     // north wall
+Box(new(24, 0, 16), new(24.4f, 6, 28));     // west wall
+Box(new(35.6f, 0, 16), new(36, 6, 28));     // east wall
 
 var sw = Stopwatch.StartNew();
 var tileCells = args.Length > 0 ? int.Parse(args[0]) : 64;
@@ -244,6 +250,9 @@ var cases = new (string, Action)[]
         Check(r != 0 && pieces.PieceOf[r] == playerPiece, "not put on the player's piece");
         Check(n > 0 && path[n - 1] == r, "the spot is not walkable from the player");
         Check(flat < 8f, "put far from where it spawned");
+    }),
+    ("a spawn spot or patrol post that cannot be walked to moves to the nearest that can (outward search)", () => {
+        ReachableSpots();
     }),
     ("a kneel spot beside a body is within 0.3 m of it, on the mesh, clear of other kneelers and the fallen", () => {
         KneelSpots();
@@ -408,6 +417,87 @@ void KneelSpots()
     Check(KneelSpot.TryChoose(bodyA, west, none, fallen, FloorNear, out var next), "beside the fallen: no spot");
     Good("beside the fallen", bodyA, next);
     Check(KneelSpot.Flat(next, first) >= KneelSpot.CorpseClearance - 1e-4f, "beside the fallen: knelt on the fallen");
+}
+
+// NavMeshBuild.NearestOnPiece, as NavMeshService.TryNearestReachable asks it (the player's piece, searched
+// outward from the point up to a radius): spawns (NpcSpawner.ReachableSpot, CrowdMover.Drive for someone new to
+// the fight), patrol posts and patrol points (NpcAiController.EnsureReachablePost / SentryGoal).
+void ReachableSpots()
+{
+    var pieces = NavMeshBuild.FindPieces(mesh!);
+    var player = Snap(new Vector3(0, 0, -15));
+    var only = new NavMeshBuild.PieceFilter(pieces, pieces.PieceOf[player.Ref]);
+    bool Walkable(Vector3 spot)
+    {
+        var to = Snap(spot, 0.5f);
+        if (to.Ref == 0) return false;
+        Span<long> path = stackalloc long[512];
+        query.FindPath(player.Ref, to.Ref, NavMeshBuild.ToRc(player.Pos), NavMeshBuild.ToRc(to.Pos), filter, path, out var n, 512);
+        return n > 0 && path[n - 1] == to.Ref;
+    }
+    float Flat(Vector3 a, Vector3 b) => new Vector2(a.X - b.X, a.Z - b.Z).Length();
+
+    // Inside the walled yard, its middle: out over the nearest wall (6 m to the inside face, +0.4 m wall, + the
+    // agent's 0.4 m clearance), on reachable ground.
+    var inYard = new Vector3(30, 0, 22);
+    Check(Snap(inYard).Ref != 0 && pieces.PieceOf[Snap(inYard).Ref] != pieces.PieceOf[player.Ref], "the yard floor is not a piece of its own");
+    Check(NavMeshBuild.NearestOnPiece(query, only, inYard, 96f, out var outOfYard), "yard: no reachable spot");
+    Console.WriteLine($"      yard middle {inYard} -> {outOfYard} ({Flat(inYard, outOfYard):F1} m), walkable from the player {Walkable(outOfYard)}");
+    Check(Walkable(outOfYard), "yard: the spot is not walkable from the player");
+    Check(Flat(inYard, outOfYard) < 8f, "yard: not the nearest way out");
+    var outside = outOfYard.X < 24f || outOfYard.X > 36f || outOfYard.Z < 16f || outOfYard.Z > 28f;
+    Check(outside, "yard: the spot is still inside the walls");
+
+    // On top of the 10 m island (a cliff top): down at its foot.
+    var onIsland = new Vector3(-25, 10.2f, 25);
+    Check(NavMeshBuild.NearestOnPiece(query, only, onIsland, 96f, out var belowIsland), "island: no reachable spot");
+    Console.WriteLine($"      island top {onIsland} -> {belowIsland} ({Flat(onIsland, belowIsland):F1} m sideways, y {belowIsland.Y:F2}), walkable {Walkable(belowIsland)}");
+    Check(Walkable(belowIsland) && MathF.Abs(belowIsland.Y) < 0.5f, "island: not put on the ground at its foot");
+    Check(Flat(onIsland, belowIsland) < 8f, "island: put far from where it was");
+
+    // Under ground (2 m below the open floor): up onto the floor right above.
+    var underground = new Vector3(-10, -2f, -20);
+    Check(NavMeshBuild.NearestOnPiece(query, only, underground, 96f, out var above), "under ground: no reachable spot");
+    Console.WriteLine($"      under ground {underground} -> {above}");
+    Check(Walkable(above) && Flat(underground, above) < 0.5f && MathF.Abs(above.Y) < 0.5f, "under ground: not the floor above");
+
+    // Already on reachable ground (inside the house, by the door): where it is, on the floor, not the roof.
+    var inHouse = new Vector3(0, 0.3f, 2);
+    Check(NavMeshBuild.NearestOnPiece(query, only, inHouse, 96f, out var same), "house: no spot");
+    Console.WriteLine($"      in the house {inHouse} -> {same}");
+    Check(Flat(inHouse, same) < 0.3f && MathF.Abs(same.Y) < 0.5f, "house: a reachable spot was moved");
+
+    // A wall's thickness (in the house's east wall): just beside it.
+    var inWall = new Vector3(4.85f, 0.2f, 0);
+    Check(NavMeshBuild.NearestOnPiece(query, only, inWall, 96f, out var besideWall), "wall: no spot");
+    Console.WriteLine($"      in a wall {inWall} -> {besideWall} ({Flat(inWall, besideWall):F2} m)");
+    Check(Walkable(besideWall) && Flat(inWall, besideWall) < 1.5f, "wall: not just beside it");
+
+    // A re-join looks only so far up and down (CrowdMover: 20 m sideways, 12 m vertical): 4 m under the floor with
+    // 1 m vertical finds nothing, however far it looks sideways (the polygons' search bounds are a little taller than the floor).
+    Check(!NavMeshBuild.NearestOnPiece(query, only, new Vector3(-10, -4f, -20), 20f, out _, maxVertical: 1f), "maxVertical: found a floor 4 m above");
+    Check(NavMeshBuild.NearestOnPiece(query, only, new Vector3(-10, -4f, -20), 20f, out _, maxVertical: 12f), "maxVertical 12: no floor 4 m above");
+
+    // The piece under the player (NavMeshService: the reachable ground, looked for again while the player is off it).
+    var anyPolygon = new NavMeshBuild.AnyPolygonFilter();
+    var playerPieceId = pieces.PieceOf[player.Ref];
+    Check(NavMeshBuild.PieceUnder(query, pieces, anyPolygon, new Vector3(0, 1f, -15), 2.5f) == playerPieceId, "standing (1 m up, a jump): not the player's piece");
+    Check(NavMeshBuild.PieceUnder(query, pieces, anyPolygon, new Vector3(0, 10f, -15), 2.5f) == -1, "10 m in the air (flying): a piece was found");
+    var islandPiece = NavMeshBuild.PieceUnder(query, pieces, anyPolygon, onIsland, 2.5f);
+    Check(islandPiece >= 0 && islandPiece != playerPieceId, "on the island: not its own piece");
+    Check(NavMeshBuild.PieceUnder(query, pieces, anyPolygon, new Vector3(float.NaN, 0, 0), 2.5f) == -1, "NaN: a piece was found");
+    Console.WriteLine($"      piece under the player {playerPieceId} ({pieces.Members[playerPieceId].Count} polygons), on the island {islandPiece} ({pieces.Members[islandPiece].Count} polygons), in the air none");
+
+    // The search stops at its radius: nothing reachable within 1 m of the yard's middle.
+    Check(!NavMeshBuild.NearestOnPiece(query, only, inYard, 1f, out _), "yard: found reachable ground within 1 m");
+    // Nonsense in, nothing out.
+    Check(!NavMeshBuild.NearestOnPiece(query, only, new Vector3(float.NaN, 0, 0), 96f, out _), "a NaN point found a spot");
+
+    // The search grows outward: a point 20 m outside the built area's ground has its spot at the ground's edge.
+    var offMap = new Vector3(60, 0, 0);
+    Check(NavMeshBuild.NearestOnPiece(query, only, offMap, 96f, out var edge), "off the map: no spot within 96 m");
+    Console.WriteLine($"      off the map {offMap} -> {edge} ({Flat(offMap, edge):F1} m)");
+    Check(edge.X > 38f && Walkable(edge), "off the map: not the nearest edge of the ground");
 }
 
 void CutOff()

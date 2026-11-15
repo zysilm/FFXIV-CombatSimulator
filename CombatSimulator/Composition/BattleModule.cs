@@ -34,6 +34,8 @@ internal sealed unsafe class BattleModule
     private readonly WarBanner warBanner = new();
     private CorpseSeizure<SimulatedNpc> corpseSeizure = null!;
     private bool outcomeShown;
+    // The outcome shown was a defeat (the first word stands): Enemy Control may take over an enemy only then.
+    private bool battleLost;
 
     public BattleModule(PluginModules modules) => m = modules;
 
@@ -96,6 +98,7 @@ internal sealed unsafe class BattleModule
         if (outcomeShown)
             return;
         outcomeShown = true;
+        battleLost = !playerWon;
 
         if (!config.ShowResultBanner)
             return;
@@ -108,7 +111,44 @@ internal sealed unsafe class BattleModule
     {
         corpseSeizure.Reset();
         outcomeShown = false;
+        battleLost = false;
         warBanner.Hide();
+        killerPossession.Cancel();
+    }
+
+    // Enemy Control's "On death: Control killer" (Battle/KillerPossession.cs): the killer, remembered by its
+    // entity id when the lord falls and taken over in the war tick once the battle is lost (every rule: plain,
+    // Spring and Autumn, Warring States). One enemy, nothing else touched.
+    private KillerPossession<SimulatedNpc>? killerPossessionField;
+    private KillerPossession<SimulatedNpc> killerPossession => killerPossessionField ??= new(new KillerPossessionWorld(this));
+
+    /// <summary>The player (the lord) has fallen to the enemy with this id (CombatEvents.PlayerDied); decided in the war tick.</summary>
+    public void OnLordFell(uint killerEntityId) => killerPossession.OnLordFell(killerEntityId);
+
+    /// <summary>Something else drives the battle now (a private director): no killer is taken over later.</summary>
+    public void CancelKillerPossession() => killerPossession.Cancel();
+
+    private sealed class KillerPossessionWorld(BattleModule plugin) : IKillerPossessionWorld<SimulatedNpc>
+    {
+        public bool ControlKillerEnabled => plugin.config.EnemyControlControlKiller;
+        public bool LordAlive => plugin.combatEngine.State.PlayerState.IsAlive;
+        public bool IsControlling => plugin.enemyControlController.IsActive;
+        public bool BodySeized => plugin.corpseSeizure.BodySeized;
+        public bool BattleLost => plugin.battleLost;
+
+        public SimulatedNpc? FindEnemy(uint entityId)
+        {
+            foreach (var npc in plugin.npcSelector.SelectedNpcs)
+                if (npc.SimulatedEntityId == entityId)
+                    return npc;
+            return null;
+        }
+
+        public bool IsLiveAndSame(SimulatedNpc npc, uint entityId)
+            => npc.IsAlive && npc.BattleChara != null && EnemyControlController.IsLiveObject(npc.Address, entityId);
+
+        public void TakeControl(SimulatedNpc npc) => plugin.enemyControlController.ControlKiller(npc);
+        public void Info(string text) => plugin.log.Info(text);
     }
 
     /// <summary>A hit landed (<c>CombatEvents.DamageLanded</c>): a seizer struck at the lord's body knocks the seizing back.</summary>
@@ -131,7 +171,11 @@ internal sealed unsafe class BattleModule
     }
 
     /// <summary>The battle rules after the engine (the corpse seizure's tick).</summary>
-    public void TickWar(float deltaTime) => companionManager.RuleParts.TickAfterEngine(deltaTime);
+    public void TickWar(float deltaTime)
+    {
+        companionManager.RuleParts.TickAfterEngine(deltaTime);
+        killerPossession.Tick();
+    }
 
     public void DrawWar() => warBanner.Draw();
 
@@ -180,6 +224,7 @@ internal sealed unsafe class BattleModule
         public void Info(string text) => plugin.log.Info(text);
         public void Warning(string text) => plugin.log.Warning(text);
 
+        public bool TakesOverSeizer => plugin.config.EnemyControlControlKiller;
         public bool BodyCanBeHeld => plugin.config.EnableRagdoll && plugin.ragdollController.IsActive;
         public bool IsControlling => plugin.enemyControlController.IsActive;
         public void TakeControl(SimulatedNpc npc) => plugin.enemyControlController.ControlKiller(npc);

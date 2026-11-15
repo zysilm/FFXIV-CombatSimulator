@@ -137,6 +137,7 @@ public sealed class NavMeshService : IDisposable
         query = null;
         pieces = null;
         playerPiece = -1;
+        playersPieceFilter = null;
         enabledPieces.Clear();
         Territory = 0;
         attempted = false;
@@ -170,13 +171,12 @@ public sealed class NavMeshService : IDisposable
                 pieces = NavMeshBuild.FindPieces(built);
                 enabledPieces.Clear();
                 playerPiece = -1;
+                playersPieceFilter = null;
                 foreach (var members in pieces.Members)
                     NavMeshBuild.SetPieceEnabled(built, members, false);
-                var seeded = EnablePieceUnder(buildingCenter, 2.5f);
-                if (seeded && query.FindNearestPoly(NavMeshBuild.ToRc(buildingCenter), new RcVec3f(1.5f, 2.5f, 1.5f), anyPolygon,
-                        out var seedRef, out _, out _).Succeeded() && pieces.PieceOf.TryGetValue(seedRef, out var seedPiece))
-                    playerPiece = seedPiece;
-                log.Info($"NavMesh: links {NavMeshBuild.DescribeLinks(built)}; {pieces.Members.Count} connected pieces; the player's {(seeded ? "switched on" : "not found")}");
+                var seeded = SetPlayerPieceUnder(buildingCenter, "where the mesh was built");
+                log.Info($"NavMesh: links {NavMeshBuild.DescribeLinks(built)}; {pieces.Members.Count} connected pieces; the player's " +
+                         (seeded ? "switched on" : "not found (not on the ground): looked for again until the player stands on the mesh"));
                 Status = $"ready: {tiles} tiles, {polys:N0} polygons in {pieces.Members.Count} pieces, built in {buildClock.ElapsedMilliseconds / 1000.0:F1} s";
                 log.Info($"NavMesh: {Status} from {buildingTriangles:N0} triangles.");
                 debugTimer = 0f;
@@ -189,6 +189,10 @@ public sealed class NavMeshService : IDisposable
             else if (!done.IsCanceled)
                 Status = "nothing walkable was found here";
         }
+
+        // Built while the player was off the ground: the reachable ground is known once the player stands on the mesh.
+        if (mesh != null && playerPiece < 0 && playerPosition is { } standing)
+            SetPlayerPieceUnder(standing, "later, once the player stood on the mesh");
 
         if (!ShowDebug || mesh == null || playerPosition is not { } player)
         {
@@ -214,22 +218,69 @@ public sealed class NavMeshService : IDisposable
         => pieces != null && playerPiece >= 0 && pieces.PieceOf.TryGetValue(polyRef, out var piece) && piece == playerPiece;
 
     /// <summary>
-    /// The nearest point on the piece connected to where the player stood, within
-    /// <paramref name=sideways/> metres horizontally and <paramref name=vertical/> vertically.
+    /// The nearest spot to <paramref name="point"/> that the party can walk to: on the piece of mesh connected
+    /// to where the player stood, searched outward from the point up to <paramref name="maxRadius"/> metres
+    /// (<see cref="NavMeshBuild.NearestOnPiece"/>). A point behind a wall, on a cliff top, under a ledge or in
+    /// a walled-off yard comes out at the nearest reachable ground. False with no mesh, no piece under the
+    /// player, or no such ground within the radius.
     /// </summary>
-    public bool TryFloorOnPlayersPiece(Vector3 point, float vertical, float sideways, out Vector3 floor)
+    public bool TryNearestReachable(Vector3 point, float maxRadius, out Vector3 spot, float maxVertical = float.PositiveInfinity)
     {
-        floor = point;
-        if (query == null || pieces == null || playerPiece < 0)
+        spot = point;
+        if (query == null || pieces == null || playerPiece < 0 || !Covers(point))
             return false;
-        var only = new NavMeshBuild.PieceFilter(pieces, playerPiece);
-        var status = query.FindNearestPoly(NavMeshBuild.ToRc(point), new RcVec3f(sideways, vertical, sideways), only,
-            out var polyRef, out var nearest, out _);
-        if (status.Failed() || polyRef == 0)
+        playersPieceFilter ??= new NavMeshBuild.PieceFilter(pieces, playerPiece);
+        return NavMeshBuild.NearestOnPiece(query, playersPieceFilter, point, maxRadius, out spot, maxVertical);
+    }
+
+    /// <summary>Whether reachability can be told: there is a mesh and the piece the player stands on is known.</summary>
+    public bool CanJudgeReach => query != null && pieces != null && playerPiece >= 0;
+
+    // The player was not on the mesh when it was built (mounted, jumping, flying): the piece under where the
+    // player stands is looked for again every frame, this far up and down, until it is found.
+    private const float PlayerPieceVertical = 2.5f;
+    // A piece this small (in polygons) under the player at build time is likely a ledge or a crate top: logged.
+    private const int SmallPlayerPiece = 40;
+
+    /// <summary>Take the piece under the player as the ground the party can reach (logs how big it is).</summary>
+    private bool SetPlayerPieceUnder(Vector3 point, string when)
+    {
+        if (query == null || pieces == null || mesh == null)
             return false;
-        floor = NavMeshBuild.ToVector(nearest);
+        var piece = NavMeshBuild.PieceUnder(query, pieces, anyPolygon, point, PlayerPieceVertical);
+        if (piece < 0)
+            return false;
+        playerPiece = piece;
+        playersPieceFilter = null;
+        if (enabledPieces.Add(piece))
+            NavMeshBuild.SetPieceEnabled(mesh, pieces.Members[piece], true);
+        var size = pieces.Members[piece].Count;
+        var largest = 0;
+        foreach (var members in pieces.Members)
+            largest = Math.Max(largest, members.Count);
+        if (size < SmallPlayerPiece && size < largest)
+            log.Warning($"NavMesh: the player stands on a small piece ({size} polygons; the largest has {largest}) {when}: " +
+                        "only what connects to it counts as reachable until the mesh is rebuilt.");
+        else
+            log.Info($"NavMesh: the player's piece ({size} polygons) found {when}.");
         return true;
     }
+
+    private NavMeshBuild.PieceFilter? playersPieceFilter;
+
+    // A point this close to the edge of the built area is not judged: the ground just past the edge is
+    // not in the mesh, so "no reachable ground near it" would be wrong.
+    private const float CoverMargin = 8f;
+
+    /// <summary>
+    /// Whether the mesh's built area takes in this point (with a margin to its edge): only then can it say
+    /// whether the point can be walked to. A point further out is judged once a mesh is built around it.
+    /// </summary>
+    public bool Covers(Vector3 point)
+        => mesh != null &&
+           MathF.Abs(point.X - Center.X) <= BuildHalfExtent - CoverMargin &&
+           MathF.Abs(point.Z - Center.Z) <= BuildHalfExtent - CoverMargin &&
+           point.Y >= Center.Y - BuildBelow + CoverMargin && point.Y <= Center.Y + BuildAbove - CoverMargin;
 
     /// <summary>
     /// Switch on the piece of mesh under a point (within <paramref name="vertical"/> metres of it): someone
