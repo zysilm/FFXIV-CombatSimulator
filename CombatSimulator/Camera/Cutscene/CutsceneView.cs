@@ -51,11 +51,26 @@ public static class CutsceneView
     public static float VerticalFovOf(in Matrix4x4 projection) =>
         MathF.Abs(projection.M22) > 1e-6f ? 2f * MathF.Atan(1f / MathF.Abs(projection.M22)) : float.NaN;
 
-    /// <summary>The projection with its vertical FOV replaced (aspect ratio and the depth terms kept).</summary>
+    /// <summary>Narrowest and widest vertical FOV ever written (radians): 1° and 170°.</summary>
+    public const float MinFov = MathF.PI / 180f, MaxFov = 170f * MathF.PI / 180f;
+
+    /// <summary>A vertical FOV (radians) kept within [<see cref="MinFov"/>, <see cref="MaxFov"/>].</summary>
+    public static float ClampFov(float verticalFov) => Math.Clamp(verticalFov, MinFov, MaxFov);
+
+    /// <summary>Whether all 16 elements are finite.</summary>
+    public static bool IsFinite(in Matrix4x4 m) =>
+        float.IsFinite(m.M11) && float.IsFinite(m.M12) && float.IsFinite(m.M13) && float.IsFinite(m.M14) &&
+        float.IsFinite(m.M21) && float.IsFinite(m.M22) && float.IsFinite(m.M23) && float.IsFinite(m.M24) &&
+        float.IsFinite(m.M31) && float.IsFinite(m.M32) && float.IsFinite(m.M33) && float.IsFinite(m.M34) &&
+        float.IsFinite(m.M41) && float.IsFinite(m.M42) && float.IsFinite(m.M43) && float.IsFinite(m.M44);
+
+    /// <summary>The projection with its vertical FOV replaced (aspect ratio and the depth terms kept); the FOV is
+    /// clamped to [1°, 170°].</summary>
     public static Matrix4x4 WithVerticalFov(in Matrix4x4 projection, float verticalFov)
     {
         var m = projection;
         if (MathF.Abs(m.M22) < 1e-6f || !float.IsFinite(verticalFov) || verticalFov <= 0f) return m;
+        verticalFov = ClampFov(verticalFov);
         var newM22 = 1f / MathF.Tan(verticalFov / 2f);
         var scale = newM22 / MathF.Abs(m.M22);
         m.M11 *= scale;

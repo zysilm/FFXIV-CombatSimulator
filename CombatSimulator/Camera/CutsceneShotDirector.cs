@@ -12,6 +12,7 @@ using CombatSimulator.Camera.Cutscene;
 using CombatSimulator.Companions;
 using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
+using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
@@ -48,6 +49,8 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
     private const float ConventionTolerance = 1.0f;
     /// <summary>j_kao height of the reference race above its root (for non-human height scaling).</summary>
     private const float ReferenceHeadHeight = 1.55f;
+    /// <summary>The camera writes stop when Tick has not run for this long (and over more than one camera update).</summary>
+    private const long TickStallMs = 500;
 
     private enum Phase { Idle, Playing, BlendOut }
 
@@ -62,6 +65,8 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
     private readonly Func<nint, string, Vector3?> ragdollBody;
     private readonly Func<nint> currentTarget;
     private readonly Func<bool> suppressed;
+    private readonly ICondition condition;
+    private readonly IClientState clientState;
     private readonly IPluginLog log;
     private readonly CutsceneShotLoader loader;
 
@@ -95,6 +100,9 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
     private readonly HashSet<string> notes = new(StringComparer.Ordinal);
     private readonly Dictionary<nint, float> heightScales = new();
     private string? pendingPlayNow;
+    private bool preloadPending = true;
+    private long lastTickAt;
+    private int updatesSinceTick;
 
     // ---- who fell last (from the engine's hits) ----
     private uint lastFallenEnemyId;
@@ -115,6 +123,8 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
         Func<string, byte[]?> loadGameFile,
         string configDirectory,
         Func<bool> suppressed,
+        ICondition condition,
+        IClientState clientState,
         IPluginLog log)
     {
         this.config = config;
@@ -128,6 +138,8 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
         this.ragdollBody = ragdollBody;
         this.currentTarget = currentTarget;
         this.suppressed = suppressed;
+        this.condition = condition;
+        this.clientState = clientState;
         this.log = log;
         loader = new CutsceneShotLoader(loadGameFile);
         Probe = new CutsceneProbe(configDirectory, bones, log);
@@ -223,6 +235,7 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
         if (entry == null) { Skip(why, id, "not in the curated list (list updated?)"); return; }
         if (config.FightingMode) { Skip(why, id, "Fighting Mode is on"); return; }
         if (suppressed()) { Skip(why, id, "a scene owns the camera"); return; }
+        if (GameOwnsCamera() is { } gameReason) { Skip(why, id, gameReason); return; }
         var player = Core.Services.ObjectTable.LocalPlayer;
         if (player == null || player.Address == nint.Zero) { Skip(why, id, "no player"); return; }
 
@@ -250,6 +263,8 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
         shot = loaded;
         roles = resolved.Value;
         trigger = why;
+        lastTickAt = Environment.TickCount64;
+        updatesSinceTick = 0;
         time = 0f;
         blendOutTime = 0f;
         endReason = null;
@@ -272,6 +287,36 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
                  $"subject {Describe(roles.Subject)}" + (entry.TwoPerson ? $", other {Describe(roles.Other)}" : "") +
                  $"; camera follows {Describe(follow)}" + (look != 0 ? $", looks at {Describe(look)}" : "") + ".");
         Sample();
+    }
+
+    /// <summary>Why the game's own camera work is on (its cutscene, group pose), or null.</summary>
+    private string? GameOwnsCamera()
+    {
+        if (condition[ConditionFlag.OccupiedInCutSceneEvent] || condition[ConditionFlag.WatchingCutscene] ||
+            condition[ConditionFlag.WatchingCutscene78])
+            return "the game's cutscene took the camera";
+        if (clientState.IsGPosing)
+            return "group pose took the camera";
+        return null;
+    }
+
+    /// <summary>Reads a shot's curves (and the reference bind points) now, so its first trigger does not stall a frame.
+    /// Main thread only (the UI and Tick): the loader's caches are not thread-safe.</summary>
+    public void Preload(string? id)
+    {
+        if (string.IsNullOrEmpty(id)) return;
+        try
+        {
+            var entry = Catalog.Find(id);
+            if (entry == null) return;
+            if (loader.Load(entry, out var error) == null)
+                log.Info($"CutShot: preload of {id} failed — {error ?? "could not be read"}.");
+            loader.BindPoints(CutsceneShotLoader.ReferenceRace);
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, $"CutShot: preload of {id} failed.");
+        }
     }
 
     private void Skip(CutsceneTrigger why, string id, string reason)
@@ -327,14 +372,25 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
     /// <summary>Framework tick, before the coordinator applies: advance the shot, sample it, keep the camera.</summary>
     public void Tick(float dt)
     {
+        lastTickAt = Environment.TickCount64;
+        updatesSinceTick = 0;
         try
         {
+            if (preloadPending)
+            {
+                preloadPending = false;
+                Preload(config.CutsceneVictoryShot);
+                Preload(config.CutsceneDeathShot);
+            }
             if (pendingPlayNow is { } id)
             {
                 pendingPlayNow = null;
                 Start(id, CutsceneTrigger.PlayNow);
             }
             if (phase == Phase.Idle || shot == null) return;
+
+            // The game's own cutscene or group pose takes the camera: let go at once, without blending.
+            if (GameOwnsCamera() is { } gameReason) { Finish(gameReason); return; }
 
             if (phase == Phase.Playing)
             {
@@ -362,7 +418,7 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
                 {
                     var w = CutPose.Ease(time / BlendSeconds);
                     var target = haveSnapshot ? snapshot.VerticalFov + (cut.VerticalFov - snapshot.VerticalFov) * w : cut.VerticalFov;
-                    fov = 2f * MathF.Atan(MathF.Tan(target / 2f) / fovRatio);
+                    fov = 2f * MathF.Atan(MathF.Tan(CutsceneView.ClampFov(target) / 2f) / fovRatio);
                     if (!float.IsFinite(fov.Value) || fov.Value <= 0.01f) fov = null;
                 }
                 coordinator.Submit(CameraOwner.CutsceneShot, new CameraRequest { Fov = fov, ClearInputH = true, ClearInputV = true });
@@ -427,6 +483,16 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
         Probe.Record(camera);
         if (phase == Phase.Idle) return;
 
+        // Tick drives the shot; if it stops running (an earlier step of the framework update throwing every frame, ...)
+        // nothing would ever end the shot, so stop writing and hand the camera back.
+        updatesSinceTick++;
+        if (updatesSinceTick > 1 && Environment.TickCount64 - lastTickAt > TickStallMs)
+        {
+            log.Warning($"CutShot: no tick for {Environment.TickCount64 - lastTickAt} ms ({updatesSinceTick} camera updates); stopping the shot.");
+            Finish("tick stalled");
+            return;
+        }
+
         var sc = &camera->SceneCamera;
         var rc = sc->RenderCamera;
         if (rc == null) return;
@@ -485,23 +551,32 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
             ? CutPose.Lerp(snapshot, cut, CutPose.Ease(time / BlendSeconds))
             : CutPose.Lerp(cut, native, CutPose.Ease(blendOutTime / BlendSeconds));
         if (!pose.IsFinite) return;
-        Write(sc, rc, pose, projection);
+        if (!Write(sc, rc, pose, projection)) return;
         lastWritten = pose;
         lastWrittenAt = Environment.TickCount64;
     }
 
-    private void Write(FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Camera* sc,
+    /// <summary>Writes the pose; false (nothing written) when the view or projection matrix would not be finite.</summary>
+    private bool Write(FFXIVClientStructs.FFXIV.Client.Graphics.Scene.Camera* sc,
         FFXIVClientStructs.FFXIV.Client.Graphics.Render.Camera* rc, in CutPose pose, in Matrix4x4 projection)
     {
+        var fov = CutsceneView.ClampFov(pose.VerticalFov);
         var view = CutsceneView.Build(convention, pose.Eye, pose.Target, pose.Up);
+        var proj = CutsceneView.WithVerticalFov(projection, fov);
+        if (!CutsceneView.IsFinite(view) || !CutsceneView.IsFinite(proj))
+        {
+            notes.Add("non-finite camera matrix (frame skipped)");
+            return false;
+        }
         sc->Position = pose.Eye;
         sc->LookAtVector = pose.Target;
         sc->ViewMatrix = ToGame(view);
         rc->Origin = pose.Eye;
         rc->ViewMatrix = ToGame(view);
-        rc->ProjectionMatrix = ToGame(CutsceneView.WithVerticalFov(projection, pose.VerticalFov));
+        rc->ProjectionMatrix = ToGame(proj);
         if (rcFovIsVertical)
-            rc->FoV = pose.VerticalFov;
+            rc->FoV = fov;
+        return true;
     }
 
     private static Matrix4x4 ToNumerics(in FFXIVClientStructs.FFXIV.Common.Math.Matrix4x4 m) => new(

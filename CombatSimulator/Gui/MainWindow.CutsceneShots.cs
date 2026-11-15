@@ -51,12 +51,14 @@ public partial class MainWindow
         if (ImGui.Button("Use for Victory##cutsceneShot"))
         {
             config.CutsceneVictoryShot = selected?.Id ?? "";
+            shots.Preload(config.CutsceneVictoryShot);
             config.Save();
         }
         ImGui.SameLine();
         if (ImGui.Button("Use for Death##cutsceneShot"))
         {
             config.CutsceneDeathShot = selected?.Id ?? "";
+            shots.Preload(config.CutsceneDeathShot);
             config.Save();
         }
         ImGui.SameLine();

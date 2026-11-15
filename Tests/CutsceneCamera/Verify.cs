@@ -217,6 +217,28 @@ internal static class Verify
         Check(CutPose.Lerp(pa, pb, 0) == pa && CutPose.Lerp(pa, pb, 1).Eye == pb.Eye && CutPose.Ease(0.5f) == 0.5f, "blend endpoints");
         var rolled = CutscenePlayback.ApplyRoll(Vector3.Zero, Vector3.UnitZ, Vector3.UnitY, 90f);
         Check(MathF.Abs(rolled.Y) < 1e-5f && MathF.Abs(MathF.Abs(rolled.X) - 1f) < 1e-5f, $"roll 90° turns up sideways ({rolled.X:0.00}, {rolled.Y:0.00}, {rolled.Z:0.00})");
+        Check(MathF.Abs(CutsceneView.VerticalFovOf(CutsceneView.WithVerticalFov(proj, 3.1f)) - CutsceneView.MaxFov) < 1e-4f
+              && MathF.Abs(CutsceneView.VerticalFovOf(CutsceneView.WithVerticalFov(proj, 1e-4f)) - CutsceneView.MinFov) < 1e-5f
+              && !CutsceneView.IsFinite(new Matrix4x4 { M43 = float.NaN }) && CutsceneView.IsFinite(proj),
+            "projection FOV clamped to [1°, 170°]; non-finite matrices detected");
+
+        Console.WriteLine("8. bad camera rigs");
+        // (node, code, parent): the eye chain (code 128) ends on a node whose ancestors are a rig level (code 64).
+        CameraShot Rig(params (byte Node, byte Code, sbyte Parent)[] nodes)
+        {
+            var s = new CameraShot { Channels = new List<CurveChannel>() };
+            foreach (var (node, code, parent) in nodes)
+                s.Channels.Add(new CurveChannel { Group = 8, Code = code, Node = node, Parent = parent });
+            return s;
+        }
+        var selfLoop = Rig((3, 128, 2), (2, 64, 2));
+        var cycle = Rig((3, 128, 2), (2, 64, 1), (1, 64, 2));
+        var deep = Rig(Enumerable.Range(0, 20).Select(i => ((byte)i, (byte)(i == 19 ? 128 : 64), (sbyte)(i - 1))).ToArray());
+        var fine = Rig((1, 64, -1), (2, 64, 1), (3, 128, 2));
+        Check(!selfLoop.RigIsAcyclic(out _) && !cycle.RigIsAcyclic(out _) && !deep.RigIsAcyclic(out _) && fine.RigIsAcyclic(out _),
+            "self / cyclic / over-deep parent chains are rejected, a normal chain is not");
+        bool Throws(CameraShot s) { try { s.Evaluate(0f, _ => Matrix4x4.Identity); return false; } catch (InvalidDataException) { return true; } }
+        Check(Throws(selfLoop) && Throws(cycle) && Throws(deep) && !Throws(fine), "evaluating a cyclic or over-deep rig fails with an error instead of recursing forever");
 
         Console.WriteLine(failures == 0 ? "ALL PASS" : $"{failures} FAILED");
         return failures == 0 ? 0 : 1;

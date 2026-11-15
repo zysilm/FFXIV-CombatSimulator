@@ -78,7 +78,8 @@ internal sealed unsafe class CameraModule
     /// Cutscene follow shots (docs/CUTSCENE_SHOTS.md): the game's own cutscene camera work on our characters at victory
     /// and death. Writes the camera after the game's update, through the same hook as the hit shake.
     /// </summary>
-    public void CreateCutsceneShots(ITargetManager targetManager, IDataManager dataManager, string configDirectory, System.Func<bool> sceneActive)
+    public void CreateCutsceneShots(ITargetManager targetManager, IDataManager dataManager, ICondition condition, IClientState clientState,
+        string configDirectory, System.Func<bool> sceneActive)
     {
         cutsceneShotDirector = new CutsceneShotDirector(
             m.Config, cameraModeCoordinator, dynamicCameraController, combatEngine, npcSelector, m.Actors.Companions,
@@ -89,6 +90,8 @@ internal sealed unsafe class CameraModule
             path => dataManager.GetFile(path)?.Data,
             configDirectory,
             sceneActive,
+            condition,
+            clientState,
             log);
         gameCameraUpdateHook.PostCameraUpdate = cutsceneShotDirector.OnPostCameraUpdate;
     }

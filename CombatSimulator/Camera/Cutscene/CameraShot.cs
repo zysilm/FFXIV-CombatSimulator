@@ -129,6 +129,31 @@ public sealed class CameraShot
 
     private int ParentOf(int node) => Channels!.FirstOrDefault(c => c.Node == node)?.Parent ?? -1;
 
+    /// <summary>Longest parent chain a rig may have (real rigs have up to 5 levels); deeper or cyclic chains are bad data.</summary>
+    public const int MaxRigDepth = 16;
+
+    /// <summary>Whether every node's parent chain ends within <see cref="MaxRigDepth"/> steps without repeating a node
+    /// (a self or cyclic parent would otherwise recurse forever in <see cref="World"/>).</summary>
+    public bool RigIsAcyclic(out string? problem)
+    {
+        problem = null;
+        if (Channels == null) return true;
+        var seen = new HashSet<int>();
+        foreach (var start in Channels.Select(c => (int)c.Node).Distinct())
+        {
+            seen.Clear();
+            var node = start;
+            var steps = 0;
+            while (node >= 0)
+            {
+                if (!seen.Add(node)) { problem = $"node {start}'s parent chain loops at node {node}"; return false; }
+                if (++steps > MaxRigDepth) { problem = $"node {start}'s parent chain is deeper than {MaxRigDepth}"; return false; }
+                node = ParentOf(node);
+            }
+        }
+        return true;
+    }
+
     /// <summary>Deepest node of a chain whose channels use <paramref name="code"/> in group 8 (eye 128, aim 192).</summary>
     private int ChainEnd(int code)
     {
@@ -142,12 +167,14 @@ public sealed class CameraShot
         return nodes.FirstOrDefault(n => !nodes.Contains(ParentOf(n)), -1);
     }
 
-    private Matrix4x4 World(int node, float frame, Func<Attach, Matrix4x4> anchor)
+    private Matrix4x4 World(int node, float frame, Func<Attach, Matrix4x4> anchor, int depth = 0)
     {
+        if (depth > MaxRigDepth)
+            throw new InvalidDataException($"camera rig parent chain deeper than {MaxRigDepth} (cyclic?) at node {node}");
         var parent = ParentOf(node);
         var local = Local(node, frame);
         if (parent < 0) return local * anchor(Root);
-        var pw = World(parent, frame, anchor);
+        var pw = World(parent, frame, anchor, depth + 1);
         // An attached aim/eye chain starts from the actor's frame instead of the rig's (offsets stay local to it).
         if (node == ChainStart(192) && Aim.Actor != 255) pw = anchor(Aim);
         if (node == ChainStart(128) && Eye.Actor != 255) pw = anchor(Eye);

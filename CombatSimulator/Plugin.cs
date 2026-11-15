@@ -292,7 +292,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         // Cutscene follow shots for death and victory (docs/CUTSCENE_SHOTS.md). After the Directed camera has armed its
         // death framing above: the shot holds that framing while it plays and hands the camera back to it. (These
         // listeners run before the SimulationStarted / SimulationReset handlers numbered #2 / #5 and on below.)
-        cameraModule.CreateCutsceneShots(targetManager, dataManager, pluginInterface.GetPluginConfigDirectory(), () => PrivateDirectorActive);
+        cameraModule.CreateCutsceneShots(targetManager, dataManager, condition, clientState, pluginInterface.GetPluginConfigDirectory(), () => PrivateDirectorActive);
         combatEvents.BeforePlayerDeath += cutsceneShots.OnPlayerDeath;
         combatEvents.DamageLanded += cutsceneShots.NoteDamage;
         combatEvents.SimulationStarted += cutsceneShots.OnSimulationStarted;

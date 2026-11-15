@@ -55,6 +55,7 @@ public sealed class CutsceneShotLoader
             if (span.Shot < 0 || span.Shot >= all.Count) { error = $"shot {span.Shot} missing ({all.Count} in timeline {entry.Timeline})"; return null; }
             var s = all[span.Shot];
             if (s.Channels == null) { error = $"shot {span.Shot} has no curves"; return null; }
+            if (!s.RigIsAcyclic(out var rigProblem)) { error = $"shot {span.Shot} has a bad camera rig: {rigProblem}"; return null; }
             if (s.Root.Actor != entry.FollowActor) { error = $"shot {span.Shot} is attached to actor {s.Root.Actor}, the list says {entry.FollowActor} (game data changed?)"; return null; }
             if (span.To <= span.From) { error = $"shot {span.Shot} has an empty span"; return null; }
             spans.Add((span, s));

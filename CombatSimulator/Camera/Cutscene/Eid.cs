@@ -12,7 +12,7 @@ namespace CombatSimulator.Camera.Cutscene;
 /// <summary>Bind-point table (.eid, "element id"): bind point id → bone name + offset. Layout from our own reading
 /// (cross-checked against the field order VFXEditor documents, MIT): magic "eid\0", i16 version ("21" = new),
 /// i16, i32 count, u32; new entries 64 B: name[32], i32 id, f32×3 position, f32×3 rotation (radians), pad.
-/// Old entries 48 B: i32 id, f32×3 position, f32×3 rotation (degrees), name[12], pad.</summary>
+/// Old entries 44 B: i32 id, f32×3 position, f32×3 rotation (degrees), name[12] at +28, 4 B pad.</summary>
 public sealed record BindPoint(int Id, string Bone, Vector3 Offset, Vector3 Rotation);
 
 public static class Eid
