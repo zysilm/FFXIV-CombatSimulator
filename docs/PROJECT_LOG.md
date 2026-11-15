@@ -22,6 +22,14 @@
 - 重写就删干净，旧路径不留作退路（2026-11-13，用户裁决）。
 - 持久的决定和教训，在产生它的同一批工作里写进本文件（2026-11-14）。
 
+### 重构 / 库
+
+- 布娃娃及相关物理中与游戏无关的部分是独立公开库 **AdvancedRagdoll**（仓库 `zysilm/AdvancedRagdoll`，nuget.org），插件以 NuGet 包引用；库先只面向 .NET（2026-11-14，用户裁决）→ [REFACTOR_PLAN.md](REFACTOR_PLAN.md)、[RAGDOLL_LIBRARY_ARCHITECTURE.md](RAGDOLL_LIBRARY_ARCHITECTURE.md)。
+- 重构期间行为必须完全一致，定义为同一份录制输入下前后输出逐位相同（2026-11-14，用户裁决）。守护：布娃娃回放 `Tests/RagdollReplay`（97 份：55 份公开版金标准 + 42 份 3 版录制，在 `%APPDATA%/XIVLauncher/pluginConfigs/CombatSimulator/ragdoll-rec/`，**不进仓库、不要删**）、`Tests/CombatReplay` 逐帧战斗金样、`Tests/PluginOrder` 构造/每帧/释放顺序。
+- 设置可改为每帧开头读一次；网格体积不开确定性模式（2026-11-14，用户裁决）。
+- 插件侧：敌我一种战斗单位与一个控制器基类（`CombatantController<TSelf>`）、一条伤害结算（`HitSettlement`）、规则部件（`BattleRules`/`IBattleRule`）、`Plugin.cs` 拆成 `Composition/` 模块（2026-11-14，`ff70c68`、`a30642b`、`c90980d`）→ [PLUGIN_ARCHITECTURE.md](PLUGIN_ARCHITECTURE.md)。
+- 部件分离（肢解）的物理暂不进公开库（协调者暂定，待用户确认）。
+
 ### 战斗数值
 
 - 一套数值：玩家、队友、敌人同威力同伤害，技能按自己 MP 池同比例扣蓝；强度档位只管血量（2026-11-13，用户裁决，`47f0a69`）→ [COMBAT_BUDGET_MODEL.md](COMBAT_BUDGET_MODEL.md)。
@@ -249,91 +257,29 @@
 
 ## 6. 本轮工作区
 
-一轮结束时：把持久的决定、教训、待验证、搁置项分别折叠进 §2–§5（一条一行，带日期和提交号），然后把下面各栏清空回模板。
+一轮结束时：把持久的决定、教训、待验证、搁置项分别折叠进 §2–§5（一条一行，带日期和提交号），然后把下面各栏清空回模板。（重构 I 的工作区已于 2026-11-15 折叠：决定进 §2“重构 / 库”，待验证在 §4“重构”，没做完的在 [REFACTOR_PLAN.md](REFACTOR_PLAN.md) §4.9；过程见 git 历史。）
 
 ### 任务
 
-项目重构（2026-11-14 开始，分支 `refactor/architecture`，从 `refactor/ui-simplification` 的 `7fc4ffd` 分出）。
-
-用户裁决（2026-11-14）：
-- **首要目的**：把布娃娃及相关物理中不针对 FFXIV 骨骼的部分抽成独立的库，插件只引用这个库；别的游戏的 mod 或游戏项目也能用。抽的同时把库的架构理清楚。
-- **重构期间行为必须完全一致。**
-- 布娃娃在范围内，而且是重点（风险高，所以先调查）。
-- 插件侧的架构（战斗单位统一、规则模块、`Plugin.cs` 拆分等）由协调者设计。
-- “行为完全一致”定义为：同一份录制输入下，重构前后输出逐位相同；方案 [REFACTOR_PLAN.md](REFACTOR_PLAN.md) 获准，第一批开工。
-- 库先只面向 .NET；虚幻引擎等非 .NET 环境怎么用，以后再定。
-- 库公开。
-- 库名 **AdvancedRagdoll**（NuGet 包名、程序集名、命名空间根；2026-11-14 查过 NuGet 与 GitHub 均未被占用）。现在的工作名 `RagdollLib` / `CombatSimulator.RagdollLib` 在开工后改过来。
-- 设置可改为每帧开头读一次（只有战斗中改设置的那一帧可能差一帧）；设计稿 §11 / §10 的建议全部采纳（2026-11-14，用户裁决“按你说的定”）。
-- GitHub 仓库 `zysilm/AdvancedRagdoll` 已由用户建好（空），A4 之后才往里搬。
-- **开工**（2026-11-14，用户明确指令）。
-- 两份架构设计稿（[RAGDOLL_LIBRARY_ARCHITECTURE.md](RAGDOLL_LIBRARY_ARCHITECTURE.md)、[PLUGIN_ARCHITECTURE.md](PLUGIN_ARCHITECTURE.md)）用户已审阅，“没有问题”（2026-11-14）。
+重构 II（2026-11-15 开始，用户明确开工；插件分支 `refactor/architecture`，库仓库 `main`）。目标是做完 [REFACTOR_PLAN.md](REFACTOR_PLAN.md) §4.9 的遗留，行为仍须逐位一致：
+- 库：R2-L1 目录改为 `src/` + `tests/`、修失效文档链接、补掉落武器金样；之后 A6 组件拆分分 10–15 个小阶段（先自成一体的子系统：水、头发、网格体积、抓取、地面、武器接触网格，最后核心与 `SimulationContext`），每阶段 97/97 回放；可选：扩大公开 API（§2.3）。
+- 插件：R2-P1 做完 B8（模块拿窄设置接口）与 B7（构造注入、`RuleParts` 构造参数、队友回调进 `CombatEvents`）；R2-P2 修 REFACTOR_PLAN §6 的小问题。
+- 每次库改动由协调者发版（打标签后需用户在 GitHub Actions 批准 `release` 环境），插件再升级包版本。
 
 ### 发出的简报
 
 | 子代理 | 角色 | 范围 | 状态 |
 | --- | --- | --- | --- |
-| 研究者（只读） | 布娃娃抽库可行性 | 依赖地图、文件分类、确定性与“回放对照”方案、分阶段计划 | 已报告（2026-11-14） |
-| 研究者（只读） | 插件侧架构 | 战斗单位统一、规则模块、`Plugin.cs` 拆分、配置分组、行为一致的验证办法、分阶段计划 | 已报告（2026-11-14） |
-| 实现者 | A1 搬纯净文件 | `RagdollLib/`、插件 csproj、sln、16 个测试 csproj | 已合入（`fa89b5a`） |
-| 实现者（worktree） | B0 基线日志与可注入随机源 | `Ai/NpcAiController*.cs`、`Companions/CombatCompanionManager.cs`、`.Aggro.cs` | 已合入（`3e72047`） |
-| 实现者 | A2a 库改名 AdvancedRagdoll、宿主接口与适配器、录制改装饰器、回放器、对 55 份标准答案回放 | 主检出 | 已合入（`0b8d23f`），独立审查：可合并 |
-| 实现者（worktree `refactor/b1-shared-math`） | B8a、B1、B2、B2b、B3 | `Configuration*.cs`、`Ai/`、`Companions/`、新 `Combat/`、`Battle/`、`Plugin.War.cs`、`Tests/` | 已合入（`25b380f`）；B2/B2b 独立审查：可合并 |
-| 实现者（同一 worktree） | B4a 两条旧出手循环接窄接口、录逐帧战斗金样 | `Ai/`、`Companions/`、`Tests/CombatReplay` | 进行中（2026-11-14） |
+| 实现者 | R2-L1 库目录、失效链接、掉落武器金样 | 库仓库；插件只建临时 worktree 跑回放 | 进行中（2026-11-15） |
+| 实现者 | R2-P1 插件 B8 窄设置接口 + B7 构造注入 | 插件主检出 `CombatSimulator/`、`Tests/` | 进行中（2026-11-15） |
 
 ### 子代理报告要点
-
-- 2026-11-14 · 布娃娃抽库研究者 · 可行，但现在没有任何离线测试运行真正的 `RagdollController`，要先建录制/回放基线才能验证“行为一致”。要点：
-  - **规模**（`Animation/` 共 35,333 行）：已纯净、可原样搬的 35 个文件 4,954 行；通用逻辑夹着游戏调用的 24,541 行（主类 13,215 行及其 partial、`WeaponDropController`、部件分离控制器）；绑定游戏文件格式的 883 行；必须留在插件的集成代码 1,019 行；动画播放 3,936 行不在范围。
-  - **接缝**：主文件实际触碰游戏的代码约 300 行（协调者先前按类型名数是 84 行）。建议接口：`ISkeletonPose`（模型空间读写，含附属子骨架）、`IWorldQuery`（射线、三角形采集、水面）、`IMeshSource`（库不读模型文件，只收中性的顶点/索引/骨权重）、`IRagdollActor`、激活时快照的 `RagdollSettings`（现用 34 个配置属性、90 处读取）、`IRagdollLog`、`IColliderActorProvider`；库只暴露 `Step(dt)` 和 `WritePose`，时钟注入。
-  - **藏在通用代码里的游戏假设**：表外骨名约 120 行（改为 profile 把骨名映射到已有的 `AnatomicalRole`）；人形比例表；Y 向上、米、前向 +Z；种族/体型缩放；本地玩家特判（改成质量档位参数）。
-  - **确定性**：固定步长 1/60，由墙钟累加驱动；单线程路径跨进程逐字节可复现（6 个现有离线测试各跑两次比对过）；网格体积走 2 线程 dispatcher，未实测；不确定来源有按秒表提前跳出、后台拟合 150 ms 超时回退、头发网格异步加载、一个没有种子的随机数。回放金标准只在同一台机器、同一运行时、同一 Bepu 版本下有效。
-  - **运行环境**：BepuPhysics 2.5.0-beta.22 只有 net8.0 目标，库至少要 .NET 8。
-  - **分阶段**：P0 录制（旧代码录下输入输出，M）→ P1 搬 35 个纯净文件（零风险，S）→ P2 引入接口和适配器、注入时钟与随机数（L）→ P3 骨表等改成 profile 数据（M）→ P4 核心类进库（L，高风险）→ P5 掉落武器和部件分离的物理拆出（L，高风险）→ P6 库内拆组件（可选，L）。
-  - **P4 前要处理**：主类里有 partial 扩展点，partial 不能跨程序集，要改成公开的扩展点接口，并且所有构建配置都要过回放。
-
-- 2026-11-14 · 插件侧架构研究者 · 协调者的图景基本属实，方案见 [REFACTOR_PLAN.md](REFACTOR_PLAN.md) §4。更正与要点：
-  - 构造后的委托赋值和事件订阅共 88 条，其中 33 条打在 `CombatEngine` 上；`CombatEngine` 与队友管理器互相依赖，靠 7 个委托断环；敌人的当前目标存在队友管理器里。
-  - 队友侧 2,815 行、敌人侧 1,628 行；队友出手加移动约 230 行，其中约 150 行是敌人代码的镜像。两边的真实差异：射程缩放与近战下限、选技能方式（随机 / 按优先级）、技能令牌、读条预警、动画锁写法、移动速度与转速、踩尸体方式、死亡处理时机。
-  - 选目标的权重函数已共用，但“到期→抽→保持”的骨架仍是两份；`Tests/TargetingSim` 测的是自己的权重副本，不覆盖生产的 `Aggro.cs`。
-  - 运行时判断战争规则开关的位置有 9 处，规则逻辑另散在引擎、选目标、队友管理器、敌人 AI 和 `Plugin.War.cs`。
-  - `config.X` 读取（不含子模块）1,824 处，其中界面占 1,123；战斗 / AI / 规则只读 36 个不同属性。建议不改存储结构，用只读小接口分组。
-  - 随机源：选目标的种子不确定；敌人 AI 13 处、队友战斗路径 3 处 `Random.Shared`；`DamageCalculator` 已支持传入 `Random` 但没用上。
-  - 敌人侧没有周期汇总日志，双方换目标频率也没有日志；重构前先补。
-
-- 2026-11-14 · A1 实现者 · 完成。35 个文件 4,954 行原样搬进 `RagdollLib/`（git 显示 35 个 100% 相似的改名）；库用 net8.0 不改源码即可编译；15 份离线测试输出搬移前后相同（4 份只差耗时数字）；公开配置和含子模块的配置都编译通过；库 DLL 在 `bin/Release` 和发布包里都有。未在游戏内加载验证。
-- 2026-11-14 · B0 实现者 · 完成。新日志行 `Enemies (…)`（9 类固定顺序）和 `Targets:`；随机源 `NpcAiController.RandomSource`（13 处）、`CombatCompanionManager.RandomSource`（3 处）、`AggroSeedSource`，默认行为不变。遗留：`StaggerTimers` 的两个外部调用（`CombatEngine`、`MapEnemyController`）和“感知到的玩家随机分边”仍用共享随机源；`casting` 一项在动作战斗下恒为 0%（读条归预警系统）。
-
-- 2026-11-14 · A2a 实现者 · 完成。55 份标准答案全部逐位回放（135,173 条输出记录、49,771 个固定步）；协调者在合并后的代码上复跑仍是 55/55。回放器加载公开版编译产物，用录制回答全部宿主查询。遗留：录制格式缺 `followWasActive`（回放从首个 FrameBegin 取，不影响行为）；读模型的代码仍直接读游戏（A2b）；两处时钟用法要在 A2b 统一。
-- 2026-11-14 · B1 实现者 · 43 个函数在约 1035 万组输入上与原表达式逐位相同；`Tests/TargetingSim` 改链生产 `AggroModel` 后，400 种子：野战 98% / 84 s，守尸胜率 47%（副本是 42%），抢尸者盯祈祷者 0.88（副本 0.72）；差距来自副本没实现的四件事（跪地者 ×3 等），关掉后回到副本数字。
-- 2026-11-14 · B3 实现者 · 规则开关的 9 处判断改为 `BattleRules` 具名查询（现读设置）；夺尸状态机搬到 `Battle/CorpseSeizure.cs`；`Tests/CorpseSeizure` 85 项，期望值从旧代码推出，9 处变异全部能被抓到。
 
 ### 待用户裁决
 
 - 部件分离（肢解）的物理是否进公开库（协调者暂定不进）。
-- 哪些功能的物理部分进公开的库（用户已定库公开，这一项还没回答）。
+- 哪些功能的物理部分进公开的库。
 
 ### 日志（新的在上）
 
-- 2026-11-14 · A7 提交：库的公开面收窄到门面 + 宿主接口 + profile；日志前缀改为 `Ragdoll:`/`WeaponDrop:`（插件侧 FfxivMeshSource 仍用 `RagdollController:`）；`Tests/LibrarySample` 只引用库。完整版 0 错误；97/97。下一步：拆仓库到 zysilm/AdvancedRagdoll，从新仓库打包发布（包元数据的仓库/提交号必须来自新仓库）。
-- 2026-11-14 · B9 合入（`301c3a9`）：独立审查可合并；私有模块不用旧状态枚举，兼容文件已删。合并后完整版 0 错误；CombatReplay 19/19、PluginOrder ALL EQUAL、其余测试过；97/97。B 轨全部完成。剩：A 轨公开发布前清理与 §2.3 公开 API、可选 A6、拆仓库与 NuGet（Trusted Publishing）、游戏内验证。
-- 2026-11-14 · B7/B8 合入（`ff93f73`）：独立审查可合并（检查器盲区已人工补查）；协调者用含私有模块的构建发现缺 `GetActiveCorpseRagdolls`，补了转发。合并后完整版 0 错误；全部测试过；97/97。插件侧剩 B9。
-- 2026-11-14 · B6 合入（`308dc5c`）：两条伤害结算合成 `HitSettlement`（`HitSide` 十个开关）；四个规则钩子接线；loop 金样加抽目标权重；金样 19 份。独立审查可合并，并用 HEAD 生产代码重录 19/19 相同。合并后：完整版 0 错误；全部测试过；97/97。审查低级意见：`CombatEngine.RuleParts` 构造后赋值，以后可改构造参数。
-- 2026-11-14 · A5（掉落武器）提交：模拟进库 `AdvancedRagdoll.WeaponDrop`，插件留薄壳；独立审查可合并；97/97。
-- 2026-11-14 · A4 提交：核心 36 个文件约 1.8 万行进库（命名空间 `AdvancedRagdoll.*`），插件留薄壳；私有模块无需改动即编译通过；97/97；独立审查可合并（低级意见记在 REFACTOR_PLAN 状态行）。私有子模块指针（父仓库记 `1a28a00`，实际需 `591b9c4`）按规定不随父仓库提交。
-- 2026-11-14 · A3b 提交（`b257b43`）：两个 partial 方法换成 `IRagdollStepExtension`/`IRagdollContactExtension` + `RagdollExtensionContext`；协调者按用户授权（“你自己决定”）改了私有模块的那个文件（私有仓库 `591b9c4`，只改接法）。完整版 0 错误；97/97；`--extensions` 6/6。
-- 2026-11-14 · A3c 提交：主文件 12,041 → 933 行，切成 20 个 partial 文件；`Tests/PartialCut` 证明成员和 IL 不变（两种配置）；97/97。A3b 待用户裁决：私有模块的 `Ragdoll.WeaponReturn.cs` 用 partial 方法和主类私有成员，A4 后接不上——改该文件接扩展接口（推荐）还是插件留兼容外壳。
-- 2026-11-14 · A3 提交（`721a6f9`），B5 合入（`a09af5b`，独立审查可合并，跟进改为只问活部件）。合并后：完整版编译 0 错误；CombatReplay 10/10、夺尸 85、函数对照、AiMovement、CombatBalance、Navigation、BoneNameLiterals 全过；布娃娃回放 97/97 逐位相同。B 轨剩 B6/B7/B9，按计划等 A4 之后。
-- 2026-11-14 · 用户第一次在游戏里录 3 版（会话 `20261114-154951` 27 个、`-155152` 15 个，NPC 碰撞 Accurate、头发碰撞、武器 Body mesh；未录网格体积和武器落尸体）。回放修两处：角色名标签只作诊断不比对；玩家激活前已在跑的活头发由回放从录制推断并恢复。现 97/97（55 金标准 + 42 新）逐位相同，头发也一致。
-- 2026-11-14 · A2b 提交（`c8526f7`，审查可合并，低优先级意见留到 A4，见 REFACTOR_PLAN 状态行）；B4a/B4b 合入（`51acbf3`）。合并后：完整版编译 0 错误；CombatReplay 7/7、夺尸 85、函数对照、AiMovement、CombatBalance、Navigation、TargetingSim 全过；55 份布娃娃回放 55/55 逐位相同。
-- 2026-11-14 · A2b（`IMeshSource`、格式版本 3）实现完成，55/55 仍逐位相同，送独立审查；B4b（敌我共用出手步骤）在 worktree 提交 `7b327dc`，审查可合并。用户裁决：网格体积不开确定性模式。
-- 2026-11-14 · A2a 与 B8a–B3 合入 `refactor/architecture`（`25b380f`）；完整版编译通过，`bin/Release` 是完整版；合并后战斗回放、夺尸测试、函数对照、55 份布娃娃回放全部一致。
-- 2026-11-14 · 协调者建议的仓库时机：用户现在建空的公开仓库占名（如 `zysilm/AdvancedRagdoll`）；A2–A4 期间代码留在本仓库 `RagdollLib/`（库和插件同提交改动、按标准答案逐位比对）；A4 完成后用 git 拆分连同历史搬到新仓库并发布 NuGet，插件改为引用包，开发时保留引用本地源码的开关。
-- 2026-11-14 · 用户用公开版（`PUBLIC_BUILD`，`DEV_EXPERIMENTAL=false`）录了金标准：两个会话 `20261114-124754`（45 个文件）和 `20261114-125323`（10 个文件），共 55 个文件、3.9 GB，在 `%APPDATA%/XIVLauncher/pluginConfigs/CombatSimulator/ragdoll-rec/`，**不进仓库，要保留到 A4 完成**。其中玩家 7 份、NPC 48 份；第二份起含水中死亡。55 份全部能读、格式版本 2、没有录制器故障；45 份正常停用收尾，第二会话 10 份由“停止录制”收尾。两份 NPC 文件（`124754-013`、`-014`）在物理开始前就被停用，0 步。单文件 0–138 MB，一个 NPC 尸体约 2–5 MB/秒。录制期间帧数 33–62，个别 5 秒窗口掉到 14。
-- 2026-11-14 · 同场录了战斗基线日志：春秋 `dddd` 三场、战国 `ddddWS` 两场、Imperial Decisive Battle、Defense of the Imperial Palace；日志里有 `Enemies (…)` 98 行、`Allies (…)` 77 行、`Targets:` 59 行、`War:` 7 行、`Rescue:` 11 行。之后插件已换回完整版。
-- 2026-11-14 · A1 与 B0 合入 `refactor/architecture`，含子模块的构建编译通过。下一步：A0（布娃娃录制）；之后请用户开游戏录战斗基线日志和布娃娃录制，录完才开始 A2 / B1。
-- 2026-11-14 · 协调者核对用户已保存的配置：有 10 种带程序集名的类型记录，没有一种在 A1 搬走的文件里。
-- 2026-11-14 · 协调者把两份调查合成 [REFACTOR_PLAN.md](REFACTOR_PLAN.md)（方案稿，等用户确认后开工）。
-- 2026-11-14 · 协调者初步测量：`Animation/RagdollController.cs`（1.3 万行）里引用游戏类型的只有约 84 行，集中在骨骼读写、地面射线、世界碰撞网格、模型文件读取、配置和日志；骨骼名字面量约 215 处，集中在骨骼定义表；已有按任意骨架自动建布娃娃的通用路径（`BuildGenericSkeletonDefs`）；`Animation/` 有 36 个文件已被离线测试直接编译（不依赖游戏）。
-- 2026-11-14 · 协调者量了现状：`RagdollController` 一个类 1.6 万行（15 个文件）；`Animation/` 3.5 万行，装着物理、网格几何和特效；`Plugin.cs` 70 个成员、约 100 行手工接线；`Configuration` 369 个设置、全项目直接读取约 2400 处；`MainWindow` 6350 行（12 个文件）；敌人 AI（`NpcAiController`）和队友 AI（`CombatCompanionManager`）是两套出手循环、两种数据类型；战斗规则散在 `Plugin.War.cs`、队友管理器的 Lord / Rescue 两个文件和 `CombatEngine` 里；离线测试 27 个项目。
-- 2026-11-14 · 协调者提出的方向（按性价比）：① 敌人和队友合成一种战斗单位、共用一套 AI；② 战斗规则做成独立模块（春秋、战国各一个规则对象，新模式只加一个文件）；③ `Plugin.cs` 按功能拆模块；④ 配置按功能分组（跟着 ③ 顺带做）；⑤ 拆布娃娃大类（风险最高，建议搁置）。建议按 ① → ② → ③ 分步做，不做一次性大重写。
+- 2026-11-15 · 重构 II 开工（用户指令“两个 repo 都开工”）；R2-L1、R2-P1 并行派出。
