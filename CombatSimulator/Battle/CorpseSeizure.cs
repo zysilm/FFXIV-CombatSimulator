@@ -180,6 +180,13 @@ public sealed class CorpseSeizure<TNpc> where TNpc : class
     /// <summary>Whether the lord's body is to be guarded (Warring States with Retreat, the lord down).</summary>
     private bool LordBodyAtStake => rules.LordBodyIsGuarded && !bodySeized;
 
+    /// <summary>
+    /// The lord's body is being fought over right now: it lies at stake and the battle's outcome is still
+    /// open. Once the outcome is decided (the lord's side wiped out, or the enemy driven off) nobody goes for
+    /// it any more (<see cref="Tick"/> releases the seizers).
+    /// </summary>
+    public bool FightOverBody => LordBodyAtStake && !world.OutcomeDecided;
+
     /// <summary>Called on every reset or stop of the battle.</summary>
     public void Reset()
     {

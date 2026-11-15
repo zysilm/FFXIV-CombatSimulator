@@ -334,6 +334,13 @@ sealed unsafe class FlatWorld : ICombatWorld, ICrowdAgents, ICastAreaMarkers
 
     public bool WalkableStraight(Vector3 from, Vector3 to) => true;
 
+    // Every point of the flat world can be walked to.
+    public bool TryReachableSpot(Vector3 point, float within, out Vector3 spot)
+    {
+        spot = point;
+        return true;
+    }
+
     public void SetObstacle(nint address, Vector3 position, float radius)
     {
         log.Note(Call.CrowdObstacle);

@@ -53,6 +53,13 @@ public unsafe class SimulatedNpc : Combatant
     public bool HasPatrolGoal { get; set; }
     /// <summary>Seconds left standing at the patrol point reached; then, seconds allowed to reach the next.</summary>
     public float PatrolTimer { get; set; }
+    /// <summary>
+    /// The post (<see cref="Combatant.SpawnPosition"/>) has been checked against the navigation mesh and
+    /// put on the ground the party can reach (NpcAiController.EnsureReachablePost); until then it is asked
+    /// again every <see cref="PostCheckTimer"/>.
+    /// </summary>
+    public bool PostOnReachableGround { get; set; }
+    public float PostCheckTimer { get; set; }
 
     // True when this enemy is engaged and its resolved combat target is the local
     // player. Updated each frame by NpcAiController; read by CombatLinkOverlay to

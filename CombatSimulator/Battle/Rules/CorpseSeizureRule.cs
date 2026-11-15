@@ -37,8 +37,12 @@ public sealed class CorpseSeizureRule : BattleRule
 
     public override void TickAfterEngine(BattleContext ctx, float deltaTime) => Seizure?.Tick(deltaTime);
 
-    /// <summary>The lord's body is fought over: nobody takes it the moment the lord falls.</summary>
-    public override bool SuppressesKillerPossession(BattleContext ctx) => true;
+    /// <summary>
+    /// While the lord's body is fought over nobody takes it the moment the lord falls: the one that carries
+    /// it off is taken over then. With nobody left to fight over it (a lord alone, or the retainers wiped
+    /// out), the outcome is already decided and Enemy Control takes the killer as under any other rule.
+    /// </summary>
+    public override bool SuppressesKillerPossession(BattleContext ctx) => Seizure?.FightOverBody == true;
 
     /// <summary>The body carried off: the battle is lost in disgrace (whatever the switches say by then).</summary>
     public override OutcomeText? DescribeOutcome(BattleContext ctx, bool playerWon)

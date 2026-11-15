@@ -24,7 +24,7 @@ using LuminaAction = Lumina.Excel.Sheets.Action;
 
 namespace CombatSimulator.Gui;
 
-// Enemy Control: post-defeat creature possession (spawn or take over the killer, walk it, grab-as-
+// Enemy Control: post-defeat possession (take over the killer, walk it, grab-as-
 // attack with finger conform, optional swarm formation). Moved out of the private Dev/Experimental
 // module — entry point is DrawEnemyControlEntrySection (Effects tab); the window itself only opens
 // when the player turns it on there, same pattern as Armor Detachment.
@@ -47,22 +47,9 @@ public partial class MainWindow
             config.ShowEnemyControlGui = showControls;
             config.Save();
         }
-        HelpMarker("Open the Enemy Control window: after a death, spawn or take over a controllable creature. " +
-                   "Every Enemy Control feature (on-death creature, swarm, grab) stays off until you enable it there.");
+        HelpMarker("Open the Enemy Control window: after a death, take over the enemy that defeated you. " +
+                   "Every Enemy Control feature (on-death control, swarm, grab) stays off until you enable it there.");
     }
-
-    private static readonly (string Name, uint Id, uint NameId)[] EnemyControlModels =
-    {
-        ("Bat", 38, 38),
-        ("Cactuar", 3, 3),
-        ("Hog", 15, 15),
-        ("Imp", 21, 21),
-        ("Flytrap", 23, 23),
-        ("Tortoise", 34, 34),
-        ("Wisp", 45, 45),
-        ("Myconid", 48, 48),
-        ("Striking Dummy", 541, 541),
-    };
 
     private static readonly (string Name, int Key)[] EnemyControlAttackKeys =
     {
@@ -97,40 +84,21 @@ public partial class MainWindow
 
         var active = ctrl.IsActive;
 
-        var onDeath = config.EnemyControlControlKiller ? 2 : config.EnemyControlSpawnOnDeath ? 1 : 0;
+        var onDeath = config.EnemyControlControlKiller ? 1 : 0;
         ImGui.SetNextItemWidth(140);
         if (ImGui.Combo("On death##EnemyControl", ref onDeath, EnemyControlOnDeathLabels, EnemyControlOnDeathLabels.Length))
         {
-            config.EnemyControlSpawnOnDeath = onDeath == 1;
-            config.EnemyControlControlKiller = onDeath == 2;
-            if (onDeath == 2) ctrl.Despawn(); // can't keep a spawned creature while controlling the killer
+            config.EnemyControlControlKiller = onDeath == 1;
             config.Save();
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Spawn creature: a controllable creature appears when you are defeated.\n" +
-                             "Control killer: take control of the enemy that just defeated you instead. Same controls.");
+            ImGui.SetTooltip("Control killer: when you are defeated, take control of the enemy that defeated you.\n" +
+                             "Only that one enemy; every other enemy keeps fighting or patrolling as before.\n" +
+                             "Warring States with Retreat: while your retainers fight over your body, the enemy\n" +
+                             "that carries it off is the one you control.");
 
-        var modelIdx = Array.FindIndex(EnemyControlModels, m => m.Id == config.EnemyControlModelId);
-        if (modelIdx < 0) modelIdx = 0;
-        ImGui.SetNextItemWidth(140);
-        if (ImGui.BeginCombo("Model##EnemyControl", EnemyControlModels[modelIdx].Name))
-        {
-            for (int i = 0; i < EnemyControlModels.Length; i++)
-                if (ImGui.Selectable(EnemyControlModels[i].Name, i == modelIdx))
-                {
-                    config.EnemyControlModelId = EnemyControlModels[i].Id;
-                    config.EnemyControlModelNameId = EnemyControlModels[i].NameId;
-                    config.Save();
-                }
-            ImGui.EndCombo();
-        }
-
-        ImGui.BeginDisabled(active || config.EnemyControlControlKiller);
-        if (ImGui.Button("Spawn##EnemyControl")) ctrl.Spawn();
-        ImGui.EndDisabled();
-        ImGui.SameLine();
         ImGui.BeginDisabled(!active);
-        if (ImGui.Button("Despawn##EnemyControl")) ctrl.Despawn();
+        if (ImGui.Button("Release##EnemyControl")) ctrl.Despawn();
         ImGui.EndDisabled();
 
         ImGui.BeginDisabled(!active);
@@ -255,7 +223,7 @@ public partial class MainWindow
         ImGui.Unindent();
     }
 
-    private static readonly string[] EnemyControlOnDeathLabels = { "Nothing", "Spawn creature", "Control killer" };
+    private static readonly string[] EnemyControlOnDeathLabels = { "Nothing", "Control killer" };
     private static readonly string[] SwarmMoveAroundLabels = { "Never", "Sometimes", "Often", "Very often" };
     private static readonly float[] SwarmLandmarkFrequencies = { 0f, 1f, 1.36f, 2f };
     private static readonly string[] SwarmFormationLabels = { "Tight", "Normal", "Loose", "Wide" };

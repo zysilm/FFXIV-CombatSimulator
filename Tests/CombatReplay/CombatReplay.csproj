@@ -19,6 +19,7 @@
   <ItemGroup>
     <Compile Include="../../CombatSimulator/Ai/NpcAiController.cs" Link="Production/Loop/NpcAiController.cs" />
     <Compile Include="../../CombatSimulator/Ai/NpcAiController.Tactics.cs" Link="Production/Loop/NpcAiController.Tactics.cs" />
+    <Compile Include="../../CombatSimulator/Ai/EnemyLayer.cs" Link="Production/Loop/EnemyLayer.cs" />
     <Compile Include="../../CombatSimulator/Combat/CombatantAiState.cs" Link="Production/Loop/CombatantAiState.cs" />
     <Compile Include="../../CombatSimulator/Companions/CombatCompanion.cs" Link="Production/Loop/CombatCompanion.cs" />
     <Compile Include="../../CombatSimulator/Companions/CombatCompanionManager.cs" Link="Production/Loop/CombatCompanionManager.cs" />

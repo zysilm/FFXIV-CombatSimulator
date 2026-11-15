@@ -459,17 +459,31 @@ static class Outcomes
             var set = RuleSetFor(settings, state, companions, Seizure(rules, seized));
             o.Append($"{settings} active {active} lord {(lordAlive ? "alive" : "dead")} executed {lordExecuted}/{allyExecuted} seized {seized} {(won ? "won" : "lost")}: {Describe(won, set)}\n");
         }
+        // Since 2026-11-15 (patrol / Enemy Control scope fix) the killer waits only while the lord's body is
+        // actually fought over: Warring States with Retreat, the lord down, the outcome still open and the body
+        // not carried off. "seizure" is the corpse seizure the rule is given: none, open (outcome undecided),
+        // decided (the outcome is shown: nobody fights over the body any more), seized (carried off).
         foreach (var fallen in new[] { WarFallenRule.StayDown, WarFallenRule.SpringAndAutumn, WarFallenRule.WarringStates })
         foreach (var hostages in new[] { false, true })
         foreach (var retreat in new[] { false, true })
         foreach (var active in new[] { false, true })
         foreach (var lordAlive in new[] { false, true })
+        foreach (var seizureState in new[] { "none", "open", "decided", "seized" })
         {
             var settings = new MutableRules { FallenRule = fallen, Hostages = hostages, Retreat = retreat };
             var state = new SimulationState { IsActive = active };
             state.PlayerState = new SimulatedEntityState { EntityId = 1, IsPlayer = true, MaxHp = 100, CurrentHp = lordAlive ? 100 : 0 };
-            var set = RuleSetFor(settings, state, new List<CombatCompanion>(), seizure: null);
-            o.Append($"killer {settings} active {active} lord {(lordAlive ? "alive" : "dead")}: suppressed {SuppressesKillerPossession(set)}\n");
+            var rules = new BattleRules(settings, () => state.IsActive, () => state.PlayerState.IsAlive);
+            CorpseSeizure<SimulatedNpc>? seizure = null;
+            if (seizureState != "none")
+            {
+                var world = Stub.Of<ICorpseSeizureWorld<SimulatedNpc>>(("get_OutcomeDecided", _ => seizureState == "decided"));
+                seizure = new CorpseSeizure<SimulatedNpc>(rules, world, null!, CombatCompanionManager.LordContestRadius);
+                typeof(CorpseSeizure<SimulatedNpc>).GetField("bodySeized", BindingFlags.NonPublic | BindingFlags.Instance)!
+                    .SetValue(seizure, seizureState == "seized");
+            }
+            var set = RuleSetFor(settings, state, new List<CombatCompanion>(), seizure);
+            o.Append($"killer {settings} active {active} lord {(lordAlive ? "alive" : "dead")} seizure {seizureState}: suppressed {SuppressesKillerPossession(set)}\n");
         }
         return o.ToString();
     }

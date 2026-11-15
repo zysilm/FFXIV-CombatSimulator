@@ -1151,51 +1151,195 @@ WarringStates hostages True retreat True active True lord alive executed True/1 
 WarringStates hostages True retreat True active True lord alive executed True/1 seized False won: VICTORY | Every enemy has been slain. Your army is victorious.
 WarringStates hostages True retreat True active True lord alive executed True/1 seized True lost: DISGRACED | Your corpse has been dragged off as a trophy. Your army is executed.
 WarringStates hostages True retreat True active True lord alive executed True/1 seized True won: VICTORY | Every enemy has been slain. Your army is victorious.
-killer StayDown hostages False retreat False active False lord dead: suppressed False
-killer StayDown hostages False retreat False active False lord alive: suppressed False
-killer StayDown hostages False retreat False active True lord dead: suppressed False
-killer StayDown hostages False retreat False active True lord alive: suppressed False
-killer StayDown hostages False retreat True active False lord dead: suppressed False
-killer StayDown hostages False retreat True active False lord alive: suppressed False
-killer StayDown hostages False retreat True active True lord dead: suppressed False
-killer StayDown hostages False retreat True active True lord alive: suppressed False
-killer StayDown hostages True retreat False active False lord dead: suppressed False
-killer StayDown hostages True retreat False active False lord alive: suppressed False
-killer StayDown hostages True retreat False active True lord dead: suppressed False
-killer StayDown hostages True retreat False active True lord alive: suppressed False
-killer StayDown hostages True retreat True active False lord dead: suppressed False
-killer StayDown hostages True retreat True active False lord alive: suppressed False
-killer StayDown hostages True retreat True active True lord dead: suppressed False
-killer StayDown hostages True retreat True active True lord alive: suppressed False
-killer SpringAndAutumn hostages False retreat False active False lord dead: suppressed False
-killer SpringAndAutumn hostages False retreat False active False lord alive: suppressed False
-killer SpringAndAutumn hostages False retreat False active True lord dead: suppressed False
-killer SpringAndAutumn hostages False retreat False active True lord alive: suppressed False
-killer SpringAndAutumn hostages False retreat True active False lord dead: suppressed False
-killer SpringAndAutumn hostages False retreat True active False lord alive: suppressed False
-killer SpringAndAutumn hostages False retreat True active True lord dead: suppressed False
-killer SpringAndAutumn hostages False retreat True active True lord alive: suppressed False
-killer SpringAndAutumn hostages True retreat False active False lord dead: suppressed False
-killer SpringAndAutumn hostages True retreat False active False lord alive: suppressed False
-killer SpringAndAutumn hostages True retreat False active True lord dead: suppressed False
-killer SpringAndAutumn hostages True retreat False active True lord alive: suppressed False
-killer SpringAndAutumn hostages True retreat True active False lord dead: suppressed False
-killer SpringAndAutumn hostages True retreat True active False lord alive: suppressed False
-killer SpringAndAutumn hostages True retreat True active True lord dead: suppressed False
-killer SpringAndAutumn hostages True retreat True active True lord alive: suppressed False
-killer WarringStates hostages False retreat False active False lord dead: suppressed False
-killer WarringStates hostages False retreat False active False lord alive: suppressed False
-killer WarringStates hostages False retreat False active True lord dead: suppressed False
-killer WarringStates hostages False retreat False active True lord alive: suppressed False
-killer WarringStates hostages False retreat True active False lord dead: suppressed True
-killer WarringStates hostages False retreat True active False lord alive: suppressed True
-killer WarringStates hostages False retreat True active True lord dead: suppressed True
-killer WarringStates hostages False retreat True active True lord alive: suppressed True
-killer WarringStates hostages True retreat False active False lord dead: suppressed False
-killer WarringStates hostages True retreat False active False lord alive: suppressed False
-killer WarringStates hostages True retreat False active True lord dead: suppressed False
-killer WarringStates hostages True retreat False active True lord alive: suppressed False
-killer WarringStates hostages True retreat True active False lord dead: suppressed True
-killer WarringStates hostages True retreat True active False lord alive: suppressed True
-killer WarringStates hostages True retreat True active True lord dead: suppressed True
-killer WarringStates hostages True retreat True active True lord alive: suppressed True
+killer StayDown hostages False retreat False active False lord dead seizure none: suppressed False
+killer StayDown hostages False retreat False active False lord dead seizure open: suppressed False
+killer StayDown hostages False retreat False active False lord dead seizure decided: suppressed False
+killer StayDown hostages False retreat False active False lord dead seizure seized: suppressed False
+killer StayDown hostages False retreat False active False lord alive seizure none: suppressed False
+killer StayDown hostages False retreat False active False lord alive seizure open: suppressed False
+killer StayDown hostages False retreat False active False lord alive seizure decided: suppressed False
+killer StayDown hostages False retreat False active False lord alive seizure seized: suppressed False
+killer StayDown hostages False retreat False active True lord dead seizure none: suppressed False
+killer StayDown hostages False retreat False active True lord dead seizure open: suppressed False
+killer StayDown hostages False retreat False active True lord dead seizure decided: suppressed False
+killer StayDown hostages False retreat False active True lord dead seizure seized: suppressed False
+killer StayDown hostages False retreat False active True lord alive seizure none: suppressed False
+killer StayDown hostages False retreat False active True lord alive seizure open: suppressed False
+killer StayDown hostages False retreat False active True lord alive seizure decided: suppressed False
+killer StayDown hostages False retreat False active True lord alive seizure seized: suppressed False
+killer StayDown hostages False retreat True active False lord dead seizure none: suppressed False
+killer StayDown hostages False retreat True active False lord dead seizure open: suppressed False
+killer StayDown hostages False retreat True active False lord dead seizure decided: suppressed False
+killer StayDown hostages False retreat True active False lord dead seizure seized: suppressed False
+killer StayDown hostages False retreat True active False lord alive seizure none: suppressed False
+killer StayDown hostages False retreat True active False lord alive seizure open: suppressed False
+killer StayDown hostages False retreat True active False lord alive seizure decided: suppressed False
+killer StayDown hostages False retreat True active False lord alive seizure seized: suppressed False
+killer StayDown hostages False retreat True active True lord dead seizure none: suppressed False
+killer StayDown hostages False retreat True active True lord dead seizure open: suppressed False
+killer StayDown hostages False retreat True active True lord dead seizure decided: suppressed False
+killer StayDown hostages False retreat True active True lord dead seizure seized: suppressed False
+killer StayDown hostages False retreat True active True lord alive seizure none: suppressed False
+killer StayDown hostages False retreat True active True lord alive seizure open: suppressed False
+killer StayDown hostages False retreat True active True lord alive seizure decided: suppressed False
+killer StayDown hostages False retreat True active True lord alive seizure seized: suppressed False
+killer StayDown hostages True retreat False active False lord dead seizure none: suppressed False
+killer StayDown hostages True retreat False active False lord dead seizure open: suppressed False
+killer StayDown hostages True retreat False active False lord dead seizure decided: suppressed False
+killer StayDown hostages True retreat False active False lord dead seizure seized: suppressed False
+killer StayDown hostages True retreat False active False lord alive seizure none: suppressed False
+killer StayDown hostages True retreat False active False lord alive seizure open: suppressed False
+killer StayDown hostages True retreat False active False lord alive seizure decided: suppressed False
+killer StayDown hostages True retreat False active False lord alive seizure seized: suppressed False
+killer StayDown hostages True retreat False active True lord dead seizure none: suppressed False
+killer StayDown hostages True retreat False active True lord dead seizure open: suppressed False
+killer StayDown hostages True retreat False active True lord dead seizure decided: suppressed False
+killer StayDown hostages True retreat False active True lord dead seizure seized: suppressed False
+killer StayDown hostages True retreat False active True lord alive seizure none: suppressed False
+killer StayDown hostages True retreat False active True lord alive seizure open: suppressed False
+killer StayDown hostages True retreat False active True lord alive seizure decided: suppressed False
+killer StayDown hostages True retreat False active True lord alive seizure seized: suppressed False
+killer StayDown hostages True retreat True active False lord dead seizure none: suppressed False
+killer StayDown hostages True retreat True active False lord dead seizure open: suppressed False
+killer StayDown hostages True retreat True active False lord dead seizure decided: suppressed False
+killer StayDown hostages True retreat True active False lord dead seizure seized: suppressed False
+killer StayDown hostages True retreat True active False lord alive seizure none: suppressed False
+killer StayDown hostages True retreat True active False lord alive seizure open: suppressed False
+killer StayDown hostages True retreat True active False lord alive seizure decided: suppressed False
+killer StayDown hostages True retreat True active False lord alive seizure seized: suppressed False
+killer StayDown hostages True retreat True active True lord dead seizure none: suppressed False
+killer StayDown hostages True retreat True active True lord dead seizure open: suppressed False
+killer StayDown hostages True retreat True active True lord dead seizure decided: suppressed False
+killer StayDown hostages True retreat True active True lord dead seizure seized: suppressed False
+killer StayDown hostages True retreat True active True lord alive seizure none: suppressed False
+killer StayDown hostages True retreat True active True lord alive seizure open: suppressed False
+killer StayDown hostages True retreat True active True lord alive seizure decided: suppressed False
+killer StayDown hostages True retreat True active True lord alive seizure seized: suppressed False
+killer SpringAndAutumn hostages False retreat False active False lord dead seizure none: suppressed False
+killer SpringAndAutumn hostages False retreat False active False lord dead seizure open: suppressed False
+killer SpringAndAutumn hostages False retreat False active False lord dead seizure decided: suppressed False
+killer SpringAndAutumn hostages False retreat False active False lord dead seizure seized: suppressed False
+killer SpringAndAutumn hostages False retreat False active False lord alive seizure none: suppressed False
+killer SpringAndAutumn hostages False retreat False active False lord alive seizure open: suppressed False
+killer SpringAndAutumn hostages False retreat False active False lord alive seizure decided: suppressed False
+killer SpringAndAutumn hostages False retreat False active False lord alive seizure seized: suppressed False
+killer SpringAndAutumn hostages False retreat False active True lord dead seizure none: suppressed False
+killer SpringAndAutumn hostages False retreat False active True lord dead seizure open: suppressed False
+killer SpringAndAutumn hostages False retreat False active True lord dead seizure decided: suppressed False
+killer SpringAndAutumn hostages False retreat False active True lord dead seizure seized: suppressed False
+killer SpringAndAutumn hostages False retreat False active True lord alive seizure none: suppressed False
+killer SpringAndAutumn hostages False retreat False active True lord alive seizure open: suppressed False
+killer SpringAndAutumn hostages False retreat False active True lord alive seizure decided: suppressed False
+killer SpringAndAutumn hostages False retreat False active True lord alive seizure seized: suppressed False
+killer SpringAndAutumn hostages False retreat True active False lord dead seizure none: suppressed False
+killer SpringAndAutumn hostages False retreat True active False lord dead seizure open: suppressed False
+killer SpringAndAutumn hostages False retreat True active False lord dead seizure decided: suppressed False
+killer SpringAndAutumn hostages False retreat True active False lord dead seizure seized: suppressed False
+killer SpringAndAutumn hostages False retreat True active False lord alive seizure none: suppressed False
+killer SpringAndAutumn hostages False retreat True active False lord alive seizure open: suppressed False
+killer SpringAndAutumn hostages False retreat True active False lord alive seizure decided: suppressed False
+killer SpringAndAutumn hostages False retreat True active False lord alive seizure seized: suppressed False
+killer SpringAndAutumn hostages False retreat True active True lord dead seizure none: suppressed False
+killer SpringAndAutumn hostages False retreat True active True lord dead seizure open: suppressed False
+killer SpringAndAutumn hostages False retreat True active True lord dead seizure decided: suppressed False
+killer SpringAndAutumn hostages False retreat True active True lord dead seizure seized: suppressed False
+killer SpringAndAutumn hostages False retreat True active True lord alive seizure none: suppressed False
+killer SpringAndAutumn hostages False retreat True active True lord alive seizure open: suppressed False
+killer SpringAndAutumn hostages False retreat True active True lord alive seizure decided: suppressed False
+killer SpringAndAutumn hostages False retreat True active True lord alive seizure seized: suppressed False
+killer SpringAndAutumn hostages True retreat False active False lord dead seizure none: suppressed False
+killer SpringAndAutumn hostages True retreat False active False lord dead seizure open: suppressed False
+killer SpringAndAutumn hostages True retreat False active False lord dead seizure decided: suppressed False
+killer SpringAndAutumn hostages True retreat False active False lord dead seizure seized: suppressed False
+killer SpringAndAutumn hostages True retreat False active False lord alive seizure none: suppressed False
+killer SpringAndAutumn hostages True retreat False active False lord alive seizure open: suppressed False
+killer SpringAndAutumn hostages True retreat False active False lord alive seizure decided: suppressed False
+killer SpringAndAutumn hostages True retreat False active False lord alive seizure seized: suppressed False
+killer SpringAndAutumn hostages True retreat False active True lord dead seizure none: suppressed False
+killer SpringAndAutumn hostages True retreat False active True lord dead seizure open: suppressed False
+killer SpringAndAutumn hostages True retreat False active True lord dead seizure decided: suppressed False
+killer SpringAndAutumn hostages True retreat False active True lord dead seizure seized: suppressed False
+killer SpringAndAutumn hostages True retreat False active True lord alive seizure none: suppressed False
+killer SpringAndAutumn hostages True retreat False active True lord alive seizure open: suppressed False
+killer SpringAndAutumn hostages True retreat False active True lord alive seizure decided: suppressed False
+killer SpringAndAutumn hostages True retreat False active True lord alive seizure seized: suppressed False
+killer SpringAndAutumn hostages True retreat True active False lord dead seizure none: suppressed False
+killer SpringAndAutumn hostages True retreat True active False lord dead seizure open: suppressed False
+killer SpringAndAutumn hostages True retreat True active False lord dead seizure decided: suppressed False
+killer SpringAndAutumn hostages True retreat True active False lord dead seizure seized: suppressed False
+killer SpringAndAutumn hostages True retreat True active False lord alive seizure none: suppressed False
+killer SpringAndAutumn hostages True retreat True active False lord alive seizure open: suppressed False
+killer SpringAndAutumn hostages True retreat True active False lord alive seizure decided: suppressed False
+killer SpringAndAutumn hostages True retreat True active False lord alive seizure seized: suppressed False
+killer SpringAndAutumn hostages True retreat True active True lord dead seizure none: suppressed False
+killer SpringAndAutumn hostages True retreat True active True lord dead seizure open: suppressed False
+killer SpringAndAutumn hostages True retreat True active True lord dead seizure decided: suppressed False
+killer SpringAndAutumn hostages True retreat True active True lord dead seizure seized: suppressed False
+killer SpringAndAutumn hostages True retreat True active True lord alive seizure none: suppressed False
+killer SpringAndAutumn hostages True retreat True active True lord alive seizure open: suppressed False
+killer SpringAndAutumn hostages True retreat True active True lord alive seizure decided: suppressed False
+killer SpringAndAutumn hostages True retreat True active True lord alive seizure seized: suppressed False
+killer WarringStates hostages False retreat False active False lord dead seizure none: suppressed False
+killer WarringStates hostages False retreat False active False lord dead seizure open: suppressed False
+killer WarringStates hostages False retreat False active False lord dead seizure decided: suppressed False
+killer WarringStates hostages False retreat False active False lord dead seizure seized: suppressed False
+killer WarringStates hostages False retreat False active False lord alive seizure none: suppressed False
+killer WarringStates hostages False retreat False active False lord alive seizure open: suppressed False
+killer WarringStates hostages False retreat False active False lord alive seizure decided: suppressed False
+killer WarringStates hostages False retreat False active False lord alive seizure seized: suppressed False
+killer WarringStates hostages False retreat False active True lord dead seizure none: suppressed False
+killer WarringStates hostages False retreat False active True lord dead seizure open: suppressed False
+killer WarringStates hostages False retreat False active True lord dead seizure decided: suppressed False
+killer WarringStates hostages False retreat False active True lord dead seizure seized: suppressed False
+killer WarringStates hostages False retreat False active True lord alive seizure none: suppressed False
+killer WarringStates hostages False retreat False active True lord alive seizure open: suppressed False
+killer WarringStates hostages False retreat False active True lord alive seizure decided: suppressed False
+killer WarringStates hostages False retreat False active True lord alive seizure seized: suppressed False
+killer WarringStates hostages False retreat True active False lord dead seizure none: suppressed False
+killer WarringStates hostages False retreat True active False lord dead seizure open: suppressed False
+killer WarringStates hostages False retreat True active False lord dead seizure decided: suppressed False
+killer WarringStates hostages False retreat True active False lord dead seizure seized: suppressed False
+killer WarringStates hostages False retreat True active False lord alive seizure none: suppressed False
+killer WarringStates hostages False retreat True active False lord alive seizure open: suppressed False
+killer WarringStates hostages False retreat True active False lord alive seizure decided: suppressed False
+killer WarringStates hostages False retreat True active False lord alive seizure seized: suppressed False
+killer WarringStates hostages False retreat True active True lord dead seizure none: suppressed False
+killer WarringStates hostages False retreat True active True lord dead seizure open: suppressed True
+killer WarringStates hostages False retreat True active True lord dead seizure decided: suppressed False
+killer WarringStates hostages False retreat True active True lord dead seizure seized: suppressed False
+killer WarringStates hostages False retreat True active True lord alive seizure none: suppressed False
+killer WarringStates hostages False retreat True active True lord alive seizure open: suppressed False
+killer WarringStates hostages False retreat True active True lord alive seizure decided: suppressed False
+killer WarringStates hostages False retreat True active True lord alive seizure seized: suppressed False
+killer WarringStates hostages True retreat False active False lord dead seizure none: suppressed False
+killer WarringStates hostages True retreat False active False lord dead seizure open: suppressed False
+killer WarringStates hostages True retreat False active False lord dead seizure decided: suppressed False
+killer WarringStates hostages True retreat False active False lord dead seizure seized: suppressed False
+killer WarringStates hostages True retreat False active False lord alive seizure none: suppressed False
+killer WarringStates hostages True retreat False active False lord alive seizure open: suppressed False
+killer WarringStates hostages True retreat False active False lord alive seizure decided: suppressed False
+killer WarringStates hostages True retreat False active False lord alive seizure seized: suppressed False
+killer WarringStates hostages True retreat False active True lord dead seizure none: suppressed False
+killer WarringStates hostages True retreat False active True lord dead seizure open: suppressed False
+killer WarringStates hostages True retreat False active True lord dead seizure decided: suppressed False
+killer WarringStates hostages True retreat False active True lord dead seizure seized: suppressed False
+killer WarringStates hostages True retreat False active True lord alive seizure none: suppressed False
+killer WarringStates hostages True retreat False active True lord alive seizure open: suppressed False
+killer WarringStates hostages True retreat False active True lord alive seizure decided: suppressed False
+killer WarringStates hostages True retreat False active True lord alive seizure seized: suppressed False
+killer WarringStates hostages True retreat True active False lord dead seizure none: suppressed False
+killer WarringStates hostages True retreat True active False lord dead seizure open: suppressed False
+killer WarringStates hostages True retreat True active False lord dead seizure decided: suppressed False
+killer WarringStates hostages True retreat True active False lord dead seizure seized: suppressed False
+killer WarringStates hostages True retreat True active False lord alive seizure none: suppressed False
+killer WarringStates hostages True retreat True active False lord alive seizure open: suppressed False
+killer WarringStates hostages True retreat True active False lord alive seizure decided: suppressed False
+killer WarringStates hostages True retreat True active False lord alive seizure seized: suppressed False
+killer WarringStates hostages True retreat True active True lord dead seizure none: suppressed False
+killer WarringStates hostages True retreat True active True lord dead seizure open: suppressed True
+killer WarringStates hostages True retreat True active True lord dead seizure decided: suppressed False
+killer WarringStates hostages True retreat True active True lord dead seizure seized: suppressed False
+killer WarringStates hostages True retreat True active True lord alive seizure none: suppressed False
+killer WarringStates hostages True retreat True active True lord alive seizure open: suppressed False
+killer WarringStates hostages True retreat True active True lord alive seizure decided: suppressed False
+killer WarringStates hostages True retreat True active True lord alive seizure seized: suppressed False

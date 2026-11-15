@@ -34,11 +34,11 @@ public sealed class CrowdMover : Combat.ICrowdAgents
     private const float GroundAbove = 0.6f;
     private const float GroundBelow = 1.2f;
     private const float ReportSeconds = 5f;
-    // Someone just spawned (not driven in the last second) beside the ground the fight is on (off a
-    // bridge, on a ledge, in water) is put on that ground from this far, instead of on whatever island
-    // it landed on, where it would be stuck for the whole fight.
-    private const float SpawnSnapSideways = 20f;
-    private const float SpawnSnapVertical = 12f;
+    // Someone new to the fight (not on the mesh in the last second) who is not on the ground the party can
+    // walk to (behind a wall, on a cliff top or a ledge, in a walled-off yard, off a bridge, in water) is
+    // put on the nearest spot of that ground, searched outward from where it is up to this far (the whole
+    // mesh), instead of on whatever island it landed on, where it would be stuck for the whole fight.
+    public const float SpawnSearchRadius = 96f;
     private const int FreshAfterFrames = 60;
     private const float MaxAgentRadius = 1.5f;
     private const int AgentsWarmUp = 24;
@@ -96,16 +96,17 @@ public sealed class CrowdMover : Combat.ICrowdAgents
             return false;
 
         radius = Math.Clamp(radius, 0.3f, MaxAgentRadius);
+        // New to the fight: never on the mesh, or not for a while. One that was turned away (no mesh under
+        // it yet) stays new until it joins, so a rebuilt mesh that reaches it still puts it on reachable ground.
         var fresh = !lastDriven.TryGetValue(address, out var seen) || frame - seen > FreshAfterFrames;
-        lastDriven[address] = frame;
         // Held as an obstacle until now (it knelt): it walks again, from where it is.
         if (agents.TryGetValue(address, out var held) && held.Obstacle)
             Remove(address);
         if (!agents.TryGetValue(address, out var agent))
         {
-            // New to the fight and not on the ground the player can reach: onto that ground.
+            // New to the fight and not on the ground the player can reach: onto the nearest of that ground.
             var onFight = navMesh.TryFloor(position, FloorSearch, out var floor, out var floorRef) && navMesh.OnPlayersPiece(floorRef);
-            if (fresh && !onFight && navMesh.TryFloorOnPlayersPiece(position, SpawnSnapVertical, SpawnSnapSideways, out var snapped))
+            if (fresh && !onFight && navMesh.TryNearestReachable(position, SpawnSearchRadius, out var snapped))
             {
                 floor = snapped;
                 spawnSnaps++;
@@ -134,6 +135,7 @@ public sealed class CrowdMover : Combat.ICrowdAgents
             crowd.UpdateAgentParameters(agent.Crowd, AgentParams(radius, speed));
         }
         agent.Frame = frame;
+        lastDriven[address] = frame;
 
         if (goal is not { } wanted)
         {
@@ -160,6 +162,21 @@ public sealed class CrowdMover : Combat.ICrowdAgents
         crowd.RequestMoveTarget(agent.Crowd, targetRef, NavMeshBuild.ToRc(target));
         agent.Goal = wanted;
         agent.HasGoal = true;
+        return true;
+    }
+
+    /// <summary>
+    /// The nearest spot to <paramref name="point"/> within <paramref name="within"/> metres that the party can
+    /// walk to (the piece of mesh connected to where the player stood), searched outward from the point.
+    /// </summary>
+    public bool TryReachableSpot(Vector3 point, float within, out Vector3 spot)
+    {
+        spot = point;
+        if (navMesh.Mesh == null || !navMesh.TryNearestReachable(point, within, out spot))
+            return false;
+        // Its height the real ground there, as TryGetMotion gives it (the mesh can sit a little above it).
+        if (Simulation.TerrainHeightService.TrySampleGroundNear(spot, GroundAbove, GroundBelow, out var ground))
+            spot.Y = ground;
         return true;
     }
 

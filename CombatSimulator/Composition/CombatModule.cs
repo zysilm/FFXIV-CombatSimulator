@@ -177,6 +177,9 @@ internal sealed class CombatModule
         npcAiController.Crowd = crowdMover;
         companionManager.Crowd = crowdMover;
         npcSpawner.Navmesh = vnavmeshIpc;
+        // Spawns only where the party can walk to (the plugin's navigation mesh, when it is there).
+        npcSpawner.ReachableSpot = point =>
+            crowdMover.TryReachableSpot(point, CrowdMover.SpawnSearchRadius, out var spot) ? spot : null;
         npcSpawner.OnAllySpawnComplete = (npc, request) =>
         {
             // An ally counts as a companion, so the party features have to be on for it to fight.

@@ -169,6 +169,12 @@ public interface ICrowdAgents
 
     /// <summary>Whether a straight walk between two points stays on the walkable floor (no wall or edge between).</summary>
     bool WalkableStraight(Vector3 from, Vector3 to);
+
+    /// <summary>
+    /// The nearest spot to a point within <paramref name="within"/> metres that the party can walk to (on the
+    /// ground connected to where the player stands), searched outward from it; false when there is none.
+    /// </summary>
+    bool TryReachableSpot(Vector3 point, float within, out Vector3 spot);
 }
 
 /// <summary>Where a telegraphed cast's area is drawn (implemented by ActionCombat.EnemyAreaMarkers).</summary>

@@ -97,7 +97,7 @@ public interface IBattleRule
     /// </summary>
     LethalBlow OnLethalBlow(BattleContext ctx, SimulatedEntityState victim, Combatant by, bool primary);
 
-    /// <summary>When the player dies, Enemy Control does not take over the killer (composed parts, any).</summary>
+    /// <summary>After the player dies, Enemy Control waits before taking over the killer, asked every frame (composed parts, any).</summary>
     bool SuppressesKillerPossession(BattleContext ctx);
 
     /// <summary>

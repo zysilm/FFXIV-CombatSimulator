@@ -232,6 +232,42 @@ public static class NavMeshBuild
         return result;
     }
 
+    // The outward search for a reachable spot: the first box is this wide each way, then twice as wide
+    // each step, up to the radius asked for; it always looks at least this far up and down.
+    private const float ReachableSearchStart = 1.5f;
+    private const float ReachableSearchMinVertical = 3f;
+
+    /// <summary>
+    /// The nearest point to <paramref name="wanted"/> on the polygons <paramref name="piece"/> lets through
+    /// (one connected piece: the ground the player can walk to), searched outward from it: boxes growing from
+    /// 1.5 m each way, doubling, to <paramref name="maxRadius"/> (as high and low as they are wide, at least
+    /// 3 m). The first box with any such ground in it gives the answer, so a point behind a wall, inside a
+    /// walled-off yard, on top of a cliff or under a ledge comes out at the nearest spot that can be walked to.
+    /// A point already on that ground comes back where it is (on the floor). False when there is none within
+    /// <paramref name="maxRadius"/>.
+    /// </summary>
+    public static bool NearestOnPiece(DtNavMeshQuery query, IDtQueryFilter piece, Vector3 wanted, float maxRadius, out Vector3 spot)
+    {
+        spot = wanted;
+        if (!(maxRadius > 0f) || !float.IsFinite(wanted.X + wanted.Y + wanted.Z))
+            return false;
+        var radius = MathF.Min(ReachableSearchStart, maxRadius);
+        while (true)
+        {
+            var vertical = MathF.Max(ReachableSearchMinVertical, radius);
+            var status = query.FindNearestPoly(ToRc(wanted), new RcVec3f(radius, vertical, radius), piece,
+                out var polyRef, out var nearest, out _);
+            if (status.Succeeded() && polyRef != 0)
+            {
+                spot = ToVector(nearest);
+                return true;
+            }
+            if (radius >= maxRadius)
+                return false;
+            radius = MathF.Min(radius * 2f, maxRadius);
+        }
+    }
+
     /// <summary>Make a piece walkable (queries and paths use it) or not.</summary>
     public static void SetPieceEnabled(DtNavMesh nav, List<long> members, bool enabled)
     {

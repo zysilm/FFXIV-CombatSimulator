@@ -137,6 +137,7 @@ public sealed class NavMeshService : IDisposable
         query = null;
         pieces = null;
         playerPiece = -1;
+        playersPieceFilter = null;
         enabledPieces.Clear();
         Territory = 0;
         attempted = false;
@@ -170,6 +171,7 @@ public sealed class NavMeshService : IDisposable
                 pieces = NavMeshBuild.FindPieces(built);
                 enabledPieces.Clear();
                 playerPiece = -1;
+                playersPieceFilter = null;
                 foreach (var members in pieces.Members)
                     NavMeshBuild.SetPieceEnabled(built, members, false);
                 var seeded = EnablePieceUnder(buildingCenter, 2.5f);
@@ -214,22 +216,36 @@ public sealed class NavMeshService : IDisposable
         => pieces != null && playerPiece >= 0 && pieces.PieceOf.TryGetValue(polyRef, out var piece) && piece == playerPiece;
 
     /// <summary>
-    /// The nearest point on the piece connected to where the player stood, within
-    /// <paramref name=sideways/> metres horizontally and <paramref name=vertical/> vertically.
+    /// The nearest spot to <paramref name="point"/> that the party can walk to: on the piece of mesh connected
+    /// to where the player stood, searched outward from the point up to <paramref name="maxRadius"/> metres
+    /// (<see cref="NavMeshBuild.NearestOnPiece"/>). A point behind a wall, on a cliff top, under a ledge or in
+    /// a walled-off yard comes out at the nearest reachable ground. False with no mesh, no piece under the
+    /// player, or no such ground within the radius.
     /// </summary>
-    public bool TryFloorOnPlayersPiece(Vector3 point, float vertical, float sideways, out Vector3 floor)
+    public bool TryNearestReachable(Vector3 point, float maxRadius, out Vector3 spot)
     {
-        floor = point;
-        if (query == null || pieces == null || playerPiece < 0)
+        spot = point;
+        if (query == null || pieces == null || playerPiece < 0 || !Covers(point))
             return false;
-        var only = new NavMeshBuild.PieceFilter(pieces, playerPiece);
-        var status = query.FindNearestPoly(NavMeshBuild.ToRc(point), new RcVec3f(sideways, vertical, sideways), only,
-            out var polyRef, out var nearest, out _);
-        if (status.Failed() || polyRef == 0)
-            return false;
-        floor = NavMeshBuild.ToVector(nearest);
-        return true;
+        playersPieceFilter ??= new NavMeshBuild.PieceFilter(pieces, playerPiece);
+        return NavMeshBuild.NearestOnPiece(query, playersPieceFilter, point, maxRadius, out spot);
     }
+
+    private NavMeshBuild.PieceFilter? playersPieceFilter;
+
+    // A point this close to the edge of the built area is not judged: the ground just past the edge is
+    // not in the mesh, so "no reachable ground near it" would be wrong.
+    private const float CoverMargin = 8f;
+
+    /// <summary>
+    /// Whether the mesh's built area takes in this point (with a margin to its edge): only then can it say
+    /// whether the point can be walked to. A point further out is judged once a mesh is built around it.
+    /// </summary>
+    public bool Covers(Vector3 point)
+        => mesh != null &&
+           MathF.Abs(point.X - Center.X) <= BuildHalfExtent - CoverMargin &&
+           MathF.Abs(point.Z - Center.Z) <= BuildHalfExtent - CoverMargin &&
+           point.Y >= Center.Y - BuildBelow + CoverMargin && point.Y <= Center.Y + BuildAbove - CoverMargin;
 
     /// <summary>
     /// Switch on the piece of mesh under a point (within <paramref name="vertical"/> metres of it): someone

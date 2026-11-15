@@ -249,7 +249,7 @@ public sealed class BattleRuleSet
         return LethalBlow.Default;
     }
 
-    /// <summary>When the player dies, whether Enemy Control leaves the killer alone: any composed part says so.</summary>
+    /// <summary>After the player dies, whether Enemy Control still waits before taking over the killer: any composed part says so.</summary>
     public bool SuppressesKillerPossession()
     {
         foreach (var part in parts)

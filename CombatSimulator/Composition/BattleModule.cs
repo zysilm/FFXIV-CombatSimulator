@@ -109,6 +109,52 @@ internal sealed unsafe class BattleModule
         corpseSeizure.Reset();
         outcomeShown = false;
         warBanner.Hide();
+        killerToPossess = nint.Zero;
+    }
+
+    // Enemy Control's "On death: Control killer": the killer, remembered when the lord falls and taken
+    // over in the war tick once nobody is left fighting over the lord's body (Warring States with
+    // Retreat; every other rule at once). A body that is carried off is the seizer's to hold
+    // (CorpseSeizure.SeizeBody), so the killer is then let go. One enemy, nothing else touched.
+    private nint killerToPossess;
+
+    /// <summary>The player (the lord) has fallen to <paramref name="killerAddress"/> (CombatEvents.PlayerDied).</summary>
+    public void OnLordFell(nint killerAddress)
+    {
+        if (!config.EnemyControlControlKiller)
+            return;
+        // Decided in the war tick of this same frame (after the engine has put the lord down).
+        killerToPossess = killerAddress;
+        killerPossessionWaitLogged = false;
+    }
+
+    private bool killerPossessionWaitLogged;
+
+    private void TickKillerPossession()
+    {
+        if (killerToPossess == nint.Zero)
+            return;
+        if (enemyControlController.IsActive || corpseSeizure.BodySeized)
+        {
+            killerToPossess = nint.Zero;
+            return;
+        }
+        if (companionManager.RuleParts.SuppressesKillerPossession())
+        {
+            if (!killerPossessionWaitLogged)
+                log.Info("EnemyControl: the lord's body is fought over; nobody takes it yet.");
+            killerPossessionWaitLogged = true;
+            return;
+        }
+
+        var killer = m.Actors.FindNpcByAddress(killerToPossess);
+        killerToPossess = nint.Zero;
+        if (killer == null || !killer.IsAlive)
+        {
+            log.Info("EnemyControl: no valid killer to control.");
+            return;
+        }
+        enemyControlController.ControlKiller(killer);
     }
 
     /// <summary>A hit landed (<c>CombatEvents.DamageLanded</c>): a seizer struck at the lord's body knocks the seizing back.</summary>
@@ -131,7 +177,11 @@ internal sealed unsafe class BattleModule
     }
 
     /// <summary>The battle rules after the engine (the corpse seizure's tick).</summary>
-    public void TickWar(float deltaTime) => companionManager.RuleParts.TickAfterEngine(deltaTime);
+    public void TickWar(float deltaTime)
+    {
+        companionManager.RuleParts.TickAfterEngine(deltaTime);
+        TickKillerPossession();
+    }
 
     public void DrawWar() => warBanner.Draw();
 
