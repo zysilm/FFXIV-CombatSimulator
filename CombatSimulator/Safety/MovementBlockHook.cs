@@ -11,12 +11,16 @@ using FFXIVClientStructs.FFXIV.Client.Game.Object;
 namespace CombatSimulator.Safety;
 
 /// <summary>
-/// Hooks GameObject.SetPosition and SetRotation so the NPCs the simulation moves itself (approach-controlled:
-/// enemies, allies, spectators, Enemy Control's creature) ignore the game's own position/rotation updates; the
-/// plugin moves them through <see cref="SetApproachPosition"/> / <see cref="SetApproachRotation"/>.
-/// The local player is never blocked: a server correction (knockback, a position sync, a teleport) always
-/// reaches the player, whatever the simulation shows (dead, captive). The player's death pose is the ragdoll's,
-/// which writes the draw object only.
+/// Hooks GameObject.SetPosition and SetRotation for two jobs:
+/// 1. <see cref="IsBlocking"/>: freeze the local player's position/rotation while they are dead or
+///    captured in the simulation. Enemy Control drives the killer with WASD in that state, and the same
+///    keys also move the player through SetPosition; this freeze is what keeps the player still.
+///    Trade-off: while frozen, server corrections to the local player (knockback, position sync) are
+///    ignored too.
+/// 2. Approach-controlled NPCs (enemies, allies, spectators, Enemy Control's creature) ignore the game's
+///    own updates; the plugin moves them through <see cref="SetApproachPosition"/> / <see cref="SetApproachRotation"/>.
+/// Unlike input-based blocking, this prevents the position from ever changing,
+/// so there is no shaking or fighting between the game engine and the plugin.
 /// </summary>
 public unsafe class MovementBlockHook : IDisposable
 {
@@ -28,6 +32,11 @@ public unsafe class MovementBlockHook : IDisposable
 
     private Hook<SetPositionDelegate>? setPositionHook;
     private Hook<SetRotationDelegate>? setRotationHook;
+
+    /// <summary>
+    /// When true, the local player's position and rotation are frozen.
+    /// </summary>
+    public bool IsBlocking { get; set; }
 
     /// <summary>
     /// Addresses of NPCs whose server-driven position updates should be blocked
@@ -148,7 +157,10 @@ public unsafe class MovementBlockHook : IDisposable
 
     private void SetPositionDetour(GameObject* thisPtr, float x, float y, float z)
     {
-        if (!allowApproachUpdate && IsApproachBlocked((nint)thisPtr) && !IsLocalPlayer(thisPtr))
+        if (IsBlocking && IsLocalPlayer(thisPtr))
+            return; // Skip — player position stays frozen
+
+        if (!allowApproachUpdate && IsApproachBlocked((nint)thisPtr))
             return; // Skip — server update blocked; we move this NPC via SetApproachPosition
 
         setPositionHook!.Original(thisPtr, x, y, z);
@@ -156,14 +168,16 @@ public unsafe class MovementBlockHook : IDisposable
 
     private void SetRotationDetour(GameObject* thisPtr, float value)
     {
-        if (!allowApproachUpdate && IsApproachBlocked((nint)thisPtr) && !IsLocalPlayer(thisPtr))
+        if (IsBlocking && IsLocalPlayer(thisPtr))
+            return; // Skip — player rotation stays frozen
+
+        if (!allowApproachUpdate && IsApproachBlocked((nint)thisPtr))
             return; // Skip — server update blocked; we rotate this NPC via SetApproachRotation
 
         setRotationHook!.Original(thisPtr, value);
     }
 
-    // Never the local player's updates: those carry the server's corrections.
-    private static bool IsLocalPlayer(GameObject* obj)
+    private bool IsLocalPlayer(GameObject* obj)
     {
         var player = CombatSimulator.Core.Services.ObjectTable.LocalPlayer;
         return player != null && (nint)obj == player.Address;
@@ -174,6 +188,7 @@ public unsafe class MovementBlockHook : IDisposable
 
     public void Dispose()
     {
+        IsBlocking = false;
         approachBlockedAddresses.Clear();
         approachBlockOwners.Clear();
         setPositionHook?.Dispose();

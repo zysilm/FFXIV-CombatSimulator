@@ -258,6 +258,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         animationController.ResetPlayerDeathAnimation();
         animationController.RestorePlayerCombatVisualState();
         animationController.RemoveAllActiveVfx();
+        movementBlockHook.IsBlocking = false;
         ragdollController.Deactivate();
         playerInitiatedCombat = false;
         LastPlayerDefeatedBy = string.Empty;
@@ -306,6 +307,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
 
         animationController.ResetPlayerDeathAnimation();
         animationController.RestorePlayerCombatVisualState();
+        movementBlockHook.IsBlocking = false;
         ragdollController.Deactivate();
 
         playerDeathTriggered = false;
@@ -370,6 +372,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         if (friend.IsPlayer)
         {
             ClearQueuedActions();
+            movementBlockHook.IsBlocking = true;
             unsafe
             {
                 var player = Core.Services.ObjectTable.LocalPlayer;
@@ -394,6 +397,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
 
         if (friend.IsPlayer && !playerDeathTriggered)
         {
+            movementBlockHook.IsBlocking = false;
             unsafe
             {
                 var player = Core.Services.ObjectTable.LocalPlayer;
@@ -439,6 +443,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         LastPlayerKillerEntityId = 0;
         animationController.ResetPlayerDeathAnimation();
         animationController.RestorePlayerCombatVisualState();
+        movementBlockHook.IsBlocking = false;
         ragdollController.Deactivate();
 
         AddLogEntry("Player revived in place.", CombatLogType.Info);
@@ -1233,6 +1238,7 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
             if (!playerDeathTriggered)
             {
                 playerDeathTriggered = true;
+                movementBlockHook.IsBlocking = true;
                 // Let the killing blow finish naturally. Tracked action VFX already have bounded
                 // TTLs, while StopSimulation/Dispose still perform immediate fail-safe cleanup.
                 BeforePlayerDeath?.Invoke();

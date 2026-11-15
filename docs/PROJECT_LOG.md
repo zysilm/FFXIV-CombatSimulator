@@ -141,7 +141,7 @@
 
 - 屏障 = UseAction + UseActionLocation + SetHardTarget 三个钩子（`Safety/SafetyBarriers.cs`）；所有开战/生成路径只查这一处。屏障失效时：生成假角色一律拒绝（界面弹 Safety Barrier Down、命令拒绝、生成器底层也拒绝）；只有硬目标保护失效时才允许 Start Anyway。
 - UseActionLocation 也拦：假目标一律拒绝；战斗中没经过 UseAction 的战斗技能丢弃；钩子异常时战斗中吞掉不放行。
-- 本地玩家永远不冻结位置/朝向（`MovementBlockHook` 只拦 NPC），服务器校正（击退等）必须生效；死亡姿态由布娃娃写 DrawObject。
+- 玩家在模拟中死亡/待戮时冻结本地玩家位置/朝向（`MovementBlockHook.IsBlocking`，`CombatEngine` 死亡/被俘置 true，复活/重置/停战置 false；2026-11-15 恢复）。原因：此时 Enemy Control 用 WASD 驱动凶手，同一组按键也会让玩家本人经 `SetPosition` 移动；`386fc4a` 去掉冻结后立刻出现“控制敌人时玩家也在走”。代价：冻结期间服务器对本地玩家的位置校正（击退、位置同步）也被吞掉。死亡姿态由布娃娃写 DrawObject。
 - 假角色只在战斗进行中且屏障完好时可选中，否则不可选中（`Safety/FakeActorGuard.cs`）；这也意味着停战后在 GPose 里点不中它们。游戏的硬/软/焦点目标一旦是假角色就当帧清掉。
 
 ## 3. 教训与死路
@@ -200,7 +200,7 @@
 - 2026-07：技能职业和角色 `ClassJob` 对不上时动画解析不出来，只有 VFX、人不动。
 - 2026-06：招架音效死路：TMB 里没有声音条目；VFXEditor 的 `InitSound` 是编辑器预览路径（且签名是调用点不是函数入口）；`PlaySpecificSound` 只能压掉正在播的声音，不能凭空播出声音。
 - 2026-06：Action Mode 曾在起手时播挥击、结算时 `playVisual:false` → 动画对不上且丢了命中音和受击反应（这些和挥击绑在同一调用里）。
-- 2026-07-03：本地玩家移动不经过 `GameObject.SetPosition`，接管位置的 2D 移动器会和游戏每帧拉扯 → 用原生移动 + 投影。
+- 2026-07-03：接管位置的 2D 移动器会和游戏每帧拉扯 → 用原生移动 + 投影。当时的结论“本地玩家移动不经过 `GameObject.SetPosition`”不成立（2026-11-15 更正）：玩家死亡/待戮、Enemy Control 驱动敌人时，WASD 让玩家移动正是经过 `SetPosition`——`386fc4a` 据此删掉 `IsBlocking` 后，玩家随 WASD 一起移动（回归），恢复冻结即修好。别再据“玩家不走 SetPosition”删这层冻结。
 - 2026-07-03：死亡相机跟踪被踢走的尸体要读 BEPU 刚体位置，骨骼 `ModelPose` 停在死亡点。
 - 2026-10-24：`vo_line = 8200000 + NpcYell.RowId` 是错的；真实映射是分块常量偏移；`374680e` 第二轮配对混进错误声音已撤销，`proven-v6` 配对不可信。
 - 2026-10-25：台词分类按英文判断导致意思错乱（「さてここからだ」被当击杀台词）。
@@ -272,7 +272,8 @@
 - [ ] 可达生成：不再刷到墙外/崖上/地下；日志 `spawn spot moved`、`post moved`。
 - [ ] Enemy Control 精简（只控制一个敌人）：Effects → Enemy Control → Show Enemy Control GUI 打开的窗口里不再有 Swarm 折叠栏和手臂姿势；控制、镜头切换、Release、抓取照常；旧抓取档案（含 Embrace）载入后没有手臂姿势。
 - [ ] Fighting Mode 删除：旧配置载入无异常；Combat 页签没有 Fighting Mode 折叠栏，快捷栏没有 Fighting Mode 勾选；Enemy Control 照常（它从 FightingModule 移到 ActorsModule）。
-- [ ] 服务器安全修复（2026-11-15）：Diagnose → Client-Side Safety 有三行（UseAction / UseActionLocation / Hard-target guard）；战斗中按住技能后开战，排队的技能不发到服务器（排队技能多半重走 UseAction；直接调 UseActionLocation 的是地面目标确认和 BossMod 这类插件，日志 `Suppressed direct UseActionLocation`）；停战后 Spawn 留下的敌人点不中（GPose 里也点不中）（日志 `FakeActorGuard: simulated actors not targetable`）；玩家死亡/待戮时击退等服务器校正照常生效；原生血条/目标栏战斗中隐藏、停战恢复，位置不变；坐骑上/坐下时 Recover Player Animation 拒绝并提示。
+- [ ] 服务器安全修复（2026-11-15）：Diagnose → Client-Side Safety 有三行（UseAction / UseActionLocation / Hard-target guard）；战斗中按住技能后开战，排队的技能不发到服务器（排队技能多半重走 UseAction；直接调 UseActionLocation 的是地面目标确认和 BossMod 这类插件，日志 `Suppressed direct UseActionLocation`）；停战后 Spawn 留下的敌人点不中（GPose 里也点不中）（日志 `FakeActorGuard: simulated actors not targetable`）；原生血条/目标栏战斗中隐藏、停战恢复，位置不变；坐骑上/坐下时 Recover Player Animation 拒绝并提示。
+- [ ] 玩家冻结恢复（2026-11-15）：战败后 Enemy Control 用 WASD 控制敌人时，玩家本人原地不动；复活/重置/停战后能正常走动。
 
 ## 5. 搁置与未完成
 
