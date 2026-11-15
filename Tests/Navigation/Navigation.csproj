@@ -8,5 +8,6 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../../CombatSimulator/Navigation/NavMeshBuild.cs" Link="Production/NavMeshBuild.cs" />
+    <Compile Include="../../CombatSimulator/Battle/Rules/KneelSpot.cs" Link="Production/KneelSpot.cs" />
   </ItemGroup>
 </Project>

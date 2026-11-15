@@ -18,6 +18,20 @@ using CombatSimulator.Simulation;
 // speeds, turning, MP prices, pace) comes from the production code. The frame loop around them is this
 // harness's, not the plugin's: the two controllers cannot run offline before stage B4a.
 
+// `-- --kneel-metrics`: no golden files; how close those raising or praying kneel to the body, in the
+// scenarios where someone kneels (to compare a change of where they kneel with the code before it).
+if (args.Contains("--kneel-metrics"))
+{
+    foreach (var scenario in LoopScenarios.All.Where(s => s.Name is "rescue" or "guard-body" or "rule-switch"))
+    {
+        LoopReplay.Kneel = new KneelStats();
+        for (var i = 0; i < 3; i++)
+            new LoopReplay(scenario, seed: 1 + i, steps: Steps.ForSeedIndex(i)).Run();
+        Console.WriteLine($"loop-{scenario.Name}: {LoopReplay.Kneel}");
+    }
+    return 0;
+}
+
 var write = args.Contains("--write");
 var writeMissing = args.Contains("--write-missing");
 var dir = Path.Combine(Here(), "golden");

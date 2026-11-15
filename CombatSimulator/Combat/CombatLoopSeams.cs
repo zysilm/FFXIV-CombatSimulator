@@ -163,6 +163,12 @@ public interface ICrowdAgents
     bool TrySnapToFloor(Vector3 point, out Vector3 floor);
     void SetObstacle(nint address, Vector3 position, float radius);
     bool TryGetMotion(nint address, out Vector3 position, out Vector3 velocity);
+
+    /// <summary>The walkable floor nearest a point within <paramref name="within"/> metres sideways, its height the real ground.</summary>
+    bool TryFloorWithin(Vector3 point, float within, out Vector3 floor);
+
+    /// <summary>Whether a straight walk between two points stays on the walkable floor (no wall or edge between).</summary>
+    bool WalkableStraight(Vector3 from, Vector3 to);
 }
 
 /// <summary>Where a telegraphed cast's area is drawn (implemented by ActionCombat.EnemyAreaMarkers).</summary>

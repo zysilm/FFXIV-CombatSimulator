@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Numerics;
+using CombatSimulator.Battle.Rules;
 using CombatSimulator.Navigation;
 using DotRecast.Core.Numerics;
 using DotRecast.Detour;
@@ -244,6 +245,9 @@ var cases = new (string, Action)[]
         Check(n > 0 && path[n - 1] == r, "the spot is not walkable from the player");
         Check(flat < 8f, "put far from where it spawned");
     }),
+    ("a kneel spot beside a body is within 0.3 m of it, on the mesh, clear of other kneelers and the fallen", () => {
+        KneelSpots();
+    }),
     // Last: it changes the mesh's flags.
     ("only what can be walked to from where the player stands is kept: roof and island are cut off", () => {
         CutOff();
@@ -329,6 +333,81 @@ void RunCrowd(bool report)
         Check(travelled.Max() < 0.6f, "an agent keeps walking (orbiting) once the crowd has gathered");
         Check(maxY < 0.5f, "an agent left the ground floor");
         Check(meanMs < 2.0 && spikes <= (frames - 60) / 50, "the crowd update is too slow");
+}
+
+// The kneel spot (CombatSimulator/Battle/Rules/KneelSpot.cs, linked), its floor asked of the mesh as
+// CrowdMover.TryFloorWithin asks it (NavMeshService.TryFloor: 3 m up and down, `within` sideways), and the
+// straight walk to it as NavMeshService.WalkableStraight checks it.
+void KneelSpots()
+{
+    bool FloorNear(Vector3 point, float within, out Vector3 floor)
+    {
+        var status = query.FindNearestPoly(NavMeshBuild.ToRc(point), new RcVec3f(within, 3f, within), filter, out var r, out var pt, out _);
+        floor = NavMeshBuild.ToVector(pt);
+        return status.Succeeded() && r != 0;
+    }
+    bool OnMesh(Vector3 spot)
+    {
+        query.FindNearestPoly(NavMeshBuild.ToRc(spot), new RcVec3f(0.05f, 0.5f, 0.05f), filter, out var r, out var pt, out _);
+        return r != 0 && KneelSpot.Flat(NavMeshBuild.ToVector(pt), spot) < 0.02f;
+    }
+    bool Straight(Vector3 from, Vector3 to)
+    {
+        var start = Snap(from);
+        Span<long> path = stackalloc long[32];
+        var status = query.Raycast(start.Ref, NavMeshBuild.ToRc(start.Pos), NavMeshBuild.ToRc(to), filter, out var t, out _, path, out _, path.Length);
+        return status.Succeeded() && t >= 1f;
+    }
+    var none = new List<Vector3>();
+    void Good(string what, Vector3 body, Vector3 spot)
+    {
+        var d = KneelSpot.Flat(spot, body);
+        Console.WriteLine($"      {what}: spot {spot.X:F2}, {spot.Y:F2}, {spot.Z:F2}, {d:F2} m from the body, on the mesh {OnMesh(spot)}");
+        Check(d <= KneelSpot.MaxFromBody + 1e-4f, $"{what}: the spot is {d:F2} m from the body");
+        Check(OnMesh(spot), $"{what}: the spot is not on the mesh");
+        Check(MathF.Abs(spot.Y) < 0.4f, $"{what}: the spot is not on the floor");
+    }
+
+    // Open ground, the body's pelvis 0.2 m up, approached from the east: 0.25 m toward the approach.
+    var body = new Vector3(0, 0.2f, -20);
+    var from = new Vector3(3, 0, -20);
+    Check(KneelSpot.TryChoose(body, from, none, none, FloorNear, out var open), "open ground: no spot");
+    Good("open ground", body, open);
+    Check(MathF.Abs(open.X - KneelSpot.Offset) < 0.05f && MathF.Abs(open.Z + 20f) < 0.05f, "open ground: not toward the approach");
+    Check(Straight(from, open), "open ground: the straight walk to the spot is blocked");
+
+    // Against the outside of the east wall (x 4.7..5), approached from inside the house: the spot toward the
+    // approach is in the wall, so it goes round to the walkable side; the walk from inside is not straight.
+    var byWall = new Vector3(5.45f, 0.2f, 0);
+    var inside = new Vector3(3, 0, 0);
+    Check(KneelSpot.TryChoose(byWall, inside, none, none, FloorNear, out var wallSpot), "by the wall: no spot");
+    Good("by the wall", byWall, wallSpot);
+    Check(wallSpot.X > 5f, "by the wall: the spot is not on the outside");
+    Check(!Straight(inside, wallSpot), "by the wall: a straight walk through the wall was allowed");
+
+    // In the wall itself: no walkable floor within 0.3 m, no spot (kneels where it is, as before).
+    var inWall = new Vector3(4.85f, 0.2f, 0);
+    Check(!KneelSpot.TryChoose(inWall, inside, none, none, FloorNear, out _), "in the wall: a spot was found");
+    Console.WriteLine("      in the wall: no spot (kneels where it is)");
+
+    // Two bodies 0.6 m apart, both approached from the west: the second kneeler goes round, clear of the first.
+    var bodyA = new Vector3(0, 0.2f, -20);
+    var bodyB = new Vector3(0.6f, 0.2f, -20);
+    var west = new Vector3(-3, 0, -20);
+    Check(KneelSpot.TryChoose(bodyA, west, none, none, FloorNear, out var first), "two bodies: no first spot");
+    Check(KneelSpot.TryChoose(bodyB, west, new List<Vector3> { first }, none, FloorNear, out var second), "two bodies: no second spot");
+    Good("two bodies, first", bodyA, first);
+    Good("two bodies, second", bodyB, second);
+    Console.WriteLine($"      two bodies: the kneelers {KneelSpot.Flat(first, second):F2} m apart");
+    Check(KneelSpot.Flat(first, second) >= KneelSpot.Clearance - 1e-4f, "two bodies: the kneelers overlap");
+    // One body never has two kneelers: every spot beside it is within 0.6 m of the first.
+    Check(!KneelSpot.TryChoose(bodyA, west, new List<Vector3> { first }, none, FloorNear, out _), "one body: a second kneeler found room");
+
+    // One who knelt here before and fell here: the next kneels on another side of the body.
+    var fallen = new List<Vector3> { first };
+    Check(KneelSpot.TryChoose(bodyA, west, none, fallen, FloorNear, out var next), "beside the fallen: no spot");
+    Good("beside the fallen", bodyA, next);
+    Check(KneelSpot.Flat(next, first) >= KneelSpot.CorpseClearance - 1e-4f, "beside the fallen: knelt on the fallen");
 }
 
 void CutOff()

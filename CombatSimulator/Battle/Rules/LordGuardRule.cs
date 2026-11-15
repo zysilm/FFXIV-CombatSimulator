@@ -46,6 +46,10 @@ public sealed unsafe class LordGuardRule : BattleRule, IAllyLeash
     private float prayerBest = float.MaxValue;
     private float prayerStall;
     private ushort prayerLoop;
+    // Where it kneels, beside the body (KneelSpot), chosen once at its post; none there: where it is.
+    private Vector3? prayerKneel;
+    private bool prayerNoSpot;
+    private float prayerKneelTime;
 
     // The ally drawing its target now: whether the body is guarded, and where it lies.
     private bool drawHasBody;
@@ -128,41 +132,73 @@ public sealed unsafe class LordGuardRule : BattleRule, IAllyLeash
 
         var self = ctx.World.PositionOf(companion);
 
-        // Pushed off where it knelt: up, and back to the post.
-        if (prayerAtPost && CombatantMath.FlatDistance(self, prayerSpot) > PrayerPushedOff)
+        // Pushed off where it knelt, or the body moved off the spot beside it: up, and back to the post.
+        var bodyMoved = prayerKneel is { } chosen && KneelSpot.BodyMovedAway(chosen, body);
+        if (bodyMoved || (prayerAtPost && CombatantMath.FlatDistance(self, prayerSpot) > PrayerPushedOff))
         {
+            if (prayerAtPost)
+            {
+                companion.State.IncomingDamageScale = 1f;
+                ctx.World.ResetEmote(companion);
+            }
             prayerAtPost = false;
             prayerBest = float.MaxValue;
             prayerStall = 0f;
-            companion.State.IncomingDamageScale = 1f;
-            ctx.World.ResetEmote(companion);
+            ForgetKneelSpot(ctx, companion);
         }
 
         if (!prayerAtPost)
         {
-            var off = CombatantMath.FlatDistance(self, post);
-            if (off < prayerBest - 0.1f)
+            // To the post first (when it is there is unchanged); then right beside the body, walking the
+            // last bit, on the floor; with no such spot it kneels where it is.
+            if (prayerKneel == null)
             {
-                prayerBest = off;
-                prayerStall = 0f;
+                var off = CombatantMath.FlatDistance(self, post);
+                if (off < prayerBest - 0.1f)
+                {
+                    prayerBest = off;
+                    prayerStall = 0f;
+                }
+                else
+                    prayerStall += deltaTime;
+                if (off > PrayerReach && prayerStall < PrayerStallSeconds)
+                {
+                    ctx.Allies.EnterState(companion, CombatantAiState.MovingToTarget, deltaTime);
+                    ctx.Allies.MoveToward(companion, post, deltaTime);
+                    return true;
+                }
+                if (!prayerNoSpot)
+                {
+                    prayerKneelTime = 0f;
+                    if (ctx.Allies.TryKneelSpot(companion, body, out var spot))
+                        prayerKneel = spot;
+                    else
+                        prayerNoSpot = true;
+                }
             }
-            else
-                prayerStall += deltaTime;
-            if (off > PrayerReach && prayerStall < PrayerStallSeconds)
+            if (prayerKneel is { } kneel && !ctx.Allies.KneelAt(companion, kneel, deltaTime))
             {
-                ctx.Allies.EnterState(companion, CombatantAiState.MovingToTarget, deltaTime);
-                ctx.Allies.MoveToward(companion, post, deltaTime);
-                return true;
+                prayerKneelTime += deltaTime;
+                if (prayerKneelTime < KneelSpot.StallSeconds)
+                    return true;
+                // Cannot get there: it kneels where it is.
+                ForgetKneelSpot(ctx, companion);
+                prayerNoSpot = true;
             }
+            if (prayerKneel == null)
+                ctx.Allies.HaltForEmote(companion);
         }
+        else if (prayerKneel is { } held)
+            ctx.Allies.KneelAt(companion, held, deltaTime);
+        else
+            ctx.Allies.HaltForEmote(companion);
 
-        ctx.Allies.HaltForEmote(companion);
         ctx.Allies.RotateToward(companion, body, deltaTime);
         if (!prayerAtPost)
         {
             // Only kneeling does it lay itself open.
             prayerAtPost = true;
-            prayerSpot = self;
+            prayerSpot = prayerKneel ?? self;
             companion.State.IncomingDamageScale = PrayerDamageScale;
             prayerLoop = ctx.World.PlayEmoteOn(companion, PrayEmoteId)
                 ? ctx.World.EmoteLoopTimeline(PrayEmoteId)
@@ -270,11 +306,23 @@ public sealed unsafe class LordGuardRule : BattleRule, IAllyLeash
             prayer.State.IncomingDamageScale = 1f;
             if (prayerAtPost && prayer.BattleChara != null && prayer.State.IsAlive && !prayer.State.IsCaptive)
                 ctx.World.ResetEmote(prayer);
+            ForgetKneelSpot(ctx, prayer);
         }
         prayerId = 0;
         prayerAtPost = false;
         prayerBest = float.MaxValue;
         prayerStall = 0f;
+        prayerKneel = null;
+        prayerNoSpot = false;
+    }
+
+    private void ForgetKneelSpot(BattleContext ctx, CombatCompanion prayer)
+    {
+        if (prayerKneel != null)
+            ctx.Allies.LeaveKneelSpot(prayer);
+        prayerKneel = null;
+        prayerNoSpot = false;
+        prayerKneelTime = 0f;
     }
 
     /// <summary>Retreat off, or another rule: nobody prays.</summary>
@@ -286,5 +334,7 @@ public sealed unsafe class LordGuardRule : BattleRule, IAllyLeash
     {
         prayerId = 0;
         prayerAtPost = false;
+        prayerKneel = null;
+        prayerNoSpot = false;
     }
 }

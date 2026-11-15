@@ -309,7 +309,8 @@ sealed unsafe class FlatWorld : ICombatWorld, ICrowdAgents, ICastAreaMarkers
         log.Note(Call.CrowdDrive);
         if (address == nint.Zero)
             return false;
-        if (!Agents.TryGetValue(address, out var agent))
+        // Held as an obstacle until now (it knelt): it walks again from where it is, as CrowdMover re-adds it.
+        if (!Agents.TryGetValue(address, out var agent) || agent.Obstacle)
             Agents[address] = agent = new Agent { Position = position };
         agent.Speed = speed;
         agent.Radius = radius;
@@ -323,6 +324,15 @@ sealed unsafe class FlatWorld : ICombatWorld, ICrowdAgents, ICastAreaMarkers
         floor = point;
         return true;
     }
+
+    // The flat world is floor everywhere, with nothing in the way.
+    public bool TryFloorWithin(Vector3 point, float within, out Vector3 floor)
+    {
+        floor = point;
+        return true;
+    }
+
+    public bool WalkableStraight(Vector3 from, Vector3 to) => true;
 
     public void SetObstacle(nint address, Vector3 position, float radius)
     {
@@ -655,10 +665,39 @@ public class NullLogProxy : DispatchProxy
 /// Random(s), CombatCompanionManager.RandomSource Random(s+1), AggroSeedSource Random(s+2), the
 /// DamageCalculator Random(s+3).
 /// </summary>
+/// <summary>
+/// How close those kneeling (raising, praying) are to the body, every frame they kneel: `-- --kneel-metrics`
+/// (Program.cs). Only observed; the golden files never run it.
+/// </summary>
+sealed class KneelStats
+{
+    public int Frames, Within03, Starts;
+    public double SumBody;
+    public float MaxBody, MinOtherAlly = float.MaxValue, MinOtherKneeler = float.MaxValue;
+
+    public void Add(float toBody)
+    {
+        Frames++;
+        SumBody += toBody;
+        MaxBody = MathF.Max(MaxBody, toBody);
+        if (toBody <= 0.3f + 1e-4f) Within03++;
+    }
+
+    public override string ToString()
+        => Frames == 0 ? "no kneeling frames"
+            : $"{Frames} kneeling frames ({Starts} kneels): to the body mean {SumBody / Frames:F2} m, max {MaxBody:F2} m, " +
+              $"within 0.3 m {100.0 * Within03 / Frames:F1}%; nearest other living ally {(MinOtherAlly == float.MaxValue ? "-" : MinOtherAlly.ToString("F2"))} m, " +
+              $"nearest other kneeler {(MinOtherKneeler == float.MaxValue ? "-" : MinOtherKneeler.ToString("F2"))} m";
+}
+
 sealed unsafe class LoopReplay
 {
     private const float Duration = 30f;
     private const float SnapshotEvery = 2f;
+
+    /// <summary>Set by `-- --kneel-metrics`: every frame, how close those kneeling are to the body.</summary>
+    public static KneelStats? Kneel;
+    private readonly HashSet<uint> kneeling = new();
 
     private readonly LoopScenario scenario;
     private readonly int seed;
@@ -790,6 +829,8 @@ sealed unsafe class LoopReplay
 
             Changes();
             FrameLine();
+            if (Kneel != null)
+                MeasureKneel(Kneel);
             frame++;
         }
         log.Frame = frame;
@@ -837,6 +878,42 @@ sealed unsafe class LoopReplay
     private static string StateOf(Combatant c) => c is CombatCompanion a ? a.AiState.ToString() : ((SimulatedNpc)c).AiState.ToString();
 
     /// <summary>What changed this frame: a target, the state, in reach, a death.</summary>
+    /// <summary>The nearest fallen body (the dead player, a dead ally) to each ally kneeling now, and its neighbours.</summary>
+    private void MeasureKneel(KneelStats stats)
+    {
+        static float Flat(Vector3 a, Vector3 b) => new Vector2(a.X - b.X, a.Z - b.Z).Length();
+        var now = companions.Companions.Where(c => c.State.IsAlive && companions.RuleParts.Exposes(c.SimulatedEntityId)).ToList();
+        foreach (var c in now)
+        {
+            var p = world.At(c.Address).Position;
+            var toBody = float.MaxValue;
+            if (!engine.State.PlayerState.IsAlive)
+                toBody = Flat(p, world.Player.Position);
+            foreach (var o in companions.Companions)
+                if (!o.State.IsAlive)
+                    toBody = MathF.Min(toBody, Flat(p, world.At(o.Address).Position));
+            if (toBody == float.MaxValue)
+                continue;
+            stats.Add(toBody);
+            if (kneeling.Add(c.SimulatedEntityId))
+            {
+                stats.Starts++;
+                if (Environment.GetEnvironmentVariable("KNEEL_DEBUG") == "1")
+                    Console.WriteLine($"  seed {seed} frame {log.Frame} {c.Name} kneels {toBody:F2} m from a body; player alive {engine.State.PlayerState.IsAlive}; nearest ally {companions.Companions.Where(o => o != c && o.State.IsAlive).Select(o => Flat(p, world.At(o.Address).Position)).DefaultIfEmpty(-1f).Min():F2}; to the player {Flat(p, world.Player.Position):F2}; corpses {string.Join(",", companions.Companions.Where(o => !o.State.IsAlive).Select(o => o.Name + ":" + Flat(p, world.At(o.Address).Position).ToString("F2")))}");
+            }
+            foreach (var o in companions.Companions)
+            {
+                if (o == c || !o.State.IsAlive)
+                    continue;
+                var d = Flat(p, world.At(o.Address).Position);
+                stats.MinOtherAlly = MathF.Min(stats.MinOtherAlly, d);
+                if (now.Contains(o))
+                    stats.MinOtherKneeler = MathF.Min(stats.MinOtherKneeler, d);
+            }
+        }
+        kneeling.RemoveWhere(id => now.All(c => c.SimulatedEntityId != id));
+    }
+
     private void Changes()
     {
         foreach (var c in Fighters())

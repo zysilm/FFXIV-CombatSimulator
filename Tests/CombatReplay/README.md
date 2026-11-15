@@ -157,3 +157,13 @@ reached by the engine side's files above (and Tests/CorpseSeizure).
 the `f` progress values are shares now, the `War:` lines' percentages follow, and "taken" is carried off at frame 132
 instead of 114 (3 seizers against 2, then 1, then 0 retainers fill at margin / 4 s instead of 1 s/s); "retreat off" is
 still taken at frame 150 and "never ready" still ends ANNIHILATED. The other 18 files were unchanged.
+
+2026-11-15: `loop-guard-body`, `loop-rescue`, `loop-rule-switch` (and their `.weights.txt`) re-recorded for the gameplay
+change to where the ones raising and praying kneel (`Battle/Rules/KneelSpot.cs`, docs/WAR_GENERATOR.md "跪点"): in reach
+(unchanged), they walk the last bit to a spot 0.25 m from the body and are held there as a crowd obstacle, so the kneel
+emote comes 6–13 frames (about 0.1–0.4 s) later than before and everything after diverges; the other 13 files were unchanged.
+`dotnet run -c Release -- --kneel-metrics` (no golden files) prints, for those three scenarios, how far from the nearest
+fallen body the kneelers are while kneeling (set `KNEEL_DEBUG=1` for one line per kneel, with the distance to the player
+and to every corpse). Before the change: prayer 1.3–1.8 m from the lord's body, raise 1.3–1.5 m; after: 0.25 m, except
+in `loop-rule-switch` where two raises of an ally lying within 0.25 m of the lord's body, while another ally knelt at
+the lord, found no spot 0.8 m clear of that kneeler and knelt where they stood (1.26 and 1.49 m), as before.
