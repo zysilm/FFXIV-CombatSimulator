@@ -33,6 +33,7 @@
     <Compile Include="../../CombatSimulator/Combat/CombatActivityTally.cs" Link="Production/Loop/CombatActivityTally.cs" />
     <Compile Include="../../CombatSimulator/Combat/TargetingService.cs" Link="Production/Loop/TargetingService.cs" />
     <Compile Include="../../CombatSimulator/Combat/CombatRoster.cs" Link="Production/Loop/CombatRoster.cs" />
+    <Compile Include="../../CombatSimulator/Combat/ICorpseQuery.cs" Link="Production/Loop/ICorpseQuery.cs" />
     <Compile Include="../../CombatSimulator/Npcs/SimulatedNpc.cs" Link="Production/Loop/SimulatedNpc.cs" />
     <Compile Include="../../CombatSimulator/Npcs/NpcSpawnRequest.cs" Link="Production/Loop/NpcSpawnRequest.cs" />
     <Compile Include="../../CombatSimulator/Npcs/NpcWeaponClassifier.cs" Link="Production/Loop/NpcWeaponClassifier.cs" />

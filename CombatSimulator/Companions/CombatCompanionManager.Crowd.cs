@@ -95,7 +95,7 @@ public unsafe partial class CombatCompanionManager
 
         // Standing on a corpse: up onto it when it is low enough to step on.
         if (config.NpcCollisionActive &&
-            CorpseSupportHeightProvider?.Invoke(companion.Address, position) is { } support &&
+            corpses.ResolveCorpseTraversalHeight(companion.Address, position) is { } support &&
             support > position.Y && support - position.Y <= CorpseStepLimit)
             position.Y = support;
 

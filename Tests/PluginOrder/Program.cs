@@ -9,16 +9,17 @@
 //       with the same tokens, wherever it lives now.
 //
 // Usage (from this folder):  dotnet run -c Release [-- <old-rev> [<dump-dir>]]
-//   old = CombatSimulator/Plugin*.cs at <old-rev> (default 9ea6cba, the commit before the split), read with git show,
-//         and CombatSimulator/Composition/*.cs when that revision has them (a revision after the split, e.g. 9d089c4,
-//         to check a later stage against it);
+//   old = CombatSimulator/Plugin*.cs at <old-rev>, read with git show, and CombatSimulator/Composition/*.cs when that
+//         revision has them (a revision after the split). Default e50250f: the last feature commit that changed the
+//         build steps (the armor detachment for allies and enemies), after the split; every later revision up to
+//         Refactoring II compares equal to it. The split itself (stage B7) was checked against 9ea6cba, the commit
+//         before it; that revision still runs, but (b) and (d) then also show e50250f (OnNpcDeathRagdoll and
+//         OnCompanionDeathRagdoll strip armour on a KO, and the AllyRevived handler forgets it).
 //   new = CombatSimulator/Plugin*.cs and CombatSimulator/Composition/*.cs in the working tree.
-//   Refactoring II (stage R2-P1) changed the build list on purpose; the changes are listed one by one in
-//   RefactoringII at the end of this file and applied to the old sequence before (b) compares. A module's
-//   "m.Config" (the whole Configuration, handed on explicitly) reads as "config" (its narrow settings view).
-//   Note: against the default revision, (b) and (d) also show the armor detachment for allies and enemies
-//   (e50250f, a feature after the split): OnNpcDeathRagdoll and OnCompanionDeathRagdoll strip armour on a KO,
-//   and the AllyRevived handler forgets it.
+//   Refactoring II (stages R2-P1, R2-P2) changed the build list on purpose; the changes are listed one by one in
+//   RefactoringII at the end of this file and applied to the old sequence before (b) compares (each stage's list
+//   only when the old revision is from before that stage). A module's "m.Config" (the whole Configuration, handed
+//   on explicitly) reads as "config" (its narrow settings view).
 //   Each comparison is made twice: parsed without defines and with DEV_EXPERIMENTAL (the private module's #if blocks).
 //   <dump-dir> receives the extracted sequences (old-*.txt, new-*.txt) for reading. Exit code 0 = everything equal.
 //
@@ -43,7 +44,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
-var oldRev = args.Length > 0 ? args[0] : "9ea6cba";
+var oldRev = args.Length > 0 ? args[0] : "e50250f";
 var dumpDir = args.Length > 1 ? args[1] : null;
 var repo = FindRepoRoot();
 var pluginDir = Path.Combine(repo, "CombatSimulator");
@@ -553,10 +554,31 @@ sealed class Model
 /// enemies' selector and spawner, the other two right before the engine), the engine and the manager are created
 /// with them, and the seven assignments are gone (CombatModule.WireCompanions keeps ResolveNpcTarget). Applied only
 /// when the new side has that shape and the old side has not.
+/// <para>Stage R2-P2 (docs/REFACTOR_PLAN.md §6, the R2-P1 tails): the allies' manager is given the corpse queries
+/// (the corpse module as ICorpseQuery) and "is this player a selected enemy" by constructor, the enemies' AI the
+/// party's positions; the five assignments that handed them over after construction are gone. Applied after
+/// R2-P1's list, only when the new side has the R2-P2 manager and the old side (so edited) has not.</para>
 /// </summary>
 static class RefactoringII
 {
     const string Marker = "new CombatRoster ( config )";
+
+    const string ManagerR2P1 =
+        "new CombatCompanionManager ( objectTable , clientState , config , combatEngine , combatRoster , targeting , ruleParts , animationController , movementBlockHook , targetManager , log )";
+    const string MarkerR2P2 =
+        "new CombatCompanionManager ( objectTable , clientState , config , combatEngine , combatRoster , targeting , ruleParts , corpse , entityId => npcSelector . GetSelectedNpc ( entityId ) != null , animationController , movementBlockHook , targetManager , log )";
+
+    static readonly (string Old, string[] New)[] EditsR2P2 =
+    {
+        (ManagerR2P1, new[] { MarkerR2P2 }),
+        ("new NpcAiController ( combatEngine , animationController , movementBlockHook , config , log , combatModeRouter , npcCorpseFootIkSolver , addr => devExperimental . ControlsNpc ( addr ) || enemyControlController . ControlsNpc ( addr ) || fightingModeController ? . ControlsEnemy ( addr ) == true , telegraphSystem . IsBusy )",
+            new[] { "new NpcAiController ( combatEngine , animationController , movementBlockHook , config , log , combatModeRouter , npcCorpseFootIkSolver , companionManager . CollectPartyPositions , addr => devExperimental . ControlsNpc ( addr ) || enemyControlController . ControlsNpc ( addr ) || fightingModeController ? . ControlsEnemy ( addr ) == true , telegraphSystem . IsBusy )" }),
+        ("assign npcAiController . CollectPartyPositions = companionManager . CollectPartyPositions", Array.Empty<string>()),
+        ("assign companionManager . CorpseSupportHeightProvider = ResolveCorpseTraversalHeight", Array.Empty<string>()),
+        ("assign companionManager . LordBodyPosition = LordBodyPosition", Array.Empty<string>()),
+        ("assign companionManager . BodyPositionOf = BodyPositionOf", Array.Empty<string>()),
+        ("assign companionManager . IsSourceEnemy = entityId => npcSelector . GetSelectedNpc ( entityId ) != null", Array.Empty<string>()),
+    };
 
     static readonly (string Old, string[] New)[] Edits =
     {
@@ -570,7 +592,7 @@ static class RefactoringII
                 "new CombatEngine ( actionDataProvider , damageCalculator , animationController , movementBlockHook , ragdollController , config , npcSelector , combatRoster , targeting , ruleParts , clientState , log )",
             }),
         ("new CombatCompanionManager ( objectTable , clientState , config , combatEngine , animationController , movementBlockHook , targetManager , log )",
-            new[] { "new CombatCompanionManager ( objectTable , clientState , config , combatEngine , combatRoster , targeting , ruleParts , animationController , movementBlockHook , targetManager , log )" }),
+            new[] { ManagerR2P1 }),
         ("assign combatEngine . ResolveExternalEntityAddress = companionManager . ResolveAddress", Array.Empty<string>()),
         ("assign combatEngine . HasLivingCompanions = ( ) => companionManager . HasLivingCompanions", Array.Empty<string>()),
         ("assign combatEngine . OnPlayerDamageDealt = companionManager . RegisterPlayerDamage", Array.Empty<string>()),
@@ -585,15 +607,35 @@ static class RefactoringII
     {
         "ActorsModule.CreateRoster", "ActorsModule.CreateCompanions",
         "CombatModule.CreateEngineAndActionCombat", "CombatModule.WireCompanions",
+        // R2-P2: the assignments moved into the constructors.
+        "ActorsModule.WireActorCallbacks", "CombatModule.CreateEnemyAi",
     };
 
     /// <summary>Applies the listed edits to the old sequence; returns how many did not apply exactly once.</summary>
     public static int Apply(List<string> oldSteps, List<string> newSteps)
     {
-        if (!newSteps.Contains(Marker) || oldSteps.Contains(Marker))
-            return 0;
         var failures = 0;
-        foreach (var (old, replacement) in Edits)
+        if (newSteps.Contains(Marker) && !oldSteps.Contains(Marker))
+        {
+            var failed = ApplyList(Edits, oldSteps);
+            Console.WriteLine($"  (b) Refactoring II R2-P1: {Edits.Length - failed}/{Edits.Length} listed edits applied to the old sequence " +
+                              "(3 objects created before the engine, the engine and the allies' manager created with them, 7 assignments gone)");
+            failures += failed;
+        }
+        if (newSteps.Contains(MarkerR2P2) && !oldSteps.Contains(MarkerR2P2))
+        {
+            var failed = ApplyList(EditsR2P2, oldSteps);
+            Console.WriteLine($"  (b) Refactoring II R2-P2: {EditsR2P2.Length - failed}/{EditsR2P2.Length} listed edits applied to the old sequence " +
+                              "(the allies' manager and the enemies' AI created with what they were handed after, 5 assignments gone)");
+            failures += failed;
+        }
+        return failures;
+    }
+
+    static int ApplyList((string Old, string[] New)[] edits, List<string> oldSteps)
+    {
+        var failures = 0;
+        foreach (var (old, replacement) in edits)
         {
             var at = oldSteps.IndexOf(old);
             if (at < 0 || oldSteps.LastIndexOf(old) != at)
@@ -605,8 +647,6 @@ static class RefactoringII
             oldSteps.RemoveAt(at);
             oldSteps.InsertRange(at, replacement);
         }
-        Console.WriteLine($"  (b) Refactoring II: {Edits.Length - failures}/{Edits.Length} listed edits applied to the old sequence " +
-                          "(3 objects created before the engine, the engine and the allies' manager created with them, 7 assignments gone)");
         return failures;
     }
 }

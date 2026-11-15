@@ -165,6 +165,7 @@ internal sealed class CombatModule
         npcAiController = new NpcAiController(
             combatEngine, animationController, movementBlockHook, config, log,
             combatModeRouter, npcCorpseFootIkSolver,
+            companionManager.CollectPartyPositions,
             // Deferred: fightingModeController is constructed later in this ctor; the
             // AI only queries during framework ticks.
             addr => devExperimental.ControlsNpc(addr) || enemyControlController.ControlsNpc(addr) ||
@@ -175,7 +176,6 @@ internal sealed class CombatModule
         npcAiController.AreaMarkers = enemyAreaMarkers;
         npcAiController.Crowd = crowdMover;
         companionManager.Crowd = crowdMover;
-        npcAiController.CollectPartyPositions = companionManager.CollectPartyPositions;
         npcSpawner.Navmesh = vnavmeshIpc;
         npcSpawner.OnAllySpawnComplete = (npc, request) =>
         {
@@ -186,9 +186,6 @@ internal sealed class CombatModule
         combatEngine.InterruptTelegraphCast = telegraphSystem.TryInterrupt;
         npcCorpseFootIkSolver.CorpseSupportHeightProvider = corpses.ResolveCorpseTraversalHeight;
         enemyControlController.FootIkSolver = npcCorpseFootIkSolver;
-        companionManager.CorpseSupportHeightProvider = corpses.ResolveCorpseTraversalHeight;
-        companionManager.LordBodyPosition = corpses.LordBodyPosition;
-        companionManager.BodyPositionOf = corpses.BodyPositionOf;
         virtualEnemyLookAt = new VirtualEnemyLookAtController(boneTransformService, config, npcSpawner, combatEngine,
             addr => devExperimental.ControlsNpc(addr) || enemyControlController.ControlsNpc(addr) ||
                     fightingModeController?.ControlsEnemy(addr) == true,

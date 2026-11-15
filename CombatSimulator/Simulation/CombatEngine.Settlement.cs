@@ -23,11 +23,10 @@ public partial class CombatEngine
     private sealed class SettlementHost(CombatEngine engine) : IHitSettlementHost
     {
         public SimulationState State => engine.State;
-        public BattleRuleSet? RuleParts => engine.RuleParts;
+        // The engine is given the set before the allies' controller binds its context: until then (no hit is
+        // settled in that window today) a lethal blow is not put to the rules, rather than to unbound parts.
+        public BattleRuleSet? RuleParts => engine.RuleParts.IsBound ? engine.RuleParts : null;
         public ActionData? GetActionData(uint actionId) => engine.actionDataProvider.GetActionData(actionId);
-        public bool EnableCriticalHits => engine.EnableCriticalHits;
-        public bool EnableDirectHits => engine.EnableDirectHits;
-        public float DamageMultiplier => engine.DamageMultiplier;
 
         public List<SimulatedEntityState> GetHostileTargets(SimulatedEntityState source) => engine.GetHostileTargets(source);
         public Vector3 GetEntityPosition(SimulatedEntityState entity) => engine.GetEntityPosition(entity);

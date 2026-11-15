@@ -70,9 +70,9 @@ sealed class RecordingHost : IHitSettlementHost
         return data;
     }
 
-    public bool EnableCriticalHits => Crit;
-    public bool EnableDirectHits => DirectHit;
-    public float DamageMultiplier => Multiplier;
+    // Crit, DirectHit and Multiplier are still drawn and written on each ally event (so the event stream and its
+    // lines stay as recorded), but since Refactoring II stage R2-P2 the settlement no longer reads them: an ally's
+    // attack without a potency goes by the action's bare potency, as an enemy's does (one set of numbers).
 
     // CombatEngine.GetHostileTargets.
     public List<SimulatedEntityState> GetHostileTargets(SimulatedEntityState source)

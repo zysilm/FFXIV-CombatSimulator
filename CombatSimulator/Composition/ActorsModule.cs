@@ -93,7 +93,8 @@ internal sealed unsafe class ActorsModule
     public void CreateCompanions(IObjectTable objectTable, IClientState clientState, ITargetManager targetManager)
     {
         companionManager = new CombatCompanionManager(
-            objectTable, clientState, config, combatEngine, combatRoster, targeting, ruleParts, animationController,
+            objectTable, clientState, config, combatEngine, combatRoster, targeting, ruleParts,
+            corpse, entityId => npcSelector.GetSelectedNpc(entityId) != null, animationController,
             movementBlockHook, targetManager, log);
     }
 
@@ -123,8 +124,6 @@ internal sealed unsafe class ActorsModule
     /// <summary>What the allies' manager and the spawner report back: spawned, died, revived, failed.</summary>
     public void WireActorCallbacks(IChatGui chatGui)
     {
-        companionManager.IsSourceEnemy = entityId => npcSelector.GetSelectedNpc(entityId) != null;
-
         // The allies' notifications are CombatEvents slots (stage B9).
         combatEngine.Events.AllySpawned = companion =>
         {

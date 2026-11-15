@@ -52,10 +52,12 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
         IAttackSink attackSink,
         ICombatAiSettings config,
         IPluginLog log,
+        Action<List<Vector3>>? collectPartyPositions,
         Func<nint, bool>? isExternallyControlled = null,
         Func<uint, bool>? isTelegraphBusy = null)
         : base(combatEngine, world, attackSink, config, log, isTelegraphBusy)
     {
+        this.collectPartyPositions = collectPartyPositions;
         this.isExternallyControlled = isExternallyControlled ?? (_ => false);
         stepSink = new EnemyStepSink(this);
 
@@ -65,8 +67,11 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
 
     private readonly List<SimulatedNpc> crowdDriven = new();
 
-    /// <summary>Fills a list with where the living party stands (player and companions); sentries watch for them.</summary>
-    public Action<List<Vector3>>? CollectPartyPositions { private get; set; }
+    /// <summary>
+    /// Fills a list with where the living party stands (player and companions); sentries watch for them. Given by
+    /// constructor (the allies' controller's <c>CollectPartyPositions</c>); null: the player alone.
+    /// </summary>
+    private readonly Action<List<Vector3>>? collectPartyPositions;
 
     /// <summary>Where telegraphed casts register their snapshotted area (null = none drawn).</summary>
     public ICastAreaMarkers? AreaMarkers { private get; set; }
@@ -345,8 +350,8 @@ public unsafe partial class NpcAiController : CombatantController<SimulatedNpc>
             if (!gathered)
             {
                 partyPositions.Clear();
-                if (CollectPartyPositions != null)
-                    CollectPartyPositions(partyPositions);
+                if (collectPartyPositions != null)
+                    collectPartyPositions(partyPositions);
                 else if (world.LocalPlayer is { } player && combatEngine.State.PlayerState.IsAlive)
                     partyPositions.Add(player.Position);
                 gathered = true;

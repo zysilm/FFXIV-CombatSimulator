@@ -51,7 +51,7 @@ public sealed class BattleRuleSet
     /// <summary>
     /// The parts before their context exists: the plugin builds the set before the engine (which is given it
     /// by constructor) and the allies' controller binds the context (<see cref="Bind"/>) when it is built.
-    /// Nothing asks the set before that.
+    /// Nothing asks the set before that; the engine's hit settlement checks <see cref="IsBound"/>.
     /// </summary>
     public BattleRuleSet(IBattleRule[] parts)
     {
@@ -70,6 +70,9 @@ public sealed class BattleRuleSet
     }
 
     public BattleContext Context { get; private set; } = null!;
+
+    /// <summary>The context has been given (<see cref="Bind"/>); before that nothing may ask the parts.</summary>
+    public bool IsBound => Context != null;
 
     /// <summary>Every part, in order.</summary>
     public IReadOnlyList<IBattleRule> Parts => parts;

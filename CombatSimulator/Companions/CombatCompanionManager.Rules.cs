@@ -28,8 +28,8 @@ public unsafe partial class CombatCompanionManager
         public IReadOnlyList<CombatCompanion> All => owner.companions;
         public CombatCompanion? Get(uint allyId) => owner.GetCompanion(allyId);
         public bool CanAct(CombatCompanion ally) => CanRescue(ally);
-        public Vector3? LordBodyPosition() => owner.LordBodyPosition?.Invoke();
-        public Vector3? BodyPositionOf(nint address) => owner.BodyPositionOf?.Invoke(address);
+        public Vector3? LordBodyPosition() => owner.corpses.LordBodyPosition();
+        public Vector3? BodyPositionOf(nint address) => owner.corpses.BodyPositionOf(address);
         public bool LordCorpseCaptured => owner.LordCorpseCaptured;
         public IReadOnlySet<uint> Seizers => owner.LordSeizers;
         public ICrowdAgents? Crowd => owner.Crowd;

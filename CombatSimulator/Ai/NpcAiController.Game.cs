@@ -3,6 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 using System;
+using System.Collections.Generic;
+using System.Numerics;
 using CombatSimulator.Animation;
 using CombatSimulator.Combat;
 using CombatSimulator.Npcs;
@@ -24,6 +26,7 @@ public unsafe partial class NpcAiController
         IPluginLog log,
         CombatSimulator.ActionCombat.CombatModeRouter combatModeRouter,
         NpcCorpseFootIkSolver footIkSolver,
+        Action<List<Vector3>>? collectPartyPositions,
         Func<nint, bool>? isExternallyControlled = null,
         Func<uint, bool>? isTelegraphBusy = null)
         : this(
@@ -32,6 +35,7 @@ public unsafe partial class NpcAiController
             new GameAttackSink(combatEngine, combatModeRouter),
             config,
             log,
+            collectPartyPositions,
             isExternallyControlled,
             isTelegraphBusy)
     {

@@ -375,6 +375,18 @@ sealed unsafe class FlatWorld : ICombatWorld, ICrowdAgents, ICastAreaMarkers
 }
 
 /// <summary>
+/// No corpses in the flat world (the README: "No corpses to stand on"): no body lies anywhere, no surface to
+/// step on, as when the manager's corpse queries were left unset before stage R2-P2 injected them.
+/// </summary>
+sealed class NoCorpses : ICorpseQuery
+{
+    public static readonly NoCorpses Instance = new();
+    public Vector3? BodyPositionOf(nint address) => null;
+    public Vector3? LordBodyPosition() => null;
+    public float? ResolveCorpseTraversalHeight(nint actorAddress, Vector3 position) => null;
+}
+
+/// <summary>
 /// The engine as the loops see it (ICombatLoopEngine): the real SimulationState and BattleRules; the
 /// enemies' target from the companion manager (as Plugin.cs wires ResolveNpcTarget); positions from the flat
 /// world (as CombatEngine.GetEntityPosition reads them); action data only for the MP prices of the kits.
@@ -747,13 +759,13 @@ sealed unsafe class LoopReplay
         var ruleParts = new CombatSimulator.Battle.Rules.BattleRuleSet(CombatSimulator.Battle.Rules.BattleRuleFactory.CreateAll());
         engine.ResolveExternalEntityAddress = roster.AddressOf;
         engine.HasLivingCompanions = () => roster.HasLivingAllies;
-        companions = new CombatCompanionManager(null!, null!, settings, engine, roster, targeting, ruleParts, world, attacks, pluginLog);
+        companions = new CombatCompanionManager(null!, null!, settings, engine, roster, targeting, ruleParts, NoCorpses.Instance,
+            _ => false, world, attacks, pluginLog);
         engine.ResolveNpcTarget = companions.SelectEnemyTarget;
         attacks.Companions = companions;
-        enemiesAi = new NpcAiController(engine, world, attacks, settings, pluginLog, null, attacks.IsBusy);
+        enemiesAi = new NpcAiController(engine, world, attacks, settings, pluginLog, companions.CollectPartyPositions, null, attacks.IsBusy);
         enemiesAi.Crowd = world;
         companions.Crowd = world;
-        enemiesAi.CollectPartyPositions = companions.CollectPartyPositions;
         enemiesAi.RandomSource = new Random(seed);
         companions.RandomSource = new Random(seed + 1);
         companions.AggroSeedSource = new Random(seed + 2);

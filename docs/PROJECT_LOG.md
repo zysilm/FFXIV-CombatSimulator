@@ -275,14 +275,20 @@
 | 实现者 | R2-A6-1 组件模式与共享上下文；先拆水、头发、武器接触网格 | 库仓库；插件只建临时 worktree | 进行中（2026-11-15） |
 | 实现者 | R2-P1 插件 B8 窄设置接口 + B7 构造注入 | 插件主检出 `CombatSimulator/`、`Tests/` | 已提交 |
 | 审查者 | R2-P1 独立复查 | 只读 | 可合并（低级意见 4 条，均非行为变化） |
+| 实现者 | R2-P2 小问题与 P1 尾巴 | 插件主检出 | 已提交（协调者复查） |
+| 实现者 | R2-A6-1 → 见上 | — | 实现完成，独立审查中 |
 
 ### 子代理报告要点
+
+- 2026-11-15 · R2-P2 · 完成。① 敌人打队友时日志写队友名（打玩家仍是 "→ You"）；② 队友 potency 0 走完整公式那条路径在生产中走不到（克隆队友固定威力、收编 NPC 只收 Potency>0 的技能、怪物技能 ≥1、普攻威力都非 0），已删，敌我同一条结算规则；③ 删 `HasActiveCompanions`；④ 库内本就读每步前的设置副本，插件唯一一处（`DismembermentController` 交给库的接触预算委托）改读副本；⑤ `BattleRuleSet.IsBound`（未绑定时结算拿到 null）、DPS 窗口常量合一、`ICorpseQuery` 移到 `Combat/` 并构造注入队友管理器（删 4 个后赋值属性）、`NpcAiController` 构造注入 `collectPartyPositions`、PluginOrder 默认基线改 `e50250f`。检查：两种构建 0 错误；PluginOrder 对 e50250f/9d089c4/ddd210b ALL EQUAL（R2-P2 清单 7/7）；CombatReplay 重录 `settlement.txt` 后 19/19（差异来源逐项核实：只来自 ①② 的 harness 事件，② 的 p0 事件生产中走不到）；RagdollReplay 97/97；其余全过。遗留：界面“Damage Multiplier”及暴击/直击开关只作用于玩家自己的技能，帮助文字却写“所有攻击”（待用户定）；`NpcCorpseFootIkSolver.CorpseSupportHeightProvider` 仍后赋值。
 
 - 2026-11-15 · R2-P1 · 完成，审查可合并。新 `Combat/CombatRoster.cs`；选目标服务、规则组在引擎之前创建并构造注入，`CombatEngine.RuleParts` 只读；引擎 7 个后赋值委托删 6 个，保留 `ResolveNpcTarget`（敌人选目标读队友管理器自身状态，搬走只换环）；窄设置接口在 `Configuration.SettingsViews.cs`、`Action/ActionCombatSettings.cs`、`Gui/OverlaySettings.cs`、`Composition/ModuleSettings.cs`，读写设置的系统与 Camera/Presentation/Combat 模块里的写设置步骤仍拿整个配置。检查：两种构建 0 错误；PluginOrder 对 `9d089c4` ALL EQUAL（新增 10 项构造顺序改动清单，每项须恰好命中一次）；CombatReplay 19/19；CorpseSeizure 95；其余全过。审查低级意见：规则组在队友管理器 `Bind` 前已交给引擎（`HitSettlement` 的判空不再兜底，目前没有这种路径）；`RecentDpsWindowSeconds` 两份；CombatReplay 用假引擎，不覆盖生产引擎直调选目标那几行；PluginOrder 默认基线 9ea6cba 因 e50250f 已不相等。仍是后赋值的：`LordBodyPosition`、`BodyPositionOf`、`CorpseSupportHeightProvider`（设计打算由 `ICorpseQuery` 注入）、`IsSourceEnemy`、`NpcAiController.CollectPartyPositions`。
 
 - 2026-11-15 · R2-L1 · 完成。库源码移到 `src/AdvancedRagdoll/`（34 个 partial 进 `Ragdoll/`），库代码只改注释；19 处外链改指库自己的 `docs/ARCHITECTURE.md`；新增 `tests/WeaponDropGolden`（4 个合成场景，逐帧逐字节对金样，金样在搬迁前生成，跨 6 个进程一致；改一个常数 0.0001 在第 22 帧被抓到）；回放 97/97。遗留：金样可能只在 Windows 上逐位一致（CI 放 windows-latest，待看 runner 结果）；库里仍有几处注释提插件类名、插件路径和命令；`WeaponMeshGeometry.Fit` 用 `HashSet<Vector3>` 收顶点，实测稳定。
 
 ### 待用户裁决
+
+- “Damage Multiplier”和暴击/直击开关只作用于玩家自己的技能（敌人、队友从来不吃）：改成作用于所有人，还是改帮助文字说明只对玩家？（R2-P2 发现）
 
 - 哪些功能的物理部分进公开的库。
 

@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using CombatSimulator.Animation;
+using CombatSimulator.Combat;
 using CombatSimulator.Companions;
 using CombatSimulator.Core;
 using CombatSimulator.Integration;

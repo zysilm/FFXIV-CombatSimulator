@@ -67,7 +67,6 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
     public const int MaxCompanionCap = 50;
 
     private const int MaxPendingFrames = 120;
-    private const float RecentDpsWindowSeconds = 8.0f;
     private const float FollowDistance = 3.0f;
     private const float FollowStopDistance = 0.6f;
     private const float CombatAnchorRelocateDistance = 10.0f;
@@ -104,7 +103,6 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
     }
     public Func<bool>? SuspendCombat { get; set; }
     public int PendingCount => pendingSpawns.Count + spawnQueue.Count;
-    public bool HasActiveCompanions => config.EnableCombatCompanions && companions.Any(c => c.IsSpawned && c.State.IsAlive);
     public bool HasLivingCompanions => roster.HasLivingAllies;
 
     // What the allies' side reports (stage B9: slots of the engine's CombatEvents; these names read and
@@ -112,15 +110,17 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
     public Action<CombatCompanion>? OnCompanionSpawnComplete { get => combatEngine.Events.AllySpawned; set => combatEngine.Events.AllySpawned = value; }
     public Action<nint>? OnCompanionDeathRagdoll { get => combatEngine.Events.AllyDied; set => combatEngine.Events.AllyDied = value; }
     public Action<string>? OnSpawnError { get => combatEngine.Events.AllySpawnError; set => combatEngine.Events.AllySpawnError = value; }
-    public Func<uint, bool>? IsSourceEnemy { get; set; }
-    /// <summary>Optional world-space surface height for walking over active corpses.</summary>
-    public Func<nint, Vector3, float?>? CorpseSupportHeightProvider { private get; set; }
+    // Whether a player seen nearby is one of the selected enemies (then it is not cloned into the party).
+    private readonly Func<uint, bool> isSourceEnemy;
+    // The bodies on the ground: where the lord's and a fallen friend's lie, and the corpse surface underfoot.
+    private readonly ICorpseQuery corpses;
 
     /// <summary>
     /// The manager over its seams (the plugin's constructor is in CombatCompanionManager.Game.cs). The
     /// roster (whose allies' list this manager keeps), who fights whom, and the battle's rule parts are
     /// built before the engine, which is given them too; the rule parts get their context here, the
-    /// allies being this manager.
+    /// allies being this manager. The bodies on the ground and whether a player is a selected enemy are
+    /// asked of <paramref name="corpses"/> and <paramref name="isSourceEnemy"/>.
     /// </summary>
     public CombatCompanionManager(
         IObjectTable objectTable,
@@ -130,6 +130,8 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
         CombatRoster roster,
         TargetingService targeting,
         BattleRuleSet ruleParts,
+        ICorpseQuery corpses,
+        Func<uint, bool> isSourceEnemy,
         ICombatWorld world,
         IAttackSink attackSink,
         IPluginLog log)
@@ -140,6 +142,8 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
         this.roster = roster;
         companions = roster.AllyList;
         this.targeting = targeting;
+        this.corpses = corpses;
+        this.isSourceEnemy = isSourceEnemy;
         stepSink = new AllyStepSink(this);
         ruleParts.Bind(new BattleContext(combatEngine.Rules, combatEngine, world, new RuleAllies(this)));
         this.ruleParts = ruleParts;
@@ -244,7 +248,7 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
                 continue;
             if (player.Address == nint.Zero)
                 continue;
-            if (IsSourceEnemy?.Invoke(player.EntityId) == true)
+            if (isSourceEnemy(player.EntityId))
                 continue;
             if (ShouldLeaveVisiblePlayerForEnemySide(player.EntityId))
                 continue;
@@ -366,7 +370,7 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
             return;
 
         companion.RecentDamage += Math.Max(0, damage);
-        companion.RecentDps = Math.Max(companion.RecentDps, companion.RecentDamage / RecentDpsWindowSeconds);
+        companion.RecentDps = Math.Max(companion.RecentDps, companion.RecentDamage / TargetingService.RecentDpsWindowSeconds);
     }
 
     /// <summary>
@@ -540,7 +544,7 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
                 continue;
             if (player.EntityId >= SimulatedEntityIdFloor)
                 continue;
-            if (IsSourceEnemy?.Invoke(player.EntityId) == true)
+            if (isSourceEnemy(player.EntityId))
                 continue;
             if (ShouldLeaveVisiblePlayerForEnemySide(player.EntityId))
                 continue;
@@ -1318,9 +1322,9 @@ public unsafe partial class CombatCompanionManager : CombatantController<CombatC
             return;
         }
 
-        var decayPerSecond = companion.RecentDamage / RecentDpsWindowSeconds;
+        var decayPerSecond = companion.RecentDamage / TargetingService.RecentDpsWindowSeconds;
         companion.RecentDamage = Math.Max(0, companion.RecentDamage - decayPerSecond * deltaTime);
-        companion.RecentDps = companion.RecentDamage / RecentDpsWindowSeconds;
+        companion.RecentDps = companion.RecentDamage / TargetingService.RecentDpsWindowSeconds;
     }
 
     private void Despawn(CombatCompanion companion)
