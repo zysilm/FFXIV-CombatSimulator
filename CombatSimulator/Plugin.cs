@@ -385,9 +385,9 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             }
             devExperimental.OnPlayerDeath(addr);
 
-            // Enemy Control takes over the killer (one enemy), in the battle's war tick: at once, or
-            // under Warring States with Retreat once nobody is left fighting over the lord's body.
-            battleModule.OnLordFell(combatEngine.LastPlayerKillerAddress);
+            // Remember the killer: Enemy Control takes over one enemy only once the battle is lost
+            // (Battle/KillerPossession.cs, the war tick), never while the fight is undecided.
+            battleModule.OnLordFell(combatEngine.LastPlayerKillerEntityId);
         };
 
         safetyDevModule.CreateHookSafetyChecker(pluginInterface);
@@ -820,7 +820,12 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
                 return;
             }
 
-            if (PrivateDirectorActive) return;
+            if (PrivateDirectorActive)
+            {
+                // A director drives the battle now: no killer is taken over after it ends.
+                battleModule.CancelKillerPossession();
+                return;
+            }
             mapEnemyController.Tick(deltaTime);
             combatEngine.Tick(deltaTime);
             corpseModule.ProcessPendingNpcRagdolls(deltaTime);

@@ -34,6 +34,8 @@ internal sealed unsafe class BattleModule
     private readonly WarBanner warBanner = new();
     private CorpseSeizure<SimulatedNpc> corpseSeizure = null!;
     private bool outcomeShown;
+    // The outcome shown was a defeat (the first word stands): Enemy Control may take over an enemy only then.
+    private bool battleLost;
 
     public BattleModule(PluginModules modules) => m = modules;
 
@@ -96,6 +98,7 @@ internal sealed unsafe class BattleModule
         if (outcomeShown)
             return;
         outcomeShown = true;
+        battleLost = !playerWon;
 
         if (!config.ShowResultBanner)
             return;
@@ -108,53 +111,44 @@ internal sealed unsafe class BattleModule
     {
         corpseSeizure.Reset();
         outcomeShown = false;
+        battleLost = false;
         warBanner.Hide();
-        killerToPossess = nint.Zero;
+        killerPossession.Cancel();
     }
 
-    // Enemy Control's "On death: Control killer": the killer, remembered when the lord falls and taken
-    // over in the war tick once nobody is left fighting over the lord's body (Warring States with
-    // Retreat; every other rule at once). A body that is carried off is the seizer's to hold
-    // (CorpseSeizure.SeizeBody), so the killer is then let go. One enemy, nothing else touched.
-    private nint killerToPossess;
+    // Enemy Control's "On death: Control killer" (Battle/KillerPossession.cs): the killer, remembered by its
+    // entity id when the lord falls and taken over in the war tick once the battle is lost (every rule: plain,
+    // Spring and Autumn, Warring States). One enemy, nothing else touched.
+    private KillerPossession<SimulatedNpc>? killerPossessionField;
+    private KillerPossession<SimulatedNpc> killerPossession => killerPossessionField ??= new(new KillerPossessionWorld(this));
 
-    /// <summary>The player (the lord) has fallen to <paramref name="killerAddress"/> (CombatEvents.PlayerDied).</summary>
-    public void OnLordFell(nint killerAddress)
+    /// <summary>The player (the lord) has fallen to the enemy with this id (CombatEvents.PlayerDied); decided in the war tick.</summary>
+    public void OnLordFell(uint killerEntityId) => killerPossession.OnLordFell(killerEntityId);
+
+    /// <summary>Something else drives the battle now (a private director): no killer is taken over later.</summary>
+    public void CancelKillerPossession() => killerPossession.Cancel();
+
+    private sealed class KillerPossessionWorld(BattleModule plugin) : IKillerPossessionWorld<SimulatedNpc>
     {
-        if (!config.EnemyControlControlKiller)
-            return;
-        // Decided in the war tick of this same frame (after the engine has put the lord down).
-        killerToPossess = killerAddress;
-        killerPossessionWaitLogged = false;
-    }
+        public bool ControlKillerEnabled => plugin.config.EnemyControlControlKiller;
+        public bool LordAlive => plugin.combatEngine.State.PlayerState.IsAlive;
+        public bool IsControlling => plugin.enemyControlController.IsActive;
+        public bool BodySeized => plugin.corpseSeizure.BodySeized;
+        public bool BattleLost => plugin.battleLost;
 
-    private bool killerPossessionWaitLogged;
-
-    private void TickKillerPossession()
-    {
-        if (killerToPossess == nint.Zero)
-            return;
-        if (enemyControlController.IsActive || corpseSeizure.BodySeized)
+        public SimulatedNpc? FindEnemy(uint entityId)
         {
-            killerToPossess = nint.Zero;
-            return;
-        }
-        if (companionManager.RuleParts.SuppressesKillerPossession())
-        {
-            if (!killerPossessionWaitLogged)
-                log.Info("EnemyControl: the lord's body is fought over; nobody takes it yet.");
-            killerPossessionWaitLogged = true;
-            return;
+            foreach (var npc in plugin.npcSelector.SelectedNpcs)
+                if (npc.SimulatedEntityId == entityId)
+                    return npc;
+            return null;
         }
 
-        var killer = m.Actors.FindNpcByAddress(killerToPossess);
-        killerToPossess = nint.Zero;
-        if (killer == null || !killer.IsAlive)
-        {
-            log.Info("EnemyControl: no valid killer to control.");
-            return;
-        }
-        enemyControlController.ControlKiller(killer);
+        public bool IsLiveAndSame(SimulatedNpc npc, uint entityId)
+            => npc.IsAlive && npc.BattleChara != null && EnemyControlController.IsLiveObject(npc.Address, entityId);
+
+        public void TakeControl(SimulatedNpc npc) => plugin.enemyControlController.ControlKiller(npc);
+        public void Info(string text) => plugin.log.Info(text);
     }
 
     /// <summary>A hit landed (<c>CombatEvents.DamageLanded</c>): a seizer struck at the lord's body knocks the seizing back.</summary>
@@ -180,7 +174,7 @@ internal sealed unsafe class BattleModule
     public void TickWar(float deltaTime)
     {
         companionManager.RuleParts.TickAfterEngine(deltaTime);
-        TickKillerPossession();
+        killerPossession.Tick();
     }
 
     public void DrawWar() => warBanner.Draw();
@@ -230,6 +224,7 @@ internal sealed unsafe class BattleModule
         public void Info(string text) => plugin.log.Info(text);
         public void Warning(string text) => plugin.log.Warning(text);
 
+        public bool TakesOverSeizer => plugin.config.EnemyControlControlKiller;
         public bool BodyCanBeHeld => plugin.config.EnableRagdoll && plugin.ragdollController.IsActive;
         public bool IsControlling => plugin.enemyControlController.IsActive;
         public void TakeControl(SimulatedNpc npc) => plugin.enemyControlController.ControlKiller(npc);

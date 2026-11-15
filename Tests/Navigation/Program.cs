@@ -473,6 +473,21 @@ void ReachableSpots()
     Console.WriteLine($"      in a wall {inWall} -> {besideWall} ({Flat(inWall, besideWall):F2} m)");
     Check(Walkable(besideWall) && Flat(inWall, besideWall) < 1.5f, "wall: not just beside it");
 
+    // A re-join looks only so far up and down (CrowdMover: 20 m sideways, 12 m vertical): 4 m under the floor with
+    // 1 m vertical finds nothing, however far it looks sideways (the polygons' search bounds are a little taller than the floor).
+    Check(!NavMeshBuild.NearestOnPiece(query, only, new Vector3(-10, -4f, -20), 20f, out _, maxVertical: 1f), "maxVertical: found a floor 4 m above");
+    Check(NavMeshBuild.NearestOnPiece(query, only, new Vector3(-10, -4f, -20), 20f, out _, maxVertical: 12f), "maxVertical 12: no floor 4 m above");
+
+    // The piece under the player (NavMeshService: the reachable ground, looked for again while the player is off it).
+    var anyPolygon = new NavMeshBuild.AnyPolygonFilter();
+    var playerPieceId = pieces.PieceOf[player.Ref];
+    Check(NavMeshBuild.PieceUnder(query, pieces, anyPolygon, new Vector3(0, 1f, -15), 2.5f) == playerPieceId, "standing (1 m up, a jump): not the player's piece");
+    Check(NavMeshBuild.PieceUnder(query, pieces, anyPolygon, new Vector3(0, 10f, -15), 2.5f) == -1, "10 m in the air (flying): a piece was found");
+    var islandPiece = NavMeshBuild.PieceUnder(query, pieces, anyPolygon, onIsland, 2.5f);
+    Check(islandPiece >= 0 && islandPiece != playerPieceId, "on the island: not its own piece");
+    Check(NavMeshBuild.PieceUnder(query, pieces, anyPolygon, new Vector3(float.NaN, 0, 0), 2.5f) == -1, "NaN: a piece was found");
+    Console.WriteLine($"      piece under the player {playerPieceId} ({pieces.Members[playerPieceId].Count} polygons), on the island {islandPiece} ({pieces.Members[islandPiece].Count} polygons), in the air none");
+
     // The search stops at its radius: nothing reachable within 1 m of the yard's middle.
     Check(!NavMeshBuild.NearestOnPiece(query, only, inYard, 1f, out _), "yard: found reachable ground within 1 m");
     // Nonsense in, nothing out.

@@ -159,7 +159,10 @@ public interface ICombatLoopEngine
 public interface ICrowdAgents
 {
     bool Ready { get; }
-    bool Drive(nint address, Vector3 position, float radius, float speed, Vector3? goal);
+    /// <param name="newToBattle">First time this combatant joins the crowd since it was spawned: one off the ground the party
+    /// can reach is put on the nearest of it however far (the whole mesh); later re-joins (released from control,
+    /// revived) only from close by.</param>
+    bool Drive(nint address, Vector3 position, float radius, float speed, Vector3? goal, bool newToBattle = false);
     bool TrySnapToFloor(Vector3 point, out Vector3 floor);
     void SetObstacle(nint address, Vector3 position, float radius);
     bool TryGetMotion(nint address, out Vector3 position, out Vector3 velocity);
@@ -175,6 +178,12 @@ public interface ICrowdAgents
     /// ground connected to where the player stands), searched outward from it; false when there is none.
     /// </summary>
     bool TryReachableSpot(Vector3 point, float within, out Vector3 spot);
+
+    /// <summary>
+    /// Whether the crowd can tell what the party can reach (the player was on the mesh when it was built, or has
+    /// stood on it since); while not, <see cref="TryReachableSpot"/> finds nothing.
+    /// </summary>
+    bool CanJudgeReach { get; }
 }
 
 /// <summary>Where a telegraphed cast's area is drawn (implemented by ActionCombat.EnemyAreaMarkers).</summary>

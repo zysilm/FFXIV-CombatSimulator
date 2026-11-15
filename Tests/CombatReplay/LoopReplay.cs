@@ -304,7 +304,7 @@ sealed unsafe class FlatWorld : ICombatWorld, ICrowdAgents, ICastAreaMarkers
 
     public bool Ready => true;
 
-    public bool Drive(nint address, Vector3 position, float radius, float speed, Vector3? goal)
+    public bool Drive(nint address, Vector3 position, float radius, float speed, Vector3? goal, bool newToBattle = false)
     {
         log.Note(Call.CrowdDrive);
         if (address == nint.Zero)
@@ -334,11 +334,14 @@ sealed unsafe class FlatWorld : ICombatWorld, ICrowdAgents, ICastAreaMarkers
 
     public bool WalkableStraight(Vector3 from, Vector3 to) => true;
 
-    // Every point of the flat world can be walked to.
+    // Every point of the flat world can be walked to (unless a case says the crowd cannot tell: the player off
+    // the mesh when it was built).
+    public bool CanJudgeReach { get; set; } = true;
+
     public bool TryReachableSpot(Vector3 point, float within, out Vector3 spot)
     {
         spot = point;
-        return true;
+        return CanJudgeReach;
     }
 
     public void SetObstacle(nint address, Vector3 position, float radius)

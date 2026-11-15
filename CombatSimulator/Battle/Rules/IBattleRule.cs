@@ -20,10 +20,10 @@ namespace CombatSimulator.Battle.Rules;
 /// <remarks>
 /// Refactor stage B5 wired the hooks the allies' controller calls (where it called its Lord and Rescue
 /// code); stage B6 the engine side: <see cref="TickAfterEngine"/> (the plugin's war tick, after the engine),
-/// <see cref="OnLethalBlow"/> (the engine's hit settlement), <see cref="SuppressesKillerPossession"/> (the
-/// player's death) and <see cref="DescribeOutcome"/> (the result banner). Those four keep the old code's
-/// reach (see <see cref="BattleRuleSet"/>): the lethal blow and the killer are asked of the composition as the
-/// old code read the switches; the tick and the banner's words go to every part, as the old code ran the
+/// <see cref="OnLethalBlow"/> (the engine's hit settlement) and <see cref="DescribeOutcome"/> (the result
+/// banner). Those keep the old code's reach (see <see cref="BattleRuleSet"/>): the lethal blow is asked of the
+/// composition as the old code read the switches (the killer's possession was a hook too until 2026-11-15, when
+/// Enemy Control became one rule for every battle: Battle/KillerPossession.cs); the tick and the banner's words go to every part, as the old code ran the
 /// seizure and worded the banner whatever the switches said by then.
 /// </remarks>
 public interface IBattleRule
@@ -97,9 +97,6 @@ public interface IBattleRule
     /// </summary>
     LethalBlow OnLethalBlow(BattleContext ctx, SimulatedEntityState victim, Combatant by, bool primary);
 
-    /// <summary>After the player dies, Enemy Control waits before taking over the killer, asked every frame (composed parts, any).</summary>
-    bool SuppressesKillerPossession(BattleContext ctx);
-
     /// <summary>
     /// The banner's title and reason, or null: the earlier parts' words stand. Every part is asked, in order,
     /// and the last answer stands: the base part words every battle, a part that ends a battle its own way
@@ -169,6 +166,5 @@ public abstract class BattleRule : IBattleRule
     public virtual string? StatusWord(BattleContext ctx, SimulatedEntityState who) => null;
     public virtual void TickAfterEngine(BattleContext ctx, float deltaTime) { }
     public virtual LethalBlow OnLethalBlow(BattleContext ctx, SimulatedEntityState victim, Combatant by, bool primary) => LethalBlow.Default;
-    public virtual bool SuppressesKillerPossession(BattleContext ctx) => false;
     public virtual OutcomeText? DescribeOutcome(BattleContext ctx, bool playerWon) => null;
 }

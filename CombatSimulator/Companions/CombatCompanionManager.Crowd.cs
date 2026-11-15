@@ -88,8 +88,9 @@ public unsafe partial class CombatCompanionManager
             return false;
 
         var speed = MoveSpeedOf(companion);
-        if (!crowd.Drive(companion.Address, world.PositionOf(companion), HitboxOf(companion), speed, goal))
+        if (!crowd.Drive(companion.Address, world.PositionOf(companion), HitboxOf(companion), speed, goal, newToBattle: !companion.JoinedCrowd))
             return false;
+        companion.JoinedCrowd = true;
         if (!crowd.TryGetMotion(companion.Address, out var position, out var velocity))
             return true;
 

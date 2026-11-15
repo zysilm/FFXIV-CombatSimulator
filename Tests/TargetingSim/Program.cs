@@ -544,6 +544,7 @@ sealed class Sim
         public void BattleLog(string text) { }
         public void Info(string text) { }
         public void Warning(string text) { }
+        public bool TakesOverSeizer => false;
         public bool BodyCanBeHeld => false;
         public bool IsControlling => false;
         public void TakeControl(Actor npc) { }

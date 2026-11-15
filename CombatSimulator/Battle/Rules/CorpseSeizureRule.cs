@@ -13,9 +13,8 @@ namespace CombatSimulator.Battle.Rules;
 /// count at the body, carrying it off) is <see cref="CorpseSeizure{TNpc}"/>, built by the plugin over the
 /// game and handed to this part (<see cref="Seizure"/>), which ticks it after the engine
 /// (<see cref="IBattleRule.TickAfterEngine"/>, every frame whatever the switches, as the plugin's war tick
-/// did). The body carried off is the battle lost in disgrace (<see cref="IBattleRule.DescribeOutcome"/>), and
-/// while the body is fought over the killer is not possessed when the lord falls
-/// (<see cref="IBattleRule.SuppressesKillerPossession"/>). The seizers' target choice: the one standing in
+/// did). The body carried off is the battle lost in disgrace (<see cref="IBattleRule.DescribeOutcome"/>); its
+/// seizer is the enemy Enemy Control takes over (Battle/KillerPossession.cs). The seizers' target choice: the one standing in
 /// their way is drawn at x100, and a new one makes them draw again. Moved from
 /// <c>CombatCompanionManager.Lord.cs</c> and <c>.Aggro.cs</c> (refactor stage B5) and <c>Plugin.War.cs</c>,
 /// <c>Plugin.cs</c> (B6).
@@ -36,13 +35,6 @@ public sealed class CorpseSeizureRule : BattleRule
     public CorpseSeizure<SimulatedNpc>? Seizure { get; set; }
 
     public override void TickAfterEngine(BattleContext ctx, float deltaTime) => Seizure?.Tick(deltaTime);
-
-    /// <summary>
-    /// While the lord's body is fought over nobody takes it the moment the lord falls: the one that carries
-    /// it off is taken over then. With nobody left to fight over it (a lord alone, or the retainers wiped
-    /// out), the outcome is already decided and Enemy Control takes the killer as under any other rule.
-    /// </summary>
-    public override bool SuppressesKillerPossession(BattleContext ctx) => Seizure?.FightOverBody == true;
 
     /// <summary>The body carried off: the battle is lost in disgrace (whatever the switches say by then).</summary>
     public override OutcomeText? DescribeOutcome(BattleContext ctx, bool playerWon)

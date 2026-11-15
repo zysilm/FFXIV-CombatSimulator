@@ -39,6 +39,10 @@ public sealed class CrowdMover : Combat.ICrowdAgents
     // put on the nearest spot of that ground, searched outward from where it is up to this far (the whole
     // mesh), instead of on whatever island it landed on, where it would be stuck for the whole fight.
     public const float SpawnSearchRadius = 96f;
+    // Someone who has been in the fight before and joins again (let go by Enemy Control, revived, back after a
+    // while away) is only put on reachable ground from close by: never carried across the map.
+    private const float RejoinSnapSideways = 20f;
+    private const float RejoinSnapVertical = 12f;
     private const int FreshAfterFrames = 60;
     private const float MaxAgentRadius = 1.5f;
     private const int AgentsWarmUp = 24;
@@ -89,7 +93,7 @@ public sealed class CrowdMover : Combat.ICrowdAgents
     /// The actor joins the crowd at <paramref name="position"/>, snapped to the floor under it, the
     /// first time. False when it is not over the mesh (it then stands).
     /// </summary>
-    public bool Drive(nint address, Vector3 position, float radius, float speed, Vector3? goal)
+    public bool Drive(nint address, Vector3 position, float radius, float speed, Vector3? goal, bool newToBattle = false)
     {
         Sync();
         if (crowd == null || address == nint.Zero)
@@ -106,7 +110,10 @@ public sealed class CrowdMover : Combat.ICrowdAgents
         {
             // New to the fight and not on the ground the player can reach: onto the nearest of that ground.
             var onFight = navMesh.TryFloor(position, FloorSearch, out var floor, out var floorRef) && navMesh.OnPlayersPiece(floorRef);
-            if (fresh && !onFight && navMesh.TryNearestReachable(position, SpawnSearchRadius, out var snapped))
+            if ((fresh || newToBattle) && !onFight &&
+                (newToBattle
+                    ? navMesh.TryNearestReachable(position, SpawnSearchRadius, out var snapped)
+                    : navMesh.TryNearestReachable(position, RejoinSnapSideways, out snapped, RejoinSnapVertical)))
             {
                 floor = snapped;
                 spawnSnaps++;
@@ -164,6 +171,9 @@ public sealed class CrowdMover : Combat.ICrowdAgents
         agent.HasGoal = true;
         return true;
     }
+
+    /// <summary>Whether reachability can be told (the piece under the player is known).</summary>
+    public bool CanJudgeReach => navMesh.CanJudgeReach;
 
     /// <summary>
     /// The nearest spot to <paramref name="point"/> within <paramref name="within"/> metres that the party can

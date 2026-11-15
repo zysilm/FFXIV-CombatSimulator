@@ -69,6 +69,8 @@ public interface ICorpseSeizureWorld<TNpc> where TNpc : class
 /// <summary>The grab on the seized body (Enemy Control in the plugin, docs/PLUGIN_ARCHITECTURE.md §6.5).</summary>
 public interface ICorpseGrab<TNpc> where TNpc : class
 {
+    /// <summary>The seizer is taken over at all (Enemy Control's "On death: Control killer"); off: the body is carried off, nobody is taken over.</summary>
+    bool TakesOverSeizer { get; }
     /// <summary>The body can be held: ragdolls are on and the lord's ragdoll is up.</summary>
     bool BodyCanBeHeld { get; }
     /// <summary>An enemy is under control.</summary>
@@ -179,13 +181,6 @@ public sealed class CorpseSeizure<TNpc> where TNpc : class
 
     /// <summary>Whether the lord's body is to be guarded (Warring States with Retreat, the lord down).</summary>
     private bool LordBodyAtStake => rules.LordBodyIsGuarded && !bodySeized;
-
-    /// <summary>
-    /// The lord's body is being fought over right now: it lies at stake and the battle's outcome is still
-    /// open. Once the outcome is decided (the lord's side wiped out, or the enemy driven off) nobody goes for
-    /// it any more (<see cref="Tick"/> releases the seizers).
-    /// </summary>
-    public bool FightOverBody => LordBodyAtStake && !world.OutcomeDecided;
 
     /// <summary>Called on every reset or stop of the battle.</summary>
     public void Reset()
@@ -361,7 +356,7 @@ public sealed class CorpseSeizure<TNpc> where TNpc : class
         world.ForceEnemyVictory();
 
         // Enemy Control's grab, with its current settings, on the body.
-        if (grab.BodyCanBeHeld && !grab.IsControlling)
+        if (grab.TakesOverSeizer && grab.BodyCanBeHeld && !grab.IsControlling)
         {
             grab.TakeControl(npc);
             if (grab.IsControlling)

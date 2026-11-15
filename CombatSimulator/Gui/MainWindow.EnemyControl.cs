@@ -92,10 +92,10 @@ public partial class MainWindow
             config.Save();
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Control killer: when you are defeated, take control of the enemy that defeated you.\n" +
+            ImGui.SetTooltip("Control killer: after the battle is lost, take control of the enemy that defeated you.\n" +
+                             "Your fall alone is not the end: while your side can still win (or raise you), nothing happens.\n" +
                              "Only that one enemy; every other enemy keeps fighting or patrolling as before.\n" +
-                             "Warring States with Retreat: while your retainers fight over your body, the enemy\n" +
-                             "that carries it off is the one you control.");
+                             "Warring States with Retreat: if your body is carried off, you control the enemy that took it.");
 
         ImGui.BeginDisabled(!active);
         if (ImGui.Button("Release##EnemyControl")) ctrl.Despawn();

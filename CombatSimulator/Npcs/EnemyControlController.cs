@@ -250,6 +250,9 @@ public unsafe partial class EnemyControlController : IDisposable
     {
         if (IsActive) { log.Info("EnemyControlMode: already active"); return; }
         if (killer.BattleChara == null || killer.Address == nint.Zero) { log.Warning("EnemyControlMode: killer invalid"); return; }
+        // A despawned enemy's address dangles (reading its DrawObject would crash) and may already belong to
+        // another object: only an object the table still lists, with this enemy's entity id.
+        if (!IsLiveObject(killer.Address, killer.SimulatedEntityId)) { log.Warning($"EnemyControlMode: '{killer.Name}' is no longer in the object table (despawned or reused)"); return; }
 
         var obj = (GameObject*)killer.Address;
         if (obj->DrawObject == null) { log.Warning("EnemyControlMode: killer not drawn"); return; }
@@ -1686,6 +1689,15 @@ public unsafe partial class EnemyControlController : IDisposable
             if (o.Address != controlledAddress) continue;
             return EnemyControlEntityId == 0 || o.EntityId == EnemyControlEntityId;
         }
+        return false;
+    }
+
+    /// <summary>An object the table still lists at this address, with this entity id (safe to dereference, and the same object).</summary>
+    public static bool IsLiveObject(nint address, uint entityId)
+    {
+        if (address == nint.Zero) return false;
+        foreach (var o in Core.Services.ObjectTable)
+            if (o.Address == address) return o.EntityId == entityId;
         return false;
     }
 
