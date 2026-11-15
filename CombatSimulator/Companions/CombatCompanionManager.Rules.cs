@@ -41,6 +41,9 @@ public unsafe partial class CombatCompanionManager
         public void MoveToward(CombatCompanion ally, Vector3 goal, float deltaTime) => owner.MoveToward(ally, goal, deltaTime);
         public void RotateToward(CombatCompanion ally, Vector3 point, float deltaTime) => owner.TurnToward(ally, point, deltaTime);
         public void HaltForEmote(CombatCompanion ally) => owner.HaltForEmote(ally);
+        public bool TryKneelSpot(CombatCompanion ally, Vector3 body, out Vector3 spot) => owner.TryKneelSpot(ally, body, out spot);
+        public bool KneelAt(CombatCompanion ally, Vector3 spot, float deltaTime) => owner.KneelAt(ally, spot, deltaTime);
+        public void LeaveKneelSpot(CombatCompanion ally) => owner.LeaveKneelSpot(ally);
         public void Revive(CombatCompanion ally, float hpShare) => owner.ReviveCompanion(ally, hpShare);
         public void Info(string text) => owner.log.Info(text);
     }

@@ -273,6 +273,21 @@ public sealed class NavMeshService : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Whether a straight walk from one point to another stays on the walkable floor (a ray along the mesh
+    /// from the floor under <paramref name="from"/> reaches <paramref name="to"/> without crossing a wall or an
+    /// edge). False with no mesh, or no floor under the start.
+    /// </summary>
+    public bool WalkableStraight(Vector3 from, Vector3 to, float vertical)
+    {
+        if (query == null || !TryFloor(from, vertical, out var start, out var startRef))
+            return false;
+        Span<long> path = stackalloc long[32];
+        var status = query.Raycast(startRef, NavMeshBuild.ToRc(start), NavMeshBuild.ToRc(to), filter,
+            out var t, out _, path, out _, path.Length);
+        return status.Succeeded() && t >= 1f;
+    }
+
     private static int CountTiles(DtNavMesh nav, out int polys)
     {
         var tiles = 0;

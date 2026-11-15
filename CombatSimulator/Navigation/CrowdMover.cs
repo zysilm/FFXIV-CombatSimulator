@@ -58,6 +58,8 @@ public sealed class CrowdMover : Combat.ICrowdAgents
         public int Frame;
         public float Radius;
         public float Speed;
+        // Put by SetObstacle: walked round, never moved (the player, someone kneeling).
+        public bool Obstacle;
     }
 
     private readonly Dictionary<nint, Agent> agents = new();
@@ -96,6 +98,9 @@ public sealed class CrowdMover : Combat.ICrowdAgents
         radius = Math.Clamp(radius, 0.3f, MaxAgentRadius);
         var fresh = !lastDriven.TryGetValue(address, out var seen) || frame - seen > FreshAfterFrames;
         lastDriven[address] = frame;
+        // Held as an obstacle until now (it knelt): it walks again, from where it is.
+        if (agents.TryGetValue(address, out var held) && held.Obstacle)
+            Remove(address);
         if (!agents.TryGetValue(address, out var agent))
         {
             // New to the fight and not on the ground the player can reach: onto that ground.
@@ -175,14 +180,34 @@ public sealed class CrowdMover : Combat.ICrowdAgents
         if (crowd == null || address == nint.Zero)
             return;
         Remove(address);
+        // Held, not gone: when it walks again it is not someone new to the fight.
+        lastDriven[address] = frame;
         if (!navMesh.TryFloor(position, FloorSearch, out var floor, out _))
             return;
         var p = AgentParams(Math.Clamp(radius, 0.3f, MaxAgentRadius), 0.5f);
         p.updateFlags = 0;
         var crowdAgent = crowd.AddAgent(NavMeshBuild.ToRc(floor), p);
         if (crowdAgent != null)
-            agents[address] = new Agent { Crowd = crowdAgent, Radius = radius, Speed = 0f, Frame = frame };
+            agents[address] = new Agent { Crowd = crowdAgent, Radius = radius, Speed = 0f, Frame = frame, Obstacle = true };
     }
+
+    /// <summary>
+    /// The walkable floor nearest a point within <paramref name="within"/> metres sideways (a spot to kneel
+    /// at), its height the real ground there as <see cref="TryGetMotion"/> gives it.
+    /// </summary>
+    public bool TryFloorWithin(Vector3 point, float within, out Vector3 floor)
+    {
+        floor = point;
+        if (navMesh.Mesh == null || !navMesh.TryFloor(point, FloorSearch, within, out floor, out _))
+            return false;
+        if (Simulation.TerrainHeightService.TrySampleGroundNear(floor, GroundAbove, GroundBelow, out var ground))
+            floor.Y = ground;
+        return true;
+    }
+
+    /// <summary>Whether a straight walk between two points stays on the walkable floor.</summary>
+    public bool WalkableStraight(Vector3 from, Vector3 to)
+        => navMesh.Mesh != null && navMesh.WalkableStraight(from, to, FloorSearch);
 
     /// <summary>Step the crowd once; actors not driven since the last step leave it.</summary>
     public void Update(float deltaTime)

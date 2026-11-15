@@ -57,6 +57,11 @@ public sealed unsafe class SpringAutumnRescueRule : BattleRule
         public float Progress;
         public bool Channelling;
         public ushort Loop;
+        // Where it kneels, beside the friend's body (KneelSpot), chosen once in reach; NoSpot: none
+        // there, it kneels where it is; SpotTime: how long it has been going to it.
+        public Vector3? Spot;
+        public bool NoSpot;
+        public float SpotTime;
     }
 
     // Patient id -> the companion raising or freeing them.
@@ -270,8 +275,16 @@ public sealed unsafe class SpringAutumnRescueRule : BattleRule
         }
 
         var self = ctx.World.PositionOf(companion);
+        // The body moved off the spot chosen beside it: up, and a new spot.
+        if (rescue.Spot is { } chosen && KneelSpot.BodyMovedAway(chosen, at))
+        {
+            if (rescue.Channelling)
+                StopChannelling(ctx, companion, rescue, keepProgress: true);
+            ForgetSpot(ctx, companion, rescue);
+        }
         if (CombatantMath.FlatDistance(self, at) > RaiseReach)
         {
+            ForgetSpot(ctx, companion, rescue);
             // Pushed off mid-raise: it waits and runs down slowly, it does not start over.
             if (rescue.Channelling)
                 StopChannelling(ctx, companion, rescue, keepProgress: true);
@@ -290,7 +303,32 @@ public sealed unsafe class SpringAutumnRescueRule : BattleRule
             return true;
         }
 
-        ctx.Allies.HaltForEmote(companion);
+        // In reach (when a raise counts is unchanged): it kneels right beside the body, on the floor and
+        // clear of other kneelers, walking the last bit there; with no such spot, where it is.
+        if (rescue.Spot == null && !rescue.NoSpot)
+        {
+            rescue.SpotTime = 0f;
+            if (ctx.Allies.TryKneelSpot(companion, at, out var spot))
+                rescue.Spot = spot;
+            else
+                rescue.NoSpot = true;
+        }
+        if (rescue.Spot is { } kneel)
+        {
+            if (!ctx.Allies.KneelAt(companion, kneel, deltaTime))
+            {
+                rescue.SpotTime += deltaTime;
+                if (rescue.SpotTime < KneelSpot.StallSeconds && !rescue.Channelling)
+                    return true;
+                // Cannot get there: it kneels where it is.
+                ctx.Allies.LeaveKneelSpot(companion);
+                rescue.Spot = null;
+                rescue.NoSpot = true;
+                ctx.Allies.HaltForEmote(companion);
+            }
+        }
+        else
+            ctx.Allies.HaltForEmote(companion);
         ctx.Allies.RotateToward(companion, at, deltaTime);
         if (!rescue.Channelling)
         {
@@ -332,12 +370,25 @@ public sealed unsafe class SpringAutumnRescueRule : BattleRule
             ctx.World.ResetEmote(companion);
     }
 
+    private static void ForgetSpot(BattleContext ctx, CombatCompanion companion, Rescue rescue)
+    {
+        if (rescue.Spot != null)
+            ctx.Allies.LeaveKneelSpot(companion);
+        rescue.Spot = null;
+        rescue.NoSpot = false;
+        rescue.SpotTime = 0f;
+    }
+
     private void EndRescue(BattleContext ctx, uint patientId)
     {
         if (!rescues.Remove(patientId, out var rescue))
             return;
-        if (ctx.Allies.Get(rescue.RescuerId) is { } rescuer && rescue.Channelling)
-            StopChannelling(ctx, rescuer, rescue);
+        if (ctx.Allies.Get(rescue.RescuerId) is { } rescuer)
+        {
+            if (rescue.Channelling)
+                StopChannelling(ctx, rescuer, rescue);
+            ForgetSpot(ctx, rescuer, rescue);
+        }
     }
 
     private void CancelAllRescues(BattleContext ctx)

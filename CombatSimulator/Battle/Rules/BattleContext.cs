@@ -94,6 +94,18 @@ public interface IRuleAllies
     /// <summary>Stands still to hold an emote.</summary>
     void HaltForEmote(CombatCompanion ally);
 
+    /// <summary>
+    /// The spot beside a body where this ally is to kneel (<see cref="KneelSpot"/>), taken for it until
+    /// <see cref="LeaveKneelSpot"/>; false when there is none (it kneels where it is).
+    /// </summary>
+    bool TryKneelSpot(CombatCompanion ally, Vector3 body, out Vector3 spot);
+
+    /// <summary>Goes to the kneel spot and holds it (nobody pushes it off); true once there, standing still for the emote.</summary>
+    bool KneelAt(CombatCompanion ally, Vector3 spot, float deltaTime);
+
+    /// <summary>Gives up its kneel spot.</summary>
+    void LeaveKneelSpot(CombatCompanion ally);
+
     /// <summary>Back on its feet with this share of its HP (MP empty).</summary>
     void Revive(CombatCompanion ally, float hpShare);
 
