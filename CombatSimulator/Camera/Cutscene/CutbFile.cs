@@ -1,5 +1,10 @@
-// Offline reader for FFXIV cutscene files (.cutb) — only the parts needed to study the camera.
-// Written from our own byte-level inspection of the game files; no third-party code copied.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+// Reader for FFXIV cutscene files (.cutb) — only the parts needed for the camera. Written from our own byte-level
+// inspection of the game files; no third-party code copied. Game-free: works on a byte array, so the offline research
+// tool (Tests/CutsceneCamera) compiles this same file.
 //
 // Container layout (little endian):
 //   0x00 "CUTB"   0x04 u32 file size   0x08 u32 chunk count
@@ -8,9 +13,13 @@
 //   Tags seen: CTRL (resource path list), CTIS, CTDS (level name + a centre/radius), CTEX, CTAL (actor table),
 //   CTCB (text keys), CTPA (per-actor cut animation .pap list), CTTL (one TMB timeline each — "TMLB").
 
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text;
 
-namespace CutsceneCamera;
+namespace CombatSimulator.Camera.Cutscene;
 
 public sealed record CutbChunk(string Tag, int Offset, int Size);
 
@@ -23,7 +32,7 @@ public sealed class CutbFile
     public CutbFile(byte[] data)
     {
         Data = data;
-        if (Encoding.ASCII.GetString(data, 0, 4) != "CUTB")
+        if (data.Length < 12 || Encoding.ASCII.GetString(data, 0, 4) != "CUTB")
             throw new InvalidDataException("not a CUTB file");
         var count = BitConverter.ToInt32(data, 8);
         for (var i = 0; i < count; i++)

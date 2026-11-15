@@ -1,4 +1,8 @@
-// TMB timeline ("TMLB") as used inside a cutscene CTTL chunk. Our own reader.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+// TMB timeline ("TMLB") as used inside a cutscene CTTL chunk. Our own reader; game-free (also compiled by Tests/CutsceneCamera).
 //
 //   TMLB: magic, u32 size, u32 item count, then items back to back.
 //   Every item: magic[4], u32 size, i16 id, i16 time (frames, 30 fps; TMDH/TMAL use it as something else).
@@ -8,10 +12,13 @@
 //   TMTR (track): +0x0C offset, +0x10 count → i16 entry ids.
 //   Cxxx entries: fixed-size payload of 32-bit words. TMFC: function curves (see Curve).
 
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text;
 
-namespace CutsceneCamera;
-
+namespace CombatSimulator.Camera.Cutscene;
 public sealed class TmbItem
 {
     public string Magic = "";

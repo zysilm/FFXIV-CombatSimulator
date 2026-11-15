@@ -33,6 +33,10 @@ public enum CameraOwner
     External = 45,
     /// <summary>User-enabled Active Camera. Always wins.</summary>
     UserActiveCam = 50,
+    /// <summary>A cutscene follow shot (victory / death / Play Now), only while it plays. Above everything: the
+    /// shot replaces the whole camera pose after the game's update (CutsceneShotDirector), and whoever owned the
+    /// camera before gets it back when the shot ends.</summary>
+    CutsceneShot = 60,
 }
 
 /// <summary>
@@ -88,6 +92,7 @@ public sealed unsafe partial class CameraModeCoordinator
     // Indexed by owner; small fixed set, iterated high→low.
     private static readonly CameraOwner[] OwnersDescending =
     {
+        CameraOwner.CutsceneShot,
         CameraOwner.UserActiveCam,
         CameraOwner.External,
         CameraOwner.FightingKO,

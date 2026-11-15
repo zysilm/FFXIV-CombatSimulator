@@ -1,6 +1,6 @@
 # 过场跟拍镜头清单（Cutscene Shots）
 
-状态：CS-1（离线筛选）完成，清单在 `CombatSimulator/Resources/CutsceneShots.json`；插件侧播放是下一阶段，尚未实现，也未在游戏内验证。
+状态：CS-1（离线筛选）完成，清单在 `CombatSimulator/Resources/CutsceneShots.json`；CS-2（插件内播放，§6）已实现，离线检查通过，**待游戏内验证**。
 
 ## 1. 用途
 
@@ -56,4 +56,54 @@ dotnet run -c Release -- curate out.json   # 写到别处
 - 运镜按镜头首尾两帧判，往返式运动会被判为静止或别的运动。
 - FOV 是垂直还是水平、c117 是否就是滚转（度），仍待游戏内定标；景别阈值按垂直 FOV 定。
 - 左右（环绕方向）按右手坐标系、角色面向 +Z 推算，未在游戏内核对。
-- `Resources/CutsceneShots.json` 目前还没有登记为插件的嵌入资源（`CombatSimulator.csproj` 不在本阶段范围），由插件阶段加上。
+- 播放时的局限见 §6.7。
+
+## 6. 插件内播放（CS-2）
+
+### 6.1 代码落点
+
+- `CombatSimulator/Camera/Cutscene/`：解析器（`CutbFile`、`TmbTimeline`、`CameraShot`、`Eid`、`CutsceneSequence`）和播放用的纯计算（`CutsceneShotCatalog` 清单、`CutsceneShotLoader` 读游戏文件、`CutscenePlayback` 采样、`CutsceneAnchoring` 挂点、`CutsceneRoles` 角色、`CutsceneView` 视图矩阵）。**这个目录里的文件一律不碰游戏**（只吃字节数组和读文件的委托），`Tests/CutsceneCamera` 直接链接编译它们——只有一份解析器。
+- `Camera/CutsceneShotDirector.cs`：触发、角色解析、相机写入、日志；`Camera/CutsceneProbe.cs`：被动定标探针；`Camera/Configuration.CutsceneShots.cs`：两个设置；`Gui/MainWindow.CutsceneShots.cs`：界面。
+- 清单作为嵌入资源进 DLL；镜头曲线和种族 `.eid` 在运行时用 Dalamud 的 `IDataManager` 从用户本机游戏读（`.cutb` 按条目缓存，`.eid` 按种族缓存），不落盘。
+
+### 6.2 播放
+
+- 一段 = 清单里的几个镜头首尾相接；按 30 帧/秒的时间轴帧换算，每帧用曲线连续采样（Hermite），到 span 边界立即切到下一个镜头（硬切，不混合）。
+- 相机：播放期间是 `CameraModeCoordinator` 里优先级最高的 `CutsceneShot`（60）；它向协调者要与目标视角匹配的游戏 FoV、冻结鼠标/手柄转视角；真正的位姿在游戏相机更新**之后**写（`GameCameraUpdateHook.PostCameraUpdate`，与受击震屏同一处，震屏仍叠在上面）：眼位、注视点、视图矩阵（场景相机和渲染相机）、投影矩阵（只改 M11/M22，保持宽高比和深度项）。视图矩阵的布局不靠猜：每帧用游戏自己刚算出的矩阵比对四种布局，取能复现它的那种（日志 `CutShot: view matrix layout …`）。
+- 进入时从当时的画面 0.3 s 平滑过渡；结束时先把相机还给原来的主人（协调者），再用 0.3 s 过渡到游戏此刻自己的相机。
+- Directed 相机的死亡构图：镜头播放期间暂停（`DynamicCameraController.HoldForCutscene`），交还时从镜头最后的画面重新开始它的平移。Enemy Control、Follow-bone 相机在镜头期间被压住，结束后照常。Fighting Mode 下不播；私有场景占用相机时不播。
+
+### 6.3 挂点（`CutsceneAnchoring`）
+
+- 每个角色按自己的种族读 `.eid`（人族以外用参考种族 c0101，并按实测头高缩放根高度偏移）；挂点的坐标系 = 挂点位置 + 角色朝向（与离线筛选时相同）。
+- 骨骼挂点（头 1/26/27、胸 28、腹 18、武器 77/78 …）：活骨骼位置 + `.eid` 偏移（按骨骼旋转）；角色布娃娃生效时用布娃娃刚体位置（没有刚体的骨骼就近替代：n_hara→j_kosi、武器→手、j_kao→j_kubi）。
+- 根高度挂点（`n_root` 上的 76/42/71 …）：站着时 = 角色位置 + 朝向 × 偏移；倒地（死亡或布娃娃）时 76、42 及 1.3 m 以上的点改挂活的头骨 `j_kao`，71 及更低的点改挂骨盆 `j_kosi`。
+- 眼位不低于跟拍对象脚下地面 + 0.15 m（倒地时地面取 min(角色位置, 骨盆 − 0.2 m)）。
+
+### 6.4 角色（用户定的规则，`CutsceneRoles`）
+
+| 情形 | 主体（subject） | 对方（other） |
+|---|---|---|
+| 死亡 | 玩家（尸体） | 杀死玩家的人 |
+| 胜利，玩家活着 | 玩家 | 最后倒下的敌人 |
+| 胜利，玩家已死 | 给最后一个敌人最后一击的队友；不知道就取离玩家最近的活着的队友 | 最后倒下的敌人 |
+| Play Now | 玩家 | 当前目标，没有就取最近的活着的敌人 |
+
+单人镜头只用主体。双人镜头里“跟拍的过场角色”（`followActor`）取条目的 `follow` 角色，“被看的过场角色”（`lookActor`）取 `lookAt` 角色。缺了必需的人就不播，日志写原因（Play Now 还在聊天栏提示）。“最后倒下的敌人”和“谁打的最后一击”由插件从引擎的伤害事件（`CombatEvents.DamageLanded`）记录。
+
+### 6.5 界面与设置
+
+Camera 页签 → 折叠栏 **Cutscene Shots**：一个可搜索的下拉菜单（搜索框按名字和标签匹配，所有词都要命中），三个按钮 **Use for Victory**、**Use for Death**、**Play Now**，下面两行 **Victory: …**、**Death: …**（选 None 再按按钮，或点行尾的 x 清除）。设置 `CutsceneVictoryShot`、`CutsceneDeathShot`（清单 id，空 = 关）。
+
+### 6.6 日志与探针
+
+- 每次播放一行 `CutShot: play <id> "<名字>" (<触发>, <单人/双人>, <秒>, <镜头数>, points …) — <角色规则>; subject …, other …; camera follows …, looks at …`，结束一行 `CutShot: end <id> after <秒> (<原因>); remaps/fallbacks: …`；跳过时 `CutShot: <触发> shot <id> skipped — <原因>`。
+- `/combatsim cutprobe start|stop|status`：看游戏自己的过场时，逐帧把渲染相机（位置、注视点、视图/投影矩阵、各 FoV 字段）、正在播的过场（`ScheduleManagement.CutSceneController.CutsceneId` = Cutscene 表行号，及出现后的秒数；停止时日志写出对应路径）、相机 40 m 内最近 12 个角色的根骨和头骨世界位姿写进插件配置目录的 `cutprobe-<时间>.csv`。只读，不写游戏内存、不调游戏函数；最多 10 分钟。过场内的时间轴帧号拿不到，只能用出现后的秒数近似。
+
+### 6.7 假设与局限（待游戏内定标）
+
+- c116 按**垂直** FOV（度）、c117 按绕视线的滚转（度、正号）处理；各是 `CutsceneLens` 里的一个常量（`FovIsVertical`、`RollSign`），探针数据出来后可翻转。
+- 相机位姿在游戏更新后整体覆盖；若游戏的剔除用的是覆盖前的视锥，画面边缘或身后的物体可能缺失；穿墙/穿地不做碰撞检测，只有眼位不低于地面一条。
+- 倒地时为站姿构图的镜头会被地面限制压低：离线检查中躺地尸体的采样有约 42%（适合尸体的条目也约 42%）需要抬到地面以上。
+- 布娃娃只有主要骨骼的刚体，布娃娃生效时骨骼挂点的小偏移（≤0.15 m）不再按骨骼旋转。
+- 离线检查：`Tests/CutsceneCamera -- verify`（解析器回归哈希、149 条全部可读、首/中/尾采样有限、站姿平移旋转不变性、躺姿重映射、五种角色情形、视图矩阵布局识别）。

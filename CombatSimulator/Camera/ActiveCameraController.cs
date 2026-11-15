@@ -350,7 +350,7 @@ public unsafe class ActiveCameraController : IDisposable
         // vertical lock in particular would overwrite the pitch they just solved for.
         var owner = GetCurrentOwner?.Invoke() ?? CameraOwner.None;
         var modeOwnsAngles = owner is CameraOwner.Fighting2D or CameraOwner.FightingKO
-            or CameraOwner.DynamicCam or CameraOwner.DynamicDeath ||
+            or CameraOwner.DynamicCam or CameraOwner.DynamicDeath or CameraOwner.CutsceneShot ||
             owner == CameraOwner.External && (ExternalOwnsAngles?.Invoke() ?? true);
 
         UpdateCollisionPolicy();

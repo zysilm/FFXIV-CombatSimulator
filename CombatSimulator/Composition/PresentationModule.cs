@@ -94,6 +94,7 @@ internal sealed class PresentationModule
         mainWindow.ArrowImpacts = arrowImpactController;
         mainWindow.HideResultBanner = warBanner.Hide;
         mainWindow.ArmorDetachment = armorDetachmentController;
+        mainWindow.CutsceneShots = m.Camera.CutsceneShots;
     }
 
     /// <summary>The enemies' voices. (What it listens to and when it keeps quiet are wired by the

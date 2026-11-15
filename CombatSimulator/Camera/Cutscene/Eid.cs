@@ -1,7 +1,13 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+using System;
+using System.Collections.Generic;
 using System.Numerics;
 using System.Text;
 
-namespace CutsceneCamera;
+namespace CombatSimulator.Camera.Cutscene;
 
 /// <summary>Bind-point table (.eid, "element id"): bind point id → bone name + offset. Layout from our own reading
 /// (cross-checked against the field order VFXEditor documents, MIT): magic "eid\0", i16 version ("21" = new),

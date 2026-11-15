@@ -127,6 +127,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     private GameCameraUpdateHook gameCameraUpdateHook => cameraModule.UpdateHook;
     private ActiveCameraController activeCameraController => cameraModule.Active;
     private DynamicCameraController dynamicCameraController => cameraModule.Dynamic;
+    private CutsceneShotDirector cutsceneShots => cameraModule.CutsceneShots;
     // Combat
     private CombatEngine combatEngine => combatModule.Engine;
     private CombatSimulator.ActionCombat.ActionComboSink actionComboSink => combatModule.ComboSink;
@@ -288,6 +289,14 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
                 combatEngine.LastPlayerKillerAddress, combatEngine.LastPlayerKillerEntityId);
             devExperimental.BeforePlayerDeath();
         };
+        // Cutscene follow shots for death and victory (docs/CUTSCENE_SHOTS.md). After the Directed camera has armed its
+        // death framing above: the shot holds that framing while it plays and hands the camera back to it. (These
+        // listeners run before the SimulationStarted / SimulationReset handlers numbered #2 / #5 and on below.)
+        cameraModule.CreateCutsceneShots(targetManager, dataManager, pluginInterface.GetPluginConfigDirectory(), () => PrivateDirectorActive);
+        combatEvents.BeforePlayerDeath += cutsceneShots.OnPlayerDeath;
+        combatEvents.DamageLanded += cutsceneShots.NoteDamage;
+        combatEvents.SimulationStarted += cutsceneShots.OnSimulationStarted;
+        combatEvents.SimulationReset += cutsceneShots.OnSimulationReset;
         actorsModule.WireActorCallbacks(chatGui);
 
         // Re-register alive spawned NPCs on sim start (they're removed from
@@ -437,6 +446,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             previous?.Invoke(playerWon);
             battleModule.ShowOutcome(playerWon);
         };
+        combatEvents.OutcomeDecided += cutsceneShots.OnOutcome;                  // (OutcomeDecided #3)
         combatEvents.SimulationReset += battleModule.ResetWar;                   // (SimulationReset #9)
         presentationModule.CreateOverlays(gameGui, clientState, dataManager, hadExistingConfig);
 
@@ -520,6 +530,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         // Any ragdoll recording still open (docs/REFACTOR_PLAN.md, stage A0) is closed with the plugin.
         RagdollRecordingSession.Stop();
         boneTransformService.Dispose();
+        cutsceneShots.Dispose();
         dynamicCameraController.Dispose();
         gameCameraUpdateHook.Dispose();
         cameraModeCoordinator.Reset();
@@ -582,6 +593,21 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
                         _ => RagdollRecordingSession.Status(),
                     };
                     chatGui.Print($"[CombatSim] Ragdoll recording: {recText}");
+                    break;
+                }
+
+            case "cutprobe":
+                {
+                    // Passive calibration of the cutscene lens (docs/CUTSCENE_SHOTS.md §5): record the real camera
+                    // while one of the game's own cutscenes plays. Read-only.
+                    var probeCommand = parts.Length > 1 ? parts[1].Trim().ToLowerInvariant() : "status";
+                    var probeText = probeCommand switch
+                    {
+                        "start" => cutsceneShots.Probe.Start(),
+                        "stop" => cutsceneShots.Probe.Stop(),
+                        _ => cutsceneShots.Probe.Status(),
+                    };
+                    chatGui.Print($"[CombatSim] Cutscene probe: {probeText}");
                     break;
                 }
 
@@ -741,6 +767,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             if (!PrivateDirectorActive) fightingModeController.Tick(deltaTime);
             dynamicCameraController.Tick(deltaTime);
             TickPrivateDirectors(deltaTime);
+            cutsceneShots.Tick(deltaTime);
             gameCameraUpdateHook.Tick();
             cameraModeCoordinator.Apply(deltaTime);
             activeCameraController.SetModeActive(cameraModeCoordinator.WantsOrbitHook);
@@ -850,6 +877,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         spectatorController.DespawnAll();
         devExperimental.ResetWorldState();
         enemyControlController.Despawn();
+        cutsceneShots.Stop("zone change");
         dynamicCameraController.Reset();
 
         if (combatEngine.IsActive)
@@ -882,6 +910,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             spectatorController.DespawnAll();
             devExperimental.ResetWorldState();
             enemyControlController.Despawn();
+            cutsceneShots.Stop("logged out");
             dynamicCameraController.Reset();
             npcSpawner.DespawnAll();
             companionManager.DespawnAll();

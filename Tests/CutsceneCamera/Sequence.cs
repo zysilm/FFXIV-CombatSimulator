@@ -9,33 +9,9 @@ namespace CutsceneCamera;
 /// </summary>
 internal static class Sequence
 {
-    public sealed record Resolved(TmbTimeline Tl, List<(int From, int To, CameraShot Shot)> Spans, int Covered);
-
-    public static Resolved Resolve(CutbFile c, TmbTimeline tl, Func<string, bool>? acceptCondition = null)
-    {
-        var shots = CameraShot.FromTimeline(c, tl).ToList();
-        var byId = tl.Items.Where(i => i.Magic == "C004").Zip(shots).ToList(); // same order as FromTimeline
-        var tracks = byId.Where(p => p.First.OwnerTrack >= 0)
-            .GroupBy(p => p.First.OwnerTrack)
-            .Where(g => !tl.TrackLua.TryGetValue(g.Key, out var lua) || (acceptCondition?.Invoke(Branches.Text(lua)) ?? false))
-            .OrderBy(g => g.Key)
-            .ToList();
-        var owner = new CameraShot?[Math.Max(tl.Length, 1)];
-        foreach (var g in tracks)
-            foreach (var (_, s) in g)
-                for (var f = Math.Max(0, s.Start); f < Math.Min(owner.Length, s.Start + s.Duration); f++)
-                    owner[f] = s;
-        var spans = new List<(int, int, CameraShot)>();
-        for (var f = 0; f < owner.Length;)
-        {
-            if (owner[f] == null) { f++; continue; }
-            var g = f;
-            while (g < owner.Length && owner[g] == owner[f]) g++;
-            spans.Add((f, g, owner[f]!));
-            f = g;
-        }
-        return new Resolved(tl, spans, owner.Count(o => o != null));
-    }
+    // The rule itself lives in the plugin (CombatSimulator/Camera/Cutscene/CutsceneSequence.cs); this class keeps the statistics.
+    public static CutsceneSequence.Resolved Resolve(CutbFile c, TmbTimeline tl, Func<string, bool>? acceptCondition = null)
+        => CutsceneSequence.Resolve(c, tl, acceptCondition);
 
     public static bool Follows(CameraShot s) => s.Root.Actor != 255;
 

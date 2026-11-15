@@ -14,11 +14,17 @@ repository. Commands (from this folder):
 | `-- bind [N] [lens\|seq]` | attach-point mapping test / lens channels / default sequence statistics |
 | `-- shot <cutscene path> <timeline>` | dump every camera shot (C004) of one timeline |
 | `-- curate [out.json]` | regenerate the curated follow-shot list (default `CombatSimulator/Resources/CutsceneShots.json`) |
+| `-- verify` | offline checks of the plugin's cutscene shot code (parser regression hash, loader, sampling, anchoring standing / lying, roles, view matrix); exit code 1 on a failure |
+| `-- digest <out.txt>` | parser regression digest of the 149 curated entries (every key, eye/aim/up/FOV per frame) |
 
-File map: `CutbFile.cs` (container), `TmbTimeline.cs` (TMLB items, curves, track ownership, Lua conditions),
-`CameraShot.cs` (C004 + rig evaluation), `Eid.cs` / `Bind.cs` (bind points, actor placements), `Sequence.cs`
-(default sequence: unconditional tracks, last track wins), `Curate.cs` (the curated list). Research findings:
-`docs/PROJECT_LOG.md` §6; the curated list: `docs/CUTSCENE_SHOTS.md`.
+The parser and everything the plugin plays shots with live in the plugin, `CombatSimulator/Camera/Cutscene/` (game-free by
+rule: byte arrays and a file-loader delegate only), and are compiled into this tool by link — one parser, no copy:
+`CutbFile.cs` (container), `TmbTimeline.cs` (TMLB items, curves, track ownership, Lua conditions), `CameraShot.cs`
+(C004 + rig evaluation), `Eid.cs` (bind points), `CutsceneSequence.cs` (default sequence: unconditional tracks, last
+track wins), plus the shot list, loader, playback, anchoring, roles and view-matrix code. This folder keeps the research:
+`Bind.cs` (actor placements, attach mapping test), `Sequence.cs` (sequence statistics), `Curate.cs` (the curated list),
+`Digest.cs` / `Verify.cs` (the checks above). Research findings: `docs/PROJECT_LOG.md`; the curated list and its
+playback: `docs/CUTSCENE_SHOTS.md`.
 
 ## Curated follow shots (`-- curate`)
 

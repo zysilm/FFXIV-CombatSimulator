@@ -77,7 +77,7 @@ internal static class Curate
             foreach (var tl in c.Timelines)
             {
                 if (!tl.Items.Any(i => i.Magic == "C004")) continue;
-                Sequence.Resolved r;
+                CutsceneSequence.Resolved r;
                 try { r = Sequence.Resolve(c, tl); } catch { continue; }
                 foreach (var seg in Segments(path, tl.Index, r.Spans))
                 {

@@ -521,9 +521,42 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
         }
     }
 
+    private bool cutsceneHold;
+
+    /// <summary>
+    /// A cutscene follow shot takes the camera (CutsceneShotDirector): the death framing waits, without solving
+    /// against a view it does not own. When the shot hands the camera back, a death shot that was armed starts its
+    /// translate again from where the cutscene camera left off, instead of from the camera before the death.
+    /// Independent of <see cref="SuspendForExternalControl"/>, which other scenes use.
+    /// </summary>
+    public void HoldForCutscene(bool hold)
+    {
+        if (cutsceneHold == hold) return;
+        cutsceneHold = hold;
+        if (hold)
+        {
+            RestoreMinDistance();
+            coordinator.Release(CameraOwner.DynamicCam);
+            coordinator.Release(CameraOwner.DynamicDeath);
+            return;
+        }
+        // The camera the shot leaves behind must not be mistaken for player scroll input.
+        prevObservedDistance = 0f;
+        wroteDistance = false;
+        pendingWheel = 0f;
+        if (phase is Phase.DeathTranslate or Phase.DeathHold)
+        {
+            hasCurState = false;
+            CaptureTranslateStart();
+            phase = Phase.DeathTranslate;
+            translateElapsed = 0f;
+            log.Info("DynamicCam: death framing resumes after the cutscene shot.");
+        }
+    }
+
     public void Tick(float dt)
     {
-        if (externalControlSuspended) return;
+        if (externalControlSuspended || cutsceneHold) return;
         try
         {
             TickCore(dt);

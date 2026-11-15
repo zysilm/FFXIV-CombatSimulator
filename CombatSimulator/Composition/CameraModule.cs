@@ -23,8 +23,11 @@ internal sealed unsafe class CameraModule
     private GameCameraUpdateHook gameCameraUpdateHook = null!;
     private ActiveCameraController activeCameraController = null!;
     private DynamicCameraController dynamicCameraController = null!;
+    private CutsceneShotDirector cutsceneShotDirector = null!;
 
     public CameraModule(PluginModules modules) => m = modules;
+
+    public CutsceneShotDirector CutsceneShots => cutsceneShotDirector;
 
     public CameraModeCoordinator Coordinator => cameraModeCoordinator;
     public GameCameraUpdateHook UpdateHook => gameCameraUpdateHook;
@@ -69,6 +72,33 @@ internal sealed unsafe class CameraModule
             dynamicCameraController.OnPreCameraUpdate(camera);
         };
         activeCameraController.ModeLookAtOverride = dynamicCameraController.OverrideDeathLookAt;
+    }
+
+    /// <summary>
+    /// Cutscene follow shots (docs/CUTSCENE_SHOTS.md): the game's own cutscene camera work on our characters at victory
+    /// and death. Writes the camera after the game's update, through the same hook as the hit shake.
+    /// </summary>
+    public void CreateCutsceneShots(ITargetManager targetManager, IDataManager dataManager, string configDirectory, System.Func<bool> sceneActive)
+    {
+        cutsceneShotDirector = new CutsceneShotDirector(
+            m.Config, cameraModeCoordinator, dynamicCameraController, combatEngine, npcSelector, m.Actors.Companions,
+            boneTransformService,
+            address => RagdollFor(address)?.IsActive == true,
+            (address, bone) => RagdollFor(address) is { IsActive: true } ragdoll ? ragdoll.GetBodyWorldPosition(bone) : null,
+            () => targetManager.Target?.Address ?? nint.Zero,
+            path => dataManager.GetFile(path)?.Data,
+            configDirectory,
+            sceneActive,
+            log);
+        gameCameraUpdateHook.PostCameraUpdate = cutsceneShotDirector.OnPostCameraUpdate;
+    }
+
+    /// <summary>The ragdoll of a body: the player's, or an enemy's / ally's death ragdoll.</summary>
+    private RagdollController? RagdollFor(nint address)
+    {
+        if (address == nint.Zero) return null;
+        if (Core.Services.ObjectTable.LocalPlayer?.Address == address) return ragdollController;
+        return m.Corpse.NpcRagdolls.TryGetValue(address, out var npc) ? npc : null;
     }
 
     /// <summary>Put the camera in Directed mode for a battle, when that is asked for.</summary>

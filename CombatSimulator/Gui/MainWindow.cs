@@ -345,6 +345,7 @@ public partial class MainWindow : IDisposable
             case 2: // Camera
                 DrawActiveCamSection();
                 DrawDynamicCamSection();
+                DrawCutsceneShotsSection();
                 break;
             case 3: // Ragdoll
                 DrawRagdollSection();

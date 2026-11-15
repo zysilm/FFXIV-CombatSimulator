@@ -1,6 +1,16 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+// Camera shots (C004) of a cutscene timeline and their rig evaluation. Game-free (also compiled by Tests/CutsceneCamera).
+
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Numerics;
 
-namespace CutsceneCamera;
+namespace CombatSimulator.Camera.Cutscene;
 
 /// <summary>An attach slot on a camera shot: cutscene actor index (255 = none) and a BIND POINT id from the actor's
 /// skeleton .eid table (e.g. 76 = n_root + face height, 71 = n_root, 26/1/27 = j_kao, 28 = j_sebo_c, 18 = n_hara) —

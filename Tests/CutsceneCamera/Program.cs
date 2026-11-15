@@ -78,6 +78,35 @@ if (mode == "curate")
     Curate.Run(gd, Load, body, outPath);
     return;
 }
+if (mode == "verify")
+{
+    // Offline checks of the plugin's cutscene shot code (see Verify.cs).
+    var body = new Bind.Body
+    {
+        Skel = Skeleton.Read(gd.GetFile("chara/human/c0101/skeleton/base/b0001/skl_c0101b0001.sklb")!.Data),
+        Eid = Eid.Read(gd.GetFile("chara/human/c0101/skeleton/base/b0001/eid_c0101b0001.eid")!.Data).GroupBy(b => b.Id).ToDictionary(g => g.Key, g => g.First()),
+    };
+    var dir = new DirectoryInfo(AppContext.BaseDirectory);
+    while (dir != null && !File.Exists(Path.Combine(dir.FullName, "CombatSimulator.sln"))) dir = dir.Parent;
+    Environment.ExitCode = Verify.Run(gd, Load, body, dir!.FullName);
+    return;
+}
+if (mode == "digest")
+{
+    // Parser regression digest of the curated entries (see Digest.cs): `-- digest out.txt`.
+    var body = new Bind.Body
+    {
+        Skel = Skeleton.Read(gd.GetFile("chara/human/c0101/skeleton/base/b0001/skl_c0101b0001.sklb")!.Data),
+        Eid = Eid.Read(gd.GetFile("chara/human/c0101/skeleton/base/b0001/eid_c0101b0001.eid")!.Data).GroupBy(b => b.Id).ToDictionary(g => g.Key, g => g.First()),
+    };
+    var dir = new DirectoryInfo(AppContext.BaseDirectory);
+    while (dir != null && !File.Exists(Path.Combine(dir.FullName, "CombatSimulator.sln"))) dir = dir.Parent;
+    var json = Path.Combine(dir!.FullName, "CombatSimulator", "Resources", "CutsceneShots.json");
+    var text = Digest.Build(json, Load, body);
+    File.WriteAllText(args[1], text, new System.Text.UTF8Encoding(false));
+    Console.WriteLine($"digest: {text.Length} chars, {text.Count(ch => ch == '\n')} lines → {args[1]}");
+    return;
+}
 if (mode == "shot")
 {
     var c = Load(args[1])!;

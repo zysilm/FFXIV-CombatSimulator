@@ -63,5 +63,7 @@
     <EmbeddedResource Include="Resources\VoiceEntryLabels.json" />
     <EmbeddedResource Include="Resources\VoiceLines.json" />
     <EmbeddedResource Include="Resources\VoicePersonas.json" />
+    <!-- Curated cutscene follow shots: references and derived features only (docs/CUTSCENE_SHOTS.md). -->
+    <EmbeddedResource Include="Resources\CutsceneShots.json" />
   </ItemGroup>
 </Project>
