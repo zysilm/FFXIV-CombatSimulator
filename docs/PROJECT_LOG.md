@@ -123,9 +123,24 @@
 - 台词分类只按日文意思判断，英文不管（2026-10-25，用户裁决）。
 - 一个敌人只有一个声音，不跨声线借台词；缺台词就静默（2026-10-25，用户裁决，`2c831de`）。
 
+### 敌人行为层 / Enemy Control（2026-11-15）
+
+- 每个敌人每帧只归一层管：被控制 → 死亡 → 抢尸 → 交战 → 巡逻 → 守岗 → 待机（`Ai/EnemyLayer.cs`）。Enemy Control 只覆盖它那一个敌人；被控制的不叫醒别人、不被叫醒；巡逻是每个敌人自己的状态（用户裁决，`43c4c3d`）。
+- Enemy Control 只在胜负已分（我方战败，`OutcomeDecided(false)`）后才接管；主角死亡不算分出胜负。接管对象：尸体被抢 → 抢尸者；否则凶手（按 EntityId 记、接管前核对存活）；都不行就不接管。Control killer 关时谁都不接管（用户裁决，`43c4c3d`）。
+- Enemy Control 的“生成一只怪来控制”已删除（用户裁决）；退役键 `EnemyControlSpawnOnDeath`、`EnemyControlModelId`、`EnemyControlModelNameId`。
+- 生成点、岗位、巡逻点都吸到我方能走到的网格块上（从候选点向外逐圈搜，首次进人群最远 96 m，重新进人群 20 m/12 m）。
+
+### 相机 / 过场镜头（2026-11-15）
+
+- 过场跟拍镜头不写矩阵：在 `SetCameraLookAt` 钩子里原函数返回后把眼位/注视点写进调用方缓冲区，游戏自己出矩阵（反汇编确认，`f22c0f3`）。无滚转。
+- 库发布：`release` 环境当前不要求审批，推 tag 即发布（beta.3 于 2026-11-15 直接发布）。
+
 ## 3. 教训与死路
 
 ### 流程
+
+- 2026-11-15：RagdollReplay 的 synthetic 第一轮录像从不删除，%TEMP% 堆了 37 GB 把 C 盘写满，回放出现截断录像（"bad magic"/"ends after"）的假差异；已修（`57e5250`）。跑大批回放前先看磁盘。
+- 2026-11-15：视图矩阵布局匹配写相机的方案从来没匹配上（误差 1.0/4.2），过场镜头一次都没写入；先看日志里的 WRN 再下结论。
 
 - 删除或改动选项前先读用户保存的值（`%APPDATA%/XIVLauncher/pluginConfigs/CombatSimulator.json`），不要假设是默认值：Damage Multiplier 默认 1.0，用户实际是 5.0（2026-11-15）。
 
@@ -243,6 +258,14 @@
 ### 实验模式
 
 - [ ] Fighting Mode（2026-07-03，`83b1fb1` 等）：投影式移动手感、最小间距推挤抖动、二段跳翻越、AI 跳越/连段/冲刺、武器 hitbox、Ctrl 招架键冲突。
+
+### 2026-11-15 批次
+
+- [ ] 库 0.1.0-beta.3（A6 拆分，插件 `090f549`）：布娃娃、头发、软组织、抓取、尸体穿行、武器、肢解照常。
+- [ ] 过场跟拍镜头（Camera → Cutscene Shots）：Play Now 画面切进机位；日志 `CutShot: camera check` 误差小、`pose handed … in N` N>0；FoV 是否对；近景角色不淡出。
+- [ ] Directed 死亡构图：日志 `DynamicCam look-at override` 的 `sceneChi` 与 `commandedChi`/`renderedChi` 对比，定位 0.26 rad 偏差出在哪一步。
+- [ ] 敌人行为层：多对多开巡逻时全员巡逻（日志 `patrolling`，不再 `idle 100%`）；Enemy Control 只在战败后接管；1v1 战败立刻接管；被救起不接管。
+- [ ] 可达生成：不再刷到墙外/崖上/地下；日志 `spawn spot moved`、`post moved`。
 
 ## 5. 搁置与未完成
 
