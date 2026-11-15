@@ -4,8 +4,8 @@ using System.Collections.Generic;
 namespace CombatSimulator.Npcs;
 
 /// <summary>
-/// A saved snapshot of the whole EnemyControl grab-as-attack setup: the pair list, the shared fitting
-/// tuning, and the arm-pose sliders. Interaction mirrors MainWindow's Ragdoll bone-profile list
+/// A saved snapshot of the whole EnemyControl grab setup: the pair list, the grab animation and the
+/// shared fitting tuning. Interaction mirrors MainWindow's Ragdoll bone-profile list
 /// (load/overwrite/delete/save) — see MainWindow.DrawEnemyControlGrabProfilesSection.
 /// </summary>
 [Serializable]
@@ -29,18 +29,4 @@ public sealed class EnemyControlGrabProfile
     public float GrabFingerStrength { get; set; } = 0.6f;
     public float GrabFingerMaxAngle { get; set; } = 45f;
     public float GrabFingerClearance { get; set; } = 0f;
-
-    public bool ArmPoseEnabled { get; set; }
-    public float LeftArmUpperPitch { get; set; }
-    public float LeftArmUpperYaw { get; set; }
-    public float LeftArmUpperRoll { get; set; }
-    public float LeftArmLowerPitch { get; set; }
-    public float LeftArmLowerYaw { get; set; }
-    public float LeftArmLowerRoll { get; set; }
-    public float RightArmUpperPitch { get; set; }
-    public float RightArmUpperYaw { get; set; }
-    public float RightArmUpperRoll { get; set; }
-    public float RightArmLowerPitch { get; set; }
-    public float RightArmLowerYaw { get; set; }
-    public float RightArmLowerRoll { get; set; }
 }

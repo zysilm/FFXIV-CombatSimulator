@@ -128,6 +128,7 @@
 - 每个敌人每帧只归一层管：被控制 → 死亡 → 抢尸 → 交战 → 巡逻 → 守岗 → 待机（`Ai/EnemyLayer.cs`）。Enemy Control 只覆盖它那一个敌人；被控制的不叫醒别人、不被叫醒；巡逻是每个敌人自己的状态（用户裁决，`43c4c3d`）。
 - Enemy Control 只在胜负已分（我方战败，`OutcomeDecided(false)`）后才接管；主角死亡不算分出胜负。接管对象：尸体被抢 → 抢尸者；否则凶手（按 EntityId 记、接管前核对存活）；都不行就不接管。Control killer 关时谁都不接管（用户裁决，`43c4c3d`）。
 - Enemy Control 的“生成一只怪来控制”已删除（用户裁决）；退役键 `EnemyControlSpawnOnDeath`、`EnemyControlModelId`、`EnemyControlModelNameId`。
+- Enemy Control 只做“控制一个敌人”：附身、移动、镜头跟随、放开、抓住尸体（grab）。Swarm（选中的敌人跟随、爬上尸体踩踏、阵型）和手臂姿势覆盖（手动转动敌人上臂/前臂骨骼）已删除，用户用过、效果不好（2026-11-15，用户裁决）；退役键见 `Configuration.cs` 的 `RetiredOptionNames`，抓取档案里的手臂姿势字段一并丢弃。
 - 生成点、岗位、巡逻点都吸到我方能走到的网格块上（从候选点向外逐圈搜，首次进人群最远 96 m，重新进人群 20 m/12 m）。
 
 ### 相机 / 过场镜头（2026-11-15）
@@ -266,6 +267,7 @@
 - [ ] Directed 死亡构图：日志 `DynamicCam look-at override` 的 `sceneChi` 与 `commandedChi`/`renderedChi` 对比，定位 0.26 rad 偏差出在哪一步。
 - [ ] 敌人行为层：多对多开巡逻时全员巡逻（日志 `patrolling`，不再 `idle 100%`）；Enemy Control 只在战败后接管；1v1 战败立刻接管；被救起不接管。
 - [ ] 可达生成：不再刷到墙外/崖上/地下；日志 `spawn spot moved`、`post moved`。
+- [ ] Enemy Control 精简（只控制一个敌人）：Effects → Enemy Control → Show Enemy Control GUI 打开的窗口里不再有 Swarm 折叠栏和手臂姿势；控制、镜头切换、Release、抓取照常；旧抓取档案（含 Embrace）载入后没有手臂姿势。
 
 ## 5. 搁置与未完成
 

@@ -151,29 +151,9 @@ public static class FfxivHumanoidProfile
                 Rule(BoneNameClass.Prefix("j_te"), 1.08f),
                 Rule(BoneNameClass.Prefix("j_sk_"), 1.0f)),
 
-            // Navigation landmarks are deliberately semantic rather than a second copy of the collider
-            // list. A nearest-collider search tends to collapse onto the large skirt/torso volumes and
-            // gives the swarm no recognizable pose to follow. These bones describe stable, readable
-            // parts of a humanoid pose. Mod-specific soft bones may be used as X/Z landmarks, but they
-            // are never promoted to traversal surfaces by IsTraversalSurfaceBone.
-            StompLandmarks = ImmutableArray.Create<StompLandmark>(
-                // Chest and abdomen dominate automatic stomp selection.
-                new("j_mune_l", "chest L", 13f, 0.10f), new("j_mune_r", "chest R", 13f, 0.10f),
-                new("iv_c_mune_l", "chest L", 13f, 0.09f), new("iv_c_mune_r", "chest R", 13f, 0.09f),
-                new("n_hara", "abdomen", 16f, 0.13f),
-                new("iv_fukubu_phys_r", "abdomen", 15f, 0.10f), new("ya_fukubu_phys", "abdomen", 15f, 0.10f),
-                // Pelvis, buttocks and groin are the other high-priority load-bearing landmarks.
-                new("j_kosi", "pelvis", 15f, 0.12f),
-                new("iv_shiri_l", "buttock L", 13f, 0.10f), new("iv_shiri_r", "buttock R", 13f, 0.10f),
-                new("iv_inshin_l", "groin L", 12f, 0.07f), new("iv_inshin_r", "groin R", 12f, 0.07f),
-                new("iv_kougan_l", "groin L", 11f, 0.06f), new("iv_kougan_r", "groin R", 11f, 0.06f),
-                new("iv_omanko", "groin", 12f, 0.06f),
-                // Armpit/shoulder landmarks have medium priority.
-                new("j_sako_l", "armpit L", 7f, 0.075f), new("j_sako_r", "armpit R", 7f, 0.075f),
-                new("n_hkata_l", "armpit L", 6f, 0.07f), new("n_hkata_r", "armpit R", 6f, 0.07f),
-                // Extremities are valid but intentionally much less likely than the torso.
-                new("j_te_l", "hand L", 1.6f, 0.055f), new("j_te_r", "hand R", 1.6f, 0.055f),
-                new("j_asi_e_l", "foot L", 1.8f, 0.06f), new("j_asi_e_r", "foot R", 1.8f, 0.06f)),
+            // Corpse landmarks fed only the removed Enemy Control swarm (followers picking spots on a
+            // corpse, CollectCorpseTraversalSlots); nothing reads them now.
+            StompLandmarks = ImmutableArray<StompLandmark>.Empty,
 
             // The bodies that actually arrive when a body falls; everything else is along for the ride.
             ImpactTorsoBones = ImmutableArray.Create(

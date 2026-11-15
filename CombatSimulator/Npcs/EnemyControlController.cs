@@ -25,7 +25,7 @@ namespace CombatSimulator.Npcs;
 /// it (active-camera-style free orbit centered on it); and the attack input (keyboard or gamepad —
 /// routed via the UseAction hook) toggles a grab (see config.EnemyControlGrabPairs).
 ///
-/// Scope: only the possessed enemy (and, with the opt-in swarm, the enemies it gathers). The enemy AI
+/// Scope: only the possessed enemy. The enemy AI
 /// skips whatever <see cref="ControlsNpc"/> names (its behaviour layer is "controlled") and treats it as
 /// absent for everyone else's decisions; this class never writes the enemy's own state (its AI state,
 /// patrol, identity flags), so on release it picks up where it left off.
@@ -49,8 +49,6 @@ public unsafe partial class EnemyControlController : IDisposable
     private readonly MovementBlockHook movementBlock;
     private readonly ActiveCameraController activeCamera;
     private readonly VNavmeshIpc vnavmesh;
-    private readonly Npcs.NpcSelector npcSelector;
-    private readonly Func<IReadOnlyList<RagdollController>> corpseRagdollProvider;
     private readonly Configuration config;
     private readonly IPluginLog log;
 
@@ -110,56 +108,16 @@ public unsafe partial class EnemyControlController : IDisposable
     private ushort grabAttackSavedBaseOverride;
     private float grabAttackRestoreTimer;
 
-    private sealed class SwarmFollowerState
-    {
-        public required Npcs.SimulatedNpc Npc;
-        public float Angle;
-        public float RadiusFactor;
-        public float WanderPhase;
-        public float WanderRate;
-        public float FloorRefreshTimer;
-        public float FloorY;
-        public bool HasFloor;
-        public bool ColliderEnsured;
-        public int CorpseSlotId = -1;
-        public int PreviousCorpseSlotId = -1;
-        public float CorpseSlotTimer;
-        public Vector2 CorpseSlotOffset;
-        public int CorpseSlotEpoch;
-        public RagdollController? ColliderRagdoll;
-        public bool OnCorpseSupport;
-        public bool TraversalGhosted;
-        public bool TraversalProxyActive;
-    }
-
-    private readonly Dictionary<nint, SwarmFollowerState> swarmFollowers = new();
-    private readonly HashSet<nint> desiredSwarmAddresses = new();
-    private readonly List<nint> staleSwarmAddresses = new();
-    private readonly List<RagdollController.CorpseTraversalSlot> swarmCorpseSlots = new();
-    private readonly Dictionary<int, nint> swarmCorpseReservations = new();
-    private Vector3 swarmCorpseCenter;
-    private float swarmCorpseExclusionRadius;
-    private float swarmElapsed;
-    private float swarmClimbDelayRemaining;
-    private float swarmStompMassHoldRemaining;
-    private RagdollController? swarmCorpseRagdoll;
-
     public bool IsActive => controlledAddress != nint.Zero;
-    public int SwarmFollowerCount => swarmFollowers.Count;
-    public int SwarmCorpseOccupantCount => swarmFollowers.Values.Count(f => f.CorpseSlotId >= 0);
 
     /// <summary>True while we're controlling an existing enemy at this address (suppresses its AI).</summary>
     public bool ControlsNpc(nint address)
-        => (controlledNpc != null && controlledNpc.Address == address) || swarmFollowers.ContainsKey(address);
-
-    /// <summary>Only the possessed actor itself, not the pack following it.</summary>
-    public bool PossessesNpc(nint address) => controlledNpc != null && controlledNpc.Address == address;
+        => controlledNpc != null && controlledNpc.Address == address;
 
     public EnemyControlController(IKeyState keyState, IGamepadState gamepad, IFramework framework,
         RagdollController playerRagdoll, AnimationController animation, BoneTransformService boneService,
         MovementBlockHook movementBlock, ActiveCameraController activeCamera,
-        VNavmeshIpc vnavmesh, Npcs.NpcSelector npcSelector,
-        Func<IReadOnlyList<RagdollController>> corpseRagdollProvider,
+        VNavmeshIpc vnavmesh,
         Configuration config, IPluginLog log)
     {
         this.keyState = keyState;
@@ -171,15 +129,10 @@ public unsafe partial class EnemyControlController : IDisposable
         this.movementBlock = movementBlock;
         this.activeCamera = activeCamera;
         this.vnavmesh = vnavmesh;
-        this.npcSelector = npcSelector;
-        this.corpseRagdollProvider = corpseRagdollProvider;
         this.config = config;
         this.log = log;
         defaultGrabConform = new EnemyControlGrabConformSolver(boneService, playerRagdoll, config, log);
-        if (config.EnemyControlSwarmEnabled && config.EnemyControlSwarmClimbCorpses)
-            swarmClimbDelayRemaining = Math.Clamp(config.EnemyControlSwarmClimbDelay, 0f, 5f);
         framework.Update += OnUpdate;
-        boneService.OnRenderFrame += ApplyArmPoseOverrides;
         boneService.OnPosePrepared += UpdatePreparedGrabTargets;
     }
 
@@ -324,7 +277,6 @@ public unsafe partial class EnemyControlController : IDisposable
             if (dt <= 0f || dt > 0.25f) dt = 1f / 60f;
 
             TickMovement(dt);
-            if (!ExternalControlActive) TickSwarm(dt);
             if (!ExternalControlActive || ExternalManualControlActive) TickAttackKey();
             TickGrabAttack(dt);
         }
@@ -332,20 +284,6 @@ public unsafe partial class EnemyControlController : IDisposable
         {
             log.Error(ex, "EnemyControlMode: error in update");
         }
-    }
-
-    private static Vector2 BuildCorpseSlotOffset(
-        nint address,
-        RagdollController.CorpseTraversalSlot slot,
-        int epoch)
-    {
-        if (slot.WanderRadius <= 0.0001f)
-            return Vector2.Zero;
-        var angleNoise = StableSlotNoise(address, slot.Id ^ unchecked(epoch * 0x45d9f3b), epoch * 0.37f);
-        var radiusNoise = StableSlotNoise(address, slot.Id ^ unchecked(epoch * 0x27d4eb2d), epoch * 0.71f);
-        var angle = angleNoise * MathF.Tau;
-        var radius = MathF.Sqrt(Math.Clamp(radiusNoise, 0f, 1f)) * slot.WanderRadius;
-        return new Vector2(MathF.Cos(angle) * radius, MathF.Sin(angle) * radius);
     }
 
     private void TickMovement(float dt)
@@ -519,692 +457,6 @@ public unsafe partial class EnemyControlController : IDisposable
         // Write through MovementBlockHook so the game's own movement doesn't override us.
         movementBlock.SetApproachPosition(obj, posX, posY, posZ);
         movementBlock.SetApproachRotation(obj, yaw);
-    }
-
-    /// <summary>Drive selected living enemies into stable randomized slots around the controlled
-    /// EnemyControl. Slots are persistent (no per-frame dice jitter); a small slow wander supplies the
-    /// requested organic variation, and Compactness damps both wander and slot error.</summary>
-    private void TickSwarm(float dt)
-    {
-        if (!config.EnemyControlSwarmEnabled)
-        {
-            ReleaseSwarmFollowers();
-            return;
-        }
-
-        swarmElapsed += dt;
-        desiredSwarmAddresses.Clear();
-        foreach (var npc in npcSelector.SelectedNpcs)
-        {
-            var address = npc.Address;
-            if (address == nint.Zero || address == controlledAddress || npc.BattleChara == null ||
-                !npc.IsAlive || !IsObjectAddressLive(address))
-                continue;
-
-            desiredSwarmAddresses.Add(address);
-            if (swarmFollowers.ContainsKey(address))
-                continue;
-
-            var go = (GameObject*)address;
-            swarmFollowers[address] = new SwarmFollowerState
-            {
-                Npc = npc,
-                // Golden-angle spacing prevents accidental piles while the small random phase keeps
-                // the ring from reading as a military formation.
-                Angle = swarmFollowers.Count * 2.39996323f + (Random.Shared.NextSingle() - 0.5f) * 0.7f,
-                RadiusFactor = Random.Shared.NextSingle(),
-                WanderPhase = Random.Shared.NextSingle() * MathF.Tau,
-                WanderRate = 0.35f + Random.Shared.NextSingle() * 0.45f,
-                FloorRefreshTimer = Random.Shared.NextSingle() * 0.2f,
-                FloorY = go->Position.Y,
-                HasFloor = false,
-            };
-            log.Info($"EnemyControlMode: swarm follower joined '{npc.Name}' (0x{address:X}).");
-        }
-
-        staleSwarmAddresses.Clear();
-        foreach (var (address, _) in swarmFollowers)
-            if (!desiredSwarmAddresses.Contains(address) || !IsObjectAddressLive(address))
-                staleSwarmAddresses.Add(address);
-        foreach (var address in staleSwarmAddresses)
-            ReleaseSwarmFollower(address);
-
-        var compactness = Math.Clamp(config.EnemyControlSwarmCompactness, 0f, 1f);
-        var followDistance = Math.Clamp(config.EnemyControlSwarmFollowDistance, 0.35f, 12f);
-        var leaderPosition = new Vector3(posX, posY, posZ);
-        SetSwarmCorpseRagdoll(config.EnemyControlSwarmClimbCorpses
-            ? FindNearestSwarmCorpse()
-            : null);
-        var waitingToClimb = config.EnemyControlSwarmClimbCorpses && swarmClimbDelayRemaining > 0f;
-        if (waitingToClimb)
-        {
-            swarmClimbDelayRemaining = MathF.Max(0f, swarmClimbDelayRemaining - dt);
-            ClearAllSwarmCorpseSlots();
-        }
-        var corpseOccupationActive = !waitingToClimb && swarmCorpseRagdoll != null &&
-                                     PrepareSwarmCorpseSlots(swarmCorpseRagdoll, dt);
-        var enhancedStompTracking = corpseOccupationActive && config.EnemyControlSwarmEnhancedStompTracking;
-        var corpseFace = Vector3.Zero;
-        var hasCorpseFace = corpseOccupationActive && TryGetCorpseFacePoint(out corpseFace);
-        // A crowd should read as several feet loading the body, not N copies of the same full-force
-        // stomp. RagdollController uses this count to cap aggregate gait impulses for large swarms.
-        var concurrentStompers = Math.Max(1, swarmFollowers.Values.Count(f => f.CorpseSlotId >= 0));
-        foreach (var (address, follower) in swarmFollowers)
-        {
-            var go = (GameObject*)address;
-            var character = (Character*)address;
-            movementBlock.AddApproachNpc(address);
-
-            var collisionRagdoll = swarmCorpseRagdoll ?? playerRagdoll;
-            EnsureSwarmFollowerCollider(address, follower, collisionRagdoll);
-            SetSwarmFollowerTraversalGhost(address, follower, corpseOccupationActive);
-            follower.OnCorpseSupport = false;
-
-            var wanderAmount = (1f - compactness) * 0.28f;
-            var angle = yaw + follower.Angle +
-                        MathF.Sin(swarmElapsed * follower.WanderRate + follower.WanderPhase) * wanderAmount;
-            var radiusVariation = (follower.RadiusFactor - 0.5f) * (1f - compactness) * 0.7f;
-            var radius = followDistance * MathF.Max(0.35f, 1f + radiusVariation);
-            var target = leaderPosition + new Vector3(MathF.Sin(angle) * radius, 0f, MathF.Cos(angle) * radius);
-            var current = new Vector3(go->Position.X, go->Position.Y, go->Position.Z);
-
-            RagdollController.CorpseTraversalSlot? corpseSlot = null;
-            if (corpseOccupationActive && TryReserveCorpseSlot(
-                    address, follower, current, out var reservedSlot))
-            {
-                corpseSlot = reservedSlot;
-                target.X = reservedSlot.Position.X + follower.CorpseSlotOffset.X;
-                target.Z = reservedSlot.Position.Z + follower.CorpseSlotOffset.Y;
-            }
-            else if (corpseOccupationActive)
-            {
-                // No free surface lane yet: circulate around the boundary instead of freezing at
-                // one formation point. The follower retries reservations every frame and can enter
-                // as soon as a lane moves/releases, while the exclusion radius still prevents the
-                // old all-at-once corpse shove.
-                var orbitDirection = (address.ToInt64() & 1) == 0 ? 1f : -1f;
-                var stagingAngle = angle + orbitDirection * swarmElapsed *
-                    (0.16f + follower.WanderRate * 0.12f);
-                var stagingRadius = swarmCorpseExclusionRadius + 0.10f +
-                                    follower.RadiusFactor * 0.22f;
-                target.X = swarmCorpseCenter.X + MathF.Sin(stagingAngle) * stagingRadius;
-                target.Z = swarmCorpseCenter.Z + MathF.Cos(stagingAngle) * stagingRadius;
-            }
-
-            follower.FloorRefreshTimer -= dt;
-            if (config.EnemyControlGroundWalk)
-            {
-                if (!follower.HasFloor || follower.FloorRefreshTimer <= 0f)
-                {
-                    follower.FloorY = SnapToFloor(target.X, go->Position.Y, target.Z);
-                    follower.HasFloor = true;
-                    follower.FloorRefreshTimer = enhancedStompTracking && corpseSlot.HasValue
-                        ? 0.045f + follower.RadiusFactor * 0.03f
-                        : 0.18f + follower.RadiusFactor * 0.14f;
-                }
-                target.Y = follower.FloorY;
-            }
-            else
-            {
-                target.Y = posY + MathF.Sin(follower.WanderPhase) * followDistance * 0.08f;
-            }
-
-            if (FightingLane is { IsLaneActive: true })
-                target = FightingLane.ConstrainToLane(target);
-
-            var horizontal = new Vector3(target.X - current.X, 0f, target.Z - current.Z);
-            var horizontalDistance = horizontal.Length();
-            // Normal formation following intentionally has a broad dead zone.  Reusing that dead
-            // zone for a moving corpse landmark makes sub-half-metre bone motion invisible and was
-            // the main reason occupied followers still looked like rigid ring followers.
-            var stopDistance = corpseSlot.HasValue
-                ? Math.Clamp(corpseSlot.Value.Clearance * 0.42f, 0.035f, 0.11f)
-                : 0.55f + (0.10f - 0.55f) * compactness;
-            var next = current;
-            var moving = horizontalDistance > stopDistance;
-            var followerYaw = yaw;
-            var resolvedMoveSpeed = config.EnemyControlMoveSpeed;
-            if (moving && horizontalDistance > 1e-5f)
-            {
-                var catchup = corpseSlot.HasValue
-                    ? MathF.Max(1.15f, 0.75f + compactness * 0.75f)
-                    : 0.75f + compactness * 0.75f;
-                if (horizontalDistance > followDistance * 1.75f)
-                    catchup *= 1.65f;
-                resolvedMoveSpeed *= catchup;
-                var step = MathF.Min(horizontalDistance, resolvedMoveSpeed * dt);
-                var direction = horizontal / horizontalDistance;
-                next += direction * step;
-                followerYaw = MathF.Atan2(direction.X, direction.Z);
-                character->SetMode(CharacterModes.Normal, 0);
-                ActorVisualStateController.ApplyMoving(character, follower.Npc.VisualState, dt);
-            }
-            else
-            {
-                ActorVisualStateController.ClearMovement(character, follower.Npc.VisualState);
-            }
-
-            // Corpse occupation is staged as a stomp/stand interaction rather than a formation
-            // march. Every assigned climber therefore watches the current ragdoll face while it
-            // approaches and after it reaches its body landmark.
-            if (corpseSlot.HasValue && hasCorpseFace)
-            {
-                var faceDirection = new Vector2(corpseFace.X - next.X, corpseFace.Z - next.Z);
-                if (faceDirection.LengthSquared() > 0.0001f)
-                    followerYaw = MathF.Atan2(faceDirection.X, faceDirection.Y);
-            }
-            movementBlock.SetApproachRotation(go, followerYaw);
-
-            var dynamicTraversal = false;
-            if (corpseSlot.HasValue && swarmCorpseRagdoll != null && config.EnemyControlGroundWalk &&
-                config.NpcCollisionActive)
-            {
-                var visualScale = GetVisualScale(go);
-                // Let ordinary navigation cover long distances. Once the follower reaches the
-                // corpse neighbourhood, one finite-mass foot carrier becomes authoritative for
-                // all three axes; no sampled height is ever written directly to the actor root.
-                var proxyEngageDistance = MathF.Max(
-                    0.9f, visualScale * 1.15f + corpseSlot.Value.Clearance * 2f);
-                dynamicTraversal = follower.TraversalProxyActive ||
-                                   horizontalDistance <= proxyEngageDistance;
-                if (dynamicTraversal)
-                {
-                    var maxClimb = 0.65f * MathF.Max(1f, visualScale);
-                    swarmCorpseRagdoll.DriveNpcTraversalProxy(
-                        address,
-                        current,
-                        new Vector3(target.X, follower.FloorY, target.Z),
-                        follower.FloorY,
-                        visualScale,
-                        resolvedMoveSpeed,
-                        maxClimb,
-                        config.EnemyControlSwarmStompResponse,
-                        concurrentStompers,
-                        moving);
-                    follower.TraversalProxyActive = true;
-                    if (swarmCorpseRagdoll.TryGetNpcTraversalProxyRoot(
-                            address, out var proxyRoot, out var proxyOnCorpse))
-                    {
-                        next = proxyRoot;
-                        follower.OnCorpseSupport = proxyOnCorpse;
-                    }
-                }
-            }
-
-            if (!dynamicTraversal)
-            {
-                if (follower.TraversalProxyActive)
-                    swarmCorpseRagdoll?.ReleaseNpcTraversalProxy(address);
-                follower.TraversalProxyActive = false;
-                var desiredRootY = target.Y;
-                var verticalSpeed = config.EnemyControlGroundWalk
-                    ? 6f
-                    : MathF.Max(1f, config.EnemyControlVerticalSpeed);
-                next.Y = MoveTowards(current.Y, desiredRootY, verticalSpeed * dt);
-            }
-            movementBlock.SetApproachPosition(go, next.X, next.Y, next.Z);
-        }
-
-        var anyStompSupport = corpseOccupationActive &&
-                              swarmFollowers.Values.Any(f => f.OnCorpseSupport);
-        swarmStompMassHoldRemaining = anyStompSupport
-            ? 0.45f
-            : MathF.Max(0f, swarmStompMassHoldRemaining - dt);
-        swarmCorpseRagdoll?.SetTraversalMassMultiplier(swarmStompMassHoldRemaining > 0f
-            ? Math.Clamp(config.EnemyControlSwarmStompCorpseMassMultiplier, 1f, 12f)
-            : 1f);
-    }
-
-    private RagdollController? FindNearestSwarmCorpse()
-    {
-        if (swarmFollowers.Count == 0)
-            return null;
-
-        var reference = Vector3.Zero;
-        var count = 0;
-        foreach (var address in swarmFollowers.Keys)
-        {
-            if (!IsObjectAddressLive(address))
-                continue;
-            var go = (GameObject*)address;
-            reference += new Vector3(go->Position.X, go->Position.Y, go->Position.Z);
-            count++;
-        }
-        if (count == 0)
-            return null;
-        reference /= count;
-
-        RagdollController? best = null;
-        var bestDistance = float.MaxValue;
-        if (swarmCorpseRagdoll is { IsActive: true })
-        {
-            var retainedDistance = swarmCorpseRagdoll.NearestBodyDistance(reference);
-            if (retainedDistance.HasValue)
-            {
-                best = swarmCorpseRagdoll;
-                bestDistance = retainedDistance.Value;
-            }
-        }
-
-        IReadOnlyList<RagdollController> candidates;
-        try { candidates = corpseRagdollProvider(); }
-        catch { return null; }
-        foreach (var candidate in candidates)
-        {
-            if (!candidate.IsActive)
-                continue;
-            var distance = candidate.NearestBodyDistance(reference);
-            if (!distance.HasValue || distance.Value >= bestDistance)
-                continue;
-
-            // Two nearby moving ragdolls can exchange the exact "nearest" result every frame.
-            // Migrating every follower's colliders and clearing all support anchors on each flip is
-            // visible as a whole-pack flash. Keep the current corpse until another is meaningfully
-            // closer; inactive/despawned targets still switch immediately.
-            if (best != null && ReferenceEquals(best, swarmCorpseRagdoll) &&
-                !ReferenceEquals(candidate, swarmCorpseRagdoll))
-            {
-                var switchMargin = MathF.Max(0.35f, bestDistance * 0.12f);
-                if (distance.Value + switchMargin >= bestDistance)
-                    continue;
-            }
-            best = candidate;
-            bestDistance = distance.Value;
-        }
-        return best;
-    }
-
-    private void SetSwarmCorpseRagdoll(RagdollController? next)
-    {
-        if (ReferenceEquals(swarmCorpseRagdoll, next))
-            return;
-
-        var previous = swarmCorpseRagdoll;
-        previous?.SetTraversalMassMultiplier(1f);
-        ClearAllSwarmCorpseSlots();
-        foreach (var (address, follower) in swarmFollowers)
-        {
-            previous?.ReleaseNpcTraversalProxy(address);
-            follower.TraversalProxyActive = false;
-            if (follower.ColliderRagdoll == null || ReferenceEquals(follower.ColliderRagdoll, next))
-                continue;
-            follower.ColliderRagdoll.SetLiveColliderLightweight(address, false);
-            follower.ColliderRagdoll.SetLiveColliderTraversalGhost(address, false);
-            follower.ColliderRagdoll.RemoveLiveCollider(address);
-            follower.ColliderRagdoll = null;
-            follower.ColliderEnsured = false;
-            follower.TraversalGhosted = false;
-        }
-
-        swarmCorpseRagdoll = next;
-        swarmStompMassHoldRemaining = 0f;
-        if (next != null)
-            log.Info($"EnemyControlMode: swarm selected nearest corpse 0x{next.TargetCharacterAddress:X}.");
-    }
-
-    private static void EnsureSwarmFollowerCollider(
-        nint address,
-        SwarmFollowerState follower,
-        RagdollController owner)
-    {
-        if (!ReferenceEquals(follower.ColliderRagdoll, owner))
-        {
-            if (follower.ColliderRagdoll != null)
-            {
-                follower.ColliderRagdoll.ReleaseNpcTraversalProxy(address);
-                follower.ColliderRagdoll.SetLiveColliderTraversalGhost(address, false);
-                follower.ColliderRagdoll.SetLiveColliderLightweight(address, false);
-                follower.ColliderRagdoll.RemoveLiveCollider(address);
-            }
-            follower.ColliderRagdoll = owner;
-            follower.ColliderEnsured = false;
-            follower.TraversalGhosted = false;
-            follower.TraversalProxyActive = false;
-        }
-
-        owner.SetLiveColliderLightweight(address, true);
-        if (!follower.ColliderEnsured)
-        {
-            follower.ColliderEnsured = owner.AddLiveCollider(address);
-            if (follower.ColliderEnsured)
-                follower.TraversalGhosted = false;
-        }
-    }
-
-    private static void SetSwarmFollowerTraversalGhost(
-        nint address,
-        SwarmFollowerState follower,
-        bool ghost)
-    {
-        if (follower.TraversalGhosted == ghost)
-            return;
-        follower.ColliderRagdoll?.SetLiveColliderTraversalGhost(address, ghost);
-        follower.TraversalGhosted = ghost;
-    }
-
-    private bool PrepareSwarmCorpseSlots(RagdollController corpseRagdoll, float dt)
-    {
-        swarmCorpseReservations.Clear();
-        swarmCorpseSlots.Clear();
-        if (!config.EnemyControlSwarmClimbCorpses || !config.EnemyControlGroundWalk ||
-            !config.NpcCollisionActive ||
-            corpseRagdoll.CollectCorpseTraversalSlots(swarmCorpseSlots) == 0)
-        {
-            ClearAllSwarmCorpseSlots();
-            return false;
-        }
-
-        swarmCorpseCenter = Vector3.Zero;
-        foreach (var slot in swarmCorpseSlots)
-            swarmCorpseCenter += slot.Position;
-        swarmCorpseCenter /= swarmCorpseSlots.Count;
-        swarmCorpseExclusionRadius = 0.25f;
-        foreach (var slot in swarmCorpseSlots)
-        {
-            var radial = new Vector2(slot.Position.X - swarmCorpseCenter.X,
-                slot.Position.Z - swarmCorpseCenter.Z).Length();
-            swarmCorpseExclusionRadius = MathF.Max(
-                swarmCorpseExclusionRadius, radial + MathF.Max(0.12f, slot.Clearance * 1.8f));
-        }
-
-        var retainedFaceOccupants = 0;
-
-        foreach (var (address, follower) in swarmFollowers)
-        {
-            if (config.EnemyControlSwarmRepositionOnCorpse)
-                follower.CorpseSlotTimer -= dt;
-
-            var timerExpired = config.EnemyControlSwarmRepositionOnCorpse && follower.CorpseSlotTimer <= 0f;
-            if (follower.CorpseSlotId < 0 ||
-                !TryFindCorpseSlot(follower.CorpseSlotId, out var slot))
-            {
-                ClearFollowerCorpseSlot(address, follower);
-                continue;
-            }
-
-            var release = timerExpired;
-            if (!release)
-            {
-                release = slot.IsFace && retainedFaceOccupants >= 2 ||
-                          !swarmCorpseReservations.TryAdd(slot.Id, address);
-                if (!release && slot.IsFace)
-                    retainedFaceOccupants++;
-            }
-
-            if (release)
-            {
-                ClearFollowerCorpseSlot(address, follower);
-            }
-        }
-
-        return true;
-    }
-
-    private bool TryGetCorpseFacePoint(out Vector3 facePoint)
-    {
-        facePoint = Vector3.Zero;
-        var count = 0;
-        foreach (var slot in swarmCorpseSlots)
-        {
-            if (!slot.IsFace)
-                continue;
-            facePoint += slot.Position;
-            count++;
-        }
-
-        if (count == 0)
-            return false;
-        facePoint /= count;
-        return true;
-    }
-
-    private bool TryReserveCorpseSlot(
-        nint address,
-        SwarmFollowerState follower,
-        Vector3 current,
-        out RagdollController.CorpseTraversalSlot slot)
-    {
-        if (follower.CorpseSlotId >= 0 && TryFindCorpseSlot(follower.CorpseSlotId, out slot))
-            return true;
-
-        var bestScore = float.MaxValue;
-        var found = false;
-        var best = default(RagdollController.CorpseTraversalSlot);
-        foreach (var candidate in swarmCorpseSlots)
-        {
-            if (swarmCorpseReservations.ContainsKey(candidate.Id))
-                continue;
-            if (candidate.IsFace && ReservedFaceOccupantCount() >= 2)
-                continue;
-
-            var distanceFromFollower = Vector2.Distance(
-                new Vector2(current.X, current.Z), new Vector2(candidate.Position.X, candidate.Position.Z));
-
-            var randomBias = StableSlotNoise(address, candidate.Id, follower.WanderPhase) *
-                             MathF.Max(0.12f, candidate.Clearance * 1.5f);
-            var previousPenalty = candidate.Id == follower.PreviousCorpseSlotId ? 0.55f : 0f;
-            // A logarithmic bonus strongly prefers torso/groin landmarks without making hands,
-            // feet or the precisely sampled face impossible once the central slots are occupied.
-            var priorityBonus = MathF.Log2(MathF.Max(1f, candidate.SelectionWeight)) * 0.32f;
-            var score = distanceFromFollower + randomBias + previousPenalty - priorityBonus;
-            if (score >= bestScore)
-                continue;
-            bestScore = score;
-            best = candidate;
-            found = true;
-        }
-
-        if (!found)
-        {
-            slot = default;
-            return false;
-        }
-
-        follower.CorpseSlotId = best.Id;
-        follower.CorpseSlotEpoch++;
-        follower.CorpseSlotOffset = BuildCorpseSlotOffset(address, best, follower.CorpseSlotEpoch);
-        var landmarkChangeFrequency = Math.Clamp(config.EnemyControlSwarmLandmarkChangeFrequency, 0.25f, 4f);
-        follower.CorpseSlotTimer = config.EnemyControlSwarmRepositionOnCorpse
-            ? (5f + StableSlotNoise(address, best.Id ^ 0x5f3759df,
-                follower.WanderPhase + follower.CorpseSlotEpoch * 0.73f) * 7f) /
-              landmarkChangeFrequency
-            : 0f;
-        follower.FloorRefreshTimer = 0f;
-        swarmCorpseReservations[best.Id] = address;
-        slot = best;
-        return true;
-    }
-
-    private int ReservedFaceOccupantCount()
-    {
-        var count = 0;
-        foreach (var slotId in swarmCorpseReservations.Keys)
-            if (TryFindCorpseSlot(slotId, out var slot) && slot.IsFace)
-                count++;
-        return count;
-    }
-
-    private bool TryFindCorpseSlot(int id, out RagdollController.CorpseTraversalSlot slot)
-    {
-        foreach (var candidate in swarmCorpseSlots)
-        {
-            if (candidate.Id != id)
-                continue;
-            slot = candidate;
-            return true;
-        }
-        slot = default;
-        return false;
-    }
-
-    private void ClearFollowerCorpseSlot(nint address, SwarmFollowerState follower)
-    {
-        if (follower.CorpseSlotId >= 0)
-            follower.PreviousCorpseSlotId = follower.CorpseSlotId;
-        follower.CorpseSlotId = -1;
-        follower.CorpseSlotTimer = 0f;
-        follower.CorpseSlotOffset = Vector2.Zero;
-        follower.FloorRefreshTimer = 0f;
-        follower.OnCorpseSupport = false;
-        follower.ColliderRagdoll?.ClearNpcTraversalSupport(address);
-    }
-
-    private void ClearAllSwarmCorpseSlots()
-    {
-        foreach (var (address, follower) in swarmFollowers)
-            ClearFollowerCorpseSlot(address, follower);
-        swarmCorpseReservations.Clear();
-        swarmCorpseSlots.Clear();
-        swarmCorpseExclusionRadius = 0f;
-    }
-
-    private static float StableSlotNoise(nint address, int slotId, float phase)
-    {
-        var seed = unchecked((uint)address.ToInt64()) ^ unchecked((uint)slotId * 0x9e3779b9u);
-        seed ^= seed >> 16;
-        seed *= 0x7feb352du;
-        seed ^= seed >> 15;
-        var normalized = (seed & 0x00ffffffu) / 16777215f;
-        return (normalized + MathF.Abs(MathF.Sin(phase + slotId * 0.017f))) * 0.5f;
-    }
-
-    public void OnSwarmSettingChanged(bool enabled)
-    {
-        if (!enabled)
-        {
-            swarmClimbDelayRemaining = 0f;
-            ReleaseSwarmFollowers();
-        }
-        else if (config.EnemyControlSwarmClimbCorpses)
-        {
-            swarmClimbDelayRemaining = Math.Clamp(config.EnemyControlSwarmClimbDelay, 0f, 5f);
-        }
-    }
-
-    public void ResetSwarm()
-    {
-        swarmCorpseRagdoll?.SetTraversalMassMultiplier(1f);
-        swarmStompMassHoldRemaining = 0f;
-        ClearAllSwarmCorpseSlots();
-        swarmElapsed = 0f;
-        swarmClimbDelayRemaining = config.EnemyControlSwarmClimbCorpses
-            ? Math.Clamp(config.EnemyControlSwarmClimbDelay, 0f, 5f)
-            : 0f;
-        var followDistance = Math.Clamp(config.EnemyControlSwarmFollowDistance, 0.35f, 12f);
-        var formationCenter = new Vector3(posX, posY, posZ);
-        var index = 0;
-        foreach (var (address, follower) in swarmFollowers)
-        {
-            follower.ColliderRagdoll?.ReleaseNpcTraversalProxy(address);
-            follower.TraversalProxyActive = false;
-            SetSwarmFollowerTraversalGhost(address, follower, false);
-            follower.Angle = index++ * 2.39996323f +
-                             (Random.Shared.NextSingle() - 0.5f) * 0.7f;
-            follower.RadiusFactor = Random.Shared.NextSingle();
-            follower.WanderPhase = Random.Shared.NextSingle() * MathF.Tau;
-            follower.WanderRate = 0.35f + Random.Shared.NextSingle() * 0.45f;
-            follower.FloorRefreshTimer = 0f;
-            follower.HasFloor = false;
-            follower.PreviousCorpseSlotId = -1;
-            follower.CorpseSlotEpoch++;
-            follower.ColliderRagdoll?.ClearNpcTraversalSupport(address);
-            if (!IsObjectAddressLive(address))
-                continue;
-
-            // Reset is an explicit recovery operation, so make it immediately observable: move
-            // every follower out of stale corpse/contact state and distribute it around the leader
-            // in one frame. The normal smooth controller resumes from these fresh slots next tick.
-            var go = (GameObject*)address;
-            var angle = yaw + follower.Angle;
-            var radius = followDistance * (0.78f + follower.RadiusFactor * 0.38f);
-            var resetPosition = formationCenter +
-                                new Vector3(MathF.Sin(angle) * radius, 0f, MathF.Cos(angle) * radius);
-            if (config.EnemyControlGroundWalk)
-                resetPosition.Y = SnapToFloor(resetPosition.X, formationCenter.Y, resetPosition.Z);
-            if (FightingLane is { IsLaneActive: true })
-                resetPosition = FightingLane.ConstrainToLane(resetPosition);
-
-            follower.FloorY = resetPosition.Y;
-            follower.HasFloor = config.EnemyControlGroundWalk;
-            movementBlock.AddApproachNpc(address);
-            movementBlock.SetApproachPosition(go, resetPosition.X, resetPosition.Y, resetPosition.Z);
-            movementBlock.SetApproachRotation(go, yaw);
-            ActorVisualStateController.ClearMovement((Character*)address, follower.Npc.VisualState);
-        }
-        log.Info($"EnemyControlMode: swarm hard reset ({swarmFollowers.Count} follower(s)).");
-    }
-
-    public void OnSwarmRepositionSettingChanged(bool enabled)
-    {
-        if (!enabled)
-            return;
-        foreach (var follower in swarmFollowers.Values)
-            follower.CorpseSlotTimer = 0f;
-    }
-
-    public void OnSwarmLandmarkChangeFrequencyChanged(float previous, float current)
-    {
-        var oldFrequency = Math.Clamp(previous, 0.25f, 4f);
-        var newFrequency = Math.Clamp(current, 0.25f, 4f);
-        var remainingScale = oldFrequency / newFrequency;
-        foreach (var follower in swarmFollowers.Values)
-            if (follower.CorpseSlotTimer > 0f)
-                follower.CorpseSlotTimer *= remainingScale;
-    }
-
-    public void OnSwarmClimbSettingChanged(bool enabled)
-    {
-        if (!enabled)
-        {
-            swarmClimbDelayRemaining = 0f;
-            SetSwarmCorpseRagdoll(null);
-        }
-        else
-        {
-            swarmClimbDelayRemaining = Math.Clamp(config.EnemyControlSwarmClimbDelay, 0f, 5f);
-        }
-    }
-
-    private void ReleaseSwarmFollowers()
-    {
-        if (swarmFollowers.Count == 0)
-        {
-            SetSwarmCorpseRagdoll(null);
-            return;
-        }
-        staleSwarmAddresses.Clear();
-        foreach (var address in swarmFollowers.Keys)
-            staleSwarmAddresses.Add(address);
-        foreach (var address in staleSwarmAddresses)
-            ReleaseSwarmFollower(address);
-        desiredSwarmAddresses.Clear();
-        SetSwarmCorpseRagdoll(null);
-    }
-
-    private void ReleaseSwarmFollower(nint address)
-    {
-        if (!swarmFollowers.Remove(address, out var follower)) return;
-        ClearFollowerCorpseSlot(address, follower);
-        if (follower.ColliderRagdoll != null)
-        {
-            follower.ColliderRagdoll.ReleaseNpcTraversalProxy(address);
-            follower.ColliderRagdoll.SetLiveColliderTraversalGhost(address, false);
-            follower.ColliderRagdoll.SetLiveColliderLightweight(address, false);
-            follower.ColliderRagdoll.RemoveLiveCollider(address);
-            follower.ColliderRagdoll = null;
-            follower.TraversalGhosted = false;
-        }
-        movementBlock.RemoveApproachNpc(address);
-        if (Core.Services.ObjectTable.LocalPlayer != null && IsObjectAddressLive(address))
-            ActorVisualStateController.ClearMovement((Character*)address, follower.Npc.VisualState);
-        log.Info($"EnemyControlMode: swarm follower released '{follower.Npc.Name}' (0x{address:X}).");
-    }
-
-    private static float MoveTowards(float current, float target, float maxDelta)
-    {
-        var delta = target - current;
-        if (MathF.Abs(delta) <= maxDelta) return target;
-        return current + MathF.CopySign(maxDelta, delta);
     }
 
     private void TickAttackKey()
@@ -1504,63 +756,6 @@ public unsafe partial class EnemyControlController : IDisposable
         return new Vector3(posX, posY + 0.8f, posZ);
     }
 
-    // Upper-arm / forearm bone pairs the pose sliders drive, left then right — see
-    // ApplyArmPoseOverrides. Standard FFXIV skeleton naming (j_ude_a = upper arm, j_ude_b = forearm),
-    // already used elsewhere in this file (HoldGrabPlayerBones) and in MainWindow.DevToolbars.cs.
-    private static readonly (string Upper, string Lower)[] ArmPoseBones =
-    {
-        ("j_ude_a_l", "j_ude_b_l"),
-        ("j_ude_a_r", "j_ude_b_r"),
-    };
-
-    /// <summary>
-    /// Manual arm-pose override (see config.EnemyControlArmPoseEnabled and the twelve slider fields):
-    /// bends the creature's own upper arm / forearm bones independent of whatever the grab animation
-    /// is doing, so the reach can be lined up with wherever a grab pair actually targets. Runs in the
-    /// render pass, same as EnemyControlGrabConformSolver, so it isn't immediately overwritten by that frame's
-    /// animation re-drive.
-    ///
-    /// Only applied while a grab is held — the creature walks around on its own animation otherwise.
-    /// The release window counts as held: the grab loop keeps playing until RestoreGrabAttackTimeline
-    /// fires (see TickGrabAttack), so dropping the pose at release instead would snap the arms back
-    /// into the canned grab pose for a second before that pose itself is released — two pops where
-    /// there should be one.
-    /// </summary>
-    private void ApplyArmPoseOverrides()
-    {
-        if (!IsActive || !config.EnemyControlArmPoseEnabled) return;
-        if (!grabAttackActive && !grabAttackRestorePending) return;
-
-        var skelN = boneService.TryGetSkeleton(controlledAddress);
-        if (skelN == null) return;
-        var skel = skelN.Value;
-
-        var deltas = new Dictionary<int, Quaternion>();
-        AddArmPoseDelta(skel, deltas, ArmPoseBones[0].Upper,
-            config.EnemyControlLeftArmUpperPitch, config.EnemyControlLeftArmUpperYaw, config.EnemyControlLeftArmUpperRoll);
-        AddArmPoseDelta(skel, deltas, ArmPoseBones[0].Lower,
-            config.EnemyControlLeftArmLowerPitch, config.EnemyControlLeftArmLowerYaw, config.EnemyControlLeftArmLowerRoll);
-        AddArmPoseDelta(skel, deltas, ArmPoseBones[1].Upper,
-            config.EnemyControlRightArmUpperPitch, config.EnemyControlRightArmUpperYaw, config.EnemyControlRightArmUpperRoll);
-        AddArmPoseDelta(skel, deltas, ArmPoseBones[1].Lower,
-            config.EnemyControlRightArmLowerPitch, config.EnemyControlRightArmLowerYaw, config.EnemyControlRightArmLowerRoll);
-
-        if (deltas.Count > 0)
-            boneService.ApplyRotationDeltas(skel, deltas);
-    }
-
-    private void AddArmPoseDelta(SkeletonAccess skel, Dictionary<int, Quaternion> deltas, string bone,
-        float pitchDeg, float yawDeg, float rollDeg)
-    {
-        if (pitchDeg == 0f && yawDeg == 0f && rollDeg == 0f) return;
-
-        var index = boneService.ResolveBoneIndex(skel, bone);
-        if (index < 0) return;
-
-        deltas[index] = Quaternion.CreateFromYawPitchRoll(
-            float.DegreesToRadians(yawDeg), float.DegreesToRadians(pitchDeg), float.DegreesToRadians(rollDeg));
-    }
-
     private void CaptureGrabAttackTimeline()
     {
         if (grabAttackTimelineCaptured || controlledAddress == nint.Zero)
@@ -1716,7 +911,6 @@ public unsafe partial class EnemyControlController : IDisposable
 
         CancelGrabAttack();
         playerRagdoll.CancelAttackStrike();
-        ReleaseSwarmFollowers();
 
         // Stop the ragdoll referencing this address BEFORE the object is deleted.
         if (colliderRegistered)
@@ -1744,7 +938,6 @@ public unsafe partial class EnemyControlController : IDisposable
     public void Dispose()
     {
         framework.Update -= OnUpdate;
-        boneService.OnRenderFrame -= ApplyArmPoseOverrides;
         boneService.OnPosePrepared -= UpdatePreparedGrabTargets;
         Despawn();
         defaultGrabConform.Dispose();
@@ -1757,6 +950,10 @@ public unsafe partial class EnemyControlController : IDisposable
     partial void OverrideExternalSpeed(float deltaTime, ref float speed);
     partial void ReleaseExternalControl();
     partial void ResolveExternalGripPairs(ref List<EnemyControlGrabPairConfig> pairs);
+    // Declared for the Dev/Experimental partial, which still calls it before a story takes over the
+    // enemy. There is nothing to release any more (Enemy Control controls one enemy only), so it has no
+    // body and the compiler removes the calls.
+    partial void ReleaseSwarmFollowers();
     private bool ExternalControlActive
     {
         get { var active = false; GetExternalControlState(ref active); return active; }

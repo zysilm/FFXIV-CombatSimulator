@@ -717,6 +717,16 @@ public partial class Configuration : IPluginConfiguration
         // Enemy Control's "spawn a creature on death", removed (2026-11-15, user's decision): Enemy
         // Control only ever takes over one enemy of the fight.
         "EnemyControlSpawnOnDeath", "EnemyControlModelId", "EnemyControlModelNameId",
+        // Enemy Control's swarm (other enemies following and climbing corpses) and its arm-pose override,
+        // removed (2026-11-15, user's decision): Enemy Control only controls its one enemy.
+        "EnemyControlSwarmEnabled", "EnemyControlSwarmFollowDistance", "EnemyControlSwarmCompactness",
+        "EnemyControlSwarmClimbCorpses", "EnemyControlSwarmRepositionOnCorpse",
+        "EnemyControlSwarmLandmarkChangeFrequency",
+        "EnemyControlArmPoseEnabled",
+        "EnemyControlLeftArmUpperPitch", "EnemyControlLeftArmUpperYaw", "EnemyControlLeftArmUpperRoll",
+        "EnemyControlLeftArmLowerPitch", "EnemyControlLeftArmLowerYaw", "EnemyControlLeftArmLowerRoll",
+        "EnemyControlRightArmUpperPitch", "EnemyControlRightArmUpperYaw", "EnemyControlRightArmUpperRoll",
+        "EnemyControlRightArmLowerPitch", "EnemyControlRightArmLowerYaw", "EnemyControlRightArmLowerRoll",
     };
 
     // The Show*Label switches merged into their text: an empty text now means "off". A switch that was

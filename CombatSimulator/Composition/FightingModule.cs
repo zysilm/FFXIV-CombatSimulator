@@ -52,7 +52,6 @@ internal sealed class FightingModule
     private CombatSimulator.ActionCombat.CombatModeRouter combatModeRouter => m.Combat.Router;
     private CombatSimulator.ActionCombat.TelegraphSystem telegraphSystem => m.Combat.Telegraphs;
     private Dev.IDevExperimental devExperimental => m.SafetyDev.DevExperimental;
-    private IReadOnlyList<RagdollController> GetActiveCorpseRagdolls() => m.Corpse.GetActiveCorpseRagdolls();
 
     /// <summary>
     /// Enemy Control (post-defeat creature possession) is a normal production controller now —
@@ -62,7 +61,7 @@ internal sealed class FightingModule
     {
         enemyControlController = new EnemyControlController(
             keyState, gamepadState, framework, ragdollController, animationController, boneTransformService,
-            movementBlockHook, activeCameraController, vnavmeshIpc, npcSelector, GetActiveCorpseRagdolls,
+            movementBlockHook, activeCameraController, vnavmeshIpc,
             m.Config, log);
     }
 

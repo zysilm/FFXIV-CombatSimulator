@@ -410,9 +410,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         voiceDirector.LinesSuppressed = () => PrivateDirectorActive;
         // Only a story's performer is held back, and only while the story runs, so it never talks
         // over its own lines. Enemy Control possesses the killer on every defeat; that actor is
-        // often the last enemy standing and must still gloat. (ControlsNpc would also cover the
-        // pack following it, which silenced the taunts entirely.)
-        voiceDirector.IsActorReserved = addr => PrivateDirectorActive && enemyControlController.PossessesNpc(addr);
+        // often the last enemy standing and must still gloat.
+        voiceDirector.IsActorReserved = addr => PrivateDirectorActive && enemyControlController.ControlsNpc(addr);
         mainWindow.VoiceDirector = voiceDirector;
         InitPrivateDirectors();
         AttachPrivateEffects();
