@@ -4,7 +4,7 @@
     "date": "2026-11-15",
     "title": "Combat Simulator 3.0.0.1",
     "changes": [
-      "Cutscene shots for victory and defeat",
+      "Experimental cutscene victory and defeat shots",
       "Anchored grab for Enemy Control",
       "Smarter patrols and safer spawns"
     ]

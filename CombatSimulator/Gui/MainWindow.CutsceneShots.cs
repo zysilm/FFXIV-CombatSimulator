@@ -21,7 +21,7 @@ public partial class MainWindow
     private void DrawCutsceneShotsSection()
     {
         var shots = CutsceneShots;
-        if (shots == null || !ImGui.CollapsingHeader("Cutscene Shots"))
+        if (shots == null || !ImGui.CollapsingHeader("Cutscene Shots [Experimental]###CutsceneShots"))
             return;
 
         ImGui.Indent();
