@@ -44,7 +44,9 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
-var oldRev = args.Length > 0 ? args[0] : "e50250f";
+// Default baseline: e4ddd07, after the intended change that made enemy death ragdolls follow the ragdoll start
+// settings (2026-11-15). Pass e50250f to compare across Refactoring II with its listed edits.
+var oldRev = args.Length > 0 ? args[0] : "e4ddd07";
 var dumpDir = args.Length > 1 ? args[1] : null;
 var repo = FindRepoRoot();
 var pluginDir = Path.Combine(repo, "CombatSimulator");
