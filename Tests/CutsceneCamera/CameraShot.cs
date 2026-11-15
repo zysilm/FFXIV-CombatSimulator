@@ -2,8 +2,9 @@ using System.Numerics;
 
 namespace CutsceneCamera;
 
-/// <summary>An attach slot on a camera shot: cutscene actor index (255 = none) and a second number that looks
-/// like a bone/attach-point index on that actor (71 when unused).</summary>
+/// <summary>An attach slot on a camera shot: cutscene actor index (255 = none) and a BIND POINT id from the actor's
+/// skeleton .eid table (e.g. 76 = n_root + face height, 71 = n_root, 26/1/27 = j_kao, 28 = j_sebo_c, 18 = n_hara) —
+/// established by the "bind" test; the frame includes the actor's yaw.</summary>
 public readonly record struct Attach(int Actor, int Point)
 {
     public override string ToString() => Actor == 255 ? "-" : $"actor{Actor}/pt{Point}";
@@ -20,7 +21,8 @@ public enum EulerOrder { XYZ, YXZ, ZXY, ZYX }
 ///   w12/w13 eye attach   w14/w15   w16 flag
 ///   w17/w18 aim attach   w19/w20   w21 flag   w22 flag
 /// Rig (TMFC channels; group 8 unless noted; nodes form a parent chain):
-///   g9 c116..118 node255 : lens — c116 = field of view in DEGREES; c117/c118 unknown (always 0 in census)
+///   g9 c116..121 node255 : lens — c116 = field of view in DEGREES (vertical vs horizontal unproven); c117 most likely
+///                          roll in degrees; c118..c121 unknown (c119..121 look like depth-of-field settings)
 ///   g8 c0..2 node0       : unknown, always 0
 ///   node1 (root) c64..66 translate, c67..69 rotate (degrees), c71..73 scale  — WORLD space when the root is not attached
 ///   node2 (parent 1)     : same TRS layout, a second rig level

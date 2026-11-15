@@ -4,4 +4,8 @@
     <PackageReference Include="Lumina" Version="7.6.0" />
     <PackageReference Include="Lumina.Excel" Version="7.5.0" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Reference-pose reader for .sklb (Havok tagfile without Havok), shared with the ragdoll hull test. -->
+    <Compile Include="../RagdollHullFit/Skeleton.cs" Link="Shared/Skeleton.cs" />
+  </ItemGroup>
 </Project>

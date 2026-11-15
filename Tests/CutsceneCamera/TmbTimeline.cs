@@ -18,6 +18,7 @@ public sealed class TmbItem
     public int Pos, Size;
     public short Id, Time;
     public int OwnerActor = -1; // cutscene actor index of the TMAC that owns this entry, if any
+    public int OwnerTrack = -1; // TMTR id holding this entry
 
     public int Word(byte[] d, int i) => BitConverter.ToInt32(d, Pos + 12 + 4 * i);
     public float Float(byte[] d, int i) => BitConverter.ToSingle(d, Pos + 12 + 4 * i);
@@ -71,6 +72,10 @@ public sealed class TmbTimeline
     public readonly List<TmbItem> Items = new();
     public readonly Dictionary<int, TmbItem> ById = new();
     public readonly Dictionary<int, List<CurveChannel>> Curves = new(); // TMFC id → channels
+    /// <summary>TMTR id → Lua condition tokens (op, int value, float value), when the track has one. +0x14 of a TMTR is
+    /// the offset of a block {i32 8, i32 count, count × 12 B tokens}; op codes follow the operator list VFXEditor documents
+    /// (0x13 variable, 0x11 int literal, 0x0D ==, 0x0C !=, 0x0E and, 0x0F or, ...).</summary>
+    public readonly Dictionary<int, List<(int Op, uint Value, float F)>> TrackLua = new();
 
     public TmbTimeline(byte[] d, int start, int index)
     {
@@ -96,6 +101,18 @@ public sealed class TmbTimeline
             p += it.Size;
         }
 
+        foreach (var tr in Items.Where(i => i.Magic == "TMTR"))
+        {
+            var lo = BitConverter.ToInt32(d, tr.Pos + 0x14);
+            if (lo == 0) continue;
+            var at = tr.Pos + 8 + lo;
+            var n = BitConverter.ToInt32(d, at + 4);
+            var toks = new List<(int, uint, float)>();
+            for (var i = 0; i < n && i < 64; i++)
+                toks.Add((BitConverter.ToInt32(d, at + 8 + 12 * i), BitConverter.ToUInt32(d, at + 12 + 12 * i), BitConverter.ToSingle(d, at + 16 + 12 * i)));
+            TrackLua[tr.Id] = toks;
+        }
+
         // Ownership: actor → tracks → entries.
         foreach (var a in Items.Where(i => i.Magic == "TMAC"))
         {
@@ -103,7 +120,7 @@ public sealed class TmbTimeline
             foreach (var tid in ReadIdList(d, a, 0x14))
                 if (ById.TryGetValue(tid, out var tr) && tr.Magic == "TMTR")
                     foreach (var eid in ReadIdList(d, tr, 0x0C))
-                        if (ById.TryGetValue(eid, out var e)) e.OwnerActor = actorIndex;
+                        if (ById.TryGetValue(eid, out var e)) { e.OwnerActor = actorIndex; e.OwnerTrack = tid; }
         }
     }
 

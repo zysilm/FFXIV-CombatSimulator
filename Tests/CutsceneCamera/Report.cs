@@ -2,7 +2,7 @@ using System.Numerics;
 
 namespace CutsceneCamera;
 
-public static class Report
+internal static class Report
 {
     /// <summary>Actor placements: C018 entries (world position, rotation in RADIANS, scale), owned by actor index.</summary>
     public static Dictionary<int, List<(int Timeline, int Time, Vector3 Pos, float Yaw)>> ActorPlacements(CutbFile c)
@@ -19,18 +19,16 @@ public static class Report
         return res;
     }
 
-    /// <summary>Frame of an attach slot: the actor's last placement at or before (timeline, time); root only —
-    /// the attach point (bone) needs the actor's skeleton and animation, which this probe does not evaluate.</summary>
-    public static Func<Attach, Matrix4x4> Anchors(CutbFile c, int timeline, int time)
+    /// <summary>Frame of an attach slot: the actor's C018 placement in that timeline (see Bind.ActorAt), the attach point
+    /// resolved as an EID bind point on the Hyur reference body (Bind.DefaultBody, set by Program). Reference pose only:
+    /// animation is not evaluated.</summary>
+    internal static Func<Attach, Matrix4x4> Anchors(CutbFile c, int timeline, int time)
     {
-        var placements = ActorPlacements(c);
+        var pl = Bind.Placements(c);
         return a =>
         {
-            if (a.Actor == 255 || !placements.TryGetValue(a.Actor, out var l)) return Matrix4x4.Identity;
-            var best = l.Where(x => x.Timeline < timeline || (x.Timeline == timeline && x.Time <= time))
-                        .OrderBy(x => x.Timeline).ThenBy(x => x.Time).LastOrDefault();
-            if (best == default) best = l[0];
-            return Matrix4x4.CreateRotationY(best.Yaw) * Matrix4x4.CreateTranslation(best.Pos);
+            if (a.Actor == 255 || Bind.ActorAt(pl, a.Actor, timeline, time) is not { } m) return Matrix4x4.Identity;
+            return Bind.DefaultBody == null ? m : Bind.PointFrame(Bind.Mapping.EidBindPoint, Bind.DefaultBody, a.Point, m);
         };
     }
 

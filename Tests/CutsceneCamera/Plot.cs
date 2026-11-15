@@ -5,7 +5,7 @@ namespace CutsceneCamera;
 /// <summary>Top-down (X right, Z down) plot of one cutscene: actor placements (white squares), camera eye path
 /// per shot (one colour per shot), short lines from eye toward the aim point every 15 frames. Only shots that are
 /// not attached to an actor are drawn (their rig is in world space); the view is framed on the median 80% of eyes.</summary>
-public static class Plot
+internal static class Plot
 {
     public static void TopDown(CutbFile c, string path, int size = 900)
     {
