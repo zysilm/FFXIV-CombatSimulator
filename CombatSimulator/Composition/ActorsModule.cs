@@ -127,6 +127,8 @@ internal sealed unsafe class ActorsModule
         {
             corpse.RemoveNpcRagdoll(address);
             weaponDropController.RemoveFor(address);
+            // The revived ally has its outfit back; its armour can come off again.
+            corpse.ArmorDetachment.Forget(address);
         };
         combatEngine.Events.AllySpawnError = msg =>
         {

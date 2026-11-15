@@ -120,8 +120,6 @@ internal sealed unsafe class CorpseModule : ICorpseQuery
     public void OnNpcDeathRagdoll(nint address)
     {
         // Fighting camera death transition must run regardless of ragdoll settings.
-        // Note: KO strip is intentionally player-only — NPC draw objects vary too much
-        // (non-humanoid, partial gear) to strip reliably, so it's not applied here.
 
         if (address == nint.Zero)
             return;
@@ -131,6 +129,10 @@ internal sealed unsafe class CorpseModule : ICorpseQuery
 
         if (!config.EnableRagdoll || !config.EnableNpcDeathRagdoll)
             return;
+
+        // The enemy's death ragdoll: its armour comes off with the player's settings ("Enemies" ticked,
+        // humanoids wearing equipment only).
+        armorDetachmentController.StripOtherOnKo(address, ally: false);
 
         if (HasLiveNpcRagdoll(address) || pendingNpcRagdollAddresses.Contains(address))
             return;
@@ -240,6 +242,9 @@ internal sealed unsafe class CorpseModule : ICorpseQuery
     {
         if (!config.EnableRagdoll || !config.PartyCompanionDeathRagdoll) return;
 
+        // The ally's death ragdoll: its armour comes off with the player's settings ("Allies" ticked).
+        armorDetachmentController.StripOtherOnKo(address, ally: true);
+
         // The weapon is released at once; only the body waits for the ragdoll activation delay.
         weaponDropController.SpawnFor(address);
 
@@ -266,6 +271,35 @@ internal sealed unsafe class CorpseModule : ICorpseQuery
                 npcRagdollStaggerBudget + NpcRagdollActivationStagger, NpcRagdollMaxStagger);
         }
         npcRagdolls[address] = controller;
+    }
+
+    /// <summary>
+    /// A hit landed (<c>CombatEvents.DamageLanded</c>): an ally or an enemy struck by the other side loses
+    /// its next piece of armour, like the player on each enemy hit ("Allies" / "Enemies" ticked).
+    /// </summary>
+    public void NoteArmorHit(SimulatedEntityState target, DamageResult hit, SimulatedEntityState? source)
+    {
+        if (target.IsPlayer || (!config.KoStripAllies && !config.KoStripEnemies) || !config.KoStripOnHitEnabled)
+            return;
+
+        if (target.IsCompanion)
+        {
+            foreach (var companion in companionManager.Companions)
+                if (ReferenceEquals(companion.State, target) && companion.IsSpawned && companion.Address != nint.Zero)
+                {
+                    armorDetachmentController.TryStripNextOnHitOther(companion.Address, ally: true);
+                    return;
+                }
+            return;
+        }
+
+        foreach (var npcs in new IEnumerable<SimulatedNpc>[] { npcSelector.SelectedNpcs, m.Actors.Spawner.SpawnedNpcs })
+            foreach (var npc in npcs)
+                if (ReferenceEquals(npc.State, target) && npc.BattleChara != null)
+                {
+                    armorDetachmentController.TryStripNextOnHitOther(npc.Address, ally: false);
+                    return;
+                }
     }
 
     /// <summary>

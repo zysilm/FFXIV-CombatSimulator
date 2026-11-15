@@ -8,6 +8,7 @@ namespace CombatSimulator
             KoStripEars, KoStripNeck, KoStripWrists, KoStripRFinger, KoStripLFinger;
         public bool KoStripEnabled = true, KoStripOnHitEnabled, KoStripSyncWithRagdoll,
             KoStripPhysicsDrop, KoStripPhysicsDropClothing = true;
+        public bool KoStripAllies, KoStripEnemies;
         public float RagdollActivationDelay;
     }
 }
@@ -21,9 +22,9 @@ namespace CombatSimulator.Integration
 {
     public sealed class GlamourerIpc
     {
-        public int Removes;
-        public string GetStateBase64(int index) => "captured-outfit";
-        public bool SetItem(int index, byte slot, ulong item, bool persist) { Removes++; return true; }
+        public int Removes, PersistentRemoves, StateCaptures;
+        public string GetStateBase64(int index) { StateCaptures++; return "captured-outfit"; }
+        public bool SetItem(int index, byte slot, ulong item, bool persist) { Removes++; if (persist) PersistentRemoves++; return true; }
     }
 }
 namespace CombatSimulator.Animation
@@ -31,14 +32,21 @@ namespace CombatSimulator.Animation
     public sealed class DismembermentController
     {
         internal readonly List<GearDropOperation> Operations = new();
-        public int Calls, FailCall = -1;
-        public bool SourceUnchanged = true;
+        public int Calls, FailCall = -1, Judged, RetireRequests, LastKeep = -1;
+        public bool SourceUnchanged = true, Detachable = true, Equipped = true;
         internal GearDropOperation? SpawnGearDrop(nint address, string bone, int slot, string? state, bool hideSkin, string? hiddenOppositeRootBone)
         {
             if (++Calls == FailCall) return null;
             var operation = new GearDropOperation(); Operations.Add(operation); return operation;
         }
         internal bool IsGearDropSourceUnchanged(GearDropOperation operation) => SourceUnchanged;
+        internal bool CanDetachArmorFrom(nint address) { Judged++; return Detachable; }
+        // Stands in for the object-table lookup: the same entity still in that slot.
+        internal unsafe bool IsSameLiveActor(nint address, uint objectIndex, uint entityId)
+            => ((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)address)->ObjectIndex == objectIndex &&
+               ((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)address)->EntityId == entityId;
+        internal bool HasEquipmentInSlot(nint address, int modelSlot) => Equipped;
+        internal int RetireOldestOthersGearPieces(int keep) { RetireRequests++; LastKeep = keep; return 0; }
     }
 }
 namespace Dalamud.Plugin.Services

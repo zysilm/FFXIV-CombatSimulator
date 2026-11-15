@@ -35,7 +35,7 @@ public partial class MainWindow
             config.KoStripOnHitEnabled = trigger == 2;
             config.Save();
         }
-        HelpMarker("Your character only.\nOn KO: every selected piece comes off when you are knocked out.\n" +
+        HelpMarker("Your character (allies and enemies: next section).\nOn KO: every selected piece comes off when you are knocked out.\n" +
                    "On each enemy hit: every hit that damages you removes the next selected piece\n" +
                    "(head and accessories first, then body, hands, legs, feet).");
 
@@ -150,6 +150,27 @@ public partial class MainWindow
         ImGui.SameLine();
         if (ImGui.Button("Reset to Defaults##armordetach"))
             config.ResetArmorDetachmentDefaults();
+    }
+
+    private void DrawArmorDetachmentOthersSection()
+    {
+        if (!ImGui.CollapsingHeader("Armor Detachment: Allies and Enemies"))
+            return;
+
+        const string tooltip = "Uses the Armor Detachment settings above (trigger, pieces, how they come off).\n" +
+                               "Does nothing while \"Detach armor\" is Off.\n" +
+                               "Humanoids wearing equipment only.";
+        ArmorDetachmentCheckbox("Allies", () => config.KoStripAllies, v => config.KoStripAllies = v);
+        HelpMarker(tooltip);
+        ArmorDetachmentCheckbox("Enemies", () => config.KoStripEnemies, v => config.KoStripEnemies = v);
+        HelpMarker(tooltip);
+
+        if (config.KoStripAllies || config.KoStripEnemies)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, new System.Numerics.Vector4(1f, 0.75f, 0.2f, 1f));
+            ImGui.TextWrapped("Each dropped piece is its own physics body: many at once can cost frames in big battles.");
+            ImGui.PopStyleColor();
+        }
     }
 
     // Wide enough for the longest option at any window size, without swallowing the label.

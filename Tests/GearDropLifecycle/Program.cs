@@ -21,6 +21,10 @@ unsafe class Program
         public Character* Actor = (Character*)NativeMemory.AllocZeroed((nuint)sizeof(Character));
         CharacterBase* draw = (CharacterBase*)NativeMemory.AllocZeroed((nuint)sizeof(CharacterBase));
         public nint Address => (nint)Actor;
+        // An ally or an enemy (another actor than the player), dressed the same way.
+        public Character* Other = (Character*)NativeMemory.AllocZeroed((nuint)sizeof(Character));
+        CharacterBase* otherDraw = (CharacterBase*)NativeMemory.AllocZeroed((nuint)sizeof(CharacterBase));
+        public nint OtherAddress => (nint)Other;
         public Fixture()
         {
             ((GameObject*)Actor)->DrawObject = (DrawObject*)draw;
@@ -28,6 +32,12 @@ unsafe class Program
             draw->Models = (FFXIVClientStructs.FFXIV.Client.Graphics.Render.Model**)NativeMemory.AllocZeroed(80);
             // Slot presence only; production controller never dereferences these model pointers.
             draw->Models[1] = (FFXIVClientStructs.FFXIV.Client.Graphics.Render.Model*)1;
+            ((GameObject*)Other)->DrawObject = (DrawObject*)otherDraw;
+            ((GameObject*)Other)->ObjectIndex = 210;
+            ((GameObject*)Other)->EntityId = 0x40000001;
+            otherDraw->SlotCount = 10;
+            otherDraw->Models = (FFXIVClientStructs.FFXIV.Client.Graphics.Render.Model**)NativeMemory.AllocZeroed(80);
+            otherDraw->Models[1] = (FFXIVClientStructs.FFXIV.Client.Graphics.Render.Model*)1;
             Services.ObjectTable.LocalPlayer = new Player { Address = Address };
             Controller = new(Config, Glamour, Drops, new Dalamud.Plugin.Services.Log());
         }
@@ -35,6 +45,7 @@ unsafe class Program
         {
             Controller.Dispose(); Services.ObjectTable.LocalPlayer = null;
             NativeMemory.Free(draw->Models); NativeMemory.Free(draw); NativeMemory.Free(Actor);
+            NativeMemory.Free(otherDraw->Models); NativeMemory.Free(otherDraw); NativeMemory.Free(Other);
         }
     }
     static void Main()
@@ -114,6 +125,89 @@ unsafe class Program
                 using var f = new Fixture(); f.Config.KoStripOnHitEnabled = true;
                 f.Drops.FailCall = 1; Check(!f.Controller.TryStripNextOnHit(f.Address), "failed hit reported success");
                 Check(f.Controller.TryStripNextOnHit(f.Address) && f.Drops.Calls == 2, "failed slot stuck in done set");
+            }),
+            // Allies and enemies: the player's settings, behind their own checkbox.
+            ("others need their checkbox and the player's trigger", () => {
+                using var f = new Fixture();
+                f.Controller.StripOtherOnKo(f.OtherAddress, ally: false);
+                Check(f.Drops.Calls == 0, "enemy stripped with Enemies unticked");
+                f.Config.KoStripEnemies = true; f.Config.KoStripEnabled = false;
+                f.Controller.StripOtherOnKo(f.OtherAddress, ally: false);
+                Check(f.Drops.Calls == 0, "enemy stripped with the trigger Off");
+                f.Config.KoStripEnabled = true;
+                f.Controller.StripOtherOnKo(f.OtherAddress, ally: false);
+                Check(f.Drops.Calls == 1, "enemy not stripped on KO");
+            }),
+            ("allies and enemies are ticked separately", () => {
+                using var f = new Fixture(); f.Config.KoStripAllies = true;
+                f.Controller.StripOtherOnKo(f.OtherAddress, ally: false);
+                Check(f.Drops.Calls == 0, "Allies ticked stripped an enemy");
+                f.Controller.StripOtherOnKo(f.OtherAddress, ally: true);
+                Check(f.Drops.Calls == 1, "ally not stripped");
+            }),
+            ("a non-humanoid is left alone and judged once", () => {
+                using var f = new Fixture(); f.Config.KoStripEnemies = true; f.Config.KoStripOnHitEnabled = true;
+                f.Config.KoStripEnabled = false; f.Drops.Detachable = false;
+                Check(!f.Controller.TryStripNextOnHitOther(f.OtherAddress, ally: false), "non-humanoid stripped");
+                f.Controller.TryStripNextOnHitOther(f.OtherAddress, ally: false);
+                Check(f.Drops.Calls == 0 && f.Drops.Judged == 1, "non-humanoid stripped or judged on every hit");
+            }),
+            ("others are not kept stripped in Glamourer and not cloned from its state", () => {
+                using var f = new Fixture(); f.Config.KoStripEnemies = true;
+                f.Controller.StripOtherOnKo(f.OtherAddress, ally: false);
+                f.Drops.Operations[0].Ready(); f.Controller.Tick(.1f);
+                Check(f.Glamour.Removes == 1 && f.Glamour.PersistentRemoves == 0 && f.Glamour.StateCaptures == 0,
+                    "enemy strip persisted in or captured from Glamourer");
+            }),
+            ("the player's strip still persists in Glamourer and skips the humanoid judge", () => {
+                using var f = new Fixture(); f.Controller.StripOnKo(f.Address);
+                f.Drops.Operations[0].Ready(); f.Controller.Tick(.1f);
+                Check(f.Glamour.PersistentRemoves == 1 && f.Drops.Judged == 0 && f.Drops.RetireRequests == 0,
+                    "player path changed");
+            }),
+            ("another actor in the slot cancels an enemy's preparation", () => {
+                using var f = new Fixture(); f.Config.KoStripEnemies = true;
+                f.Controller.StripOtherOnKo(f.OtherAddress, ally: false);
+                ((GameObject*)f.Other)->EntityId = 0x40000002;
+                f.Drops.Operations[0].Ready(); f.Controller.Tick(.1f);
+                Check(f.Glamour.Removes == 0 && f.Drops.Operations[0].IsCancelled, "stripped the next actor");
+            }),
+            ("a recycled address is judged afresh", () => {
+                using var f = new Fixture(); f.Config.KoStripEnemies = true;
+                f.Controller.StripOtherOnKo(f.OtherAddress, ally: false);
+                f.Drops.Operations[0].Ready(); f.Controller.Tick(.1f);
+                ((GameObject*)f.Other)->EntityId = 0x40000002;
+                f.Controller.StripOtherOnKo(f.OtherAddress, ally: false);
+                Check(f.Drops.Calls == 2 && f.Drops.Judged == 2, "new actor inherited the old one's guard");
+            }),
+            ("others' drops ask for room under the cap", () => {
+                using var f = new Fixture(); f.Config.KoStripEnemies = true;
+                f.Controller.StripOtherOnKo(f.OtherAddress, ally: false);
+                Check(f.Drops.RetireRequests == 1 && f.Drops.LastKeep == KoStripController.MaxOthersDroppedPieces - 1,
+                    "no room made for the enemy's piece");
+            }),
+            ("unequipped slots on others are skipped", () => {
+                using var f = new Fixture(); f.Config.KoStripEnemies = true; f.Drops.Equipped = false;
+                f.Controller.StripOtherOnKo(f.OtherAddress, ally: false);
+                Check(f.Drops.Calls == 0 && f.Glamour.Removes == 0, "stripped a slot with no equipment");
+            }),
+            ("others on each hit follow the player's trigger", () => {
+                using var f = new Fixture(); f.Config.KoStripEnemies = true;
+                Check(!f.Controller.TryStripNextOnHitOther(f.OtherAddress, ally: false), "on-hit with trigger On KO");
+                f.Config.KoStripEnabled = false; f.Config.KoStripOnHitEnabled = true;
+                f.Controller.StripOtherOnKo(f.OtherAddress, ally: false);
+                Check(f.Drops.Calls == 0, "KO strip while the trigger is on each hit");
+                Check(f.Controller.TryStripNextOnHitOther(f.OtherAddress, ally: false) && f.Drops.Calls == 1, "hit did not strip");
+            }),
+            ("a revived ally can lose its armour again", () => {
+                using var f = new Fixture(); f.Config.KoStripAllies = true;
+                f.Controller.StripOtherOnKo(f.OtherAddress, ally: true);
+                f.Drops.Operations[0].Ready(); f.Controller.Tick(.1f);
+                f.Controller.StripOtherOnKo(f.OtherAddress, ally: true);
+                Check(f.Drops.Calls == 1, "once-per-actor guard missing");
+                f.Controller.Forget(f.OtherAddress);
+                f.Controller.StripOtherOnKo(f.OtherAddress, ally: true);
+                Check(f.Drops.Calls == 2, "revived ally kept its guard");
             }),
         };
         foreach (var (name, test) in tests) { test(); Console.WriteLine($"PASS {name}"); }

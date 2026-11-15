@@ -351,12 +351,13 @@ public partial class MainWindow : IDisposable
                 DrawGuidedCollapseSection();
                 DrawNpcCollisionSection();
                 DrawArmorDetachmentEntrySection();
+                DrawArmorDetachmentOthersSection();
                 ImGui.Separator();
                 if (ImGui.Button("Reset All to Defaults##ragdollpage"))
                     config.ResetRagdollPageDefaults();
                 if (ImGui.IsItemHovered())
                     ImGui.SetTooltip("Restore every option on this page to its default.\n" +
-                                     "Leaves Enable Ragdoll alone: resetting it would switch the feature off and take the page with it.");
+                                     "Leaves Enable Ragdoll and Detach armor alone: resetting them would switch the feature off.");
                 break;
             case 4: // War Generator
                 DrawVirtualEnemiesTab();

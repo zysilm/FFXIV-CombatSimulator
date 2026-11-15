@@ -351,6 +351,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         };
 
         combatEvents.EnemyDied = corpseModule.OnNpcDeathRagdoll;
+        // Allies and enemies lose armour on each hit like the player (Armor Detachment: Allies and Enemies).
+        combatEvents.DamageLanded += corpseModule.NoteArmorHit;
         combatEvents.PlayerDamaged = () =>
         {
             var player = objectTable.LocalPlayer;

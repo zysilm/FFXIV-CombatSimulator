@@ -120,7 +120,7 @@ public partial class Configuration : IPluginConfiguration
     public bool KoStripOnHitEnabled { get; set; } = false;
     public bool KoStripHead { get; set; } = true;
     public bool KoStripBody { get; set; } = true;
-    public bool KoStripHands { get; set; } = false;
+    public bool KoStripHands { get; set; } = true;
     public bool KoStripLegs { get; set; } = true;
     public bool KoStripFeet { get; set; } = false;
     public bool KoStripEars { get; set; } = false;
@@ -128,6 +128,11 @@ public partial class Configuration : IPluginConfiguration
     public bool KoStripWrists { get; set; } = false;
     public bool KoStripRFinger { get; set; } = false;
     public bool KoStripLFinger { get; set; } = false;
+
+    // The same detachment, with the same settings, for allies and for enemies (humanoids wearing
+    // equipment). Nothing happens while "Detach armor" is Off.
+    public bool KoStripAllies { get; set; } = false;
+    public bool KoStripEnemies { get; set; } = false;
 
     // Physically drop removed pieces instead of just hiding them. The UI sets both together; separate
     // fields remain because hats/accessories and clothing take different runtime paths.
@@ -143,25 +148,30 @@ public partial class Configuration : IPluginConfiguration
     // Pieces still attached to the body travel with it when the body is moved as a whole. Pieces that
     // have already come away stay put; which is which is decided by whether the piece still wraps the
     // bones it was built around, not by how near the body it happens to lie.
-    public bool KoStripGarmentFollowsBody { get; set; } = true;
+    public bool KoStripGarmentFollowsBody { get; set; } = false;
 
     // Body/Legs garment behaviour. Stored values keep their historic numbering:
     // 1 drop when the body settles, 5 Visual only (enhanced).
-    public const int KoStripClothHoldPresetDefault = 1;
+    public const int KoStripClothHoldPresetDefault = 5;
     public int KoStripClothHoldPreset { get; set; } = KoStripClothHoldPresetDefault;
 
     // Half off, hanging on the body (preset 5): which parts of the top / lower garment stay on the body
     // (sums of the GarmentTether.Top* / Lower* bits) and how hard the rest is pulled down (index into
     // GarmentTether.PullLabels).
-    public int KoStripTopHolds { get; set; } = AdvancedRagdoll.Attachment.GarmentTether.DefaultTopHold;
-    public int KoStripLowerHolds { get; set; } = AdvancedRagdoll.Attachment.GarmentTether.DefaultLowerHold;
-    public int KoStripHangPull { get; set; } = AdvancedRagdoll.Attachment.GarmentTether.DefaultPull;
+    // Defaults: the top stays on at the waist, collar and both arms; the lower garment comes off
+    // completely; a gentle pull (index 1 of GarmentTether.PullLabels).
+    public int KoStripTopHolds { get; set; } =
+        AdvancedRagdoll.Attachment.GarmentTether.TopWaist | AdvancedRagdoll.Attachment.GarmentTether.TopCollar |
+        AdvancedRagdoll.Attachment.GarmentTether.TopLeftUpperArm | AdvancedRagdoll.Attachment.GarmentTether.TopLeftForearm |
+        AdvancedRagdoll.Attachment.GarmentTether.TopRightUpperArm | AdvancedRagdoll.Attachment.GarmentTether.TopRightForearm;
+    public int KoStripLowerHolds { get; set; } = 0;
+    public int KoStripHangPull { get; set; } = 1;
 
     // Unselected previous implementation of preset 5 (whole-garment slide): how far the top and the lower garment slide down from their worn
     // position, in metres on a scale-one actor. The top never travels more than 0.08 m and the lower
     // garment never more than 65% of the thigh, whatever is set here.
     public float KoStripTopSlideDistance { get; set; } = 0.09f;
-    public float KoStripLowerSlideDistance { get; set; } = 0.13f;
+    public float KoStripLowerSlideDistance { get; set; } = 0.18f;
 
     /// <summary>
     /// Named like Armor Detachment, but not its to reset.
@@ -765,7 +775,9 @@ public partial class Configuration : IPluginConfiguration
         {
             1 or 5 => KoStripClothHoldPreset,
             4 => 5,
-            _ => KoStripClothHoldPresetDefault,
+            // The retired presets (Natural, Quick, Clingy, Slide to floor) all dropped the garment: map them
+            // to "Drop when the body settles", whatever the default is.
+            _ => 1,
         };
         if (preset == KoStripClothHoldPreset)
             return;
@@ -828,12 +840,14 @@ public partial class Configuration : IPluginConfiguration
 
         return name.StartsWith("Ragdoll", StringComparison.Ordinal)
             || name.StartsWith("WeaponDrop", StringComparison.Ordinal)
-            || RagdollPageExtraOptions.Contains(name);
+            || RagdollPageExtraOptions.Contains(name)
+            // Armor Detachment lives on this page too; its trigger is left alone like Enable Ragdoll.
+            || IsArmorDetachmentOption(name);
     }
 
     /// <summary>
     /// Restore everything on the Ragdoll page — the ragdoll options themselves, guided collapse, NPC
-    /// collision and its settle pass — to defaults.
+    /// collision and its settle pass, Armor Detachment's options (not its trigger) — to defaults.
     ///
     /// Done by reflection against a fresh Configuration rather than by a hand-written list of
     /// assignments, because a hand-written list is exactly what this replaces. That one had drifted

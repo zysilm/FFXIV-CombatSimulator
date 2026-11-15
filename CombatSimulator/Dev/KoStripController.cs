@@ -40,11 +40,22 @@ public unsafe class KoStripController : IDisposable
     {
         public nint Address;
         public uint ObjectIndex;
+        public uint EntityId;
+        public bool Other;
         public StripSlot Slot;
         public readonly List<GearDropOperation> Pieces = new();
         public float Age;
     }
     private readonly List<PreparedStrip> preparedStrips = new();
+
+    // Allies and enemies ("others"): which actor an address belonged to when it was judged, and whether
+    // its armour can come off (a humanoid wearing real equipment). A new actor at a recycled address is
+    // judged afresh and starts with a clean once-per-actor guard.
+    private readonly Dictionary<nint, (uint EntityId, bool Eligible)> others = new();
+
+    // Each dropped piece is its own physics body and its own clone actor. The player's pieces have
+    // reserved clone slots; others' pieces are capped together, the oldest retired first.
+    internal const int MaxOthersDroppedPieces = 16;
 
     public KoStripController(Configuration config, GlamourerIpc glamourer,
         DismembermentController dismemberment, IPluginLog log)
@@ -128,24 +139,94 @@ public unsafe class KoStripController : IDisposable
     };
 
     /// <summary>
-    /// Strip the configured slots on the knocked-out player. Player-only by design — NPC draw
-    /// objects vary too much (non-humanoid, partial gear) to strip reliably. Fires once per actor.
+    /// Strip the configured slots on the knocked-out player. Fires once per actor.
     /// </summary>
     public void StripOnKo(nint characterAddress)
     {
         if (!config.KoStripEnabled || IsOnHitDetachActive()) return;
         if (stripped.Contains(characterAddress)) return;
-        DoStrip(characterAddress);
+        DoStrip(characterAddress, other: false);
+    }
+
+    /// <summary>
+    /// An ally (<paramref name="ally"/>) or an enemy fell: with "Allies" / "Enemies" ticked and the
+    /// player's trigger On KO, strip it with the player's settings. Humanoids wearing real equipment
+    /// only; once per actor, like the player.
+    /// </summary>
+    public void StripOtherOnKo(nint characterAddress, bool ally)
+    {
+        if (!OthersEnabled(ally) || !config.KoStripEnabled || IsOnHitDetachActive()) return;
+        if (!AdmitOther(characterAddress)) return;
+        if (stripped.Contains(characterAddress)) return;
+        DoStrip(characterAddress, other: true);
     }
 
     /// <summary>Strip now, ignoring the once-per-actor guard (manual test button).</summary>
-    public void StripNow(nint characterAddress) => DoStrip(characterAddress);
+    public void StripNow(nint characterAddress) => DoStrip(characterAddress, other: false);
 
     public void Tick(float deltaTime) => TickPreparedStrips(deltaTime);
 
     public bool TryStripNextOnHit(nint characterAddress)
     {
         if (!IsOnHitDetachActive() || characterAddress == nint.Zero) return false;
+        return StripNextOnHit(characterAddress, other: false);
+    }
+
+    /// <summary>
+    /// An ally (<paramref name="ally"/>) or an enemy was hit by the other side: with "Allies" /
+    /// "Enemies" ticked and the player's trigger On each enemy hit, the next selected piece comes off,
+    /// in the player's order.
+    /// </summary>
+    public bool TryStripNextOnHitOther(nint characterAddress, bool ally)
+    {
+        if (!OthersEnabled(ally) || !IsOnHitDetachActive()) return false;
+        if (!AdmitOther(characterAddress)) return false;
+        return StripNextOnHit(characterAddress, other: true);
+    }
+
+    /// <summary>
+    /// Forget an actor whose equipment came back (a revived ally): its pieces can come off again.
+    /// Pieces already on the floor stay.
+    /// </summary>
+    public void Forget(nint characterAddress)
+    {
+        for (var i = preparedStrips.Count - 1; i >= 0; i--)
+        {
+            if (preparedStrips[i].Address != characterAddress) continue;
+            foreach (var piece in preparedStrips[i].Pieces) piece.Cancel();
+            preparedStrips.RemoveAt(i);
+        }
+        stripped.Remove(characterAddress);
+        onHitStripped.Remove(characterAddress);
+        others.Remove(characterAddress);
+    }
+
+    private bool OthersEnabled(bool ally) => ally ? config.KoStripAllies : config.KoStripEnemies;
+
+    private bool AdmitOther(nint characterAddress)
+    {
+        if (characterAddress == nint.Zero) return false;
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player == null || player.Address == characterAddress) return false;
+        var gameObj = (GameObject*)characterAddress;
+        if (gameObj->DrawObject == null) return false;
+
+        var entityId = gameObj->EntityId;
+        if (others.TryGetValue(characterAddress, out var known))
+        {
+            if (known.EntityId == entityId) return known.Eligible;
+            Forget(characterAddress); // a different actor now lives at this address
+        }
+
+        var eligible = dismemberment.CanDetachArmorFrom(characterAddress);
+        others[characterAddress] = (entityId, eligible);
+        if (!eligible)
+            log.Info($"KoStrip: 0x{characterAddress:X} (idx={gameObj->ObjectIndex}) is not a humanoid wearing equipment; left as is");
+        return eligible;
+    }
+
+    private bool StripNextOnHit(nint characterAddress, bool other)
+    {
         var gameObj = (GameObject*)characterAddress;
         if (gameObj->DrawObject == null) return false;
         var objectIndex = gameObj->ObjectIndex;
@@ -159,16 +240,16 @@ public unsafe class KoStripController : IDisposable
             if (!TryGetSlot(apiSlot, out var slot) || !slot.Enabled(config) || done.Contains(apiSlot))
                 continue;
 
-            if (!SlotRendersModel(gameObj, slot))
+            if (!SlotRendersModel(gameObj, slot) || (other && !dismemberment.HasEquipmentInSlot(characterAddress, slot.ModelSlot)))
             {
                 done.Add(apiSlot);
                 continue;
             }
 
-            var glamState = ShouldPhysicsDrop(apiSlot)
+            var glamState = !other && ShouldPhysicsDrop(apiSlot)
                 ? glamourer.GetStateBase64((int)objectIndex)
                 : null;
-            var result = StripOneSlot(characterAddress, character, objectIndex, slot, glamState);
+            var result = StripOneSlot(characterAddress, character, objectIndex, slot, glamState, other);
             if (!result.Accepted) return false;
             done.Add(apiSlot);
             log.Info($"KoStrip: on-hit stripped slot {apiSlot} on 0x{characterAddress:X} (idx={objectIndex}) - " +
@@ -181,7 +262,7 @@ public unsafe class KoStripController : IDisposable
 
     private bool IsOnHitDetachActive() => config.KoStripOnHitEnabled;
 
-    private void DoStrip(nint characterAddress)
+    private void DoStrip(nint characterAddress, bool other)
     {
         if (characterAddress == nint.Zero) return;
         var gameObj = (GameObject*)characterAddress;
@@ -191,8 +272,10 @@ public unsafe class KoStripController : IDisposable
 
         // Capture the full Glamourer state BEFORE we strip anything, so a dropped piece can reproduce a
         // glam hat/accessory (which leaves the real equipment id empty). null if Glamourer absent.
+        // Others' pieces are cloned from what they render (DismembermentController), never from a
+        // Glamourer state.
         var anyDrop = config.KoStripPhysicsDrop || config.KoStripPhysicsDropClothing;
-        var glamState = anyDrop ? glamourer.GetStateBase64((int)objectIndex) : null;
+        var glamState = anyDrop && !other ? glamourer.GetStateBase64((int)objectIndex) : null;
 
         var nGlam = 0;
         var nDirect = 0;
@@ -201,7 +284,8 @@ public unsafe class KoStripController : IDisposable
         foreach (var slot in Slots)
         {
             if (!slot.Enabled(config)) continue;
-            var result = StripOneSlot(characterAddress, character, objectIndex, slot, glamState);
+            if (other && !dismemberment.HasEquipmentInSlot(characterAddress, slot.ModelSlot)) continue;
+            var result = StripOneSlot(characterAddress, character, objectIndex, slot, glamState, other);
             nGlam += result.Glamourer;
             nDirect += result.Direct;
             nDrop += result.Drop;
@@ -220,6 +304,7 @@ public unsafe class KoStripController : IDisposable
         preparedStrips.Clear();
         stripped.Clear();
         onHitStripped.Clear();
+        others.Clear();
     }
 
     private readonly struct StripResult
@@ -239,12 +324,29 @@ public unsafe class KoStripController : IDisposable
     }
 
     private StripResult StripOneSlot(nint characterAddress, Character* character, uint objectIndex,
-        StripSlot slot, string? glamourBase64)
+        StripSlot slot, string? glamourBase64, bool other)
     {
         if (preparedStrips.Exists(p => p.Address == characterAddress && p.Slot.ApiSlot == slot.ApiSlot))
             return new StripResult(0, 0, 0);
         var nDrop = 0;
-        var preparation = new PreparedStrip { Address = characterAddress, ObjectIndex = objectIndex, Slot = slot };
+        var preparation = new PreparedStrip
+        {
+            Address = characterAddress, ObjectIndex = objectIndex, Slot = slot, Other = other,
+            EntityId = ((GameObject*)characterAddress)->EntityId,
+        };
+        if (other)
+        {
+            var needed = 0;
+            foreach (var drop in EnumerateGearDrops(slot.ApiSlot))
+                if (drop.Clothing ? config.KoStripPhysicsDropClothing : config.KoStripPhysicsDrop)
+                    needed++;
+            if (needed > 0)
+            {
+                var retired = dismemberment.RetireOldestOthersGearPieces(MaxOthersDroppedPieces - needed);
+                if (retired > 0)
+                    log.Info($"KoStrip: others' dropped pieces at the cap ({MaxOthersDroppedPieces}); retired the oldest {retired}");
+            }
+        }
         foreach (var drop in EnumerateGearDrops(slot.ApiSlot))
         {
             if (!(drop.Clothing ? config.KoStripPhysicsDropClothing : config.KoStripPhysicsDrop))
@@ -268,7 +370,7 @@ public unsafe class KoStripController : IDisposable
             return new StripResult(0, 0, 0); // Count only committed removals, never mere spawn requests.
         }
 
-        if (glamourer.SetItem((int)objectIndex, slot.ApiSlot, 0, persist: true))
+        if (glamourer.SetItem((int)objectIndex, slot.ApiSlot, 0, persist: !other))
             return new StripResult(1, 0, nDrop);
 
         SetEquipmentDirect(character, slot.GameSlot, 0);
@@ -282,7 +384,11 @@ public unsafe class KoStripController : IDisposable
             var preparation = preparedStrips[i];
             preparation.Age += MathF.Max(0, deltaTime);
             var player = Core.Services.ObjectTable.LocalPlayer;
-            var valid = player != null && player.Address == preparation.Address;
+            // The player's own; or, while the session is alive, the same ally/enemy still in that slot.
+            var valid = player != null && (preparation.Other
+                ? player.Address != preparation.Address &&
+                  dismemberment.IsSameLiveActor(preparation.Address, preparation.ObjectIndex, preparation.EntityId)
+                : player.Address == preparation.Address);
             var failed = !valid || preparation.Age > 8f || preparation.Pieces.Exists(p => p.IsCancelled);
             if (!failed && !preparation.Pieces.TrueForAll(p => p.IsReady)) continue;
             // Do not remove a different outfit if the player changed/reverted appearance while
@@ -305,7 +411,9 @@ public unsafe class KoStripController : IDisposable
             }
             try
             {
-                if (!glamourer.SetItem((int)preparation.ObjectIndex, preparation.Slot.ApiSlot, 0, persist: true))
+                // Others are not kept stripped in Glamourer's state: their outfit comes back on a revive
+                // or a reset, and an enemy of the same kind spawned later must not inherit the change.
+                if (!glamourer.SetItem((int)preparation.ObjectIndex, preparation.Slot.ApiSlot, 0, persist: !preparation.Other))
                     SetEquipmentDirect(character, preparation.Slot.GameSlot, 0);
                 foreach (var piece in preparation.Pieces) piece.Commit();
                 log.Info($"KoStrip: committed slot {preparation.Slot.ApiSlot}; {preparation.Pieces.Count} physics-dropped");

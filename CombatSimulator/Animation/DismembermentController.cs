@@ -875,7 +875,12 @@ public unsafe partial class DismembermentController : IDisposable
         // Appearance must be decided from actor/model identity, not just skeleton
         // topology. Some monster models use human-like skeletons; routing those
         // through the humanoid copy path bootstraps them as player-shaped clones.
-        var useMonsterAppearance = !isPlayerControlledSource &&
+        // A piece of armour taken off a human (an ally's or an enemy's, not only the player's) is cloned
+        // from what that human renders right now, like the player's: the BNpc row would rebuild its
+        // Excel outfit, not necessarily the one it is wearing.
+        var gearFromRenderedHuman = p.GearKeepModelSlot >= 0 &&
+            skel.CharBase->GetModelType() == CharacterBase.ModelType.Human;
+        var useMonsterAppearance = !isPlayerControlledSource && !gearFromRenderedHuman &&
             (ids.BNpcBaseId > 0 || sourceModelCharaId > 0);
 
         var clientObjMgr = ClientObjectManager.Instance();
@@ -5647,14 +5652,107 @@ public unsafe partial class DismembermentController : IDisposable
     internal bool IsGearDropSourceUnchanged(GearDropOperation operation)
     {
         var clone = clones.Find(c => ReferenceEquals(c.GearOperation, operation));
-        var player = objectTable.LocalPlayer;
-        if (clone == null || player == null || player.Address != clone.SourceAddress) return false;
-        var draw = ((GameObject*)player.Address)->DrawObject;
+        // Any source (the player, an ally, an enemy); nothing is read once the session is gone.
+        if (clone == null || clone.SourceAddress == nint.Zero || objectTable.LocalPlayer == null) return false;
+        var draw = ((GameObject*)clone.SourceAddress)->DrawObject;
         if (draw == null) return false;
         var cb = (CharacterBase*)draw;
         if (cb->Models == null || clone.GearKeepModelSlot >= cb->SlotCount) return false;
         var actual = GetModelAppearanceSignature(cb->Models[clone.GearKeepModelSlot]);
         return actual != null && string.Equals(actual, clone.GearExpectedAppearanceSignature, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Bones only a humanoid skeleton carries: thumbs, the weapon attach point and the upper chest. A
+    // quadruped's front legs are also j_ude_*, so the generic signature alone does not tell them apart.
+    private static readonly string[] ArmorHumanoidBones = { "j_oya_a_l", "j_oya_a_r", "n_buki_r", "j_sebo_c" };
+
+    /// <summary>
+    /// Can armour come off this actor the way it comes off the player? A human draw object (demihumans
+    /// and monsters have no equipment slots to strip, and a demihuman has no body under its gear), a
+    /// humanoid skeleton, and at least one real piece of equipment on head, body, hands, legs or feet.
+    /// </summary>
+    internal bool CanDetachArmorFrom(nint address)
+    {
+        if (address == nint.Zero || objectTable.LocalPlayer == null) return false;
+        var draw = ((GameObject*)address)->DrawObject;
+        if (draw == null) return false;
+        var cb = (CharacterBase*)draw;
+        if (cb->GetModelType() != CharacterBase.ModelType.Human) return false;
+
+        var skelN = boneService.TryGetSkeleton(address);
+        if (skelN == null || !IsHumanoidSkeleton(skelN.Value)) return false;
+        foreach (var bone in ArmorHumanoidBones)
+            if (boneService.ResolveBoneIndex(skelN.Value, bone) < 0)
+                return false;
+
+        for (var slot = 0; slot < 5; slot++)
+            if (HasEquipmentInSlot(address, slot))
+                return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Is the actor that stood at <paramref name="address"/> (table slot <paramref name="objectIndex"/>,
+    /// entity <paramref name="entityId"/>) still there? Asked through the object table, so a despawned
+    /// actor's freed memory is never read.
+    /// </summary>
+    internal bool IsSameLiveActor(nint address, uint objectIndex, uint entityId)
+    {
+        if (address == nint.Zero || objectTable.LocalPlayer == null) return false;
+        IGameObject? live;
+        try { live = objectTable[(int)objectIndex]; }
+        catch { return false; }
+        return live != null && live.Address == address && ((GameObject*)address)->EntityId == entityId &&
+               ((GameObject*)address)->DrawObject != null;
+    }
+
+    /// <summary>Does this human draw a real equipment model (not the bare body) in model slot <paramref name="modelSlot"/>?</summary>
+    internal bool HasEquipmentInSlot(nint address, int modelSlot)
+    {
+        if (address == nint.Zero) return false;
+        var draw = ((GameObject*)address)->DrawObject;
+        if (draw == null) return false;
+        var cb = (CharacterBase*)draw;
+        if (cb->GetModelType() != CharacterBase.ModelType.Human) return false;
+        if (cb->Models == null || modelSlot < 0 || modelSlot >= cb->SlotCount || cb->Models[modelSlot] == null) return false;
+        var human = (Human*)cb;
+        return modelSlot < human->EquipmentModels.Length && human->EquipmentModels[modelSlot].Id != 0;
+    }
+
+    /// <summary>
+    /// Keep at most <paramref name="keep"/> dropped pieces from actors other than the player, retiring
+    /// the oldest first (already-dropped pieces before ones still being prepared). Each piece is its own
+    /// physics body; this bounds what a big battle can pile up. Returns how many were retired.
+    /// </summary>
+    internal int RetireOldestOthersGearPieces(int keep)
+    {
+        var count = 0;
+        foreach (var c in clones)
+            if (!c.IsPlayerControlledSource && c.GearKeepModelSlot >= 0)
+                count++;
+
+        var retired = 0;
+        while (count > Math.Max(0, keep))
+        {
+            var victim = -1;
+            for (var i = 0; i < clones.Count; i++)
+            {
+                var c = clones[i];
+                if (c.IsPlayerControlledSource || c.GearKeepModelSlot < 0) continue;
+                if (victim < 0) { victim = i; continue; }
+                var best = clones[victim];
+                var committed = c.GearOperation is not { IsCommitted: false };
+                var bestCommitted = best.GearOperation is not { IsCommitted: false };
+                if ((committed && !bestCommitted) || (committed == bestCommitted && c.CreatedSeq < best.CreatedSeq))
+                    victim = i;
+            }
+            if (victim < 0) break;
+            DespawnClone(clones[victim]);
+            clones.RemoveAt(victim);
+            count--;
+            retired++;
+        }
+        return retired;
     }
 
     /// <summary>
