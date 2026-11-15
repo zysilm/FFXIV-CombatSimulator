@@ -8,6 +8,11 @@ using CombatSimulator.Safety;
 using CombatSimulator.Simulation;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
+using FFXIVClientStructs.FFXIV.Client.Game.Character;
+using FFXIVClientStructs.FFXIV.Client.Game.Object;
+using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
+using FFXIVClientStructs.FFXIV.Client.Sound;
+using FFXIVClientStructs.Havok.Animation.Rig;
 
 namespace CombatSimulator.Composition;
 
@@ -52,8 +57,13 @@ internal sealed unsafe class SafetyDevModule
     }
 
     /// <summary>
-    /// Hook safety checker — register native functions we CALL (not hook) that other plugins may hook.
-    /// We check for JMP detours at each address to detect third-party hooks.
+    /// Hook safety checker — register native functions we CALL (not hook) with our simulated actors or in
+    /// simulation paths, that other plugins plausibly hook: their detour then runs inside our call. Our own
+    /// hooks need no registration; the checker finds them in Dalamud's hook registry.
+    /// Only the first three raise the conflict warning: there we hand the game input it never produces
+    /// itself (fabricated effect packets, manually spawned VFX). The rest are the game's ordinary spawn /
+    /// appearance / draw / pose functions, which it calls for every actor; Penumbra and Glamourer hook
+    /// several of them on almost every install, so they are shown for crash diagnosis only.
     /// </summary>
     public void CreateHookSafetyChecker(IDalamudPluginInterface pluginInterface)
     {
@@ -67,6 +77,63 @@ internal sealed unsafe class SafetyDevModule
             animationController.ActorVfxRemoveAddress); // resolved via pointer chase — no expected byte
         hookSafetyChecker.Register("ActionEffectHandler.Receive",
             "Processes combat effects (damage, flytext, animations). Hooked by ACT, combat log plugins.",
-            (nint)FFXIVClientStructs.FFXIV.Client.Game.Character.ActionEffectHandler.MemberFunctionPointers.Receive);
+            (nint)ActionEffectHandler.MemberFunctionPointers.Receive);
+
+        // Spawning and dressing simulated actors (enemies, allies, spectators).
+        hookSafetyChecker.Register("CreateBattleCharacter",
+            "Creates our simulated actors. Hooked by actor-spawning and object-tracking tools.",
+            (nint)ClientObjectManager.MemberFunctionPointers.CreateBattleCharacter, raisesConflict: false);
+        hookSafetyChecker.Register("DeleteObjectByIndex",
+            "Removes our simulated actors. Hooked by actor-spawning and object-tracking tools.",
+            (nint)ClientObjectManager.MemberFunctionPointers.DeleteObjectByIndex, raisesConflict: false);
+        hookSafetyChecker.Register("CopyFromCharacter",
+            "Copies appearance onto our actors. Hooked by Penumbra (collection inheritance), Brio-style tools.",
+            (nint)CharacterSetupContainer.MemberFunctionPointers.CopyFromCharacter, raisesConflict: false);
+        hookSafetyChecker.Register("LoadWeapon",
+            "Loads our actors' weapons. Hooked by Penumbra, Glamourer.",
+            (nint)DrawDataContainer.MemberFunctionPointers.LoadWeapon, raisesConflict: false);
+        hookSafetyChecker.Register("LoadEquipment",
+            "Changes our actors' gear. Hooked by Glamourer-style appearance plugins.",
+            (nint)DrawDataContainer.MemberFunctionPointers.LoadEquipment, raisesConflict: false);
+        // Virtual: the address is the entry in a live BattleChara's vtable (our actors are BattleChara,
+        // as is the local player), resolved at each scan.
+        hookSafetyChecker.Register("EnableDraw",
+            "Makes our spawned actors visible. Hooked by Penumbra (assigns mod collections).",
+            ResolveBattleCharaEnableDraw, raisesConflict: false);
+
+        // Animation, sound, ragdoll.
+        hookSafetyChecker.Register("PlayActionTimeline",
+            "Plays animations on our actors. Hooked by animation / emote / posing tools.",
+            (nint)TimelineContainer.MemberFunctionPointers.PlayActionTimeline, raisesConflict: false);
+        hookSafetyChecker.Register("SoundManager.PlaySound",
+            "Plays enemy voices. Hooked by sound filter / replacement plugins.",
+            (nint)SoundManager.MemberFunctionPointers.PlaySound, raisesConflict: false);
+        hookSafetyChecker.Register("hkaPose.SyncModelSpace",
+            "Syncs ragdoll bone poses. Hooked by posing tools (Ktisis, Brio).",
+            (nint)hkaPose.MemberFunctionPointers.SyncModelSpace, raisesConflict: false);
+        hookSafetyChecker.Register("Human.ResolveMdlPath",
+            "Reads model paths when fitting the ragdoll to a body. Hooked by Penumbra.",
+            ResolveHumanResolveMdlPath, raisesConflict: false);
+    }
+
+    private static nint ResolveBattleCharaEnableDraw()
+    {
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player == null || player.Address == 0) return 0;
+        var obj = (GameObject*)player.Address;
+        return obj->VirtualTable == null ? 0 : (nint)obj->VirtualTable->EnableDraw;
+    }
+
+    // Our call goes to the vtable of the actor's draw object; Human is the one Penumbra always hooks
+    // (monster/demihuman draw objects have their own entries, not checked).
+    private static nint ResolveHumanResolveMdlPath()
+    {
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player == null || player.Address == 0) return 0;
+        var draw = ((GameObject*)player.Address)->DrawObject;
+        if (draw == null || draw->Object.GetObjectType() != FFXIVClientStructs.FFXIV.Client.Graphics.Scene.ObjectType.CharacterBase) return 0;
+        var cb = (CharacterBase*)draw;
+        if (cb->GetModelType() != CharacterBase.ModelType.Human || cb->VirtualTable == null) return 0;
+        return (nint)cb->VirtualTable->ResolveMdlPath;
     }
 }

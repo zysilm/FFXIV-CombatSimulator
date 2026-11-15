@@ -2990,13 +2990,13 @@ public partial class MainWindow : IDisposable
         ImGui.Separator();
         ImGui.Spacing();
 
-        // Function table
-        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Native Functions");
+        // Functions we call: another plugin's hook on one of these runs inside our call.
+        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Functions we call");
         ImGui.Spacing();
 
         if (ImGui.BeginTable("##HookTable", 4, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg))
         {
-            ImGui.TableSetupColumn("Function", ImGuiTableColumnFlags.WidthFixed, 150);
+            ImGui.TableSetupColumn("Function", ImGuiTableColumnFlags.WidthFixed, 170);
             ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 80);
             ImGui.TableSetupColumn("Hooked By", ImGuiTableColumnFlags.WidthFixed, 160);
             ImGui.TableSetupColumn("Details", ImGuiTableColumnFlags.WidthStretch);
@@ -3004,15 +3004,23 @@ public partial class MainWindow : IDisposable
 
             foreach (var func in hookSafetyChecker.Functions)
             {
+                if (func.Address == 0)
+                    continue; // virtual function not resolved yet (no local player at scan time)
+
                 ImGui.TableNextRow();
 
                 ImGui.TableNextColumn();
                 ImGui.Text(func.Name);
 
                 ImGui.TableNextColumn();
-                if (func.IsHooked)
+                if (func.IsHooked && func.RaisesConflict)
                 {
                     ImGui.TextColored(new Vector4(1f, 0.4f, 0.4f, 1f), "HOOKED");
+                }
+                else if (func.IsHooked)
+                {
+                    // Informational: the game calls this for every actor; see HookSafetyChecker.RaisesConflict.
+                    ImGui.TextColored(new Vector4(0.85f, 0.75f, 0.45f, 1f), "Hooked");
                 }
                 else
                 {
@@ -3034,13 +3042,15 @@ public partial class MainWindow : IDisposable
                 }
 
                 ImGui.TableNextColumn();
-                if (func.IsHooked)
+                if (func.IsHooked && func.RaisesConflict)
                 {
                     ImGui.TextWrapped(func.DetourInfo);
                 }
                 else
                 {
+                    ImGui.PushTextWrapPos(0);
                     ImGui.TextDisabled(func.Description);
+                    ImGui.PopTextWrapPos();
                 }
             }
 
@@ -3052,6 +3062,36 @@ public partial class MainWindow : IDisposable
             ImGui.TextDisabled("No native functions registered for checking.");
         }
 
+        ImGui.Spacing();
+
+        // Functions we hook: other plugins on the same address. Dalamud chains the hooks, so this is
+        // informational and never raises the conflict warning.
+        ImGui.TextColored(new Vector4(0.7f, 0.85f, 1f, 1f), "Functions we hook");
+        HelpMarker("Other plugins that hook the same game functions as Combat Simulator. " +
+                   "Dalamud runs both hooks one after the other, so this is not a conflict by itself; " +
+                   "it tells you where to look if something misbehaves only with that plugin enabled.");
+        ImGui.Spacing();
+
+        if (ImGui.BeginTable("##OwnHookTable", 2, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg))
+        {
+            ImGui.TableSetupColumn("Our hook", ImGuiTableColumnFlags.WidthFixed, 280);
+            ImGui.TableSetupColumn("Also hooked by", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableHeadersRow();
+
+            foreach (var own in hookSafetyChecker.OwnHooks)
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.Text(own.Name);
+                ImGui.TableNextColumn();
+                if (own.AlsoHookedBy.Length > 0)
+                    ImGui.TextColored(new Vector4(0.85f, 0.75f, 0.45f, 1f), own.AlsoHookedBy);
+                else
+                    ImGui.TextDisabled("-");
+            }
+
+            ImGui.EndTable();
+        }
     }
 
     // Health of our OWN safety hooks — the barriers that keep simulated combat from ever
