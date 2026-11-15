@@ -205,7 +205,10 @@ internal sealed unsafe class CorpseModule : ICorpseQuery
         // together lands all of those on top of each other. Each activation pushes the next one
         // further out; the budget decays in ProcessPendingNpcRagdolls, so it only bites during a
         // burst and is back to zero by the next fight.
-        controller.Activate(address, AdvancedRagdoll.RagdollTuning.NpcActivationDelay + npcRagdollStaggerBudget);
+        // The player's choice of when physics takes over (fixed delay, or a moment found from the animation
+        // or the fall), as for allies; the stagger budget offsets it.
+        controller.Activate(address, config.RagdollActivationDelay,
+            AdvancedRagdoll.RagdollTrigger.ClampMode(config.RagdollTriggerMode), npcRagdollStaggerBudget);
         npcRagdollStaggerBudget = MathF.Min(
             npcRagdollStaggerBudget + NpcRagdollActivationStagger, NpcRagdollMaxStagger);
         npcRagdolls[address] = controller;
