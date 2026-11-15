@@ -66,8 +66,14 @@ public partial class MainWindow : IDisposable
     private readonly CombatRecipeBook recipeBook;
     private readonly IPluginLog log;
 
-    // Conflict confirmation popup
-    private bool showConflictConfirmPopup;
+    // Start confirmation popup, shown when a client-side safety barrier is down
+    private bool showBarrierConfirmPopup;
+
+    private static readonly Vector4 ConflictYellow = new(1f, 0.8f, 0f, 1f);
+    private static readonly Vector4 BarrierRed = new(1f, 0.4f, 0.4f, 1f);
+
+    /// <summary>True when every interceptor that keeps simulated combat off the server is installed.</summary>
+    private bool SafetyBarriersHealthy => useActionHook.IsHealthy && playerTargetController.IsHardTargetGuardHealthy;
 
     // Glamourer design list cache for combo box
     private List<KeyValuePair<Guid, string>> glamourerDesigns = new();
@@ -294,9 +300,12 @@ public partial class MainWindow : IDisposable
 
         // Left sidebar
         ImGui.BeginChild("##sidebar", new Vector2(sidebarWidth, contentHeight), true);
+        var diagnoseIndex = TabIndex("Diagnose");
         for (int i = 0; i < TabNames.Length; i++)
         {
-            if (ImGui.Selectable(TabNames[i], selectedTab == i))
+            if (i == diagnoseIndex)
+                DrawDiagnoseSidebarEntry(i);
+            else if (ImGui.Selectable(TabNames[i], selectedTab == i))
                 selectedTab = i;
         }
         DrawDevSidebarEntry(ref selectedTab);
@@ -378,58 +387,65 @@ public partial class MainWindow : IDisposable
         }
         ImGui.EndChild();
 
-        // Conflict confirmation popup (must be at window scope, not inside a child)
-        DrawConflictConfirmPopup();
+        // Barrier confirmation popup (must be at window scope, not inside a child)
+        DrawBarrierConfirmPopup();
 
         ImGui.End();
+    }
+
+    /// <summary>
+    /// The Diagnose sidebar entry: red with a warning icon when a safety barrier is down,
+    /// yellow with the same icon when other plugins hook functions we call, plain otherwise.
+    /// The sidebar is a list of Selectables chosen by index, and the entry keeps one fixed ID
+    /// ("##sidebar_diagnose") whatever it looks like. A label renders in one font only, so in the
+    /// warning states the Selectable has no visible label and the icon (icon font) and the name
+    /// are drawn over it as plain text, which takes no clicks.
+    /// </summary>
+    private void DrawDiagnoseSidebarEntry(int index)
+    {
+        Vector4? color = !SafetyBarriersHealthy ? BarrierRed
+            : hookSafetyChecker.HasConflicts ? ConflictYellow
+            : null;
+
+        if (color == null)
+        {
+            if (ImGui.Selectable($"{TabNames[index]}##sidebar_diagnose", selectedTab == index))
+                selectedTab = index;
+            return;
+        }
+
+        var startX = ImGui.GetCursorPosX();
+        if (ImGui.Selectable("##sidebar_diagnose", selectedTab == index))
+            selectedTab = index;
+        ImGui.SameLine(startX);
+        using (ImRaii.PushFont(UiBuilder.IconFont))
+            ImGui.TextColored(color.Value, FontAwesomeIcon.ExclamationTriangle.ToIconString());
+        ImGui.SameLine();
+        ImGui.TextColored(color.Value, TabNames[index]);
+    }
+
+    /// <summary>Start from a button: straight away when the barriers are up, otherwise ask first.</summary>
+    private void RequestStartSimulation()
+    {
+        if (!SafetyBarriersHealthy)
+        {
+            showBarrierConfirmPopup = true;
+            return;
+        }
+        combatEngine.StartSimulation();
+        chatGui.Print("[CombatSim] Combat simulation started.");
     }
 
     private void DrawStatusSection()
     {
         var simActive = combatEngine.IsActive;
-        var hasConflicts = hookSafetyChecker.HasConflicts;
 
         ImGui.Text("Status:");
         ImGui.SameLine();
-        if (simActive && hasConflicts)
-        {
-            ImGui.TextColored(new Vector4(1f, 0.6f, 0f, 1f), "Active — Conflict Detected");
-        }
-        else if (simActive)
-        {
+        if (simActive)
             ImGui.TextColored(new Vector4(0, 1, 0, 1), "Active");
-        }
-        else if (hasConflicts)
-        {
-            ImGui.TextColored(new Vector4(1f, 0.6f, 0f, 1f), "Inactive — Conflict Detected");
-        }
         else
-        {
             ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1), "Inactive");
-        }
-
-        if (hasConflicts)
-        {
-            ImGui.SameLine();
-            using (ImRaii.PushFont(UiBuilder.IconFont))
-            {
-                ImGui.TextColored(new Vector4(1f, 0.6f, 0f, 1f), FontAwesomeIcon.ExclamationTriangle.ToIconString());
-            }
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.BeginTooltip();
-                ImGui.PushTextWrapPos(ImGui.GetFontSize() * 25.0f);
-                ImGui.TextUnformatted(
-                    "Other plugins are hooking native functions used by Combat Simulator. " +
-                    "This may cause crashes during combat.\n\n" +
-                    "Go to the Diagnose tab to see details and " +
-                    "consider deactivating conflicting plugins.");
-                ImGui.PopTextWrapPos();
-                ImGui.EndTooltip();
-            }
-            if (ImGui.IsItemClicked())
-                selectedTab = TabIndex("Diagnose");
-        }
 
         if (simActive && combatEngine.State.CombatDuration > 0)
         {
@@ -2078,17 +2094,7 @@ public partial class MainWindow : IDisposable
             if (!isActive)
             {
                 if (ImGui.Button("Start Combat", new Vector2(150, 0)))
-                {
-                    if (hookSafetyChecker.HasConflicts)
-                    {
-                        showConflictConfirmPopup = true;
-                    }
-                    else
-                    {
-                        combatEngine.StartSimulation();
-                        chatGui.Print("[CombatSim] Combat simulation started.");
-                    }
-                }
+                    RequestStartSimulation();
             }
             else
             {
@@ -2748,12 +2754,6 @@ public partial class MainWindow : IDisposable
                            "None: only your own and those that hit you.");
             }
 
-            if (actionVfx && hookSafetyChecker.HasConflicts)
-            {
-                ImGui.SameLine();
-                ImGui.TextColored(new Vector4(1f, 0.6f, 0f, 1f), "! Check Diagnose");
-            }
-
             var spark = config.EnableHitVfx || config.EnableHitSparkVfx;
             if (ImGui.Checkbox("Impact spark", ref spark))
             {
@@ -2880,37 +2880,37 @@ public partial class MainWindow : IDisposable
         ("L Shin", "j_asi_b_l"),      ("R Shin", "j_asi_b_r"),
     };
 
-    private void DrawConflictConfirmPopup()
+    private void DrawBarrierConfirmPopup()
     {
-        if (showConflictConfirmPopup)
+        if (showBarrierConfirmPopup)
         {
-            ImGui.OpenPopup("##ConflictConfirm");
-            showConflictConfirmPopup = false;
+            ImGui.OpenPopup("##BarrierConfirm");
+            showBarrierConfirmPopup = false;
         }
 
         ImGui.SetNextWindowSize(new Vector2(420, 0));
         var popupOpen = true;
-        if (ImGui.BeginPopupModal("##ConflictConfirm", ref popupOpen, ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoTitleBar))
+        if (ImGui.BeginPopupModal("##BarrierConfirm", ref popupOpen, ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoTitleBar))
         {
             using (ImRaii.PushFont(UiBuilder.IconFont))
             {
-                ImGui.TextColored(new Vector4(1f, 0.6f, 0f, 1f), FontAwesomeIcon.ExclamationTriangle.ToIconString());
+                ImGui.TextColored(BarrierRed, FontAwesomeIcon.ExclamationTriangle.ToIconString());
             }
             ImGui.SameLine();
-            ImGui.TextColored(new Vector4(1f, 0.6f, 0f, 1f), "Plugin Conflict Detected");
+            ImGui.TextColored(BarrierRed, "Safety Barrier Down");
 
             ImGui.Spacing();
             ImGui.TextWrapped(
-                "Other plugins are hooking native functions used by Combat Simulator. " +
-                "This may cause the game to crash during combat.\n\n" +
-                "Check the Diagnose tab to see which plugins are conflicting " +
-                "and consider deactivating them before starting.");
+                "A client-side safety barrier is not installed, so simulated actions or targets " +
+                "might reach the server as if they were real.\n\n" +
+                "Restart the game or reload Combat Simulator to reinstall it. " +
+                "The Diagnose tab shows which barrier is down.");
 
             ImGui.Spacing();
             ImGui.Separator();
             ImGui.Spacing();
 
-            if (ImGui.Button("Start with Conflicts", new Vector2(150, 0)))
+            if (ImGui.Button("Start Anyway", new Vector2(150, 0)))
             {
                 combatEngine.StartSimulation();
                 chatGui.Print("[CombatSim] Combat simulation started.");
@@ -3106,7 +3106,7 @@ public partial class MainWindow : IDisposable
 
         var actionOk = useActionHook.IsHealthy;
         var targetGuardOk = playerTargetController.IsHardTargetGuardHealthy;
-        var allOk = actionOk && targetGuardOk;
+        var allOk = SafetyBarriersHealthy;
 
         using (ImRaii.PushFont(UiBuilder.IconFont))
         {
@@ -3807,17 +3807,7 @@ public partial class MainWindow : IDisposable
         if (!isActive)
         {
             if (ImGui.Button("Start", btnSize))
-            {
-                if (hookSafetyChecker.HasConflicts)
-                {
-                    showConflictConfirmPopup = true;
-                }
-                else
-                {
-                    combatEngine.StartSimulation();
-                    chatGui.Print("[CombatSim] Combat simulation started.");
-                }
-            }
+                RequestStartSimulation();
         }
         else
         {
@@ -3828,8 +3818,8 @@ public partial class MainWindow : IDisposable
             }
         }
 
-        // Conflict popup must be drawn at this window scope
-        DrawConflictConfirmPopup();
+        // Barrier popup must be drawn at this window scope
+        DrawBarrierConfirmPopup();
 
         ImGui.SameLine();
         if (ImGui.Button("Reset All", btnSize))
