@@ -26,6 +26,8 @@ public sealed unsafe partial class WorldGeometryRenderer : IDisposable
 
     partial void ResetSpecializedLayer(LayerState layer);
     partial void ReleaseSpecializedLayer(LayerState layer);
+    /// <summary>Called from <see cref="ClearLayer"/>: a specialized producer drops its drawable data as well.</summary>
+    partial void ClearSpecializedLayer(LayerState layer);
     partial void RefreshSpecializedPasses();
     partial void CopySpecializedSnapshot(LayerState layer, Slot slot, int offset, int count, ref bool copied);
     partial void CaptureSpecializedBatch(LayerState layer, ref Batch batch);
@@ -211,6 +213,7 @@ public sealed unsafe partial class WorldGeometryRenderer : IDisposable
         {
             if (layer.Disposed) return;
             layer.Count = 0; layer.Generation++;
+            ClearSpecializedLayer(layer);
             layer.LastDrawMode = -1; layer.ProjectionLogged = false;
             layer.DepthProbe?.Dispose(); layer.DepthProbe = null;
             layer.Status = layer.Enabled ? "Waiting for geometry" : "Off";
