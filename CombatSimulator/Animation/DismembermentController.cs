@@ -420,12 +420,22 @@ public unsafe partial class DismembermentController : IDisposable
         public int SourceSkeletonBoneCount;
         public int SourceSkeletonParentCount;
         public int SourceSkeletonSignature;
+        // What a human source RENDERS (race, body, face, equipment), captured with the identity above.
+        // The game-side setup that CopyFromCharacter copies is the actor's own data, which Glamourer
+        // and similar tools leave untouched. Null when the source does not draw a human model.
+        public RenderedHumanAppearance? SourceRenderedHuman;
         public int GearKeepModelSlot = -1;
         public string? GearExpectedAppearanceSignature;
         public bool GearHideSkin;
         public string? GearHiddenOppositeRootBone;
         public bool GearRealAttachmentRequested;
         public bool GearTethered;
+    }
+
+    private sealed class RenderedHumanAppearance
+    {
+        public CustomizeData Customize;
+        public readonly EquipmentModelId[] Equipment = new EquipmentModelId[10];
     }
 
     private readonly List<Clone> clones = new();
@@ -668,10 +678,23 @@ public unsafe partial class DismembermentController : IDisposable
             var s = srcDraw->Scale;
             if (s.X > 0f && s.Y > 0f && s.Z > 0f)
                 p.SourceScale = s;
+            p.SourceRenderedHuman = CaptureRenderedHuman((CharacterBase*)srcDraw);
         }
         if (boneService.TryGetSkeleton(p.SourceAddress) is { } skel)
             CaptureSourceSkeletonFingerprint(p, skel);
         p.IdentityCaptured = true;
+    }
+
+    private static RenderedHumanAppearance? CaptureRenderedHuman(CharacterBase* draw)
+    {
+        if (draw->GetModelType() != CharacterBase.ModelType.Human)
+            return null;
+        var human = (Human*)draw;
+        var appearance = new RenderedHumanAppearance { Customize = human->Customize };
+        var equipment = human->EquipmentModels;
+        for (var i = 0; i < appearance.Equipment.Length && i < equipment.Length; i++)
+            appearance.Equipment[i] = equipment[i];
+        return appearance;
     }
 
     private static void CaptureSourceSkeletonFingerprint(Pending p, SkeletonAccess skel)
@@ -875,12 +898,12 @@ public unsafe partial class DismembermentController : IDisposable
         // Appearance must be decided from actor/model identity, not just skeleton
         // topology. Some monster models use human-like skeletons; routing those
         // through the humanoid copy path bootstraps them as player-shaped clones.
-        // A piece of armour taken off a human (an ally's or an enemy's, not only the player's) is cloned
-        // from what that human renders right now, like the player's: the BNpc row would rebuild its
-        // Excel outfit, not necessarily the one it is wearing.
-        var gearFromRenderedHuman = p.GearKeepModelSlot >= 0 &&
-            skel.CharBase->GetModelType() == CharacterBase.ModelType.Human;
-        var useMonsterAppearance = !isPlayerControlledSource && !gearFromRenderedHuman &&
+        // A part of a human (the player's, an ally's or an enemy's; a separated part or a piece of
+        // armour) is cloned from what that human rendered when it was scheduled: the BNpc row would
+        // rebuild its Excel outfit and CopyFromCharacter its game-side look, neither necessarily the
+        // one it shows (Glamourer changes only what is rendered, race included).
+        var renderedHuman = p.SourceRenderedHuman;
+        var useMonsterAppearance = !isPlayerControlledSource && renderedHuman == null &&
             (ids.BNpcBaseId > 0 || sourceModelCharaId > 0);
 
         var clientObjMgr = ClientObjectManager.Instance();
@@ -906,7 +929,7 @@ public unsafe partial class DismembermentController : IDisposable
         WriteCloneName((GameObject*)obj, index);
 
         SetupCloneAppearance(character, src, (GameObject*)obj, sourceIsHumanoid,
-            useMonsterAppearance, ids, sourceModelCharaId, p.GearKeepModelSlot >= 0);
+            useMonsterAppearance, ids, sourceModelCharaId, renderedHuman);
         character->SetMode(CharacterModes.Normal, 0);
         if (p.GearKeepModelSlot >= 0) character->Timeline.OverallSpeed = 1f;
 
@@ -1099,7 +1122,7 @@ public unsafe partial class DismembermentController : IDisposable
 
     private void SetupCloneAppearance(Character* target, Character* source, GameObject* obj,
         bool sourceIsHumanoid, bool useMonsterAppearance,
-        (uint BNpcBaseId, uint BNpcNameId) ids, int sourceModelCharaId, bool useRenderedHuman = false)
+        (uint BNpcBaseId, uint BNpcNameId) ids, int sourceModelCharaId, RenderedHumanAppearance? renderedHuman)
     {
         if (useMonsterAppearance || !sourceIsHumanoid)
         {
@@ -1128,15 +1151,14 @@ public unsafe partial class DismembermentController : IDisposable
                 ? CharacterSetupContainer.CopyFlags.None
                 : CharacterSetupContainer.CopyFlags.ClassJob | CharacterSetupContainer.CopyFlags.WeaponHiding;
             target->CharacterSetup.CopyFromCharacter(source, flags);
-            if (useRenderedHuman && source->DrawObject != null &&
-                ((CharacterBase*)source->DrawObject)->GetModelType() == CharacterBase.ModelType.Human)
+            if (renderedHuman != null)
             {
-                // Seed the second setup with the LIVE human, not the game's unglamoured race
-                // and equipment. Otherwise an asynchronous race redraw is required just to
-                // load the intended garment; IPC acceptance alone cannot guarantee that redraw.
-                var human = (Human*)source->DrawObject;
-                target->DrawData.CustomizeData = human->Customize;
-                human->EquipmentModels.CopyTo(target->DrawData.EquipmentModelIds);
+                // Seed the second setup with the RENDERED human, not the game's unglamoured race
+                // and equipment. Otherwise the clone is built with the actor's real look, and only
+                // an asynchronous race redraw after Glamourer's ApplyState could change it; IPC
+                // acceptance alone cannot guarantee that redraw lands before the part is armed.
+                target->DrawData.CustomizeData = renderedHuman.Customize;
+                renderedHuman.Equipment.CopyTo(target->DrawData.EquipmentModelIds);
                 target->ModelContainer.ModelCharaId = 0;
             }
             target->CharacterSetup.CopyFromCharacter(target, CharacterSetupContainer.CopyFlags.None);

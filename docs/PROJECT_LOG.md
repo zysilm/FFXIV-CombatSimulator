@@ -151,6 +151,8 @@
 
 ### 流程
 
+- 2026-11-22：克隆角色的外观必须取正在渲染的 Human（`Customize` + `EquipmentModels`），不能用 `CopyFromCharacter` 复制的游戏数据：Glamourer 只改渲染模型，换种族时克隆会变回换装前的真实角色；同步判断“绘制对象 N 帧没变”不核对结果。分离部件、护甲克隆同一条路径。
+
 - 2026-11-15：RagdollReplay 的 synthetic 第一轮录像从不删除，%TEMP% 堆了 37 GB 把 C 盘写满，回放出现截断录像（"bad magic"/"ends after"）的假差异；已修（`57e5250`）。跑大批回放前先看磁盘。
 - 2026-11-15：视图矩阵布局匹配写相机的方案从来没匹配上（误差 1.0/4.2），过场镜头一次都没写入；先看日志里的 WRN 再下结论。
 
@@ -284,6 +286,11 @@
 
 - [ ] 手臂姿势覆盖恢复 → [ENEMY_CONTROL_GRAB.md](ENEMY_CONTROL_GRAB.md) §2 第 9 条：Effects → Enemy Control → Show Enemy Control GUI 打开的 “Enemy Control” 窗口里，Grab pairs 下面有 Enable arm pose override，勾选后 Fitting 下面出现 Left Arm Pose / Right Arm Pose 折叠栏（Upper arm / Forearm 的 X/Y/Z 滑条、Reset）；抓取时敌人手臂按滑条转、放开约 1 s 后随抓取动画一起恢复；不抓取时不生效；Grab Profiles 保存再载入后手臂角度和精确点都在；带精确点的对与手臂覆盖同时用时，敌人端点跟着转过的手臂走。
 - [ ] Armor Detachment 删除 “Still-attached pieces follow the body”：Ragdoll 页签 → Armor Detachment 折叠栏里没有这一项；脱落、半脱挂、Detach Now 照常；尸体被抓起时还穿着的衣物与之前（选项关）一样。
+
+### 2026-11-22 批次
+
+- [ ] 用 Glamourer 换种族和装备后，分离部件与护甲克隆是当前外观（含 Penumbra 模组）；日志无 `skeleton did not match` / `never resolved`。
+- [ ] 液体效果：Reset 后日志不再连续出现 “World fluid layer”；离倒地点 10–20 m 转镜头不掉帧；再次出现时不卡。
 
 ## 5. 搁置与未完成
 
