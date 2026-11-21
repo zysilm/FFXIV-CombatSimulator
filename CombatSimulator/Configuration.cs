@@ -143,11 +143,6 @@ public partial class Configuration : IPluginConfiguration
     public bool KoStripCloneAutoExpireEnabled { get; set; } = false;
     public float KoStripCloneAutoExpireSeconds { get; set; } = 2f;
 
-    // Pieces still attached to the body travel with it when the body is moved as a whole. Pieces that
-    // have already come away stay put; which is which is decided by whether the piece still wraps the
-    // bones it was built around, not by how near the body it happens to lie.
-    public bool KoStripGarmentFollowsBody { get; set; } = false;
-
     // Body/Legs garment behaviour. Stored values keep their historic numbering:
     // 1 drop when the body settles, 5 Visual only (enhanced).
     public const int KoStripClothHoldPresetDefault = 5;
@@ -628,16 +623,15 @@ public partial class Configuration : IPluginConfiguration
         // Enemy Control's "spawn a creature on death", removed (2026-11-15, user's decision): Enemy
         // Control only ever takes over one enemy of the fight.
         "EnemyControlSpawnOnDeath", "EnemyControlModelId", "EnemyControlModelNameId",
-        // Enemy Control's swarm (other enemies following and climbing corpses) and its arm-pose override,
-        // removed (2026-11-15, user's decision): Enemy Control only controls its one enemy.
+        // Enemy Control's swarm (other enemies following and climbing corpses), removed (2026-11-15, user's
+        // decision): Enemy Control only controls its one enemy. (The arm-pose override removed with it was
+        // restored on 2026-11-21 at the user's request; its keys are live again.)
         "EnemyControlSwarmEnabled", "EnemyControlSwarmFollowDistance", "EnemyControlSwarmCompactness",
         "EnemyControlSwarmClimbCorpses", "EnemyControlSwarmRepositionOnCorpse",
         "EnemyControlSwarmLandmarkChangeFrequency",
-        "EnemyControlArmPoseEnabled",
-        "EnemyControlLeftArmUpperPitch", "EnemyControlLeftArmUpperYaw", "EnemyControlLeftArmUpperRoll",
-        "EnemyControlLeftArmLowerPitch", "EnemyControlLeftArmLowerYaw", "EnemyControlLeftArmLowerRoll",
-        "EnemyControlRightArmUpperPitch", "EnemyControlRightArmUpperYaw", "EnemyControlRightArmUpperRoll",
-        "EnemyControlRightArmLowerPitch", "EnemyControlRightArmLowerYaw", "EnemyControlRightArmLowerRoll",
+        // Armor Detachment's "Still-attached pieces follow the body", removed (2026-11-21, user's decision):
+        // pieces never ride along when the body is relocated onto a grab or hold.
+        "KoStripGarmentFollowsBody",
         // Fighting Mode (the experimental 1v1 side-view lane, its weapon hitboxes, AI and cameras), removed
         // (2026-11-15, user's decision: no longer used).
         "FightingMode", "FightingModeLaneHalfWidth", "FightingModeMinSeparation", "FightingModeMaxSeparation",

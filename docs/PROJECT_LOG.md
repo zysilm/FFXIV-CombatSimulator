@@ -75,6 +75,7 @@
 - Professional Mode 精简：删掉的控件改为常量，常量取用户已保存的值；用户改过的偏好保留为控件（2026-11-09，用户裁决，`6da2a1e`…`0a7b2fe`）。
 - 精简时的取舍：Enemy Control 的攻击功能删除；Guided Collapse 只留膝盖跪下；逐骨表和 Bone Profiles 删除；近战同时攻击上限滑条保留（2026-11-09，用户裁决）。
 - Glamourer 的死亡/重置套装功能已删；Targets、Party 并入 Combat 页签；Armor Detachment 移到 Ragdoll 页签（2026-11-11，`cbe891d`）。
+- Armor Detachment 的 “Still-attached pieces follow the body” 已删除，连同它为 true 时才走的路径（尸体被投到抓取/托举上时，还穿在身上的衣物跟着搬走：`DismembermentController.ShouldCarryExternalRig`、`IsGarmentWorn`，以及交给库的 `CarryExternalRigOnAnchor` 回调——库里回调为 null 即“什么都不带”，与原来选项关时一样）；用户保存的值是 false，行为不变；退役键 `KoStripGarmentFollowsBody`（2026-11-21，用户裁决）。
 - 伤害数字由插件自己画（客户端角色不显示游戏的 flytext）；别人的数字不弱化，只强化玩家自己的：打出去橙金粗描边不飘动，挨打红色带负号、在胸口高度（2026-11-13，用户裁决，`a371a6e`、`66d23b7`）。
 - 名字和数字默认只在玩家自己的血条上；其他人是小血条，只在“有关”时显示（队友 10 m 内，用户确认合适）；敌人按视线显示，看不到敌人时脚下罗盘指向最近的敌人；匿名模式优先级最高，隐藏全部名字和数字（2026-11-13，用户裁决，`e0553d5`、`00f9d20`、`8a8d4ea`）。
 - 血条前缀是固定状态词，由状态自动决定；自定义 Sim Label / Dead Label 输入框已删（2026-11-13，用户裁决，`7e27feb`）。
@@ -129,7 +130,8 @@
 - 每个敌人每帧只归一层管：被控制 → 死亡 → 抢尸 → 交战 → 巡逻 → 守岗 → 待机（`Ai/EnemyLayer.cs`）。Enemy Control 只覆盖它那一个敌人；被控制的不叫醒别人、不被叫醒；巡逻是每个敌人自己的状态（用户裁决，`43c4c3d`）。
 - Enemy Control 只在胜负已分（我方战败，`OutcomeDecided(false)`）后才接管；主角死亡不算分出胜负。接管对象：尸体被抢 → 抢尸者；否则凶手（按 EntityId 记、接管前核对存活）；都不行就不接管。Control killer 关时谁都不接管（用户裁决，`43c4c3d`）。
 - Enemy Control 的“生成一只怪来控制”已删除（用户裁决）；退役键 `EnemyControlSpawnOnDeath`、`EnemyControlModelId`、`EnemyControlModelNameId`。
-- Enemy Control 只做“控制一个敌人”：附身、移动、镜头跟随、放开、抓住尸体（grab）。Swarm（选中的敌人跟随、爬上尸体踩踏、阵型）和手臂姿势覆盖（手动转动敌人上臂/前臂骨骼）已删除，用户用过、效果不好（2026-11-15，用户裁决）；退役键见 `Configuration.cs` 的 `RetiredOptionNames`，抓取档案里的手臂姿势字段一并丢弃。
+- Enemy Control 只做“控制一个敌人”：附身、移动、镜头跟随、放开、抓住尸体（grab）。Swarm（选中的敌人跟随、爬上尸体踩踏、阵型）已删除，用户用过、效果不好（2026-11-15，用户裁决）；退役键见 `Configuration.cs` 的 `RetiredOptionNames`。
+- 更正（2026-11-21）：2026-11-15 那次（`1e61073`）只该删 Swarm 和 Swarm 踩尸体；手臂姿势覆盖（抓取时手动转动敌人上臂/前臂骨骼）是误删，用户的抓取档案依赖它，已按 `a712651` 原样恢复（设置、档案 13 个字段、界面、运行时），13 个键移出 `RetiredOptionNames`（2026-11-21，用户要求）→ [ENEMY_CONTROL_GRAB.md](ENEMY_CONTROL_GRAB.md) §2 第 9 条。误删期间载入并保存过的配置已把档案里的手臂字段丢掉（用户的配置就是这样；2026-10-25 的备份 `CombatSimulator.json.fluids-fix3-20261025-191958.bak` 里还在）。
 - 精确抓取点（anchor）：抓取对两端可在 3D 画面里点模型选点（不做部位列表），存为拥有那块皮肤的骨骼 + 骨骼局部偏移/法线；敌人点的骨骼在别的生物上不存在时退回手/后备骨骼链并丢掉偏移；两点开始时相距远照样用现有拉入；第一版只约束位置；库 0.1.0-beta.4 的 `CreateGrabConstraintAt`（2026-11-15，用户裁决）→ [ENEMY_CONTROL_GRAB.md](ENEMY_CONTROL_GRAB.md) §3。没设点的对行为不变。
 - 生成点、岗位、巡逻点都吸到我方能走到的网格块上（从候选点向外逐圈搜，首次进人群最远 96 m，重新进人群 20 m/12 m）。
 
@@ -271,12 +273,17 @@
 - [ ] Directed 死亡构图：日志 `DynamicCam look-at override` 的 `sceneChi` 与 `commandedChi`/`renderedChi` 对比，定位 0.26 rad 偏差出在哪一步。
 - [ ] 敌人行为层：多对多开巡逻时全员巡逻（日志 `patrolling`，不再 `idle 100%`）；Enemy Control 只在战败后接管；1v1 战败立刻接管；被救起不接管。
 - [ ] 可达生成：不再刷到墙外/崖上/地下；日志 `spawn spot moved`、`post moved`。
-- [ ] Enemy Control 精简（只控制一个敌人）：Effects → Enemy Control → Show Enemy Control GUI 打开的窗口里不再有 Swarm 折叠栏和手臂姿势；控制、镜头切换、Release、抓取照常；旧抓取档案（含 Embrace）载入后没有手臂姿势。
+- [ ] Enemy Control 精简（只控制一个敌人）：Effects → Enemy Control → Show Enemy Control GUI 打开的窗口里不再有 Swarm 折叠栏；控制、镜头切换、Release、抓取照常。（手臂姿势部分已被 2026-11-21 的恢复取代，见下一节。）
 - [ ] Fighting Mode 删除：旧配置载入无异常；Combat 页签没有 Fighting Mode 折叠栏，快捷栏没有 Fighting Mode 勾选；Enemy Control 照常（它从 FightingModule 移到 ActorsModule）。
 - [ ] 服务器安全修复（2026-11-15）：Diagnose → Client-Side Safety 有三行（UseAction / UseActionLocation / Hard-target guard）；战斗中按住技能后开战，排队的技能不发到服务器（排队技能多半重走 UseAction；直接调 UseActionLocation 的是地面目标确认和 BossMod 这类插件，日志 `Suppressed direct UseActionLocation`）；停战后 Spawn 留下的敌人点不中（GPose 里也点不中）（日志 `FakeActorGuard: simulated actors not targetable`）；原生血条/目标栏战斗中隐藏、停战恢复，位置不变；坐骑上/坐下时 Recover Player Animation 拒绝并提示。
 - [ ] 玩家冻结恢复（2026-11-15）：战败后 Enemy Control 用 WASD 控制敌人时，玩家本人原地不动；复活/重置/停战后能正常走动。
 - [ ] 精确抓取点（2026-11-15，库 0.1.0-beta.4）→ [ENEMY_CONTROL_GRAB.md](ENEMY_CONTROL_GRAB.md) §3：Enemy Control 窗口抓取对两端的 Pick 能点中模型（日志 `GrabAnchor: picked …` 的 ray residual 在几像素内、round trip ≈ 0），点击不落到游戏选目标/镜头，Esc 取消；标记画在点上；抓取时两点贴合（`GrabAnchor: pair N after 1.0 s — gap` 小）；缩放 ≠ 1 的生物看 `scaled vs unscaled` 差值并确认点落在可见的手上；换种族/脱衣后玩家点 `re-snapped` 幅度合理；点在前臂等非手骨上时手指不乱弯；没设点的对与以前一样。
 - [ ] 库 0.1.0-beta.4：布娃娃、抓取照常（回放 97/97、扩展 6/6 已过）。
+
+### 2026-11-21 批次
+
+- [ ] 手臂姿势覆盖恢复 → [ENEMY_CONTROL_GRAB.md](ENEMY_CONTROL_GRAB.md) §2 第 9 条：Effects → Enemy Control → Show Enemy Control GUI 打开的 “Enemy Control” 窗口里，Grab pairs 下面有 Enable arm pose override，勾选后 Fitting 下面出现 Left Arm Pose / Right Arm Pose 折叠栏（Upper arm / Forearm 的 X/Y/Z 滑条、Reset）；抓取时敌人手臂按滑条转、放开约 1 s 后随抓取动画一起恢复；不抓取时不生效；Grab Profiles 保存再载入后手臂角度和精确点都在；带精确点的对与手臂覆盖同时用时，敌人端点跟着转过的手臂走。
+- [ ] Armor Detachment 删除 “Still-attached pieces follow the body”：Ragdoll 页签 → Armor Detachment 折叠栏里没有这一项；脱落、半脱挂、Detach Now 照常；尸体被抓起时还穿着的衣物与之前（选项关）一样。
 
 ## 5. 搁置与未完成
 

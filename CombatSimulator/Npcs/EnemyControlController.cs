@@ -149,6 +149,7 @@ public unsafe partial class EnemyControlController : IDisposable
         defaultGrabConform = new EnemyControlGrabConformSolver(boneService, playerRagdoll, config, log);
         anchorPicker = new EnemyControlGrabAnchorPicker(boneService, log);
         framework.Update += OnUpdate;
+        boneService.OnRenderFrame += ApplyArmPoseOverrides;
         boneService.OnPosePrepared += UpdatePreparedGrabTargets;
     }
 
@@ -923,6 +924,62 @@ public unsafe partial class EnemyControlController : IDisposable
         return new Vector3(posX, posY + 0.8f, posZ);
     }
 
+    // Upper-arm / forearm bone pairs the pose sliders drive, left then right — see
+    // ApplyArmPoseOverrides. Standard FFXIV skeleton naming (j_ude_a = upper arm, j_ude_b = forearm).
+    private static readonly (string Upper, string Lower)[] ArmPoseBones =
+    {
+        ("j_ude_a_l", "j_ude_b_l"),
+        ("j_ude_a_r", "j_ude_b_r"),
+    };
+
+    /// <summary>
+    /// Manual arm-pose override (see config.EnemyControlArmPoseEnabled and the twelve slider fields):
+    /// bends the creature's own upper arm / forearm bones independent of whatever the grab animation
+    /// is doing, so the reach can be lined up with wherever a grab pair actually targets. Runs in the
+    /// render pass, same as EnemyControlGrabConformSolver, so it isn't immediately overwritten by that frame's
+    /// animation re-drive.
+    ///
+    /// Only applied while a grab is held — the creature walks around on its own animation otherwise.
+    /// The release window counts as held: the grab loop keeps playing until RestoreGrabAttackTimeline
+    /// fires (see TickGrabAttack), so dropping the pose at release instead would snap the arms back
+    /// into the canned grab pose for a second before that pose itself is released — two pops where
+    /// there should be one.
+    /// </summary>
+    private void ApplyArmPoseOverrides()
+    {
+        if (!IsActive || !config.EnemyControlArmPoseEnabled) return;
+        if (!grabAttackActive && !grabAttackRestorePending) return;
+
+        var skelN = boneService.TryGetSkeleton(controlledAddress);
+        if (skelN == null) return;
+        var skel = skelN.Value;
+
+        var deltas = new Dictionary<int, Quaternion>();
+        AddArmPoseDelta(skel, deltas, ArmPoseBones[0].Upper,
+            config.EnemyControlLeftArmUpperPitch, config.EnemyControlLeftArmUpperYaw, config.EnemyControlLeftArmUpperRoll);
+        AddArmPoseDelta(skel, deltas, ArmPoseBones[0].Lower,
+            config.EnemyControlLeftArmLowerPitch, config.EnemyControlLeftArmLowerYaw, config.EnemyControlLeftArmLowerRoll);
+        AddArmPoseDelta(skel, deltas, ArmPoseBones[1].Upper,
+            config.EnemyControlRightArmUpperPitch, config.EnemyControlRightArmUpperYaw, config.EnemyControlRightArmUpperRoll);
+        AddArmPoseDelta(skel, deltas, ArmPoseBones[1].Lower,
+            config.EnemyControlRightArmLowerPitch, config.EnemyControlRightArmLowerYaw, config.EnemyControlRightArmLowerRoll);
+
+        if (deltas.Count > 0)
+            boneService.ApplyRotationDeltas(skel, deltas);
+    }
+
+    private void AddArmPoseDelta(SkeletonAccess skel, Dictionary<int, Quaternion> deltas, string bone,
+        float pitchDeg, float yawDeg, float rollDeg)
+    {
+        if (pitchDeg == 0f && yawDeg == 0f && rollDeg == 0f) return;
+
+        var index = boneService.ResolveBoneIndex(skel, bone);
+        if (index < 0) return;
+
+        deltas[index] = Quaternion.CreateFromYawPitchRoll(
+            float.DegreesToRadians(yawDeg), float.DegreesToRadians(pitchDeg), float.DegreesToRadians(rollDeg));
+    }
+
     private void CaptureGrabAttackTimeline()
     {
         if (grabAttackTimelineCaptured || controlledAddress == nint.Zero)
@@ -1105,6 +1162,7 @@ public unsafe partial class EnemyControlController : IDisposable
     public void Dispose()
     {
         framework.Update -= OnUpdate;
+        boneService.OnRenderFrame -= ApplyArmPoseOverrides;
         boneService.OnPosePrepared -= UpdatePreparedGrabTargets;
         Despawn();
         defaultGrabConform.Dispose();

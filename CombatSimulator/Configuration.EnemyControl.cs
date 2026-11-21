@@ -8,8 +8,8 @@ using CombatSimulator.Npcs;
 
 namespace CombatSimulator;
 
-// Enemy Control (post-defeat possession of one enemy): movement, camera, grab pairs, and
-// saved grab profiles. Moved out of the private Dev/Experimental module — see Npcs/EnemyControlController.
+// Enemy Control (post-defeat possession of one enemy): movement, camera, grab pairs, arm pose
+// override, and saved grab profiles. Moved out of the private Dev/Experimental module — see Npcs/EnemyControlController.
 public partial class Configuration
 {
     // Shown under Effects > Enemy Control. The only Enemy Control setting on that page; everything
@@ -33,7 +33,7 @@ public partial class Configuration
     // instead — see EnemyControlController.ResolveGrabAnimationTimeline and MainWindow's
     // DrawEnemyControlGrabAnimationPicker.
     public uint EnemyControlGrabEmoteId { get; set; } = 0;
-    // Saved snapshots of the whole grab setup below (pairs, animation, fitting) — see
+    // Saved snapshots of the whole grab setup below (pairs, animation, fitting, arm pose) — see
     // EnemyControlGrabProfile and Configuration.SeedEnemyControlGrabProfiles. GUI mirrors the Ragdoll bone
     // profile list (load/overwrite/delete/save).
     public List<EnemyControlGrabProfile> EnemyControlGrabProfiles { get; set; } = new();
@@ -100,6 +100,23 @@ public partial class Configuration
     // Extra gap left between the digits and the skin, on top of the digit's own thickness. Raise it
     // if the fingers still read as sunk in; a small negative value lets them dimple the surface.
     public float EnemyControlGrabFingerClearance { get; set; } = 0f;
+    // Manual arm-pose override for Enemy Control (see EnemyControlController.ApplyArmPoseOverrides).
+    // Degrees, additive on top of whatever the grab animation is doing to the upper arm / forearm.
+    // Applied only while a grab is held (including its release window) — outside a grab the creature
+    // moves on its own animation.
+    public bool EnemyControlArmPoseEnabled { get; set; } = false;
+    public float EnemyControlLeftArmUpperPitch { get; set; } = 0f;
+    public float EnemyControlLeftArmUpperYaw { get; set; } = 0f;
+    public float EnemyControlLeftArmUpperRoll { get; set; } = 0f;
+    public float EnemyControlLeftArmLowerPitch { get; set; } = 0f;
+    public float EnemyControlLeftArmLowerYaw { get; set; } = 0f;
+    public float EnemyControlLeftArmLowerRoll { get; set; } = 0f;
+    public float EnemyControlRightArmUpperPitch { get; set; } = 0f;
+    public float EnemyControlRightArmUpperYaw { get; set; } = 0f;
+    public float EnemyControlRightArmUpperRoll { get; set; } = 0f;
+    public float EnemyControlRightArmLowerPitch { get; set; } = 0f;
+    public float EnemyControlRightArmLowerYaw { get; set; } = 0f;
+    public float EnemyControlRightArmLowerRoll { get; set; } = 0f;
 
     /// <summary>
     /// Seeds the two built-in EnemyControl grab profiles once, idempotent by name (safe to call every
@@ -137,6 +154,7 @@ public partial class Configuration
                 GrabFingerStrength = 0.6f,
                 GrabFingerMaxAngle = 45f,
                 GrabFingerClearance = 0f,
+                ArmPoseEnabled = false,
             });
             changed = true;
         }
@@ -164,6 +182,11 @@ public partial class Configuration
                 GrabFingerStrength = 0.6f,
                 GrabFingerMaxAngle = 45f,
                 GrabFingerClearance = 0f,
+                ArmPoseEnabled = true,
+                LeftArmUpperPitch = -19f, LeftArmUpperYaw = 37f, LeftArmUpperRoll = -67f,
+                LeftArmLowerPitch = -54f, LeftArmLowerYaw = 7f, LeftArmLowerRoll = -35f,
+                RightArmUpperPitch = 63f, RightArmUpperYaw = -54f, RightArmUpperRoll = 17f,
+                RightArmLowerPitch = 90f, RightArmLowerYaw = -71f, RightArmLowerRoll = -34f,
             });
             changed = true;
         }

@@ -140,7 +140,7 @@ public partial class MainWindow
 
         DrawEnemyControlGrabAnimationPicker();
         DrawEnemyControlGrabPairsList(ctrl);
-        DrawEnemyControlGrabFitting();
+        DrawEnemyControlArmPoseSection();
         DrawEnemyControlGrabProfilesSection();
 
         ImGui.TextDisabled("WASD = camera-relative move; Q/E = down/up");
@@ -351,6 +351,19 @@ public partial class MainWindow
         snapshot.GrabFingerStrength = config.EnemyControlGrabFingerStrength;
         snapshot.GrabFingerMaxAngle = config.EnemyControlGrabFingerMaxAngle;
         snapshot.GrabFingerClearance = config.EnemyControlGrabFingerClearance;
+        snapshot.ArmPoseEnabled = config.EnemyControlArmPoseEnabled;
+        snapshot.LeftArmUpperPitch = config.EnemyControlLeftArmUpperPitch;
+        snapshot.LeftArmUpperYaw = config.EnemyControlLeftArmUpperYaw;
+        snapshot.LeftArmUpperRoll = config.EnemyControlLeftArmUpperRoll;
+        snapshot.LeftArmLowerPitch = config.EnemyControlLeftArmLowerPitch;
+        snapshot.LeftArmLowerYaw = config.EnemyControlLeftArmLowerYaw;
+        snapshot.LeftArmLowerRoll = config.EnemyControlLeftArmLowerRoll;
+        snapshot.RightArmUpperPitch = config.EnemyControlRightArmUpperPitch;
+        snapshot.RightArmUpperYaw = config.EnemyControlRightArmUpperYaw;
+        snapshot.RightArmUpperRoll = config.EnemyControlRightArmUpperRoll;
+        snapshot.RightArmLowerPitch = config.EnemyControlRightArmLowerPitch;
+        snapshot.RightArmLowerYaw = config.EnemyControlRightArmLowerYaw;
+        snapshot.RightArmLowerRoll = config.EnemyControlRightArmLowerRoll;
 
         var existing = config.EnemyControlGrabProfiles.FindIndex(p => p.Name == name);
         if (existing >= 0)
@@ -379,6 +392,19 @@ public partial class MainWindow
         config.EnemyControlGrabFingerStrength = p.GrabFingerStrength;
         config.EnemyControlGrabFingerMaxAngle = p.GrabFingerMaxAngle;
         config.EnemyControlGrabFingerClearance = p.GrabFingerClearance;
+        config.EnemyControlArmPoseEnabled = p.ArmPoseEnabled;
+        config.EnemyControlLeftArmUpperPitch = p.LeftArmUpperPitch;
+        config.EnemyControlLeftArmUpperYaw = p.LeftArmUpperYaw;
+        config.EnemyControlLeftArmUpperRoll = p.LeftArmUpperRoll;
+        config.EnemyControlLeftArmLowerPitch = p.LeftArmLowerPitch;
+        config.EnemyControlLeftArmLowerYaw = p.LeftArmLowerYaw;
+        config.EnemyControlLeftArmLowerRoll = p.LeftArmLowerRoll;
+        config.EnemyControlRightArmUpperPitch = p.RightArmUpperPitch;
+        config.EnemyControlRightArmUpperYaw = p.RightArmUpperYaw;
+        config.EnemyControlRightArmUpperRoll = p.RightArmUpperRoll;
+        config.EnemyControlRightArmLowerPitch = p.RightArmLowerPitch;
+        config.EnemyControlRightArmLowerYaw = p.RightArmLowerYaw;
+        config.EnemyControlRightArmLowerRoll = p.RightArmLowerRoll;
         config.Save();
         chatGui.Print($"[CombatSim] EnemyControl grab profile '{p.Name}' loaded.");
     }
@@ -739,6 +765,76 @@ public partial class MainWindow
                 ImGui.SetTooltip("Grabbing bone — every bone on the ACTIVE creature's own skeleton. Claws, jaws, tentacles.\n" +
                                  "Only populated while a creature is out; spawn one first.");
         }
+    }
+
+    /// <summary>
+    /// Manual arm-pose override: bends the creature's own upper-arm/forearm bones independent of
+    /// whatever the grab animation is doing, so the reach can be lined up with wherever a grab pair
+    /// actually targets. Applied only while a grab is held (see
+    /// EnemyControlController.ApplyArmPoseOverrides).
+    /// </summary>
+    private void DrawEnemyControlArmPoseSection()
+    {
+        var enabled = config.EnemyControlArmPoseEnabled;
+        if (ImGui.Checkbox("Enable arm pose override##EnemyControlarmpose", ref enabled))
+        { config.EnemyControlArmPoseEnabled = enabled; config.Save(); }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Bend the creature's own upper-arm/forearm bones by hand, independent of whatever the grab\n" +
+                             "animation is doing. Only applied while a grab is held — outside a grab the creature moves\n" +
+                             "on its own animation.");
+
+        DrawEnemyControlGrabFitting();
+
+        if (!enabled)
+            return;
+
+        if (ImGui.CollapsingHeader("Left Arm Pose##EnemyControlarm"))
+        {
+            ImGui.Indent();
+            ImGui.TextDisabled("Upper arm");
+            DrawArmPoseAxisSlider("X##leftupperx", config.EnemyControlLeftArmUpperPitch, v => config.EnemyControlLeftArmUpperPitch = v);
+            DrawArmPoseAxisSlider("Y##leftuppery", config.EnemyControlLeftArmUpperYaw, v => config.EnemyControlLeftArmUpperYaw = v);
+            DrawArmPoseAxisSlider("Z##leftupperz", config.EnemyControlLeftArmUpperRoll, v => config.EnemyControlLeftArmUpperRoll = v);
+            ImGui.TextDisabled("Forearm");
+            DrawArmPoseAxisSlider("X##leftlowerx", config.EnemyControlLeftArmLowerPitch, v => config.EnemyControlLeftArmLowerPitch = v);
+            DrawArmPoseAxisSlider("Y##leftlowery", config.EnemyControlLeftArmLowerYaw, v => config.EnemyControlLeftArmLowerYaw = v);
+            DrawArmPoseAxisSlider("Z##leftlowerz", config.EnemyControlLeftArmLowerRoll, v => config.EnemyControlLeftArmLowerRoll = v);
+            if (ImGui.Button("Reset##EnemyControlLeftArmPoseReset"))
+            {
+                config.EnemyControlLeftArmUpperPitch = 0f; config.EnemyControlLeftArmUpperYaw = 0f; config.EnemyControlLeftArmUpperRoll = 0f;
+                config.EnemyControlLeftArmLowerPitch = 0f; config.EnemyControlLeftArmLowerYaw = 0f; config.EnemyControlLeftArmLowerRoll = 0f;
+                config.Save();
+            }
+            ImGui.Unindent();
+        }
+
+        if (ImGui.CollapsingHeader("Right Arm Pose##EnemyControlarm"))
+        {
+            ImGui.Indent();
+            ImGui.TextDisabled("Upper arm");
+            DrawArmPoseAxisSlider("X##rightupperx", config.EnemyControlRightArmUpperPitch, v => config.EnemyControlRightArmUpperPitch = v);
+            DrawArmPoseAxisSlider("Y##rightuppery", config.EnemyControlRightArmUpperYaw, v => config.EnemyControlRightArmUpperYaw = v);
+            DrawArmPoseAxisSlider("Z##rightupperz", config.EnemyControlRightArmUpperRoll, v => config.EnemyControlRightArmUpperRoll = v);
+            ImGui.TextDisabled("Forearm");
+            DrawArmPoseAxisSlider("X##rightlowerx", config.EnemyControlRightArmLowerPitch, v => config.EnemyControlRightArmLowerPitch = v);
+            DrawArmPoseAxisSlider("Y##rightlowery", config.EnemyControlRightArmLowerYaw, v => config.EnemyControlRightArmLowerYaw = v);
+            DrawArmPoseAxisSlider("Z##rightlowerz", config.EnemyControlRightArmLowerRoll, v => config.EnemyControlRightArmLowerRoll = v);
+            if (ImGui.Button("Reset##EnemyControlRightArmPoseReset"))
+            {
+                config.EnemyControlRightArmUpperPitch = 0f; config.EnemyControlRightArmUpperYaw = 0f; config.EnemyControlRightArmUpperRoll = 0f;
+                config.EnemyControlRightArmLowerPitch = 0f; config.EnemyControlRightArmLowerYaw = 0f; config.EnemyControlRightArmLowerRoll = 0f;
+                config.Save();
+            }
+            ImGui.Unindent();
+        }
+    }
+
+    private void DrawArmPoseAxisSlider(string label, float current, Action<float> setter)
+    {
+        ImGui.SetNextItemWidth(120);
+        var v = current;
+        if (ImGui.SliderFloat(label, ref v, -90f, 90f, "%.0f°"))
+        { setter(v); config.Save(); }
     }
 
     /// <summary>

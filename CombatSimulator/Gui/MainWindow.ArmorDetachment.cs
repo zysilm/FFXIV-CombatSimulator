@@ -135,10 +135,6 @@ public partial class MainWindow
             ImGui.Unindent();
         }
 
-        ArmorDetachmentCheckbox("Still-attached pieces follow the body",
-            () => config.KoStripGarmentFollowsBody, v => config.KoStripGarmentFollowsBody = v);
-        HelpMarker("Pieces still on the body travel with it when the body is moved as a whole.\nPieces that already came off stay where they fell.");
-
         ImGui.EndDisabled();
 
         if (ImGui.Button("Detach Now##armordetach"))

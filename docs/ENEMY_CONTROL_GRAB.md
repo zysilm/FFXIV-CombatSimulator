@@ -1,6 +1,6 @@
 # Enemy Control 抓取（grab）
 
-状态：抓取本体已在用；“精确抓取点”（§3）2026-11-15 实现，待游戏内验证。本文件是抓取系统的唯一依据：怎么工作、代码在哪、界面和日志。Enemy Control 本身（接管谁、什么时候接管）见 [PROJECT_LOG.md](PROJECT_LOG.md) §2“敌人行为层 / Enemy Control”。
+状态：抓取本体已在用；“精确抓取点”（§3）2026-11-15 实现，待游戏内验证；手臂姿势覆盖（§2 第 9 条）2026-11-15 误删、2026-11-21 按用户要求原样恢复。本文件是抓取系统的唯一依据：怎么工作、代码在哪、界面和日志。Enemy Control 本身（接管谁、什么时候接管）见 [PROJECT_LOG.md](PROJECT_LOG.md) §2“敌人行为层 / Enemy Control”。
 
 ## 1. 它做什么
 
@@ -20,8 +20,9 @@
 6. **手指贴合**（`ConformSolver.OnRenderFrame`）：每个手指关节转向玩家身体表面（表面用 `TryGetCharacterSurface`：按种族/体型的轻量表面轮廓，退而用物理胶囊），每帧最多转 Finger max angle，强度 Finger strength。
 7. **接触**：软接触（默认）时敌人的碰撞体全程保留，尸体靠在它身上；关闭时抓取期间把敌人的碰撞体停放。
 8. **抓取动画**：Grab animation（默认内置抓握循环，或任选表情的循环动画），放开 1 s 后恢复原动画。
+9. **手臂姿势覆盖**（`EnemyControlController.ApplyArmPoseOverrides`，2026-11-21 恢复）：勾选 Enable arm pose override 后，抓取期间（含放开后恢复动画前的那 1 s）在渲染帧里给敌人的上臂 `j_ude_a_l/r`、前臂 `j_ude_b_l/r` 叠加一个旋转（X = pitch、Y = yaw、Z = roll，各 −90°…90°，在抓取动画之上叠加），用来把手伸到抓取对的目标处。不抓取时不生效；骨骼不存在就跳过那根；三个角都为 0 的骨骼不动。设置项 `EnemyControlArmPoseEnabled` 与 12 个 `EnemyControl{Left|Right}Arm{Upper|Lower}{Pitch|Yaw|Roll}`；抓取档案存同名去掉前缀的 13 个字段（`ArmPoseEnabled`、`LeftArmUpperPitch` …），和抓取对（含精确点）一起保存/载入；没有这些字段的旧档案载入后覆盖关闭、角度全 0。内置 Embrace 自带一组手臂角度。敌人端精确点（§3.3）按 `OnPosePrepared` 时的骨骼位姿计算，与手臂覆盖的先后关系和 2026-11-15 之前的手骨目标相同。
 
-界面（Effects 页签 → Enemy Control 折叠栏 → 勾选 Show Enemy Control GUI，打开 “Enemy Control” 窗口）：Grab pairs 行、Any npc / Any player、Fitting 折叠栏（Grip depth、Skin gap）、Grab Profiles 折叠栏（保存/载入/覆盖/删除整套抓取设置，内置 Default 与 Embrace）。
+界面（Effects 页签 → Enemy Control 折叠栏 → 勾选 Show Enemy Control GUI，打开 “Enemy Control” 窗口）：Grab pairs 行、Any npc / Any player、Enable arm pose override 勾选框、Fitting 折叠栏（Grip depth、Skin gap）、勾选后出现的 Left Arm Pose / Right Arm Pose 折叠栏（各有 Upper arm、Forearm 的 X/Y/Z 滑条和 Reset）、Grab Profiles 折叠栏（保存/载入/覆盖/删除整套抓取设置，含抓取对、精确点和手臂姿势；内置 Default 与 Embrace）。
 
 ## 3. 精确抓取点（anchor，2026-11-15）
 
@@ -66,7 +67,7 @@
 
 ### 3.5 离线检查
 
-- `Tests/GrabAnchor`（`dotnet run -c Release`）：骨骼局部 ↔ 世界往返（旋转 + 非均匀缩放，2000 组）、点随骨骼重摆、随缩放放大；合成网格上的射线–三角形与拥有骨骼；沿法线贴回；旧 JSON 读入后点为 null、档案往返保留点、深拷贝、带点的对不被去重吞掉。
+- `Tests/GrabAnchor`（`dotnet run -c Release`）：骨骼局部 ↔ 世界往返（旋转 + 非均匀缩放，2000 组）、点随骨骼重摆、随缩放放大；合成网格上的射线–三角形与拥有骨骼；沿法线贴回；旧 JSON 读入后点为 null、档案往返保留点、深拷贝、带点的对不被去重吞掉；带手臂字段的档案载入 → 保存 → 载入后 13 个值和两端点都不变，没有手臂字段的档案覆盖关闭；源码检查界面的档案保存/载入两个方向都复制了 13 个字段。
 - `Tests/RenderedGeometry` 带 sqpack 路径运行时追加跨种族检查：14 个种族的裸体（smallclothes 经种族变形）绑定姿势上拾取，换到别的种族解析，报到对方表面的距离（贴回前/后）。鲁加男、硌狮男、拉拉菲尔不参与（离线骨架与模型对不上，同 RagdollHullFit）。离线贴回的是真实网格；游戏里贴回的是表面轮廓。
 
 ## 4. 代码落点
@@ -77,8 +78,8 @@
 | `Npcs/EnemyControlGrabAnchor.cs` | 点的存储、纯数学（换算、拾取、拥有骨骼、贴回）、对的复制与去重 |
 | `Npcs/EnemyControlGrabAnchorRuntime.cs` | 在活角色上解析点（`GrabAnchorSkeleton`）、点击拾取（`EnemyControlGrabAnchorPicker`） |
 | `Camera/ScreenRay.cs` | 鼠标下的世界射线 |
-| `Npcs/EnemyControlController.cs` | 抓取开始/每帧目标/放开、`GrabAnchor:` 日志 |
+| `Npcs/EnemyControlController.cs` | 抓取开始/每帧目标/放开、手臂姿势覆盖、`GrabAnchor:` 日志 |
 | `Npcs/EnemyControlGrabConformSolver.cs` | 握持体积、手指贴合、`HasDigitHand` |
 | `Gui/MainWindow.EnemyControl.cs` | Enemy Control 窗口：抓取对行、Pick/Clear、拾取覆盖层、标记 |
-| `Configuration.EnemyControl.cs` | 抓取设置、内置档案、配置去重 |
+| `Configuration.EnemyControl.cs` | 抓取设置（含手臂姿势）、内置档案、配置去重 |
 | 库 `Ragdoll.Grab.cs` | `CreateGrabConstraint` / `CreateGrabConstraintAt`、伺服 |
