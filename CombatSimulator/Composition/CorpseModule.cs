@@ -112,7 +112,14 @@ internal sealed unsafe class CorpseModule : ICorpseQuery
             var body = npcRagdolls.TryGetValue(addr, out var found) ? found : ragdollController;
             body?.ApplyAngularVelocity(bone, angularVel);
         };
+        // The death ragdoll driving a body: an enemy's or an ally's own, else the player's.
+        dismembermentController.RagdollFor = address =>
+            npcRagdolls.TryGetValue(address, out var npcRagdoll) ? npcRagdoll
+            : ragdollController.IsActive && ragdollController.TargetCharacterAddress == address ? ragdollController
+            : null;
         armorDetachmentController = new Dev.KoStripController(m.Config, glamourerIpc, dismembermentController, log);
+        armorDetachmentController.RagdollPhysicsStarted = address =>
+            dismembermentController.RagdollFor?.Invoke(address)?.PhysicsStarted == true;
     }
 
     public void OnNpcDeathRagdoll(nint address)
@@ -126,8 +133,8 @@ internal sealed unsafe class CorpseModule : ICorpseQuery
         if (!config.EnableRagdoll || !config.EnableNpcDeathRagdoll)
             return;
 
-        // The enemy's death ragdoll: its armour comes off with the player's settings ("Enemies" ticked,
-        // humanoids wearing equipment only).
+        // The enemy is knocked out: its armour comes off with the player's settings ("Enemies" ticked,
+        // humanoids wearing equipment only), now or when its ragdoll starts.
         armorDetachmentController.StripOtherOnKo(address, ally: false);
 
         if (HasLiveNpcRagdoll(address) || pendingNpcRagdollAddresses.Contains(address))
@@ -189,8 +196,13 @@ internal sealed unsafe class CorpseModule : ICorpseQuery
         controller.SetDismemberedBones(bones);
         if (bones.Count > 0)
         {
+            // "Timing": at the death (now: this runs as the enemy falls, from the activation queue), or the
+            // moment its ragdoll physics starts.
+            var atDeath = config.DismemberTiming == SeparationTiming.OnDeath;
+            if (atDeath)
+                dismembermentController.HideOnBodyUntilRagdoll(address, bones);
             foreach (var bone in bones)
-                dismembermentController.SpawnFor(address, bone, AdvancedRagdoll.RagdollTuning.NpcActivationDelay, null);
+                dismembermentController.SpawnFor(address, bone, null, waitForRagdoll: !atDeath);
             log.Info($"NPC death ragdoll: selected {bones.Count} visual parts for 0x{address:X}");
         }
 
@@ -241,7 +253,8 @@ internal sealed unsafe class CorpseModule : ICorpseQuery
     {
         if (!config.EnableRagdoll || !config.PartyCompanionDeathRagdoll) return;
 
-        // The ally's death ragdoll: its armour comes off with the player's settings ("Allies" ticked).
+        // The ally is knocked out: its armour comes off with the player's settings ("Allies" ticked), now or
+        // when its ragdoll starts.
         armorDetachmentController.StripOtherOnKo(address, ally: true);
 
         // The weapon is released at once; only the body waits for the ragdoll activation delay.
@@ -270,35 +283,6 @@ internal sealed unsafe class CorpseModule : ICorpseQuery
                 npcRagdollStaggerBudget + NpcRagdollActivationStagger, NpcRagdollMaxStagger);
         }
         npcRagdolls[address] = controller;
-    }
-
-    /// <summary>
-    /// A hit landed (<c>CombatEvents.DamageLanded</c>): an ally or an enemy struck by the other side loses
-    /// its next piece of armour, like the player on each enemy hit ("Allies" / "Enemies" ticked).
-    /// </summary>
-    public void NoteArmorHit(SimulatedEntityState target, DamageResult hit, SimulatedEntityState? source)
-    {
-        if (target.IsPlayer || (!config.KoStripAllies && !config.KoStripEnemies) || !config.KoStripOnHitEnabled)
-            return;
-
-        if (target.IsCompanion)
-        {
-            foreach (var companion in companionManager.Companions)
-                if (ReferenceEquals(companion.State, target) && companion.IsSpawned && companion.Address != nint.Zero)
-                {
-                    armorDetachmentController.TryStripNextOnHitOther(companion.Address, ally: true);
-                    return;
-                }
-            return;
-        }
-
-        foreach (var npcs in new IEnumerable<SimulatedNpc>[] { npcSelector.SelectedNpcs, m.Actors.Spawner.SpawnedNpcs })
-            foreach (var npc in npcs)
-                if (ReferenceEquals(npc.State, target) && npc.BattleChara != null)
-                {
-                    armorDetachmentController.TryStripNextOnHitOther(npc.Address, ally: false);
-                    return;
-                }
     }
 
     /// <summary>

@@ -13,7 +13,7 @@ public partial class MainWindow
 {
     public KoStripController? ArmorDetachment { get; set; }
 
-    private static readonly string[] ArmorDetachmentTriggerLabels = { "Off", "On KO", "On each enemy hit" };
+    private static readonly string[] ArmorDetachmentTriggerLabels = { "Off", "On KO", "On ragdoll activated" };
     private static readonly string[] ArmorDetachmentRemovedLabels = { "Fall physically", "Just vanish" };
     private static readonly string[] ArmorDetachmentLifetimeLabels =
         { "Stay until reset", "Fade after 2 s", "Fade after 10 s", "Fade after 30 s" };
@@ -27,17 +27,17 @@ public partial class MainWindow
         if (!ImGui.CollapsingHeader("Armor Detachment"))
             return;
 
-        var trigger = config.KoStripOnHitEnabled ? 2 : config.KoStripEnabled ? 1 : 0;
+        var trigger = Math.Clamp((int)config.KoStripTrigger, 0, ArmorDetachmentTriggerLabels.Length - 1);
         ImGui.SetNextItemWidth(ArmorDetachmentItemWidth());
         if (ImGui.Combo("Detach armor##armordetach", ref trigger, ArmorDetachmentTriggerLabels, ArmorDetachmentTriggerLabels.Length))
         {
-            config.KoStripEnabled = trigger == 1;
-            config.KoStripOnHitEnabled = trigger == 2;
+            config.KoStripTrigger = (ArmorDetachmentTrigger)trigger;
             config.Save();
         }
-        HelpMarker("Your character (allies and enemies: next section).\nOn KO: every selected piece comes off when you are knocked out.\n" +
-                   "On each enemy hit: every hit that damages you removes the next selected piece\n" +
-                   "(head and accessories first, then body, hands, legs, feet).");
+        HelpMarker("Your character (allies and enemies: next section).\n" +
+                   "On KO: every selected piece comes off the moment you are knocked out.\n" +
+                   "On ragdoll activated: every selected piece comes off when the body goes limp\n" +
+                   "(the ragdoll starts: Ragdoll Trigger > Ragdoll starts).");
 
         ArmorDetachmentCheckbox("Head", () => config.KoStripHead, v => config.KoStripHead = v);
         ImGui.SameLine();

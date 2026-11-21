@@ -6,8 +6,8 @@ namespace CombatSimulator
     {
         public bool KoStripHead, KoStripBody = true, KoStripHands, KoStripLegs, KoStripFeet,
             KoStripEars, KoStripNeck, KoStripWrists, KoStripRFinger, KoStripLFinger;
-        public bool KoStripEnabled = true, KoStripOnHitEnabled, KoStripSyncWithRagdoll,
-            KoStripPhysicsDrop, KoStripPhysicsDropClothing = true;
+        public CombatSimulator.Dev.ArmorDetachmentTrigger KoStripTrigger = CombatSimulator.Dev.ArmorDetachmentTrigger.OnKo;
+        public bool KoStripPhysicsDrop, KoStripPhysicsDropClothing = true;
         public bool KoStripAllies, KoStripEnemies;
         public float RagdollActivationDelay;
     }

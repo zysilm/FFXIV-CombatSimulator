@@ -2292,9 +2292,16 @@ public partial class MainWindow : IDisposable
         DrawEnemyVoiceSection();
 
         DrawPcDismemberSection();
+        // The private PC Dismemberment section ends above; its "Timing" is drawn here, as its last row, while
+        // that header is open (the setting is shared with Enemy Dismemberment).
+        var devUnlocked = false;
+        GetDevExperimentalUnlocked(ref devUnlocked);
+        if (devUnlocked && ImGui.GetStateStorage().GetInt(ImGui.GetID("PC Dismemberment"), 0) != 0)
+            DrawSeparationTimingCombo("pc");
 
         if (ImGui.CollapsingHeader("Enemy Dismemberment"))
         {
+            DrawSeparationTimingCombo("enemy");
             if (ImGui.Button("Reset Defaults##enemy_dismemberment_defaults"))
             {
                 var defaults = new Configuration();
@@ -2311,7 +2318,7 @@ public partial class MainWindow : IDisposable
                 config.EnableEnemyDismemberment = enemyDismember;
                 config.Save();
             }
-            HelpMarker("Randomly separates visible pieces when enemy death ragdoll starts. Human enemies use a fixed count; non-human enemies use a percentage of eligible skeleton branches.");
+            HelpMarker("Randomly separates visible pieces when an enemy dies (see Timing). Human enemies use a fixed count; non-human enemies use a percentage of eligible skeleton branches.");
 
             if (config.EnableEnemyDismemberment)
             {
@@ -2331,6 +2338,22 @@ public partial class MainWindow : IDisposable
             }
         }
         DrawPlayerWeaponVisibilitySection();
+    }
+
+    private static readonly string[] SeparationTimingLabels = { "On death", "On ragdoll activated" };
+
+    private void DrawSeparationTimingCombo(string idSuffix)
+    {
+        var timing = Math.Clamp((int)config.DismemberTiming, 0, SeparationTimingLabels.Length - 1);
+        ImGui.SetNextItemWidth(200f);
+        if (ImGui.Combo($"Timing##separation_timing_{idSuffix}", ref timing, SeparationTimingLabels, SeparationTimingLabels.Length))
+        {
+            config.DismemberTiming = (SeparationTiming)timing;
+            config.Save();
+        }
+        HelpMarker("When the parts come off, for you (PC Dismemberment) and enemies (Enemy Dismemberment) alike.\n" +
+                   "On death: at the moment of death, while the death animation still plays.\n" +
+                   "On ragdoll activated: when the body goes limp (Ragdoll tab > Ragdoll Trigger > Ragdoll starts).");
     }
 
     private static readonly string[] MonsterBonePercentLabels = { "25%", "50%", "75%", "100%" };

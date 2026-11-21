@@ -97,7 +97,7 @@ unsafe class Program
                 Check(f.Drops.Operations[0].IsCancelled && f.Glamour.Removes == 0, "late ready callback revived reset request");
             }),
             ("manual detachment works with automatic KO disabled", () => {
-                using var f = new Fixture(); f.Config.KoStripEnabled = false;
+                using var f = new Fixture(); f.Config.KoStripTrigger = ArmorDetachmentTrigger.Off;
                 f.Controller.StripNow(f.Address); f.Drops.Operations[0].Ready(); f.Controller.Tick(.1f);
                 Check(f.Glamour.Removes == 1, "manual preparation was not ticked");
             }),
@@ -121,20 +121,15 @@ unsafe class Program
                 f.Drops.Operations[0].Ready(); f.Controller.Tick(.1f); f.Controller.StripNow(f.Address);
                 Check(f.Drops.Calls == 2, "completed drop suppressed next manual request");
             }),
-            ("on-hit failure can retry the same slot", () => {
-                using var f = new Fixture(); f.Config.KoStripOnHitEnabled = true;
-                f.Drops.FailCall = 1; Check(!f.Controller.TryStripNextOnHit(f.Address), "failed hit reported success");
-                Check(f.Controller.TryStripNextOnHit(f.Address) && f.Drops.Calls == 2, "failed slot stuck in done set");
-            }),
             // Allies and enemies: the player's settings, behind their own checkbox.
             ("others need their checkbox and the player's trigger", () => {
                 using var f = new Fixture();
                 f.Controller.StripOtherOnKo(f.OtherAddress, ally: false);
                 Check(f.Drops.Calls == 0, "enemy stripped with Enemies unticked");
-                f.Config.KoStripEnemies = true; f.Config.KoStripEnabled = false;
+                f.Config.KoStripEnemies = true; f.Config.KoStripTrigger = ArmorDetachmentTrigger.Off;
                 f.Controller.StripOtherOnKo(f.OtherAddress, ally: false);
                 Check(f.Drops.Calls == 0, "enemy stripped with the trigger Off");
-                f.Config.KoStripEnabled = true;
+                f.Config.KoStripTrigger = ArmorDetachmentTrigger.OnKo;
                 f.Controller.StripOtherOnKo(f.OtherAddress, ally: false);
                 Check(f.Drops.Calls == 1, "enemy not stripped on KO");
             }),
@@ -146,11 +141,10 @@ unsafe class Program
                 Check(f.Drops.Calls == 1, "ally not stripped");
             }),
             ("a non-humanoid is left alone and judged once", () => {
-                using var f = new Fixture(); f.Config.KoStripEnemies = true; f.Config.KoStripOnHitEnabled = true;
-                f.Config.KoStripEnabled = false; f.Drops.Detachable = false;
-                Check(!f.Controller.TryStripNextOnHitOther(f.OtherAddress, ally: false), "non-humanoid stripped");
-                f.Controller.TryStripNextOnHitOther(f.OtherAddress, ally: false);
-                Check(f.Drops.Calls == 0 && f.Drops.Judged == 1, "non-humanoid stripped or judged on every hit");
+                using var f = new Fixture(); f.Config.KoStripEnemies = true; f.Drops.Detachable = false;
+                f.Controller.StripOtherOnKo(f.OtherAddress, ally: false);
+                f.Controller.StripOtherOnKo(f.OtherAddress, ally: false);
+                Check(f.Drops.Calls == 0 && f.Drops.Judged == 1, "non-humanoid stripped or judged on every KO");
             }),
             ("others are not kept stripped in Glamourer and not cloned from its state", () => {
                 using var f = new Fixture(); f.Config.KoStripEnemies = true;
@@ -191,13 +185,74 @@ unsafe class Program
                 f.Controller.StripOtherOnKo(f.OtherAddress, ally: false);
                 Check(f.Drops.Calls == 0 && f.Glamour.Removes == 0, "stripped a slot with no equipment");
             }),
-            ("others on each hit follow the player's trigger", () => {
+            // "Detach armor": Off / On KO (at the knockout) / On ragdoll activated.
+            ("retired switches map to the trigger", () => {
+                Check(ArmorDetachmentTriggers.FromRetiredSwitches(false, false) == ArmorDetachmentTrigger.Off, "off");
+                Check(ArmorDetachmentTriggers.FromRetiredSwitches(true, false) == ArmorDetachmentTrigger.OnKo, "On KO not kept");
+                Check(ArmorDetachmentTriggers.FromRetiredSwitches(false, true) == ArmorDetachmentTrigger.OnRagdollActivated, "on-hit (as saved)");
+                Check(ArmorDetachmentTriggers.FromRetiredSwitches(true, true) == ArmorDetachmentTrigger.OnRagdollActivated, "on-hit with KO");
+            }),
+            ("Off does nothing on a KO", () => {
+                using var f = new Fixture(); f.Config.KoStripTrigger = ArmorDetachmentTrigger.Off;
+                f.Controller.StripOnKo(f.Address); f.Controller.Tick(.1f);
+                Check(f.Drops.Calls == 0 && f.Glamour.Removes == 0, "stripped while Off");
+            }),
+            ("On KO detaches at the knockout without waiting for the ragdoll", () => {
+                using var f = new Fixture(); var asked = 0;
+                f.Controller.RagdollPhysicsStarted = _ => { asked++; return false; };
+                f.Controller.StripOnKo(f.Address);
+                Check(f.Drops.Calls == 1 && asked == 0, "On KO waited for or asked the ragdoll");
+                f.Drops.Operations[0].Ready(); f.Controller.Tick(.1f);
+                Check(f.Glamour.Removes == 1 && f.Drops.Operations[0].IsCommitted, "On KO not committed while the ragdoll has not started");
+            }),
+            ("On ragdoll activated waits for the ragdoll's physics", () => {
+                using var f = new Fixture(); f.Config.KoStripTrigger = ArmorDetachmentTrigger.OnRagdollActivated;
+                var started = false; f.Controller.RagdollPhysicsStarted = a => a == f.Address && started;
+                f.Controller.StripOnKo(f.Address);
+                for (var i = 0; i < 30; i++) f.Controller.Tick(.1f);
+                Check(f.Drops.Calls == 0, "detached before the ragdoll started");
+                started = true; f.Controller.Tick(.1f);
+                Check(f.Drops.Calls == 1, "not detached when the ragdoll started");
+                f.Drops.Operations[0].Ready(); f.Controller.Tick(.1f);
+                Check(f.Glamour.Removes == 1, "not committed");
+                f.Controller.StripOnKo(f.Address); f.Controller.Tick(.1f);
+                Check(f.Drops.Calls == 1, "second KO stripped again");
+            }),
+            ("others follow the player's trigger On ragdoll activated", () => {
                 using var f = new Fixture(); f.Config.KoStripEnemies = true;
-                Check(!f.Controller.TryStripNextOnHitOther(f.OtherAddress, ally: false), "on-hit with trigger On KO");
-                f.Config.KoStripEnabled = false; f.Config.KoStripOnHitEnabled = true;
+                f.Config.KoStripTrigger = ArmorDetachmentTrigger.OnRagdollActivated;
+                var started = false; f.Controller.RagdollPhysicsStarted = a => a == f.OtherAddress && started;
+                f.Controller.StripOtherOnKo(f.OtherAddress, ally: false); f.Controller.Tick(.1f);
+                Check(f.Drops.Calls == 0, "enemy detached before its ragdoll");
+                started = true; f.Controller.Tick(.1f);
+                Check(f.Drops.Calls == 1 && f.Glamour.StateCaptures == 0, "enemy not detached by its ragdoll");
+            }),
+            ("a wait ends when the trigger changes, the actor changes, or no ragdoll comes", () => {
+                using var f = new Fixture(); f.Config.KoStripEnemies = true;
+                f.Config.KoStripTrigger = ArmorDetachmentTrigger.OnRagdollActivated;
+                var started = false; f.Controller.RagdollPhysicsStarted = _ => started;
+                f.Controller.StripOnKo(f.Address); f.Config.KoStripTrigger = ArmorDetachmentTrigger.Off;
+                f.Controller.Tick(.1f); f.Config.KoStripTrigger = ArmorDetachmentTrigger.OnRagdollActivated;
+                started = true; f.Controller.Tick(.1f);
+                Check(f.Drops.Calls == 0, "wait survived a trigger change");
+                started = false;
                 f.Controller.StripOtherOnKo(f.OtherAddress, ally: false);
-                Check(f.Drops.Calls == 0, "KO strip while the trigger is on each hit");
-                Check(f.Controller.TryStripNextOnHitOther(f.OtherAddress, ally: false) && f.Drops.Calls == 1, "hit did not strip");
+                ((GameObject*)f.Other)->EntityId = 0x40000002; f.Controller.Tick(.1f);
+                ((GameObject*)f.Other)->EntityId = 0x40000001; started = true; f.Controller.Tick(.1f);
+                Check(f.Drops.Calls == 0, "wait survived another actor in the slot");
+                using var g = new Fixture(); g.Config.KoStripTrigger = ArmorDetachmentTrigger.OnRagdollActivated;
+                var late = false; g.Controller.RagdollPhysicsStarted = _ => late;
+                g.Controller.StripOnKo(g.Address); g.Controller.Tick(KoStripController.MaxRagdollWaitSeconds + 1f);
+                late = true; g.Controller.Tick(.1f);
+                Check(g.Drops.Calls == 0, "wait never expired");
+            }),
+            ("reset and forget drop a wait", () => {
+                using var f = new Fixture(); f.Config.KoStripAllies = true;
+                f.Config.KoStripTrigger = ArmorDetachmentTrigger.OnRagdollActivated;
+                var started = false; f.Controller.RagdollPhysicsStarted = _ => started;
+                f.Controller.StripOnKo(f.Address); f.Controller.StripOtherOnKo(f.OtherAddress, ally: true);
+                f.Controller.Forget(f.OtherAddress); f.Controller.Reset(); started = true; f.Controller.Tick(.1f);
+                Check(f.Drops.Calls == 0, "a dropped wait still detached");
             }),
             ("a revived ally can lose its armour again", () => {
                 using var f = new Fixture(); f.Config.KoStripAllies = true;

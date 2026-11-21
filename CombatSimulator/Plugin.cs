@@ -339,28 +339,28 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         };
 
         combatEvents.EnemyDied = corpseModule.OnNpcDeathRagdoll;
-        // Allies and enemies lose armour on each hit like the player (Armor Detachment: Allies and Enemies).
-        combatEvents.DamageLanded += corpseModule.NoteArmorHit;
-        combatEvents.PlayerDamaged = () =>
-        {
-            var player = objectTable.LocalPlayer;
-            if (player != null && player.Address != nint.Zero)
-                armorDetachmentController.TryStripNextOnHit(player.Address);
-        };
         combatEvents.PlayerDied = addr =>
         {
             OnPrivateEffectsKo();
             weaponDropController.SpawnFor(addr); // at the moment of death, not after the ragdoll delay
-            armorDetachmentController.StripOnKo(addr);
-            if (config.EnableDismemberRollaway && config.DismemberPocBones is { Count: > 0 })
+            armorDetachmentController.StripOnKo(addr); // now ("On KO") or when the ragdoll starts
+            if (config.DismemberPocBones is { Count: > 0 })
             {
-                // Capture the player's LIVE Glamourer state once (null if Glamourer absent) and spawn one
-                // severed-limb clone per selected part.
-                var playerIdx = objectTable.LocalPlayer?.ObjectIndex ?? 0;
-                var glam = glamourerIpc.GetStateBase64((int)playerIdx);
-                log.Info($"Dismember: glamour capture playerIdx={playerIdx} len={(glam?.Length ?? -1)}");
-                foreach (var bone in config.DismemberPocBones)
-                    dismembermentController.SpawnFor(addr, bone, config.RagdollActivationDelay, glam);
+                // PC Dismemberment "Timing": at the death (the parts are hidden on the body from now on, while
+                // the death animation plays), or the moment the ragdoll's physics starts (it hides them itself).
+                var atDeath = config.DismemberTiming == SeparationTiming.OnDeath;
+                if (atDeath)
+                    dismembermentController.HideOnBodyUntilRagdoll(addr, config.DismemberPocBones);
+                if (config.EnableDismemberRollaway)
+                {
+                    // Capture the player's LIVE Glamourer state once (null if Glamourer absent) and spawn one
+                    // separated-part clone per selected part.
+                    var playerIdx = objectTable.LocalPlayer?.ObjectIndex ?? 0;
+                    var glam = glamourerIpc.GetStateBase64((int)playerIdx);
+                    log.Info($"Dismember: glamour capture playerIdx={playerIdx} len={(glam?.Length ?? -1)}");
+                    foreach (var bone in config.DismemberPocBones)
+                        dismembermentController.SpawnFor(addr, bone, glam, waitForRagdoll: !atDeath);
+                }
             }
             devExperimental.OnPlayerDeath(addr);
 

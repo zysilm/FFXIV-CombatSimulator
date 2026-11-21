@@ -147,6 +147,11 @@
 - 玩家在模拟中死亡/待戮时冻结本地玩家位置/朝向（`MovementBlockHook.IsBlocking`，`CombatEngine` 死亡/被俘置 true，复活/重置/停战置 false；2026-11-15 恢复）。原因：此时 Enemy Control 用 WASD 驱动凶手，同一组按键也会让玩家本人经 `SetPosition` 移动；`386fc4a` 去掉冻结后立刻出现“控制敌人时玩家也在走”。代价：冻结期间服务器对本地玩家的位置校正（击退、位置同步）也被吞掉。死亡姿态由布娃娃写 DrawObject。
 - 假角色只在战斗进行中且屏障完好时可选中，否则不可选中（`Safety/FakeActorGuard.cs`）；这也意味着停战后在 GPose 里点不中它们。游戏的硬/软/焦点目标一旦是假角色就当帧清掉。
 
+### 脱装 / 分离时机（2026-11-22，用户裁决）
+
+- Armor Detachment 触发：Off / On KO（倒地当下）/ On ragdoll activated（该角色布娃娃物理开始时）；“每次受击”删除。设置 `KoStripTrigger`，旧键 `KoStripEnabled`/`KoStripOnHitEnabled` 迁移后退役。
+- 分离 Timing：On death（默认，死亡当下；身体上的部位在布娃娃开始前由插件逐帧收起）/ On ragdoll activated。设置 `DismemberTiming`，玩家与敌人共用。
+
 ## 3. 教训与死路
 
 ### 流程
@@ -289,6 +294,8 @@
 
 ### 2026-11-22 批次
 
+- [ ] Detach armor 三档时机；On KO 倒地当下脱（Body/Legs 选 “Drop when the body settles” 时上衣裤子仍等身体静止）；On ragdoll activated 等物理开始。
+- [ ] 分离 Timing：On death 时部件当下飞出、身上部位同时消失，布娃娃启动时不重现不闪；敌人不再有部件已飞出而身上仍在的约 3 s。
 - [ ] 用 Glamourer 换种族和装备后，分离部件与护甲克隆是当前外观（含 Penumbra 模组）；日志无 `skeleton did not match` / `never resolved`。
 - [ ] 液体效果：Reset 后日志不再连续出现 “World fluid layer”；离倒地点 10–20 m 转镜头不掉帧；再次出现时不卡。
 

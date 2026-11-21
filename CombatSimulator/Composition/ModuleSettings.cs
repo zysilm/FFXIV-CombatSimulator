@@ -42,7 +42,7 @@ internal interface ICorpseModuleSettings
     int RagdollTriggerMode { get; }
     bool KoStripAllies { get; }
     bool KoStripEnemies { get; }
-    bool KoStripOnHitEnabled { get; }
+    SeparationTiming DismemberTiming { get; }
     bool NpcCollisionActive { get; }
 }
 
