@@ -107,6 +107,10 @@ public sealed unsafe partial class CameraModeCoordinator
     private bool fovOverridden;
     private CameraOwner lastLoggedOwner = CameraOwner.None;
 
+    /// <summary>The game's own FoV field, saved while some owner's FoV is applied (what releasing goes back to);
+    /// null when no FoV is overridden.</summary>
+    public float? SavedFov => fovOverridden ? savedFoV : null;
+
     /// <summary>Winner of the last Apply pass (scalar write authority).</summary>
     public CameraOwner CurrentOwner { get; private set; } = CameraOwner.None;
 

@@ -18,18 +18,22 @@ namespace CombatSimulator.Camera;
 
 /// <summary>What the Directed camera asks of the death shot on a frame it wants one.</summary>
 public readonly record struct DeathShotRequest(
-    /// <summary>The player's own body: framed when <paramref name="Subject"/> cannot be read.</summary>
-    nint Player,
-    /// <summary>The body to frame (the player's, unless a scene names another).</summary>
+    /// <summary>The body to frame: the player's (the first version frames the body only).</summary>
     nint Subject,
-    /// <summary>For the log: "you", or the name of the other body.</summary>
-    string SubjectLabel,
     DeathShotProfile Profile,
     /// <summary>Shot size on top of the profile's own and of the player's wheel (1 = the profile's).</summary>
     float Size,
     /// <summary>A ragdoll is still to be armed for this body (the player between the killing blow and the death
     /// animation).</summary>
-    bool RagdollToCome);
+    bool RagdollToCome,
+    /// <summary>A scene (the private module) directs this shot: a jump of the game camera's yaw is the scene placing
+    /// the camera, an absolute azimuth for the shot, not the player's hand.</summary>
+    bool SceneDirected = false,
+    /// <summary>The scene is known to have locked the player's camera input: every change of the game camera's yaw is
+    /// the scene's.</summary>
+    bool InputLocked = false,
+    /// <summary>The wheel does nothing (the scene locks the input, or does not say whether it does).</summary>
+    bool WheelLocked = false);
 
 /// <summary>
 /// The automatic death shot in the game (docs/DEATH_SHOTS.md): runs <see cref="DeathShotSolver"/> on the fallen body
@@ -62,6 +66,9 @@ public sealed unsafe class DeathShotDirector : IDisposable
     private const long SummaryMs = 5000;
     /// <summary>A change of the game camera's yaw larger than this in one frame is not the player's hand.</summary>
     private const float MaxYawStep = 1.0f;
+    /// <summary>In a shot a scene directs, a change of the game camera's yaw larger than this in one frame is the scene
+    /// placing the camera (20°: 1200°/s at 60 fps).</summary>
+    private const float SceneYawJump = 0.35f;
     /// <summary>One wheel notch changes the shot size by about 10 %.</summary>
     private const float WheelStep = 0.10f;
     /// <summary>Frames without a readable body before the shot gives up.</summary>
@@ -110,17 +117,23 @@ public sealed unsafe class DeathShotDirector : IDisposable
     private State state = State.Idle;
     private bool ranThisFrame;
     private bool failed;
-    private nint subject, requestedSubject;
-    private string subjectLabel = "you";
+    private nint subject;
     private DeathShotProfile profile;
     private float shotTime;
     private bool resumed;
     private string status = "off";
+    private int statusKey = -1;
+    private DeathShotRequest lastRequest;
+    private bool haveRequest;
+    private string? beginFailure;
 
     // positions
     private readonly Vector3[] boneNow = new Vector3[Bones.Length];
     private readonly Vector3[] bodyNow = new Vector3[Bones.Length];
     private readonly bool[] boneKnown = new bool[Bones.Length];
+    private readonly int[] boneIndex = new int[Bones.Length];
+    private nint indexedSkeleton;
+    private int indexedBoneCount;
     private readonly Vector3[] extra = new Vector3[Bones.Length - CoreBones];
     private readonly Vector3[] extraBones = new Vector3[Bones.Length - CoreBones];
     private bool lastPhysics, hadFrame;
@@ -133,12 +146,15 @@ public sealed unsafe class DeathShotDirector : IDisposable
     private bool havePose;
     private float fovRatio = 1f;
     private float aspect = 16f / 9f;
-    private float heldDistance;
-    private bool haveHeldDistance;
+    private float heldDistance, heldDirV;
+    private bool haveHeldDistance, haveHeldDirV;
 
     // the player's hand
     private float userYaw, userSize = 1f, lastDirH, pendingWheel;
     private bool haveDirH;
+    /// <summary>A scene placed the game camera's yaw during this shot: that yaw (and what the player turned since) is
+    /// the azimuth asked for, also after the solver picks a side again.</summary>
+    private bool sceneYawSet;
 
     // blend back to the game's camera
     private float blendOutTime;
@@ -211,22 +227,46 @@ public sealed unsafe class DeathShotDirector : IDisposable
             blendOutTime += dt;
             if (blendOutTime >= BlendOutSeconds)
             {
-                state = State.Idle;
-                havePose = false;
-                status = "off";
+                EndBlendOut();
+                return;
             }
+            // The lens goes back with the pose: from the shot's to the game's own (what the coordinator restores
+            // when the request is released at the end), instead of snapping on the first frame.
+            float? field = null;
+            if (CutsceneView.GameFovFor(poseFov, fovRatio) is { } shot && coordinator.SavedFov is { } own && float.IsFinite(own))
+                field = shot + (own - shot) * CutPose.Ease(blendOutTime / BlendOutSeconds);
+            coordinator.Submit(CameraOwner.DynamicDeath, new CameraRequest
+            {
+                Fov = field,
+                Distance = haveHeldDistance ? heldDistance : null,
+                DirV = haveHeldDirV ? heldDirV : null,
+            });
         }
+    }
+
+    private void EndBlendOut()
+    {
+        coordinator.Release(CameraOwner.DynamicDeath);
+        state = State.Idle;
+        havePose = false;
+        haveHeldDistance = haveHeldDirV = false;
+        SetStatus(-1, "off");
+    }
+
+    private void SetStatus(int key, string text)
+    {
+        statusKey = key;
+        status = text;
     }
 
     /// <summary>A death shot is wanted this frame: start one (from the camera as it is), or carry on.</summary>
     public void Run(float dt, in DeathShotRequest request)
     {
         ranThisFrame = true;
+        lastRequest = request;
+        haveRequest = true;
         if (failed)
-        {
-            status = "death shot stopped after an error (see the log)";
             return;
-        }
         try
         {
             RunCore(dt, in request);
@@ -234,6 +274,32 @@ public sealed unsafe class DeathShotDirector : IDisposable
         catch (Exception ex)
         {
             log.Warning(ex, "DeathShot: frame failed; the shot ends and the camera goes back to the game.");
+            Stop("error");
+            failed = true;
+            SetStatus(-2, "death shot stopped after an error (see the log)");
+        }
+    }
+
+    /// <summary>
+    /// A cutscene shot starts blending out (CutsceneShotDirector.HandingBack, inside its tick, before the coordinator
+    /// applies): a waiting death shot starts now, from the camera the cutscene last rendered, and asks for its lens in
+    /// this same frame. Otherwise the coordinator would restore the game's own FoV for the one frame between the two.
+    /// </summary>
+    public void ResumeNow()
+    {
+        if (state != State.Waiting || !haveRequest || failed) return;
+        try
+        {
+            if (GameOwnsCamera() != null) return;
+            var camMgr = GameCameraManager.Instance();
+            if (camMgr == null || camMgr->Camera == null) return;
+            var request = lastRequest;
+            if (Begin(camMgr->Camera, in request, true))
+                Step(camMgr->Camera, 0f, in request);
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "DeathShot: could not take the camera back from the cutscene shot; the shot ends.");
             Stop("error");
             failed = true;
         }
@@ -245,12 +311,16 @@ public sealed unsafe class DeathShotDirector : IDisposable
         if (GameOwnsCamera() is { } gameReason)
         {
             if (state != State.Idle) Stop(gameReason);
-            status = $"death shot waits — {gameReason}";
+            if (statusKey != -3) SetStatus(-3, "death shot waits — " + gameReason);
             return;
         }
 
         var camMgr = GameCameraManager.Instance();
-        if (camMgr == null || camMgr->Camera == null) return;
+        if (camMgr == null || camMgr->Camera == null)
+        {
+            CannotBegin("no game camera");
+            return;
+        }
         var game = camMgr->Camera;
 
         // A cutscene shot (or anything else above the death shot) has the camera: wait, and start again from the
@@ -268,16 +338,9 @@ public sealed unsafe class DeathShotDirector : IDisposable
                 resumed = state == State.Running || resumed;
                 state = State.Waiting;
                 havePose = false;
+                SetStatus(-4, $"death shot waits — {above} has the camera");
             }
-            status = $"death shot waits — {above} has the camera";
             return;
-        }
-
-        if (state == State.Running && request.Subject != requestedSubject)
-        {
-            log.Info($"DeathShot: subject changes to {request.SubjectLabel} at {shotTime:0.0} s; the shot starts again from here.");
-            state = State.Waiting;
-            resumed = true;
         }
 
         if (state != State.Running)
@@ -301,39 +364,43 @@ public sealed unsafe class DeathShotDirector : IDisposable
         return null;
     }
 
+    /// <summary>A shot that cannot start says why, once per reason and death (it keeps trying every frame).</summary>
+    private bool CannotBegin(string reason)
+    {
+        if (beginFailure == reason) return false;
+        beginFailure = reason;
+        log.Info($"DeathShot: cannot start yet — {reason}; trying again every frame.");
+        SetStatus(-5, "death shot cannot start — " + reason);
+        return false;
+    }
+
     /// <summary>Starts the solver from the camera as the game last rendered it, and measures how the game's FoV field
     /// maps to the lens it renders.</summary>
     private bool Begin(FFXIVClientStructs.FFXIV.Client.Game.Camera* game, in DeathShotRequest request, bool afterWaiting)
     {
         var sc = &game->CameraBase.SceneCamera;
         var rc = sc->RenderCamera;
-        if (rc == null) return false;
+        if (rc == null) return CannotBegin("no render camera");
         var projection = ToNumerics(rc->ProjectionMatrix);
         var rendered = CutsceneView.VerticalFovOf(projection);
-        if (CutsceneView.FovRatio(rendered, game->FoV) is not { } ratio) return false;
+        if (CutsceneView.FovRatio(rendered, game->FoV) is not { } ratio)
+            return CannotBegin("the lens cannot be measured (projection or FoV field unusable)");
         var eye = new Vector3(sc->Position.X, sc->Position.Y, sc->Position.Z);
         var look = new Vector3(sc->LookAtVector.X, sc->LookAtVector.Y, sc->LookAtVector.Z);
-        if (!CutsceneView.CanHandOver(eye, look)) return false;
+        if (!CutsceneView.CanHandOver(eye, look))
+            return CannotBegin("the game camera's eye and look-at point are less than 0.1 m apart (first person?) or not finite");
         var body = request.Subject;
-        var label = request.SubjectLabel;
         Array.Clear(boneKnown);
+        indexedSkeleton = nint.Zero;
         if (!ReadBones(body) && !ReadBodies(ragdollFor(body)))
-        {
-            // A body without the seven bones of the body frame (not a humanoid, or gone): the player's own.
-            if (body == request.Player) return false;
-            body = request.Player;
-            label = "you (the body asked for cannot be read)";
-            Array.Clear(boneKnown);
-            if (!ReadBones(body) && !ReadBodies(ragdollFor(body))) return false;
-        }
+            return CannotBegin("the body's bones cannot be read (model being redrawn, or not a humanoid skeleton)");
+        beginFailure = null;
 
         fovRatio = ratio;
         if (MathF.Abs(projection.M11) > 1e-6f)
             aspect = MathF.Abs(projection.M22 / projection.M11);
 
-        requestedSubject = request.Subject;
         subject = body;
-        subjectLabel = label;
         profile = request.Profile;
         // Body size from the animated bones' spine, whichever source the first frame uses: the rigid-body centres
         // sit elsewhere along the spine, and the recipes' lengths were set against the bones.
@@ -356,10 +423,18 @@ public sealed unsafe class DeathShotDirector : IDisposable
         userSize = 1f;
         pendingWheel = 0f;
         haveDirH = false;
+        sceneYawSet = false;
+        // The game's own zoom and pitch as they were when this death's shot first started: held while it runs (neither
+        // shows in the picture), so the camera the player gets back is the one they left.
         if (!haveHeldDistance)
         {
             heldDistance = game->Distance;
             haveHeldDistance = float.IsFinite(heldDistance) && heldDistance > 0f;
+        }
+        if (!haveHeldDirV)
+        {
+            heldDirV = game->DirV;
+            haveHeldDirV = float.IsFinite(heldDirV);
         }
         overrideCount = 0;
         checkCount = 0;
@@ -375,7 +450,7 @@ public sealed unsafe class DeathShotDirector : IDisposable
         nextSummaryAt = Environment.TickCount64 + SummaryMs;
 
         var away = eye - look;
-        log.Info($"DeathShot: {(afterWaiting && resumed ? "resumes" : "start")} — subject {subjectLabel}, profile {Label(profile)}, " +
+        log.Info($"DeathShot: {(afterWaiting && resumed ? "resumes" : "start")} — profile {Label(profile)}{(request.SceneDirected ? " (a scene directs)" : "")}, " +
                  $"body scale {(bodyScale > 0f ? bodyScale.ToString("0.00") : "from the first frame")}; " +
                  $"from the camera at azimuth {Degrees(DeathShotMath.Azimuth(away)):0}°, {away.Length():0.00} m, lens {Degrees(rendered):0.0}° " +
                  $"(game yaw {Degrees(game->DirH):0}°, FoV field {game->FoV:0.000}, field→lens ratio {fovRatio:0.000}, aspect {aspect:0.00}).");
@@ -386,9 +461,11 @@ public sealed unsafe class DeathShotDirector : IDisposable
     private void Step(FFXIVClientStructs.FFXIV.Client.Game.Camera* game, float dt, in DeathShotRequest request)
     {
         // ---- the body: animated bones until the ragdoll's physics has started, its rigid bodies after ----
+        // Once the bodies are the source the bones are not read any more (the frame of the change still has them:
+        // it is not known to be that frame until the bodies have been read).
         var ragdoll = ragdollFor(subject);
-        var haveBones = ReadBones(subject);
         var physics = ragdoll is { IsActive: true, PhysicsStarted: true } && ReadBodies(ragdoll);
+        var haveBones = !(physics && lastPhysics && hadFrame) && ReadBones(subject);
         var source = physics ? bodyNow : boneNow;
         var points = PointsOf(source);
         if (!physics && !haveBones || !points.IsFinite)
@@ -415,15 +492,27 @@ public sealed unsafe class DeathShotDirector : IDisposable
         // A ragdoll armed for this body (or still to be armed): the death animation coming to rest is not "settled".
         // One whose bodies cannot be read is not waited for (its pose reaches the bones anyway).
         var expect = config.EnableRagdoll &&
-            (request.RagdollToCome && subject == request.Player || ragdoll is { IsActive: true } && (physics || !ragdoll.PhysicsStarted));
+            (request.RagdollToCome || ragdoll is { IsActive: true } && (physics || !ragdoll.PhysicsStarted));
 
         // ---- the player's hand: left/right orbit from the game camera's own yaw, size from the wheel ----
         var dirH = game->DirH;
         if (haveDirH && float.IsFinite(dirH))
         {
             var turned = DeathShotMath.AngleDelta(lastDirH, dirH);
-            if (MathF.Abs(turned) <= MaxYawStep)
+            if (request.SceneDirected && hadFrame && (request.InputLocked ? MathF.Abs(turned) > 0.01f : MathF.Abs(turned) > SceneYawJump))
+            {
+                // The scene placed the game camera (its entry yaw, written once before the camera update, or every
+                // frame while it locks the input): an absolute azimuth. The game's yaw is the azimuth of the eye about
+                // what it looks at, the same angle the solver's side is, so the shot's side is turned onto it.
+                userYaw = DeathShotMath.AngleDelta(solver.SideAzimuth, dirH);
+                sceneYawSet = true;
+                log.Info($"DeathShot: the scene set the camera's yaw to {Degrees(dirH):0}° at {shotTime:0.0} s — the shot's azimuth follows " +
+                         $"({Degrees(userYaw):+0;-0}° from the side it chose).");
+            }
+            else if (MathF.Abs(turned) <= MaxYawStep)
+            {
                 userYaw = DeathShotMath.WrapAngle(userYaw + turned);
+            }
         }
         if (float.IsFinite(dirH))
         {
@@ -432,8 +521,9 @@ public sealed unsafe class DeathShotDirector : IDisposable
         }
         if (pendingWheel != 0f)
         {
-            // Wheel up = closer (the game's own convention).
-            userSize = Math.Clamp(userSize * MathF.Exp(-WheelStep * pendingWheel), 0.5f, 3f);
+            // Wheel up = closer (the game's own convention). Nothing while a scene locks the input.
+            if (!request.WheelLocked)
+                userSize = Math.Clamp(userSize * MathF.Exp(-WheelStep * pendingWheel), 0.5f, 3f);
             pendingWheel = 0f;
         }
 
@@ -484,23 +574,36 @@ public sealed unsafe class DeathShotDirector : IDisposable
         Report(in o, in points, previousSource, first, physics, expect, dt);
         last = o;
 
-        // The solver picked a side again: the player's offsets were about the old one.
+        // The solver picked a side again: the player's offsets were about the old one. An azimuth a scene asked for
+        // is absolute, so it is put back onto the new side, unless the side was changed because the view from there
+        // was blocked (holding it would have the solver change side again every 1.5 s).
         if (o.SideChanged)
         {
-            userYaw = 0f;
+            if (sceneYawSet && o.Reason == "blocked")
+            {
+                sceneYawSet = false;
+                log.Info($"DeathShot: the azimuth the scene asked for is blocked at {shotTime:0.0} s; the shot keeps the side it found.");
+            }
+            userYaw = sceneYawSet && request.SceneDirected && haveDirH ? DeathShotMath.AngleDelta(solver.SideAzimuth, lastDirH) : 0f;
             userSize = 1f;
         }
 
-        status = $"death shot — {Label(o.Shot)}{(profile == DeathShotProfile.Auto ? " (Auto)" : "")}, {PoseWord(o.Pose)}, " +
-                 (o.Holding ? "holding" : expect && !physics ? "following the fall" : "following");
+        // The Camera tab's line, rebuilt only when what it says changes.
+        var key = (int)o.Shot | (int)o.Pose << 4 | (o.Holding ? 1 : expect && !physics ? 2 : 0) << 8 | (profile == DeathShotProfile.Auto ? 1 : 0) << 10;
+        if (key != statusKey)
+            SetStatus(key, $"death shot — {Label(o.Shot)}{(profile == DeathShotProfile.Auto ? " (Auto)" : "")}, {PoseWord(o.Pose)}, " +
+                           (o.Holding ? "holding" : expect && !physics ? "following the fall" : "following"));
     }
 
     /// <summary>This frame's request to the coordinator: the lens (as the game's FoV field), and the game's own zoom
-    /// held where it was (the wheel is the shot's size while it runs).</summary>
+    /// and pitch held where they were (the wheel is the shot's size while it runs, and the pitch is the shot's: what
+    /// the player drags meanwhile shows nowhere, and must not be what they find when the shot ends).</summary>
     private void Submit() => coordinator.Submit(CameraOwner.DynamicDeath, new CameraRequest
     {
         Fov = havePose ? CutsceneView.GameFovFor(poseFov, fovRatio) : null,
         Distance = haveHeldDistance ? heldDistance : null,
+        DirV = haveHeldDirV ? heldDirV : null,
+        ClearInputV = true,
     });
 
     // ------------------------------------------------------------------
@@ -508,13 +611,22 @@ public sealed unsafe class DeathShotDirector : IDisposable
     // ------------------------------------------------------------------
 
     /// <summary>The 22 animated bones into <see cref="boneNow"/>. False when one of the seven of the body frame is
-    /// missing; a missing bone of the rest keeps its last value (the chest before it was ever read).</summary>
+    /// missing; a missing bone of the rest keeps its last value (the chest before it was ever read). The bones'
+    /// indices are looked up by name once per skeleton (again when the model is redrawn with another one).</summary>
     private bool ReadBones(nint address)
     {
         if (address == nint.Zero) return false;
+        if (bones.TryGetSkeleton(address) is not { } skeleton) return false;
+        if ((nint)skeleton.HavokSkeleton != indexedSkeleton || skeleton.BoneCount != indexedBoneCount)
+        {
+            for (var i = 0; i < Bones.Length; i++)
+                boneIndex[i] = bones.ResolveBoneIndex(skeleton, Bones[i]);
+            indexedSkeleton = (nint)skeleton.HavokSkeleton;
+            indexedBoneCount = skeleton.BoneCount;
+        }
         for (var i = 0; i < Bones.Length; i++)
         {
-            var p = bones.GetBoneWorldPos(address, Bones[i]);
+            var p = bones.GetBoneWorldPos(skeleton, boneIndex[i]);
             if (p is { } v && Finite(v))
             {
                 boneNow[i] = v;
@@ -651,19 +763,17 @@ public sealed unsafe class DeathShotDirector : IDisposable
     public void Stop(string reason = "stopped", bool blend = false)
     {
         failed = false;
-        haveHeldDistance = false;
         pendingWheel = 0f;
+        beginFailure = null;
+        haveRequest = false;
         if (state is State.Idle or State.BlendOut)
         {
             if (!blend && state == State.BlendOut)
-            {
-                state = State.Idle;
-                havePose = false;
-                status = "off";
-            }
+                EndBlendOut();
+            else if (state == State.Idle && statusKey != -1)
+                SetStatus(-1, "off");
             return;
         }
-        coordinator.Release(CameraOwner.DynamicDeath);
         if (state == State.Running)
             log.Info($"DeathShot: end after {shotTime:0.0} s ({reason}) — {Label(last.Shot)}, {PoseWord(last.Pose)}; " +
                      $"pose handed to the game in {overrideCount} camera update(s); {last.SideChanges} change(s) of side, " +
@@ -674,15 +784,15 @@ public sealed unsafe class DeathShotDirector : IDisposable
         resumed = false;
         if (blend && state == State.Running && havePose)
         {
+            // The request stays for the blend (Advance keeps the lens moving with the pose) and goes at its end.
             state = State.BlendOut;
             blendOutTime = 0f;
-            status = "death shot — back to the game's camera";
+            SetStatus(-6, "death shot — back to the game's camera");
         }
         else
         {
-            state = State.Idle;
-            havePose = false;
-            status = "off";
+            state = State.BlendOut;
+            EndBlendOut();
         }
     }
 

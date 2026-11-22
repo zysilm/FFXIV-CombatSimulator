@@ -336,9 +336,19 @@ public unsafe partial class EnemyControlController : IDisposable
         var camMgr = GameCameraManager.Instance();
         if (camMgr != null && camMgr->Camera != null) dirH = camMgr->Camera->DirH;
 
-        // W goes into the screen (forward), so forward = -(sin,cos).
+        // W goes into the screen (forward), so forward = -(sin,cos) of the camera's yaw.
         var forward = new Vector3(-MathF.Sin(dirH), 0f, -MathF.Cos(dirH));
-        var right = new Vector3(MathF.Cos(dirH), 0f, -MathF.Sin(dirH));
+        // The picture is not always the orbit camera's: a death shot or a cutscene shot hands the game its own eye and
+        // look-at point, and the game's DirH then says nothing about what is on screen. Steer by the view actually
+        // rendered; DirH only when that view has no usable horizontal direction (looking straight down or up).
+        if (GameCameraView.TryRead(out var view))
+        {
+            var flat = new Vector3(view.Forward.X, 0f, view.Forward.Z);
+            if (flat.LengthSquared() > 0.04f && float.IsFinite(flat.X) && float.IsFinite(flat.Z))
+                forward = Vector3.Normalize(flat);
+        }
+        // Screen right of that forward (for forward = -(sin,cos) this is (cos, 0, -sin), as before).
+        var right = new Vector3(-forward.Z, 0f, forward.X);
         var move = forward * fwd + right * strafe;
 
         OverrideExternalMovement(ref move, ref fwd, ref strafe);

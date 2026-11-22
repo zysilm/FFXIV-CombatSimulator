@@ -11,16 +11,22 @@ namespace CombatSimulator.Camera;
 ///  • <see cref="DynamicCameraController.ProfileFramingOverride"/> true: the scene wants the Directed camera's
 ///    framing whatever the "Directs" option says: death shots (and combat framing) run, and the combat zoom and
 ///    pitch it learns meanwhile are not saved.
-///  • <see cref="TemporaryDeathInputs"/>: picks the profile and the shot size (see <see cref="ProfileFor"/>,
-///    <see cref="SizeFor"/>). Null: the user's own profile, the profile's own size.
-///  • <see cref="TemporaryDeathActor"/>: the body the shot frames instead of the player's, when it is a character
-///    in the object table (and <see cref="DynamicDeathCameraInputs.IgnoreActor"/> is not set). The director starts
-///    the shot again when the body changes, and goes back to the player's when this one cannot be read.
+///  • <see cref="TemporaryDeathInputs"/> non-null: a scene directs the shot. It picks the profile and the shot size
+///    (see <see cref="ProfileFor"/>, <see cref="SizeFor"/>), and a jump of the game camera's yaw (the scene's entry
+///    yaw, which it writes itself before the camera update) is taken as the azimuth it wants for the shot. Null: the
+///    user's own profile, the profile's own size, and the yaw is the player's hand.
+///  • <see cref="TemporaryDeathActor"/>: ignored for framing. The shot frames the player's body only (first version:
+///    no second subject); the old fit used this actor as the second person of its two-shot. Logged once per death.
+///  • <see cref="TemporaryDeathInputLock"/> (new, optional): whether the scene locks the player's camera input. The
+///    scene's own lock (it pins the game camera's yaw) cannot be seen from here, so until it is set a shot a scene
+///    directs ignores the wheel.
 /// </summary>
 public sealed unsafe partial class DynamicCameraController
 {
     public Func<DynamicDeathCameraInputs?>? TemporaryDeathInputs { get; set; }
     public Func<NativeCameraActor?>? TemporaryDeathActor { get; set; }
+    public Func<bool>? TemporaryDeathInputLock { get; set; }
+    private bool loggedActorIgnored;
 
     /// <summary>
     /// The old fit's angle (radians, positive = looking down; its three presets were −0.25 "Looking up", 0.45
@@ -36,10 +42,12 @@ public sealed unsafe partial class DynamicCameraController
     }
 
     /// <summary>
-    /// The old fit's body coverage (0.25 head and chest … 1 head to feet … 2 space around the body) as the shot
-    /// size on top of the profile's own: 1 stays 1, less is tighter, more is wider, within what the solver takes
-    /// (0.5–2). The other inputs of the old fit (body band, maximize, close-up distance, transition time) have no
-    /// counterpart: the profile decides them.
+    /// The old fit's body coverage as the shot size on top of the profile's own, within 0.5–2: 1 stays 1, less is
+    /// tighter, more is wider. NOT the same thing as before: the old value counted how much of the body had to stay in
+    /// frame from the head down (0.25 head and chest, 0.5 head to waist, 1 head to feet, above 1 space around it); here
+    /// it only scales whatever the profile frames (0.5 on Face is a tighter face, not "head to waist"; on a whole-body
+    /// profile it comes closer than the body fits). The other inputs of the old fit (body band, maximize, close-up
+    /// distance, transition time) have no counterpart: the profile decides them.
     /// </summary>
     internal static float SizeFor(DynamicDeathCameraInputs? inputs) =>
         inputs?.BodyVisibility is { } visible && float.IsFinite(visible) ? Math.Clamp(visible, 0.5f, 2f) : 1f;
@@ -47,36 +55,22 @@ public sealed unsafe partial class DynamicCameraController
     private DeathShotRequest DeathShotRequestFor(nint playerAddress)
     {
         var inputs = TemporaryDeathInputs?.Invoke();
-        var subject = playerAddress;
-        var label = "you";
-        if (inputs?.IgnoreActor != true && TemporaryDeathActor?.Invoke() is { } actor &&
-            TryResolveTemporaryDeathActor(actor, out var address, out var name) && address != playerAddress)
+        var scene = inputs != null;
+        if (scene && !loggedActorIgnored && inputs!.IgnoreActor != true && TemporaryDeathActor?.Invoke() is { } actor)
         {
-            subject = address;
-            label = name;
+            loggedActorIgnored = true;
+            log.Info($"DeathShot: the scene names a second actor (entity {actor.EntityId:X}); it is ignored — the automatic death shot frames the player's body only.");
         }
+        var locked = scene && TemporaryDeathInputLock?.Invoke() == true;
         return new DeathShotRequest(
             playerAddress,
-            subject,
-            label,
             ProfileFor(inputs, config.DeathShotProfile),
             SizeFor(inputs),
-            // The player's ragdoll is armed when the death animation starts; another body's is armed or it is not.
-            RagdollToCome: !deathAnimationStarted);
-    }
-
-    private static bool TryResolveTemporaryDeathActor(NativeCameraActor actor, out nint address, out string name)
-    {
-        address = nint.Zero;
-        name = "";
-        if (actor.Address == nint.Zero || actor.EntityId == 0) return false;
-        foreach (var obj in Core.Services.ObjectTable)
-        {
-            if (obj.Address != actor.Address || obj.EntityId != actor.EntityId) continue;
-            address = obj.Address;
-            name = $"{obj.Name.TextValue} (0x{address:X})";
-            return true;
-        }
-        return false;
+            // The player's ragdoll is armed when the death animation starts.
+            RagdollToCome: !deathAnimationStarted,
+            SceneDirected: scene,
+            InputLocked: locked,
+            // Unknown lock (the scene has not said): no wheel, so a locked scene is never resized by it.
+            WheelLocked: scene && (TemporaryDeathInputLock == null || locked));
     }
 }

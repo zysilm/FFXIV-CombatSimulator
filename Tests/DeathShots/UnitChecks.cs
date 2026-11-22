@@ -118,6 +118,22 @@ internal static class UnitChecks
                 $"turned {turned:F1} deg, max view rate {maxRate:F1} deg/s, min eye height {minClear:F3} m, reach {Reach(o, extra):F2}, side changes {o.SideChanges - sides}");
         }
 
+        // A scene's absolute azimuth (the plugin turns the side in use onto the yaw the scene set: UserYaw = that yaw
+        // minus DeathShotSolver.SideAzimuth): the eye ends at that azimuth about the body.
+        {
+            var solver = new DeathShotSolver(world);
+            solver.Begin(body.Chest + DeathShotMath.OrbitDirection(0f, 15f * Deg) * 5f, body.Chest, 0.78f);
+            const float asked = 200f * Deg;
+            DeathShotOutput o = default;
+            for (var i = 0; i < 60 * 20; i++)
+            {
+                var yaw = i < 60 * 10 ? 0f : DeathShotMath.AngleDelta(solver.SideAzimuth, asked);
+                o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = body, Extra = extra, Profile = DeathShotProfile.GroundProfile, Aspect = 16f / 9f, UserYaw = yaw, UserSize = 1f });
+            }
+            var off = DeathShotMath.AngleDelta(asked, DeathShotMath.Azimuth(o.BaseEye - o.BaseLookAt)) / Deg;
+            Check("an absolute azimuth asked through the side in use: the eye ends there", MathF.Abs(off) < 2f, $"off by {off:F1} deg");
+        }
+
         // Wheel: the frame at the subject grows and shrinks with the size.
         {
             float At(float size)

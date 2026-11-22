@@ -322,6 +322,20 @@ public unsafe class BoneTransformService : IDisposable
         return -1;
     }
 
+    /// <summary>A bone's world-space position by index in a skeleton already looked up (callers that read many bones
+    /// every frame resolve the indices once with <see cref="ResolveBoneIndex"/>). Null when out of range.</summary>
+    public Vector3? GetBoneWorldPos(SkeletonAccess ns, int idx)
+    {
+        if (idx < 0 || idx >= ns.BoneCount) return null;
+        var skeleton = ns.CharBase->Skeleton;
+        if (skeleton == null) return null;
+        var skelPos = new Vector3(skeleton->Transform.Position.X, skeleton->Transform.Position.Y, skeleton->Transform.Position.Z);
+        var skelRot = new Quaternion(skeleton->Transform.Rotation.X, skeleton->Transform.Rotation.Y,
+            skeleton->Transform.Rotation.Z, skeleton->Transform.Rotation.W);
+        ref var mt = ref ns.Pose->ModelPose.Data[idx];
+        return skelPos + Vector3.Transform(new Vector3(mt.Translation.X, mt.Translation.Y, mt.Translation.Z), skelRot);
+    }
+
     /// <summary>
     /// Get a bone's world-space position for any character by address and bone name.
     /// Returns null if the skeleton is unavailable or the bone is not found.

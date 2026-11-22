@@ -97,6 +97,7 @@ internal sealed unsafe class CameraModule
             clientState,
             log);
         deathShotDirector.CutsceneOwnsCamera = () => cutsceneShotDirector.OwnsCamera;
+        cutsceneShotDirector.HandingBack = deathShotDirector.ResumeNow;
         gameCameraUpdateHook.PostCameraUpdate = camera =>
         {
             cutsceneShotDirector.OnPostCameraUpdate(camera);

@@ -149,7 +149,7 @@ dotnet run -c Release -- probe <录像名的一部分> <档案> [0..7]   一次�
 
 ### 8.3 门槛（全部通过）
 
-每个档案和 Auto：离地 < 5 cm 的帧 = 0；视线角速度 ≤ 60°/s（硬切除外）；每次死亡换边 ≤ 1（已静止的身体被移动、再静止且姿态大变时可再换一次：这是设计要求的；这样的死亡 760 次里 0–16 次，最多共 2 次）；布娃娃开始跳变 < 2 cm；相机静止后漂移 < 1 mm；构图不差于两条基线（同一主体下比较；全身档案用含手臂的全身，对基线只要求不含手臂的头到脚）；净空不差于两条基线；平滑不差于两条基线（眼位加加速度 p99、视线角加速度 p99，各留 5% 余量）；Low three-quarter 复现旧预设；Face 在身体静止后看得到脸 ≥ 90%。另有 33 项单元检查（合成姿态上的身体坐标系、各姿态类、回差与停留、静止检测、弹簧、各档案在静止身体上的落点、水面、墙、两侧都挡时的回退、旋转平移不变性、体型缩放；P2 加了两项：玩家环绕 60° 时镜头绕身体转 60°、不重新选边、视线 ≤ 60°/s、眼位不低于 10 cm、身体在画面内；滚轮 ×2 / ×0.5 时距离 ×2 / ×0.5）。
+每个档案和 Auto：离地 < 5 cm 的帧 = 0；视线角速度 ≤ 60°/s（硬切除外）；每次死亡换边 ≤ 1（已静止的身体被移动、再静止且姿态大变时可再换一次：这是设计要求的；这样的死亡 760 次里 0–16 次，最多共 2 次）；布娃娃开始跳变 < 2 cm；相机静止后漂移 < 1 mm；构图不差于两条基线（同一主体下比较；全身档案用含手臂的全身，对基线只要求不含手臂的头到脚）；净空不差于两条基线；平滑不差于两条基线（眼位加加速度 p99、视线角加速度 p99，各留 5% 余量）；Low three-quarter 复现旧预设；Face 在身体静止后看得到脸 ≥ 90%。另有 34 项单元检查（合成姿态上的身体坐标系、各姿态类、回差与停留、静止检测、弹簧、各档案在静止身体上的落点、水面、墙、两侧都挡时的回退、旋转平移不变性、体型缩放；P2 加了两项：玩家环绕 60° 时镜头绕身体转 60°、不重新选边、视线 ≤ 60°/s、眼位不低于 10 cm、身体在画面内；滚轮 ×2 / ×0.5 时距离 ×2 / ×0.5；审查后又加一项：经 `SideAzimuth` 要一个绝对方位，眼位落在那个方位上）。
 
 “平滑”比的是加加速度和角加速度，不是速度：Directed 从不改变方位，所以它的视线角速度必然更低（p99 45.8 对 44°/s，最大 45.9 对 60°/s），新镜头为了转到指定侧必须转动。
 
@@ -173,12 +173,13 @@ dotnet run -c Release -- probe <录像名的一部分> <档案> [0..7]   一次�
 ### 9.1 什么时候跑
 
 - `DynamicCameraController` 每帧判断：Camera 页签的 **Camera mode** 是 **Directed**、**Directs** 含 Death、模拟在进行、玩家已倒下（`PlayerState.IsAlive == false`，即从致命一击起——死亡动画要等引擎的延迟之后才开始）、没有别的场景挂起它 → 阶段 `Death`，每帧调 `DeathShotDirector.Run`；战斗构图在此期间停下。
-- 结束：复活（0.3 s 过渡回游戏相机）；重置 / 停止模拟 / 换图 / 登出 / 卸载 / 关掉 Directed 或 Death（立即）；游戏自己的过场或 GPose 开始（立即，期间也不开始）；某一帧没人再要它（`no longer wanted`）；`Advance` 超过 0.5 s 没跑且已过不止一次相机更新（`tick stalled`）；连续 120 帧读不到身体。
-- 过场跟拍镜头（owner 60）优先：它占着相机时自动死亡镜头等待（不求解、不提交），它开始淡出的下一帧自动死亡镜头从它留下的画面重新开始（`solver.Begin` 用当时的场景相机），见 [CUTSCENE_SHOTS.md](CUTSCENE_SHOTS.md) §6.2。协调者里比 `DynamicDeath`（25）高的其他主人同样处理。
+- 结束：复活（0.3 s 过渡回游戏相机：位姿和 FoV 一起插值，FoV 的请求在过渡结束时才释放，不在第一帧跳回）；重置 / 停止模拟 / 换图 / 登出 / 卸载 / 关掉 Directed 或 Death（立即）；游戏自己的过场或 GPose 开始（立即，期间也不开始）；某一帧没人再要它（`no longer wanted`）；`Advance` 超过 0.5 s 没跑且已过不止一次相机更新（`tick stalled`）；连续 120 帧读不到身体。
+- 开始不了时（没有渲染相机、镜头比例量不出、游戏相机的眼位与注视点相距不足 0.1 m 例如第一人称、身体骨骼读不到）每种原因每次死亡记一行 `DeathShot: cannot start yet — <原因>`，并继续每帧重试。
+- 过场跟拍镜头（owner 60）优先：它占着相机时自动死亡镜头等待（不求解、不提交）。它开始淡出的**同一帧**（`CutsceneShotDirector.HandingBack` → `DeathShotDirector.ResumeNow`，在协调者 Apply 之前）自动死亡镜头就从它留下的画面重新开始并提交 FoV，所以 FoV 不会在两者之间回到游戏自己的值一帧；见 [CUTSCENE_SHOTS.md](CUTSCENE_SHOTS.md) §6.2。协调者里比 `DynamicDeath`（25）高的其他主人：等待，下一帧起重新开始。
 
 ### 9.2 每帧
 
-1. **位置**：22 根骨骼（前 7 根是身体坐标系，其余供全身档案；与离线轨迹同名同序）。`BoneTransformService` 读骨骼；该身体的布娃娃 `IsActive && PhysicsStarted` 且 7 个点的刚体都读得到时改用 `Ragdoll.GetBodyWorldPosition`。`PhysicsStarted` 输入 = “这一帧的位置是刚体给的”，由同一个判断产生，不会不一致。切换那一帧把同帧读到的骨骼作为 `PreviousSource` / `PreviousSourceExtra` 传入。其余 15 根里读不到刚体的用骨骼，读不到骨骼的沿用上一帧。
+1. **位置**：22 根骨骼（前 7 根是身体坐标系，其余供全身档案；与离线轨迹同名同序）。骨骼索引按骨架指针缓存（开始时按名字查一次，模型重绘换了骨架再查），之后按索引读。该身体的布娃娃 `IsActive && PhysicsStarted` 且 7 个点的刚体都读得到时改用 `Ragdoll.GetBodyWorldPosition`；刚体成为位置源之后不再读骨骼（切换那一帧仍读：读完刚体才知道是切换帧）。`PhysicsStarted` 输入 = “这一帧的位置是刚体给的”，由同一个判断产生，不会不一致。切换那一帧把同帧读到的骨骼作为 `PreviousSource` / `PreviousSourceExtra` 传入。其余 15 根里读不到刚体的用最后读到的骨骼。
 2. **`ExpectRagdoll`** = 布娃娃开着，并且（死亡动画还没开始，或该身体的布娃娃已武装且（物理未开始，或正在用它的刚体））。布娃娃已开始但刚体读不到时不等它（它的姿态反正会写进骨骼）。
 3. **`BodyScale`**：开始时用骨骼的脊柱长度（髋→胸→头）÷ 0.46 m 算好传入（0.4–4），不让求解器自己估：若第一帧已经是刚体，刚体中心沿脊柱的间距与骨骼不同，而配方是按骨骼定的。
 4. **世界**（`DeathShotDirector.GameWorld`）：
@@ -186,7 +187,7 @@ dotnet run -c Release -- probe <录像名的一部分> <档案> [0..7]   一次�
    - 水面：`WorldCollisionMesh.TryFindWaterSurface`，起点上方 4 m 到下方 20 m（不再往上：高处平台上的水池不该把眼位抬上去）。
    - 遮挡：主体中心 → 眼位一条 `RaycastMaterialFilter`（地形和墙；不含角色）。
    - 同一帧内完全相同的查询只打一次（按毫米取键）。**没有**按 5 cm 网格缓存：求解器在阻尼之后才把眼位压到地面以上，网格化的地面高度在坡上会让眼位一格一格地跳。每帧的射线数写在 5 s 汇总里（`rays/frame`），嫌多再处理。
-5. **玩家的手**：左右环绕 = 游戏相机自己的 `DirH` 每帧的变化量，累加成 `UserYaw`（游戏照常积分鼠标 / 手柄 / 键盘，灵敏度和反向设置都跟着游戏走；一帧超过 1 rad 的变化不算玩家的）；滚轮 = ImGui 的原始滚轮，每格约 10%，成 `UserSize`（0.5–3，滚轮向上 = 更近）。俯仰不读（位姿是镜头的）。求解器重新选边（`SideChanged`）时两者归零 / 归一。游戏自己的缩放距离在镜头期间保持在开始时的值（经协调者每帧写回），复活后不会停在滚轮滚到的地方。
+5. **玩家的手**：左右环绕 = 游戏相机自己的 `DirH` 每帧的变化量，累加成 `UserYaw`（游戏照常积分鼠标 / 手柄 / 键盘，灵敏度和反向设置都跟着游戏走；一帧超过 1 rad 的变化不算玩家的）；滚轮 = ImGui 的原始滚轮，每格约 10%，成 `UserSize`（0.5–3，滚轮向上 = 更近）。俯仰不读（位姿是镜头的）。求解器重新选边（`SideChanged`）时两者归零 / 归一。游戏自己的缩放距离和俯仰（`DirV`）在镜头期间保持在开始时的值（经协调者每帧写回，并清垂直输入），镜头结束后玩家拿回的是死前的相机，不是镜头期间滚到 / 拖到的地方。有场景指挥时的规则见 §10。
 6. **交接**：眼位 + 注视点在游戏相机更新之中交给游戏（`ActiveCameraController.PoseOverride`，与过场镜头同一个机制，现在两级：自动死亡镜头先写，过场镜头后写）；FoV 走协调者（`CameraRequest.Fov`，求解器给的垂直视角按开始时量出的“字段 → 实际视角”比例换成字段值）。求解器的输出原样写入，这里不做任何混合，所以 `Output.Cut` 的那一帧就是硬切。镜头期间强制开着防淡出（`PoseOverrideActive`）。
 7. **时序**：求解在框架帧（`Tick`）里做，读到的是上一渲染帧的骨骼 / 刚体；位姿在同一帧稍后的相机更新里写入。也就是位置比画面晚一帧（60 fps 下身体 3 m/s 时 5 cm），由求解器的阻尼吸收。
 
@@ -194,7 +195,8 @@ dotnet run -c Release -- probe <录像名的一部分> <档案> [0..7]   一次�
 
 | 行 | 什么时候 | 内容 |
 |---|---|---|
-| `start —` / `resumes —` | 开始；过场镜头交还或换主体后重新开始 | 主体、档案、体型、起始相机的方位 / 距离 / 视角、游戏 `DirH`、FoV 字段、字段→视角比例、宽高比 |
+| `start —` / `resumes —` | 开始；过场镜头交还后重新开始 | 档案（有场景指挥时注明）、体型、起始相机的方位 / 距离 / 视角、游戏 `DirH`、FoV 字段、字段→视角比例、宽高比 |
+| `cannot start yet —` | 开始不了（每种原因每次死亡一行） | 原因 |
 | `first frame —` | 第一帧 | 设置的档案 → 实际档案、姿态类、所在侧（相对身体正面的角度、仰角、距离）、位置源、是否在等布娃娃、体型 |
 | `side at … s —` | 每次重新选边 | 原因（settled / moved / calm / blocked / profile）、档案、cut / ease、姿态类、所在侧、第几次 |
 | `ragdoll at … s —` | 位置源切换 | 髋的源跳变（cm）、7 个点里最大的跳变、这一帧眼位实际移动了多少 |
@@ -212,21 +214,24 @@ dotnet run -c Release -- probe <录像名的一部分> <档案> [0..7]   一次�
 
 ### 9.5 同批删除的旧死亡构图
 
+Enemy Control 的移动方向同批改为按实际渲染的视线（`Npcs/EnemyControlController.cs`）：死亡镜头接管画面后游戏的 `DirH` 与画面无关。
+
 `DynamicCameraController` 的 `TickDeath`、`SolveDeathFraming`、`TrySolveAtLevel`、`BuildDeathAnchors`、凶手包络（`TryGetKillerExtent`）、`CorpsePoint`、`OnPreCameraUpdate`（锁俯仰、钉缩放）、`OverrideDeathLookAt`、`HoldForCutscene`、`CaptureTranslateStart`、tiltBias / 轨道方向测量 / 梯级等全部状态；`DynamicCameraSolver.GroundedFit`（搬到 `Tests/DeathShots/OldDirectedFraming.cs`，只给离线基线用）；`Gui/DynamicCameraDebugOverlay.cs`（内容全是旧求解的锚点和读数，没有界面开关）及 `IDynamicCameraDebugSettings`。战斗时的 Directed 构图（越肩、敌人入画、缩放和俯仰记忆）没有改动。
 
-## 10. 私有模块的三个入口现在的含义
+## 10. 私有模块的入口现在的含义
 
 私有模块经 `DynamicCameraController` 的这些成员接入（`Dev/Experimental/Plugin.Stories.cs`，本批没有改它，仍然编译）。名字和类型不变，含义改为（`Camera/DynamicCameraController.Inputs.cs`）：
 
 | 入口 | 以前 | 现在 |
 |---|---|---|
 | `ProfileFramingOverride`（`Func<bool>`） | 为 true 时不管 Directs 选项都做战斗构图和死亡构图，并且不保存学到的缩放 / 俯仰 | 不变：为 true 时不管 Directs 选项都跑自动死亡镜头（和战斗构图），不保存缩放 / 俯仰记忆 |
-| `TemporaryDeathInputs`（`Func<DynamicDeathCameraInputs?>`） | 逐项覆盖旧构图的参数 | 选档案和景别：`Angle`（旧构图的角度，正 = 俯视）< 0.1 → Ground profile（旧 “Looking up” 是 −0.25），> 0.625 → Overhead（旧 “Looking down” 是 0.8），之间 → Auto，没给 → 用户自己选的档案；`BodyVisibility` → 档案自身景别上的倍数（夹在 0.5–2，1 = 不变，再乘玩家的滚轮）；`IgnoreActor == true` → 不用下面的 actor 当主体。`BodyBand`、`MaximizeBody`、`CloseUpDistance`、`Transition` 没有对应物，忽略（由档案决定）。返回 null = 用户的档案、档案自身的景别 |
-| `TemporaryDeathActor`（`Func<NativeCameraActor?>`） | 代替凶手成为双人构图里的第二个人 | 成为镜头的**主体**（代替玩家的尸体）：地址和 EntityId 在对象表里对得上、且不是玩家本人时，镜头拍这个角色；它有自己的布娃娃时照样用刚体。读不到它的 7 根骨骼（不是人形，或已消失）时退回玩家的尸体（日志 `subject you (the body asked for cannot be read)`）。主体变了镜头从当时的画面重新开始（日志 `subject changes to …`） |
+| `TemporaryDeathInputs`（`Func<DynamicDeathCameraInputs?>`） | 逐项覆盖旧构图的参数 | 非 null = 有场景指挥这次镜头。选档案和景别：`Angle`（旧构图的角度，正 = 俯视）< 0.1 → Ground profile（旧 “Looking up” 是 −0.25），> 0.625 → Overhead（旧 “Looking down” 是 0.8），之间 → Auto，没给 → 用户自己选的档案；`BodyVisibility` → 档案自身景别上的倍数（夹在 0.5–2，1 = 不变）。**`BodyVisibility` 的含义与以前不同**：以前是“从头往下身体要留在画面里多少”（0.25 头胸、0.5 头到腰、1 头到脚、> 1 四周留白），现在只是把档案拍的东西放大缩小（Face 上 0.5 是更紧的脸，不是“头到腰”；全身档案上 < 1 会比全身入画更近）。`BodyBand`、`MaximizeBody`、`CloseUpDistance`、`Transition`、`IgnoreActor` 没有对应物，忽略。返回 null = 用户的档案、档案自身的景别 |
+| `TemporaryDeathActor`（`Func<NativeCameraActor?>`） | 代替凶手成为双人构图里的第二个人 | **不参与构图**：主体永远是玩家的尸体（第一版只拍尸体）。成员保留以便编译；有场景指挥且给了 actor 时每次死亡记一行 `DeathShot: the scene names a second actor … it is ignored`。不解引用它的地址 |
+| `TemporaryDeathInputLock`（`Func<bool>`，新增，可选） | — | 场景是否锁了玩家的相机输入。私有模块自己的锁（每帧把 `DirH` 写回、清 `InputDeltaH`）从插件这边看不到，所以**没设这个入口时，有场景指挥的镜头一律不响应滚轮**（保证锁住的场景不会被滚轮改景别；代价是没锁的场景也没有滚轮，直到私有模块设置它）。为 true 时：滚轮无效，`DirH` 的任何变化都按场景的绝对方位处理 |
 
 - `EnabledOverride`、`ActiveCameraEnabledOverride`、`SuspendForExternalControl`、`Reset(persistMemory)` 含义不变，只是作用对象里的“死亡构图”换成自动死亡镜头：挂起或 Reset 时镜头立即结束，条件恢复后从当时的画面重新开始。
 - `ActiveCameraController.ModeLookAtOverride` 仍在（私有模块自己包了一层）；插件本身不再给它赋值。
-- 私有模块在相机更新前写 `DirH`（入场 yaw、锁输入时每帧写）和清 `InputDeltaH` 的做法仍然编译：锁输入时 `DirH` 不变，玩家就转不动镜头（符合原意）；入场 yaw 的一次性写入会被当成玩家转了这么多（超过 1 rad 的被忽略），见 §12。
+- 私有模块的入场 yaw（`StoryNativeCamera.YawOffset`，它在相机更新前把 `DirH` 写成“角色朝向 + 偏移”，一次；锁输入时每帧写）：有场景指挥时（`TemporaryDeathInputs != null`），`DirH` 一帧内跳变超过 20°（或已知锁输入时的任何变化）按**绝对方位**处理——游戏的 `DirH` 就是眼位绕注视点的方位角，与求解器的侧向是同一个量，于是 `UserYaw = DirH − 求解器当前选的侧向（DeathShotSolver.SideAzimuth）`，镜头转到场景要的方位（日志 `DeathShot: the scene set the camera's yaw to …`）。之后求解器重新选边时这个方位会重新对上去；若是因为那个方位被挡才换的边，则放弃它（日志 `the azimuth the scene asked for is blocked`）。没有场景指挥时仍按玩家的增量处理（超过 1 rad 的丢弃）。小于 20° 的入场跳变分不出来，会被当成玩家转了这么多。
 
 ## 11. 游戏里看什么
 
@@ -250,5 +255,5 @@ dotnet run -c Release -- probe <录像名的一部分> <档案> [0..7]   一次�
 - 位置比画面晚一帧（§9.2 第 7 条）。若看得出来，可把求解挪到相机更新里做，但那时骨骼是不是当帧姿态要先量。
 - 玩家环绕受求解器的方位限速（45°/s）和 0.6 s 弹簧限制，是“导演镜头上的偏移”，不是自由相机。离线只在静止身体上测过（`Tests/DeathShots` 单元检查 “player orbit / player wheel”）。
 - 遮挡只查地形和墙，不查角色：别的尸体或敌人挡在镜头前不会触发回退。
-- 私有模块的入场 yaw（`StoryNativeCamera.YawOffset`）原来是直接摆相机的方位，现在位姿由镜头决定，它只会表现为一次玩家偏移（> 1 rad 的被忽略）。要让它重新有意义，需要私有模块把它作为档案 / 侧向的输入交进来。
-- 凶手双人构图没有了（用户裁决，第一版只拍尸体）；`TemporaryDeathActor` 因此从“第二个人”变成“主体”。
+- 私有模块没设 `TemporaryDeathInputLock` 之前，有场景指挥的镜头没有滚轮（§10）；场景的入场 yaw 与当时 `DirH` 相差不到 20° 时分不出是场景写的还是玩家转的。
+- 凶手双人构图没有了（用户裁决，第一版只拍尸体）；`TemporaryDeathActor` 因此不再有作用。

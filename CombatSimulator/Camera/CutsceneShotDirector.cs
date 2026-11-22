@@ -168,6 +168,11 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
     /// <summary>The shot holds the camera (it is not blending out yet): the automatic death shot waits.</summary>
     public bool OwnsCamera => phase == Phase.Playing;
 
+    /// <summary>Called when a shot starts blending out, right after it gave up the coordinator and before the
+    /// coordinator applies this frame: whoever takes the camera next (the automatic death shot) can ask for its FoV
+    /// in the same frame, so the lens does not fall back to the game's own for one frame in between.</summary>
+    public Action? HandingBack { get; set; }
+
     // ------------------------------------------------------------------
     // Triggers
     // ------------------------------------------------------------------
@@ -337,6 +342,7 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
         phase = Phase.BlendOut;
         blendOutTime = 0f;
         coordinator.Release(CameraOwner.CutsceneShot);
+        HandingBack?.Invoke();
     }
 
     private void Finish(string reason)

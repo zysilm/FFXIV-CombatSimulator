@@ -124,7 +124,9 @@
 - 眼位阻尼作用在绕注视点的轨道坐标上（直角坐标的缓动会穿过身体，也封不住视线转速）；换边只在开始、第一次静止、被移动后再静止、被挡 1.5 s、改档案时发生，每次死亡在身体被移动前最多一次 → [DEATH_SHOTS.md](DEATH_SHOTS.md) §5、§7。
 - 运行时的约定（[DEATH_SHOTS.md](DEATH_SHOTS.md) §9）：位姿交接（`ActiveCameraController.PoseOverride`）是两级的，自动死亡镜头先写、过场镜头（owner 60）后写并覆盖；过场镜头占着相机时自动死亡镜头等待，交还后从过场留下的画面重新开始。玩家的左右环绕取游戏相机 `DirH` 的逐帧变化量、滚轮取 ImGui 原始滚轮（景别），俯仰锁定，重新选边时归零；游戏自己的缩放距离在镜头期间保持不变。设置 `DeathShotProfile` 默认 Auto，不从旧选项迁移（用户裁决）；`DynCamDeathFraming`（Directs 里的 Death）保留；退役键 `DynCamDeathIgnoreKiller`、`DynCamDeathBodyVisibility`、`DynCamDeathBodyBand`、`DynCamDeathAngle`、`ShowDynamicCamToolbar`、`DynCamDebugOverlay`。
 - 地面查询不按网格缓存：求解器在阻尼之后才把眼位压到地面以上，网格化的地面高度在坡上会让眼位一格一格跳；只对同一帧内完全相同的查询去重，每帧射线数写在 `DeathShot:` 的 5 s 汇总里。
-- 私有模块的三个入口（`ProfileFramingOverride` / `TemporaryDeathInputs` / `TemporaryDeathActor`）名字和类型不变，含义改为强制开启 / 选档案和景别 / 换主体 → [DEATH_SHOTS.md](DEATH_SHOTS.md) §10。
+- 私有模块的入口（[DEATH_SHOTS.md](DEATH_SHOTS.md) §10）：`ProfileFramingOverride` 强制开启；`TemporaryDeathInputs` 非 null = 场景指挥（`Angle` → 档案，`BodyVisibility` → 景别倍数，含义与旧“身体覆盖”不同；场景写的 `DirH` 跳变按绝对方位）；`TemporaryDeathActor` 不参与构图——主体永远是玩家的尸体（2026-11-22 裁决）；新增可选的 `TemporaryDeathInputLock`，没设时有场景指挥的镜头不响应滚轮。
+- Enemy Control 的 WASD / 左摇杆方向按**实际渲染的视线**的水平分量（`GameCameraView.Forward`），不按游戏相机的 `DirH`：死亡镜头或过场镜头接管画面时 `DirH` 与画面无关，按它算 W 会朝镜头走；水平分量退化（正俯 / 正仰）时才退回 `DirH`（2026-11-22）。
+- 自动死亡镜头期间游戏自己的缩放距离和俯仰都保持在开始时的值；复活的 0.3 s 过渡里 FoV 跟着位姿一起插值；过场死亡镜头交还的同一帧自动镜头就接手 FoV（`CutsceneShotDirector.HandingBack`）（2026-11-22）。
 - 旧 Death Cam 仅存的三个镜头有 76–81% 的帧眼位离地不足 5 cm、多数在地面以下（当时关着相机碰撞，尸体躺地后等于从地下仰拍）；新镜头不进地面，同样的侧向在躺地后是贴地平拍（离线复现，`Tests/DeathShots`）。
 
 ### 特效 / 语音

@@ -177,6 +177,8 @@ public sealed class DeathShotSolver
     public DeathShotSolver(IDeathShotWorld world) => this.world = world;
 
     public PoseClass Pose => classifier.Current;
+    /// <summary>The azimuth of the side in use (eye about the look-at point, world), before the player's orbit.</summary>
+    public float SideAzimuth => lockAzimuth;
     public float BodyScale => scale;
 
     /// <summary>Starts a death shot from the camera as it is now (the shot eases in from it). Without it the first

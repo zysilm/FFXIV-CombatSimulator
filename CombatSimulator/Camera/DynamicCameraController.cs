@@ -165,7 +165,6 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
         phase = Phase.Off;
         hasCurState = false;
         wroteDistance = false;
-        deathAnimationStarted = false;
         // Combat zoom and pitch survive resets by design: persist what was learned, then reseed
         // from the persisted values — a new fight resumes at the zoom and angle last settled on.
         if (persistMemory)
@@ -210,6 +209,10 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
 
     public void Tick(float dt)
     {
+        // Only a living player forgets that the death animation started (a Reset in the middle of a death must not:
+        // the shot that starts again would wait for a ragdoll that is not coming and never settle).
+        if ((deathAnimationStarted || loggedActorIgnored) && (!combatEngine.IsActive || combatEngine.State.PlayerState.IsAlive))
+            deathAnimationStarted = loggedActorIgnored = false;
         deathShots.Advance(dt);
         if (externalControlSuspended) return;
         try
@@ -276,7 +279,6 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
         // Revived: back to combat framing; the death shot eases back to the game's camera.
         if (alive)
         {
-            deathAnimationStarted = false;
             if (phase == Phase.Death)
             {
                 phase = Phase.Combat;
