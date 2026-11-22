@@ -522,6 +522,10 @@ public unsafe class ActiveCameraController : IDisposable
 
     // Dynamic Cam always supplies its own terrain clearance. This controller is
     // the sole owner of the shared native patch, including when a mode resets.
+    // (So the game's camera collision is off for the whole of a death shot, which only runs in Directed mode. A
+    // below-ground death shot does not depend on it: its eye is written after the game's collision has run, into the
+    // buffers the game stores without another check. The patch only keeps the game's own orbit camera, which is
+    // what the shot blends back to, from being pulled about meanwhile.)
     public void UpdateCollisionPolicy()
     {
         if (DynamicCameraEnabled || (IsActive && config.ActiveCameraDisableCollision))

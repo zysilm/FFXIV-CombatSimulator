@@ -71,6 +71,11 @@ public partial class Configuration
     /// own settings (coverage, band, angle, ignore-killer) are retired: everyone starts on Auto.</summary>
     public Camera.DeathShots.DeathShotProfile DeathShotProfile { get; set; } = Camera.DeathShots.DeathShotProfile.Auto;
 
+    /// <summary>"Allow below ground": Low three-quarter (and Face, where it sits slightly low) keep their from-below
+    /// placement on a body on the ground, with the eye under it looking up through the one-sided ground — the look
+    /// of the old Death Cam with camera collision off. Off: the eye never goes under the ground.</summary>
+    public bool DeathShotBelowGround { get; set; } = false;
+
     /// <summary>Restore every Dynamic Camera option to its shipped default, leaving the master
     /// switch alone (resetting it would switch the feature off and take the page with it,
     /// which reads as a break rather than a restore).</summary>
@@ -92,6 +97,7 @@ public partial class Configuration
 
         DynCamDeathFraming = d.DynCamDeathFraming;
         DeathShotProfile = d.DeathShotProfile;
+        DeathShotBelowGround = d.DeathShotBelowGround;
 
         Save();
     }

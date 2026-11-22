@@ -450,7 +450,8 @@ public sealed unsafe class DeathShotDirector : IDisposable
         nextSummaryAt = Environment.TickCount64 + SummaryMs;
 
         var away = eye - look;
-        log.Info($"DeathShot: {(afterWaiting && resumed ? "resumes" : "start")} — profile {Label(profile)}{(request.SceneDirected ? " (a scene directs)" : "")}, " +
+        log.Info($"DeathShot: {(afterWaiting && resumed ? "resumes" : "start")} — profile {Label(profile)}{(request.SceneDirected ? " (a scene directs)" : "")}" +
+                 $"{(config.DeathShotBelowGround ? ", below ground allowed" : "")}, " +
                  $"body scale {(bodyScale > 0f ? bodyScale.ToString("0.00") : "from the first frame")}; " +
                  $"from the camera at azimuth {Degrees(DeathShotMath.Azimuth(away)):0}°, {away.Length():0.00} m, lens {Degrees(rendered):0.0}° " +
                  $"(game yaw {Degrees(game->DirH):0}°, FoV field {game->FoV:0.000}, field→lens ratio {fovRatio:0.000}, aspect {aspect:0.00}).");
@@ -555,6 +556,7 @@ public sealed unsafe class DeathShotDirector : IDisposable
             BodyScale = bodyScale,
             UserYaw = userYaw,
             UserSize = Math.Clamp(userSize * size, 0.5f, 3f),
+            AllowBelowGround = config.DeathShotBelowGround,
         });
 
         var first = !hadFrame;
@@ -875,7 +877,7 @@ public sealed unsafe class DeathShotDirector : IDisposable
         var ground = world.GroundBelow(o.Eye + new Vector3(0f, DeathShotSolver.GroundRayLift, 0f));
         log.Info($"DeathShot: {t:0.0} s — {Label(o.Shot)}{(profile == DeathShotProfile.Auto ? " (Auto)" : "")} [{PoseWord(o.Pose)}], " +
                  $"{(o.Holding ? "holding" : expect && !physics ? "waiting for the ragdoll" : "following")}, {(physics ? "ragdoll bodies" : "bones")}; " +
-                 $"{Side(in o, in points)}, eye {(ground is { } g ? $"{o.Eye.Y - g:0.00} m above ground" : "over no ground")}, " +
+                 $"{Side(in o, in points)}, eye {(ground is { } g ? o.Eye.Y >= g ? $"{o.Eye.Y - g:0.00} m above ground" : $"{g - o.Eye.Y:0.00} m BELOW ground" : "over no ground")}, " +
                  $"lens {Degrees(o.Fov):0.0}°; player yaw {Degrees(userYaw):0}°, size ×{userSize:0.00}; " +
                  $"last 5 s: eye up to {windowEyeSpeed:0.00} m/s, view up to {windowViewRate:0}°/s, " +
                  $"{(windowFrames > 0 ? (float)windowRays / windowFrames : 0f):0.0} rays/frame (max {windowRaysMax}); " +
@@ -1008,9 +1010,13 @@ public sealed unsafe class DeathShotDirector : IDisposable
             return result;
         }
 
-        public bool Blocked(Vector3 from, Vector3 to, out float distance)
+        public bool Blocked(Vector3 from, Vector3 to, out float distance) => Blocked(from, to, out distance, out _);
+
+        /// <summary>With the normal of what stopped the ray (the below-ground shots tell the ground from a wall by it).</summary>
+        public bool Blocked(Vector3 from, Vector3 to, out float distance, out Vector3 normal)
         {
             distance = 0f;
+            normal = default;
             var along = to - from;
             var length = along.Length();
             if (!(length > 1e-3f)) return false;
@@ -1020,6 +1026,8 @@ public sealed unsafe class DeathShotDirector : IDisposable
                 if (!BGCollisionModule.RaycastMaterialFilter(from, along / length, out var hit, length))
                     return false;
                 distance = Vector3.Distance(hit.Point, from);
+                var n = hit.Normal;
+                if (float.IsFinite(n.X) && float.IsFinite(n.Y) && float.IsFinite(n.Z)) normal = n;
                 return float.IsFinite(distance) && distance < length;
             }
             catch

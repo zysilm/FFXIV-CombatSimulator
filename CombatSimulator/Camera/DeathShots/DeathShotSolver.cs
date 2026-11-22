@@ -38,6 +38,10 @@ public struct DeathShotInput
     public float UserYaw;
     /// <summary>The player's wheel on top of the solve: 1 = the shot's own size, larger = wider.</summary>
     public float UserSize;
+    /// <summary>The option "Allow below ground": the shots whose recipe puts the eye below the subject looking up
+    /// (Low three-quarter, and Face where it sits slightly low) keep that placement on a body on the ground, with
+    /// the eye under it, instead of giving way to ground level (<see cref="DeathShotSolver.GoesBelow"/>).</summary>
+    public bool AllowBelowGround;
 }
 
 /// <summary>What the solver hands back each frame: the pose for the game camera (eye and look-at through the pose
@@ -125,8 +129,49 @@ public sealed class DeathShotSolver
     public const float ReferenceSpine = 0.46f;
     public const float CalmSpeed = 0.4f;
     public const float CalmSeconds = 1.5f;
+    /// <summary>Below-ground shots: a hit of the subject → eye ray counts as the ground the eye goes under, not as
+    /// something in the way, when the ground query at the hit returns the hit's own height within this,</summary>
+    public const float GroundHitTolerance = 0.08f;
+    /// <summary>and that height is within this (times the body's size) of the ground under the body.</summary>
+    public const float GroundHitBand = 0.5f;
 
     private readonly IDeathShotWorld world;
+    private bool allowBelow;
+
+    /// <summary>
+    /// With "Allow below ground" on, the shots that may put the eye under the ground: the free-orbit recipes whose
+    /// eye sits below the subject looking up (Low three-quarter; Face, slightly low). For them the eye is not kept
+    /// above the ground or the water, is never "found inside terrain", and the ground it goes under does not count
+    /// as blocking the view. The others (Along the body, Overhead, Ground profile) are never affected.
+    /// </summary>
+    public static bool GoesBelow(ShotRecipe recipe) =>
+        recipe.EyeHeight <= 0f && recipe.Profile is DeathShotProfile.LowThreeQuarter or DeathShotProfile.Face;
+
+    private bool Below(ShotRecipe r) => allowBelow && GoesBelow(r);
+
+    /// <summary>
+    /// Whether something stands between the subject and the eye, and how far along. For a below-ground shot the
+    /// ground the eye goes under is not that something. It is told from a wall or a bank in between by where and on
+    /// what the ray is stopped: on a ray going down, at the level of the ground under the body (within
+    /// <see cref="GroundHitBand"/> × body size), on a surface that faces up (its normal within 45° of straight up) —
+    /// or, in a world that does not give normals, at a point that lies on the ground surface (the ground query
+    /// straight down at that point returns the point's own height within <see cref="GroundHitTolerance"/>). A wall
+    /// faces sideways (or has the ground well below the point); a bank or a ledge stops the ray away from the body's
+    /// ground level; either still blocks.
+    /// (What lies beyond the point where the ray enters the ground is under the ground and is not looked at.)
+    /// </summary>
+    private bool Obstructed(ShotRecipe r, Vector3 centre, Vector3 eye, float ground, out float hit)
+    {
+        if (!Below(r)) return world.Blocked(centre, eye, out hit);
+        if (!world.Blocked(centre, eye, out hit, out var normal)) return false;
+        var along = eye - centre;
+        var length = along.Length();
+        if (length < 1e-4f || along.Y >= 0f) return true;
+        var at = centre + along * (hit / length);
+        if (MathF.Abs(at.Y - ground) > GroundHitBand * scale) return true;
+        if (normal.LengthSquared() > 0.25f) return normal.Y / normal.Length() < 0.7f;
+        return !(world.GroundBelow(at + new Vector3(0f, GroundRayLift, 0f)) is { } surface && MathF.Abs(surface - at.Y) <= GroundHitTolerance);
+    }
     private readonly PoseClassifier classifier = new();
     private readonly SettleDetector settle = new();
     private readonly SettleDetector calm = new(CalmSpeed, CalmSeconds);
@@ -240,6 +285,7 @@ public sealed class DeathShotSolver
         var dt = Math.Clamp(input.Dt, 0f, 0.1f);
         var aspect = input.Aspect > 0.1f ? input.Aspect : 16f / 9f;
         var userSize = input.UserSize > 0.01f ? Math.Clamp(input.UserSize, 0.5f, 3f) : 1f;
+        allowBelow = input.AllowBelowGround;
         var output = new DeathShotOutput();
 
         // ---- 1. the body: source switch, ground, frame, class, settled ----
@@ -341,6 +387,7 @@ public sealed class DeathShotSolver
         // ---- 3. side choice ----
         var changed = false;
         var cut = false;
+        var recipeBefore = recipe;
         if (!has)
         {
             lastProfile = input.Profile;
@@ -376,7 +423,7 @@ public sealed class DeathShotSolver
         // ---- 4. distance and constraints: this frame's goal ----
         var goal = Solve(recipe, lockAzimuth + input.UserYaw, lockElevation, subjectFrame, subjectPoints, subjectExtra, subjectGround, aspect, userSize);
         var pulled = false;
-        if (world.Blocked(goal.Centre, goal.Eye, out var hit))
+        if (Obstructed(recipe, goal.Centre, goal.Eye, subjectGround, out var hit))
         {
             var full = Vector3.Distance(goal.Centre, goal.Eye);
             if (hit >= PullInLimit * full)
@@ -422,6 +469,10 @@ public sealed class DeathShotSolver
         {
             blockedFor = 0f;
         }
+        // From a below-ground shot to one the ground holds, with the eye under the ground: there is no way up
+        // through the ground to ease along, so the change is a cut.
+        if (changed && !cut && hasOutput && Below(recipeBefore) && !Below(recipe) && lastEye.Y < FloorAt(lastEye) - 1e-3f)
+            cut = true;
 
         // ---- 5. damping ----
         if (!has)
@@ -513,12 +564,16 @@ public sealed class DeathShotSolver
 
         // ---- 7. the pose, kept off the ground and the water, and under the view-rate cap ----
         var soft = recipe.EyeHeight <= 0f;
-        var baseEye = soft ? Land(look + OrbitDirection(azimuth, elevation) * distance) : Floor(look + OrbitDirection(azimuth, elevation) * distance);
+        // A below-ground shot: the eye goes where the orbit puts it (still under the speed cap), ground or no ground.
+        var below = Below(recipe);
+        var baseEye = look + OrbitDirection(azimuth, elevation) * distance;
+        if (!below) baseEye = soft ? Land(baseEye) : Floor(baseEye);
         var eye = look + OrbitDirection(outAzimuth, elevation) * outDistance;
-        if (soft) eye = Land(eye);
+        if (soft && !below) eye = Land(eye);
         var lookAt = look;
         var popped = false;
-        eye = hasOutput && !cut && dt > 0f ? Advance(lastEye, eye, dt, out popped) : Floor(eye);
+        if (below) eye = hasOutput && !cut && dt > 0f ? Toward(lastEye, eye, dt) : eye;
+        else eye = hasOutput && !cut && dt > 0f ? Advance(lastEye, eye, dt, out popped) : Floor(eye);
         if (popped)
         {
             // The eye turned out to be inside the terrain and was put on top of it: a jump, and reported as one.
@@ -675,6 +730,15 @@ public sealed class DeathShotSolver
         return onTop;
     }
 
+    /// <summary>The speed cap of <see cref="Advance"/> alone, for an eye the ground does not hold (below-ground shots).</summary>
+    private static Vector3 Toward(Vector3 from, Vector3 wanted, float dt)
+    {
+        var budget = MaxEyeSpeed * dt;
+        var step = wanted - from;
+        var length = step.Length();
+        return length > budget ? from + step * (budget / length) : wanted;
+    }
+
     private float FloorAt(Vector3 eye)
     {
         var from = eye + new Vector3(0f, GroundRayLift, 0f);
@@ -786,7 +850,7 @@ public sealed class DeathShotSolver
         if (goal.Elevation > el + 30f * Deg && goal.Elevation > 25f * Deg) return true;
         // The ground there leaves no place from which the shot holds its subject (a body draped over an edge).
         if (goal.Reach > OutOfFrame) return true;
-        return world.Blocked(goal.Centre, goal.Eye, out var hit) && hit < PullInLimit * Vector3.Distance(goal.Centre, goal.Eye);
+        return Obstructed(r, goal.Centre, goal.Eye, ground, out var hit) && hit < PullInLimit * Vector3.Distance(goal.Centre, goal.Eye);
     }
 
     /// <summary>The side rule of a shot for a pose: where the eye may sit (azimuth and elevation about the subject).</summary>
@@ -937,12 +1001,14 @@ public sealed class DeathShotSolver
                 }
                 d = MathF.Min(d * userSize, most);
                 eye = centre + away * d;
+                // A below-ground shot keeps the recipe's placement: nothing gives way to the ground.
+                if (Below(r)) break;
                 var floor = FloorAt(eye);
                 if (eye.Y >= floor - 1e-4f) break;
                 elevationNow = MathF.Asin(Math.Clamp((floor - centre.Y) / d, -1f, 1f));
             }
             goal.LookAt = centre;
-            goal.Eye = Floor(eye);
+            goal.Eye = Below(r) ? eye : Floor(eye);
             FromEye(ref goal);
             goal.Reach = ReachOf(goal.Eye, goal.LookAt, tanH, tanV);
             return goal;

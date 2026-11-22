@@ -38,7 +38,7 @@ internal static class Runners
     public const int CoreBones = 7;
 
     /// <summary>The new solver over a trajectory, fed what the plugin would read (bones, then ragdoll bodies).</summary>
-    public static Cam[] New(Trajectory t, RecordedWorld world, StartCamera start, DeathShotProfile profile, out float bodyScale, bool oldSourceAtSwitch = true)
+    public static Cam[] New(Trajectory t, RecordedWorld world, StartCamera start, DeathShotProfile profile, out float bodyScale, bool oldSourceAtSwitch = true, bool belowGround = false)
     {
         var solver = new DeathShotSolver(world);
         solver.Begin(start.Eye, start.LookAt, start.Fov);
@@ -57,7 +57,7 @@ internal static class Runners
                 PreviousSource = switching ? t.Points(f.Bone) : null,
                 PreviousSourceExtra = switching ? f.Bone.Skip(CoreBones).ToArray() : null,
                 Dt = f.Dt, Points = t.Points(f.Runtime), Extra = extra, PhysicsStarted = f.PhysicsStarted, ExpectRagdoll = true,
-                Profile = profile, Aspect = Aspect, UserSize = 1f,
+                Profile = profile, Aspect = Aspect, UserSize = 1f, AllowBelowGround = belowGround,
             });
             cams[i] = new Cam
             {

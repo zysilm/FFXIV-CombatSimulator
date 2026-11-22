@@ -21,6 +21,8 @@ internal static class MetricRun
     {
         public string Name = "";
         public bool IsNew, Hidden;
+        /// <summary>Run with "Allow below ground" on: the clearance gates do not apply, the depth is reported instead.</summary>
+        public bool Below;
         /// <summary>The column's own subject is the head-to-feet chain (the Directed camera's anchors: no arms).</summary>
         public bool OwnIsChain;
         public ShotSubject? Subject; // null: per frame (Auto)
@@ -38,9 +40,15 @@ internal static class MetricRun
         public int Pops, OldStarts, OldLimited, Runs, RunsWithFallback, SettleWindows, CameraNeverSettled;
         public readonly List<float> JumpSlow = new(), JumpFast = new(), OldRaw = new(), OldRawPlayer = new(), OldOff = new(), OldUp = new(), OldDistance = new();
         public readonly SortedDictionary<string, long> ShotFrames = new();
+        /// <summary>Below-ground columns: frames with the eye under the ground, how deep, and where Low three-quarter
+        /// sits on a lying body at rest (looking-up angle, distance for the reference body).</summary>
+        public long BelowGround, BelowGroundAtRest, LyingFrames;
+        public readonly List<float> Depth = new(), LyingUp = new(), LyingDistance = new();
 
         public void Merge(Acc o)
         {
+            BelowGround += o.BelowGround; BelowGroundAtRest += o.BelowGroundAtRest; LyingFrames += o.LyingFrames;
+            Depth.AddRange(o.Depth); LyingUp.AddRange(o.LyingUp); LyingDistance.AddRange(o.LyingDistance);
             ChainIn += o.ChainIn; RestFrames += o.RestFrames; OwnInRest += o.OwnInRest; FaceHeld += o.FaceHeld; FaceHeldVisible += o.FaceHeldVisible; Frames += o.Frames; OwnIn += o.OwnIn; OwnSafe += o.OwnSafe; HipsChestIn += o.HipsChestIn; HeadIn += o.HeadIn; WholeIn += o.WholeIn;
             FaceClaimed += o.FaceClaimed; FaceVisible += o.FaceVisible; Below5 += o.Below5; TriFrames += o.TriFrames; TriBlocked += o.TriBlocked;
             PulledIn += o.PulledIn; CutFrames += o.CutFrames;
@@ -67,6 +75,17 @@ internal static class MetricRun
                 Name = p switch { DeathShotProfile.LowThreeQuarter => "Low3/4", DeathShotProfile.AlongBody => "Along", DeathShotProfile.GroundProfile => "Ground", _ => p.ToString() },
                 IsNew = true, Subject = p == DeathShotProfile.Auto ? null : ShotRecipe.Of(p).Subject,
                 Run = (t, w, s) => { var c = Runners.New(t, w, s, p, out var scale); return (c, scale); },
+            });
+        }
+        // The option "Allow below ground", on the shots it changes and on Auto.
+        foreach (var profile in new[] { DeathShotProfile.LowThreeQuarter, DeathShotProfile.Face, DeathShotProfile.Auto })
+        {
+            var p = profile;
+            columns.Add(new Column
+            {
+                Name = (p == DeathShotProfile.LowThreeQuarter ? "Low3/4" : p.ToString()) + " below",
+                IsNew = true, Below = true, Subject = p == DeathShotProfile.Auto ? null : ShotRecipe.Of(p).Subject,
+                Run = (t, w, s) => { var c = Runners.New(t, w, s, p, out var scale, belowGround: true); return (c, scale); },
             });
         }
         columns.Add(new Column
@@ -106,6 +125,36 @@ internal static class MetricRun
         PrintTable(columns);
         Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"ragdoll start without the bones on the switch frame (the solver carries each point on at its speed): jump max {(hidden.JumpFast.Count > 0 ? hidden.JumpFast.Max() * 100f : 0f):F2} cm at 20 fps or better ({hidden.JumpFast.Count} runs), {(hidden.JumpSlow.Count > 0 ? hidden.JumpSlow.Max() * 100f : 0f):F2} cm in the recordings at 10 fps ({hidden.JumpSlow.Count} runs)"));
         return Gates(columns);
+    }
+
+    /// <summary>One hash per profile over every output pose (eye, look-at, FoV, bit for bit) of every trajectory from
+    /// the eight start azimuths, with the default options: to show a change leaves the default output untouched.</summary>
+    public static void Hash(List<Trajectory> all)
+    {
+        var usable = all.Where(t => t.Humanoid && t.Frames.Length >= 2).ToList();
+        foreach (var profile in new[] { DeathShotProfile.LowThreeQuarter, DeathShotProfile.Face, DeathShotProfile.AlongBody, DeathShotProfile.Overhead, DeathShotProfile.GroundProfile, DeathShotProfile.Auto })
+        {
+            var hashes = new ulong[usable.Count];
+            long frames = 0;
+            Parallel.For(0, usable.Count, i =>
+            {
+                var t = usable[i];
+                var world = new RecordedWorld(t);
+                var h = 14695981039346656037UL;
+                void Mix(float v) { h = (h ^ BitConverter.SingleToUInt32Bits(v)) * 1099511628211UL; }
+                for (var k = 0; k < 8; k++)
+                    foreach (var c in Runners.New(t, world, StartCamera.For(t, k), profile, out _))
+                    {
+                        Mix(c.Eye.X); Mix(c.Eye.Y); Mix(c.Eye.Z); Mix(c.LookAt.X); Mix(c.LookAt.Y); Mix(c.LookAt.Z); Mix(c.Fov);
+                        Mix(c.Cut ? 1f : 0f); Mix(c.SideChanges); Mix(c.Fallbacks); Mix(c.Pops);
+                    }
+                hashes[i] = h;
+                Interlocked.Add(ref frames, t.Frames.Length * 8L);
+            });
+            var total = 14695981039346656037UL;
+            foreach (var h in hashes) total = (total ^ h) * 1099511628211UL;
+            Console.WriteLine($"{profile,-16} {frames,8} poses  {total:X16}");
+        }
     }
 
     // ------------------------------------------------------------------ one run
@@ -206,6 +255,25 @@ internal static class MetricRun
             var clearance = cam.Eye.Y - under;
             a.MinClearance = MathF.Min(a.MinClearance, clearance);
             if (clearance < 0.05f) a.Below5++;
+            if (clearance < 0f)
+            {
+                a.BelowGround++;
+                if (bodySettled) a.BelowGroundAtRest++;
+                a.Depth.Add(-clearance);
+            }
+            // Low three-quarter on a lying body at rest: where the shot aims (the old presets looked up 19-26 deg from
+            // 1.0-1.35 m; with the eye kept above the ground that cannot be had on a body on the ground).
+            if (bodySettled && cam.HasDiagnostics && cam.Shot == DeathShotProfile.LowThreeQuarter && PoseClassifier.IsLying(cam.Pose) && !cam.PulledIn)
+            {
+                var aim = cam.GoalEye - cam.GoalLookAt;
+                var reach = aim.Length();
+                if (reach > 1e-3f)
+                {
+                    a.LyingFrames++;
+                    a.LyingUp.Add(-MathF.Asin(Math.Clamp(aim.Y / reach, -1f, 1f)) / Deg);
+                    a.LyingDistance.Add(reach / scale);
+                }
+            }
             if (world.HasTriangles)
             {
                 a.TriFrames++;
@@ -358,6 +426,10 @@ internal static class MetricRun
             ("face visible % (Face frames, body at rest)", a => a.FaceHeld == 0 ? "-" : Pct(a.FaceHeldVisible, a.FaceHeld)),
             ("min eye clearance m", a => a.MinClearance.ToString("F3", inv)),
             ("frames below 5 cm clearance", a => a.Below5.ToString(inv)),
+            ("eye below ground % of frames (body at rest)", a => $"{Pct(a.BelowGround, a.Frames)} ({Pct(a.BelowGroundAtRest, a.RestFrames)})"),
+            ("eye depth below ground median / max m", a => a.Depth.Count == 0 ? "-" : $"{Stats.P(a.Depth, .5f):F2}/{a.Depth.Max():F2}"),
+            ("Low 3/4, lying at rest: looking up deg p5..p95", a => a.LyingUp.Count == 0 ? "-" : $"{Stats.P(a.LyingUp, .05f):F1}..{Stats.P(a.LyingUp, .95f):F1}"),
+            ("  distance m (reference body) p5..p95", a => a.LyingDistance.Count == 0 ? "-" : $"{Stats.P(a.LyingDistance, .05f):F2}..{Stats.P(a.LyingDistance, .95f):F2}"),
             ("view blocked by ground tris % (player)", a => Pct(a.TriBlocked, a.TriFrames)),
             ("subject size p5 / p95 (frame fraction)", a => $"{Stats.P(a.Size, .05f):F2}/{Stats.P(a.Size, .95f):F2}"),
             ("eye speed p99 / max m/s", a => $"{Stats.P(a.EyeSpeed, .99f):F2}/{a.EyeSpeed.Max():F2}"),
@@ -422,6 +494,17 @@ internal static class MetricRun
         {
             var a = c.A;
             Console.WriteLine($" {c.Name}");
+            if (c.Below)
+            {
+                // Under the ground on purpose: no clearance gate. How deep, how often, and what it buys.
+                Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  info  below ground allowed: eye under the ground on {Pct(a.BelowGround, a.Frames)}% of frames ({Pct(a.BelowGroundAtRest, a.RestFrames)}% with the body at rest), " +
+                    $"depth median {(a.Depth.Count > 0 ? Stats.P(a.Depth, .5f) : 0f):F2} m, max {(a.Depth.Count > 0 ? a.Depth.Max() : 0f):F2} m; eye found inside terrain {a.Pops} time(s); deaths with a fallback {Pct(a.RunsWithFallback, a.Runs)}%"));
+                if (c.Name.StartsWith("Low3/4", StringComparison.Ordinal))
+                    Gate("old presets on a lying body at rest: looking up 19-26 deg from 1.0-1.35 m (reference body)",
+                        a.LyingUp.Count > 0 && a.LyingUp.Min() >= 19f && a.LyingUp.Max() <= 26f && a.LyingDistance.Min() >= 1.0f && a.LyingDistance.Max() <= 1.35f,
+                        a.LyingUp.Count == 0 ? "no lying frames" : $"up {a.LyingUp.Min():F1}..{a.LyingUp.Max():F1} deg, distance {a.LyingDistance.Min():F2}..{a.LyingDistance.Max():F2} m over {a.LyingFrames} frames");
+            }
+            else
             Gate("frames below 5 cm clearance = 0", a.Below5 == 0, $"{a.Below5} (min clearance {a.MinClearance:F3} m)");
             Gate("view angular speed <= 60 deg/s outside cuts", a.ViewSpeed.Max() <= 60.5f, $"max {a.ViewSpeed.Max():F1}");
             Gate("side changes <= 1 per death (a settled body that is moved and comes to rest turned may get one more each time)", a.SideChangesUnmoved.Max() <= 1f,
@@ -442,6 +525,7 @@ internal static class MetricRun
             else
                 Gate("framing not worse than both baselines", Own(a) >= Own(directed) - 0.5 && Own(a) >= Own(old) - 0.5,
                     $"own subject in frame {Own(a):F1}% vs Directed (its head-to-feet chain) {Own(directed):F1}%, Old (hips+chest) {Own(old):F1}%");
+            if (!c.Below)
             Gate("clearance not worse than both baselines", a.Below5 <= directed.Below5 && a.Below5 <= old.Below5 && a.MinClearance >= MathF.Min(0.05f, MathF.Min(directed.MinClearance, old.MinClearance)),
                 $"below 5 cm: {a.Below5} vs Directed {directed.Below5}, Old {old.Below5}; min {a.MinClearance:F3} vs {directed.MinClearance:F3}, {old.MinClearance:F3} m");
             var jerk = Stats.P(a.Jerk, .99f);
@@ -456,7 +540,7 @@ internal static class MetricRun
                     a.OldRawPlayer.Count > 0 && a.OldRawPlayer.Min() >= 1.0f && a.OldRawPlayer.Max() <= 1.35f,
                     a.OldOff.Count == 0 ? "no standing start" : $"off {a.OldOff.Min():F1}..{a.OldOff.Max():F1}, up {a.OldUp.Min():F1}..{a.OldUp.Max():F1}, distance {a.OldDistance.Min():F2}..{a.OldDistance.Max():F2} m for the reference body, " +
                                                                   $"{a.OldRawPlayer.Min():F2}..{a.OldRawPlayer.Max():F2} m on the player's own body; {a.OldLimited} of {a.OldStarts} standing starts give way to the ground and are not counted");
-            if (c.Name is "Face")
+            if (c.Name is "Face" or "Face below")
                 Gate("face visible on Face frames once the body rests >= 90 %", a.FaceHeld > 0 && 100.0 * a.FaceHeldVisible / a.FaceHeld >= 90.0,
                     Pct(a.FaceHeldVisible, a.FaceHeld) + "% at rest (" + Pct(a.FaceVisible, a.FaceClaimed) + "% over all Face frames: the side is not re-chosen while the body falls)");
         }

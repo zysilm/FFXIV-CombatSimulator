@@ -107,6 +107,15 @@ public partial class MainWindow
                        "Overhead: the whole body from above.\n" +
                        "Ground profile: the whole body from the side, at ground level, looking up.\n" +
                        "Changing it while you are down switches the shot at once.");
+
+            var below = config.DeathShotBelowGround;
+            if (ImGui.Checkbox("Allow below ground##dyncam", ref below))
+            {
+                config.DeathShotBelowGround = below;
+                config.Save();
+            }
+            HelpMarker("Low three-quarter and Face may put the camera under the ground, looking up at a body lying on it " +
+                       "(the ground is not drawn from below). Off: the camera stays above the ground.");
         }
 
         if (ImGui.Button("Reset to Defaults##dyncam"))

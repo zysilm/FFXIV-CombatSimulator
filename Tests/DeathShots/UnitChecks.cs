@@ -77,6 +77,7 @@ internal static class UnitChecks
         SettleAndSprings();
         SolverStatic();
         PlayerHand();
+        BelowGround();
         Console.WriteLine(failures == 0 ? "unit checks: all ok" : $"unit checks: {failures} FAILED");
         return failures;
     }
@@ -417,6 +418,87 @@ internal static class UnitChecks
         // No start camera: the first frame is the shot itself.
         var cold = RunStatic(world, standing, DeathShotProfile.LowThreeQuarter, 1f / 60f, 0f, begin: false);
         Check("without a start camera the first frame is the solved shot", Vector3.Distance(cold.Out.Eye, cold.Out.GoalEye) < 1e-4f);
+    }
+
+    /// <summary>Flat ground at y = 0 that stops rays the way the game's does (a ray that goes under it is stopped where
+    /// it crosses), and optionally a wall: the plane x = WallX, from the ground up.</summary>
+    private sealed class SolidGroundWorld : IDeathShotWorld
+    {
+        public float WallX = float.PositiveInfinity;
+        public float? GroundBelow(Vector3 from) => 0f;
+        public float? WaterBelow(Vector3 from) => null;
+        public bool Blocked(Vector3 from, Vector3 to, out float distance) => Blocked(from, to, out distance, out _);
+        public bool Blocked(Vector3 from, Vector3 to, out float distance, out Vector3 normal)
+        {
+            distance = float.MaxValue;
+            normal = default;
+            var length = Vector3.Distance(from, to);
+            if (from.Y > 0f && to.Y < 0f)
+            {
+                distance = length * from.Y / (from.Y - to.Y);
+                normal = Vector3.UnitY;
+            }
+            if (from.X < WallX != to.X < WallX)
+            {
+                var t = MathF.Abs((WallX - from.X) / (to.X - from.X));
+                if ((from + (to - from) * t).Y >= 0f && length * t < distance)
+                {
+                    distance = length * t;
+                    normal = new Vector3(from.X < WallX ? -1f : 1f, 0f, 0f);
+                }
+            }
+            if (distance == float.MaxValue) { distance = 0f; return false; }
+            return true;
+        }
+    }
+
+    /// <summary>The option "Allow below ground".</summary>
+    private static void BelowGround()
+    {
+        var body = Lying(90f * Deg);
+        var extra = All(body);
+        DeathShotOutput Run(IDeathShotWorld world, DeathShotProfile profile, bool below, out float minEye)
+        {
+            var solver = new DeathShotSolver(world);
+            solver.Begin(body.Chest + DeathShotMath.OrbitDirection(0f, 15f * Deg) * 5f, body.Chest, 0.78f);
+            DeathShotOutput o = default;
+            minEye = float.MaxValue;
+            for (var i = 0; i < 60 * 12; i++)
+            {
+                o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = body, Extra = extra, Profile = profile, Aspect = 16f / 9f, UserSize = 1f, AllowBelowGround = below });
+                minEye = MathF.Min(minEye, o.Eye.Y);
+            }
+            return o;
+        }
+
+        // Low three-quarter on a body on the ground: the old shots' placement, under the ground, and the ground it
+        // goes under is not "in the way" (no fallback, nothing pulled in).
+        var open = new SolidGroundWorld();
+        var low = Run(open, DeathShotProfile.LowThreeQuarter, true, out _);
+        var away = low.BaseEye - low.BaseLookAt;
+        var up = -MathF.Asin(away.Y / away.Length()) / Deg;
+        Check("below ground allowed: Low three-quarter on a lying body looks up 22 deg from 1.25 m, eye under the ground, no fallback",
+            MathF.Abs(up - 22f) < 0.5f && MathF.Abs(away.Length() - 1.25f) < 0.03f && low.BaseEye.Y < -0.1f && low.Fallbacks == 0 && !low.PulledIn && low.Shot == DeathShotProfile.LowThreeQuarter,
+            $"up {up:F1} deg, {away.Length():F2} m, eye y {low.BaseEye.Y:F2}, fallbacks {low.Fallbacks}");
+
+        // The same body with the option off, and the profiles the option does not touch with it on: above the ground.
+        Run(open, DeathShotProfile.LowThreeQuarter, false, out var offMin);
+        Run(open, DeathShotProfile.AlongBody, true, out var alongMin);
+        Run(open, DeathShotProfile.GroundProfile, true, out var groundMin);
+        Run(open, DeathShotProfile.Overhead, true, out var overMin);
+        Check("option off, and Along / Ground profile / Overhead with it on: the eye never under 10 cm",
+            offMin >= 0.0999f && alongMin >= 0.0999f && groundMin >= 0.0999f && overMin >= 0.0999f, $"min eye y {offMin:F3}, {alongMin:F3}, {groundMin:F3}, {overMin:F3}");
+
+        // A wall still blocks a below-ground shot: put where the view of the open shot crosses it above the ground
+        // (close to the body: further out the view is already under the ground, and under the wall), that side is
+        // given up and the view from where the eye ends does not cross the wall above the ground.
+        var wallX = low.Eye.X * 0.2f;
+        var beside = Run(new SolidGroundWorld { WallX = wallX }, DeathShotProfile.LowThreeQuarter, true, out _);
+        var walled = new SolidGroundWorld { WallX = wallX };
+        var crosses = walled.Blocked(beside.GoalLookAt, beside.GoalEye, out _, out var stoppedBy) && MathF.Abs(stoppedBy.X) > 0.5f;
+        Check("below ground allowed: a wall between still blocks (another side is taken, counted as a fallback)",
+            MathF.Abs(low.Eye.X) > 0.3f && beside.Fallbacks >= 1 && !crosses && Vector3.Distance(beside.Eye, low.Eye) > 0.2f,
+            $"eye {beside.Eye.X:F2}, {beside.Eye.Y:F2}, {beside.Eye.Z:F2} with the wall at x {wallX:F2} (without it {low.Eye.X:F2}, {low.Eye.Y:F2}, {low.Eye.Z:F2}), fallbacks {beside.Fallbacks}");
     }
 
     /// <summary>Flat ground between two walls at x = ±0.7.</summary>

@@ -20,6 +20,15 @@ public interface IDeathShotWorld
 
     /// <summary>Whether walls or terrain block the segment, and how far along it.</summary>
     bool Blocked(Vector3 from, Vector3 to, out float distance);
+
+    /// <summary><see cref="Blocked(Vector3, Vector3, out float)"/> with the normal of the surface that stops the
+    /// segment, for a world that knows it (zero: not known). Only the below-ground shots ask: they tell the ground
+    /// the eye goes under from a wall by it.</summary>
+    bool Blocked(Vector3 from, Vector3 to, out float distance, out Vector3 normal)
+    {
+        normal = default;
+        return Blocked(from, to, out distance);
+    }
 }
 
 /// <summary>Angles and critically damped springs for the death shots. Pure.</summary>

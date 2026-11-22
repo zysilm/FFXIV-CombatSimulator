@@ -127,6 +127,7 @@
 - 私有模块的入口（[DEATH_SHOTS.md](DEATH_SHOTS.md) §10）：`ProfileFramingOverride` 强制开启；`TemporaryDeathInputs` 非 null = 场景指挥（`Angle` → 档案，`BodyVisibility` → 景别倍数，含义与旧“身体覆盖”不同；场景写的 `DirH` 跳变按绝对方位）；`TemporaryDeathActor` 不参与构图——主体永远是玩家的尸体（2026-11-22 裁决）；新增可选的 `TemporaryDeathInputLock`，没设时有场景指挥的镜头不响应滚轮。
 - Enemy Control 的 WASD / 左摇杆方向按**实际渲染的视线**的水平分量（`GameCameraView.Forward`），不按游戏相机的 `DirH`：死亡镜头或过场镜头接管画面时 `DirH` 与画面无关，按它算 W 会朝镜头走；水平分量退化（正俯 / 正仰）时才退回 `DirH`（2026-11-22）。
 - 自动死亡镜头期间游戏自己的缩放距离和俯仰都保持在开始时的值；复活的 0.3 s 过渡里 FoV 跟着位姿一起插值；过场死亡镜头交还的同一帧自动镜头就接手 FoV（`CutsceneShotDirector.HandingBack`）（2026-11-22）。
+- “Allow below ground”（2026-11-22，用户裁决：到地面以下做成选项，默认关）：Camera 页签 → Directed Camera → **Allow below ground**，设置 `DeathShotBelowGround`。开启后 Low three-quarter（和位置略低时的 Face）在躺地的尸体上保持配方的仰拍位置，眼位在地下（离线：仰 22°、1.25 m、深度中位 0.42 m，对应旧镜头的 19–26°、1.0–1.35 m、0.27–0.48 m）；地面不算遮挡，墙照算（按挡面的法线和高度区分）；其余档案和选项关着时的输出不变（逐位相同）→ [DEATH_SHOTS.md](DEATH_SHOTS.md) §9.6。
 - 旧 Death Cam 仅存的三个镜头有 76–81% 的帧眼位离地不足 5 cm、多数在地面以下（当时关着相机碰撞，尸体躺地后等于从地下仰拍）；新镜头不进地面，同样的侧向在躺地后是贴地平拍（离线复现，`Tests/DeathShots`）。
 
 ### 特效 / 语音
@@ -309,6 +310,7 @@
 - [ ] 用 Glamourer 换种族和装备后，分离部件与护甲克隆是当前外观（含 Penumbra 模组）；日志无 `skeleton did not match` / `never resolved`。
 - [ ] 液体效果：Reset 后日志不再连续出现 “World fluid layer”；离倒地点 10–20 m 转镜头不掉帧；再次出现时不卡。
 - [ ] 自动死亡镜头（P2 已接入，未在游戏里看过）→ [DEATH_SHOTS.md](DEATH_SHOTS.md) §11：Camera 页签 → Camera mode = Directed，折叠栏 Directed Camera → Directs 含 Death、Death shot 选档案。看：日志 `DeathShot: camera check over 60 frames`（眼位 / 注视点差毫米级、镜头差 < 1°，否则 FoV 字段比例不对）；进入时绕到正面的 3–4 s；`ragdoll at … s` 那一帧画面不跳；身体静止那一刻的换边（约 60% 的死亡有一次硬切）是否突兀；Low three-quarter 在尸体躺地后的贴地平拍是否可接受（旧镜头是从地下仰拍）；左右拖动绕身体转（比手慢：45°/s 上限 + 0.6 s 缓动）、滚轮改景别、上下无效；死亡中换档案立即切换；真实的墙 / 天花板 / 坡 / 水面下的回退（日志 `fallback`、`view blocked`、`the eye was inside terrain`）；过场死亡镜头结束后 `DeathShot: resumes`、画面不跳；复活 0.3 s 回游戏相机；拉拉菲尔 / 鲁加等体型的景别；5 s 汇总里的 `rays/frame`。
+- [ ] Allow below ground（Camera 页签 → Directed Camera → Death shot 下面的勾选，默认关）：勾上后 Low three-quarter / Face / Auto 在尸体躺地后镜头到地面以下仰拍，地面从下面看不见（日志 5 s 汇总里 `eye … m BELOW ground`）；游戏没有把相机推回地面以上（`camera check` 眼位差仍是毫米级）；水边、室内（地面下有别的楼层 / 双面地形）时的画面；墙边仍然换边而不是穿墙；关掉后与之前一样不进地面。
 - [ ] 旧死亡构图删除后：旧配置载入无异常；Camera 页签 → Directed Camera 里没有 Body coverage 和 Show toolbar，“Dynamic Cam” 浮动工具条不再出现；战斗时的 Directed 构图（越肩、敌人入画、缩放 / 俯仰记忆、复活后回到战斗构图）照常。
 
 ## 5. 搁置与未完成
