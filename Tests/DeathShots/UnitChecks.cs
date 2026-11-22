@@ -80,6 +80,7 @@ internal static class UnitChecks
         BelowGround();
         SoftChanges();
         Grabbed();
+        SidePreferences();
         Console.WriteLine(failures == 0 ? "unit checks: all ok" : $"unit checks: {failures} FAILED");
         return failures;
     }
@@ -613,6 +614,104 @@ internal static class UnitChecks
                 releasedEvent.Contains("LowThreeQuarter") && trace.Last.Shot == DeathShotProfile.LowThreeQuarter && !trace.Last.Grabbed && trace.Last.Holding,
                 $"{releasedEvent}; all changes: {string.Join("; ", trace.Events)}");
         }
+    }
+
+    /// <summary>The option "Side preference", on bodies whose face is given (the recordings supply the real one).</summary>
+    private static void SidePreferences()
+    {
+        var world = new FlatWorld();
+        var supine = Lying(0f);
+        var frame = BodyFrame.From(supine, 0f);
+        // Left shoulder -> right shoulder, horizontal on a body on its back: the body's right.
+        var right = Vector3.Normalize(new Vector3(frame.Lateral.X, 0f, frame.Lateral.Z));
+        var up = Vector3.UnitY;
+
+        // Which side of the body the eye ends on (+1 = its right), the note of the last choice, the eye.
+        (int Side, string Note, Vector3 Eye) Ends(IDeathShotWorld w, BodyPoints body, DeathShotSide side, Vector3 face, float startAzimuth, DeathShotProfile profile = DeathShotProfile.LowThreeQuarter)
+        {
+            var solver = new DeathShotSolver(w);
+            solver.Begin(body.Chest + DeathShotMath.OrbitDirection(startAzimuth, 15f * Deg) * 5f, body.Chest, 0.78f);
+            DeathShotOutput o = default;
+            for (var i = 0; i < 60 * 8; i++)
+                o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = body, Extra = All(body), Profile = profile, Aspect = 16f / 9f, UserSize = 1f, SidePreference = side, Face = face });
+            var away = o.BaseEye - o.BaseLookAt;
+            return (Vector3.Dot(away, right) > 0f ? 1 : -1, o.SideNote, o.BaseEye);
+        }
+        bool All8(DeathShotSide side, Vector3 face, int expected, BodyPoints? body = null) =>
+            Enumerable.Range(0, 8).All(k => Ends(world, body ?? supine, side, face, k * 45f * Deg).Side == expected);
+
+        var faceRight = Vector3.Normalize(up * 0.8f + right * 0.6f);
+        var faceLeft = Vector3.Normalize(up * 0.8f - right * 0.6f);
+        var nearestSides = Enumerable.Range(0, 8).Select(k => Ends(world, supine, DeathShotSide.Nearest, faceRight, k * 45f * Deg).Side).ToList();
+        Check("Nearest: the side depends on where the camera starts (both sides are used over 8 start azimuths)", nearestSides.Contains(1) && nearestSides.Contains(-1));
+        Check("Face side, on the back with the head turned: the eye is on the side the face points to, from every start azimuth",
+            All8(DeathShotSide.FaceSide, faceRight, 1) && All8(DeathShotSide.FaceSide, faceLeft, -1), Ends(world, supine, DeathShotSide.FaceSide, faceRight, 0f).Note);
+        Check("Behind the head: the other side", All8(DeathShotSide.BehindHead, faceRight, -1) && All8(DeathShotSide.BehindHead, faceLeft, 1), Ends(world, supine, DeathShotSide.BehindHead, faceRight, 0f).Note);
+        Check("Body's left / Body's right: fixed to the body, whatever the face and the start",
+            All8(DeathShotSide.BodyRight, faceLeft, 1) && All8(DeathShotSide.BodyLeft, faceRight, -1), Ends(world, supine, DeathShotSide.BodyLeft, faceRight, 0f).Note);
+
+        // The face to the sky: nothing sideways to go by, so the nearest side, exactly as with Nearest.
+        var same = true;
+        for (var k = 0; k < 8; k++)
+            same &= Vector3.Distance(Ends(world, supine, DeathShotSide.FaceSide, up, k * 45f * Deg).Eye, Ends(world, supine, DeathShotSide.Nearest, up, k * 45f * Deg).Eye) < 1e-5f;
+        var skyNote = Ends(world, supine, DeathShotSide.FaceSide, up, 0f).Note;
+        Check("Face side, the face straight up: the same shot as Nearest", same && skyNote.Contains("points up, nearest"), skyNote);
+
+        // Face down with the head turned a little: the way it is turned names the side.
+        var prone = Lying(MathF.PI);
+        var proneRight = Vector3.Normalize(new Vector3(BodyFrame.From(prone, 0f).Lateral.X, 0f, BodyFrame.From(prone, 0f).Lateral.Z));
+        var turned = Vector3.Normalize(-up + proneRight * 0.25f);
+        var proneEnds = Enumerable.Range(0, 8).Select(k => Ends(world, prone, DeathShotSide.FaceSide, turned, k * 45f * Deg)).ToList();
+        Check("Face side, face down with the head turned 14 deg: the eye is on the side the head is turned to (the visible profile)",
+            proneEnds.All(e => Vector3.Dot(e.Eye - prone.Chest, proneRight) > 0f), proneEnds[0].Note);
+        var buried = Ends(world, prone, DeathShotSide.FaceSide, -up, 0f).Note;
+        Check("Face side, the face straight into the ground: nearest", buried.Contains("points down, nearest"), buried);
+
+        // The preferred side walled off: the other side, and the note says so.
+        var bodyLeftX = -right.X; // the body's left lies toward this x
+        var walled = new FlatWorld { WallX = 0.5f * MathF.Sign(bodyLeftX) };
+        var blocked = Ends(walled, supine, DeathShotSide.BodyLeft, faceRight, 0f);
+        var blockedWhere = Ends(walled, supine, DeathShotSide.Nearest, faceRight, 0f);
+        Check("the preferred side is walled off: the other side is taken and the note says the preference was not met",
+            MathF.Sign(bodyLeftX) > 0f && blocked.Side == 1 && blocked.Note.Contains("not met"), $"{blocked.Note}; eye x {blocked.Eye.X:F2} (Nearest: {blockedWhere.Eye.X:F2})");
+
+        // Low on the face has its sides from the face already: the preference changes nothing there but ties.
+        var faceShot = Ends(world, supine, DeathShotSide.FaceSide, faceRight, 0f, DeathShotProfile.LowFace);
+        Check("Low on the face with Face side: still a shot of the face (the preference only orders its sides)", faceShot.Note.StartsWith("face side", StringComparison.Ordinal), faceShot.Note);
+
+        // Hold: a body at rest with the head turned right is moved and comes to rest with the face nearly at the sky,
+        // a little the other way: the side stays. With the head clearly turned the other way: it changes, eased.
+        Trace Moved(Vector3 after)
+        {
+            BodyPoints At(float t)
+            {
+                var k = DeathShotMath.SmoothStep((t - 6f) / 1f);
+                return Map(supine, v => v + new Vector3(0f, 0f, 0.6f * k));
+            }
+            return Follow(world, At, (t, input) => input with { SidePreference = DeathShotSide.FaceSide, Face = t < 6f ? faceRight : after }, 16f);
+        }
+        var wavering = Moved(Vector3.Normalize(up - right * 0.2f));
+        var turnedOver = Moved(faceLeft);
+        Check("hold: the face nearly at the sky and 11 deg the other way does not send the camera across; the head clearly turned does (eased, no cut frame)",
+            wavering.Events.Count == 0 && turnedOver.Events.Count == 1 && turnedOver.CutFrames == 0 && turnedOver.MaxViewRate <= 60.5f,
+            $"wavering: {wavering.Events.Count} changes ({wavering.Last.SideNote}); turned: {string.Join("; ", turnedOver.Events)} ({turnedOver.Last.SideNote})");
+
+        // A held body: the three-quarter on the side the face is turned to.
+        var hanging = Map(Standing, v => v + new Vector3(0f, 0.45f, 0f));
+        var standingRight = Vector3.Normalize(new Vector3(BodyFrame.From(hanging, 0f).Lateral.X, 0f, 0f));
+        var lookingRight = Vector3.Normalize(BodyFrame.From(hanging, 0f).FrontHorizontal + standingRight * 0.7f);
+        var heldSides = new List<float>();
+        for (var k = 0; k < 8; k++)
+        {
+            var solver = new DeathShotSolver(world);
+            solver.Begin(hanging.Chest + DeathShotMath.OrbitDirection(k * 45f * Deg, 15f * Deg) * 5f, hanging.Chest, 0.78f);
+            DeathShotOutput o = default;
+            for (var i = 0; i < 60 * 8; i++)
+                o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = hanging, Extra = All(hanging), Profile = DeathShotProfile.LowThreeQuarter, Aspect = 16f / 9f, UserSize = 1f,
+                    Grabbed = i > 30, SidePreference = DeathShotSide.FaceSide, Face = lookingRight });
+            heldSides.Add(Vector3.Dot(o.BaseEye - o.BaseLookAt, standingRight));
+        }
+        Check("grabbed with Face side: the three-quarter on the side the head is turned to, from every start azimuth", heldSides.All(s => s > 0.2f), $"{heldSides.Min():F2}..{heldSides.Max():F2} m toward that side");
     }
 
     /// <summary>Where each shot sits on a body lying on its back with the head to the right of someone looking down

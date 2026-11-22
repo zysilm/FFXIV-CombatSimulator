@@ -23,6 +23,8 @@ internal static class MetricRun
         public bool IsNew, Hidden;
         /// <summary>Run with "Allow below ground" on: the clearance gates do not apply, the depth is reported instead.</summary>
         public bool Below;
+        /// <summary>The side preference the column runs with.</summary>
+        public DeathShotSide Side;
         /// <summary>The column's own subject is the head-to-feet chain (the Directed camera's anchors: no arms).</summary>
         public bool OwnIsChain;
         public ShotSubject? Subject; // null: per frame (Auto)
@@ -43,11 +45,16 @@ internal static class MetricRun
         /// <summary>Below-ground columns: frames with the eye under the ground, how deep, and where Low three-quarter
         /// sits on a lying body at rest (looking-up angle, distance for the reference body).</summary>
         public long BelowGround, BelowGroundAtRest, LyingFrames, UpperIn;
+        /// <summary>Frames with the body at rest and a face that points somewhere sideways; of those, the ones with the
+        /// camera on the face's side. And, for a column with a side preference: frames at rest where the preference
+        /// names a side, and the ones with the camera on it; deaths whose last choice of side could not meet it.</summary>
+        public long FaceFrames, FaceOnSide, PreferFrames, PreferOnSide, NotMet;
         public readonly List<float> Depth = new(), LyingUp = new(), LyingDistance = new();
 
         public void Merge(Acc o)
         {
             BelowGround += o.BelowGround; BelowGroundAtRest += o.BelowGroundAtRest; LyingFrames += o.LyingFrames;
+            FaceFrames += o.FaceFrames; FaceOnSide += o.FaceOnSide; PreferFrames += o.PreferFrames; PreferOnSide += o.PreferOnSide; NotMet += o.NotMet;
             Depth.AddRange(o.Depth); LyingUp.AddRange(o.LyingUp); LyingDistance.AddRange(o.LyingDistance);
             ChainIn += o.ChainIn; RestFrames += o.RestFrames; OwnInRest += o.OwnInRest; FaceHeld += o.FaceHeld; FaceHeldVisible += o.FaceHeldVisible; Frames += o.Frames; OwnIn += o.OwnIn; OwnSafe += o.OwnSafe; HipsChestIn += o.HipsChestIn; HeadIn += o.HeadIn; WholeIn += o.WholeIn;
             FaceClaimed += o.FaceClaimed; FaceVisible += o.FaceVisible; Below5 += o.Below5; TriFrames += o.TriFrames; TriBlocked += o.TriBlocked;
@@ -92,6 +99,21 @@ internal static class MetricRun
                 Name = Short(p) + " bg",
                 IsNew = true, Below = true, Subject = p == DeathShotProfile.Auto ? null : ShotRecipe.Of(p).Subject,
                 Run = (t, w, s) => { var c = Runners.New(t, w, s, p, out var scale, belowGround: true); return (c, scale); },
+            });
+        }
+        // The option "Side preference", on Low three-quarter and on Auto.
+        foreach (var (profile, side, tag) in new[]
+                 {
+                     (DeathShotProfile.LowThreeQuarter, DeathShotSide.FaceSide, "L3/4 face"), (DeathShotProfile.LowThreeQuarter, DeathShotSide.BehindHead, "L3/4 behind"),
+                     (DeathShotProfile.Auto, DeathShotSide.FaceSide, "Auto face"), (DeathShotProfile.Auto, DeathShotSide.BehindHead, "Auto behind"),
+                     (DeathShotProfile.Auto, DeathShotSide.BodyLeft, "Auto left"), (DeathShotProfile.Auto, DeathShotSide.BodyRight, "Auto right"),
+                 })
+        {
+            var (p, s2) = (profile, side);
+            columns.Add(new Column
+            {
+                Name = tag, IsNew = true, Side = s2, Subject = p == DeathShotProfile.Auto ? null : ShotRecipe.Of(p).Subject,
+                Run = (t, w, s) => { var c = Runners.New(t, w, s, p, out var scale, side: s2); return (c, scale); },
             });
         }
         columns.Add(new Column
@@ -143,27 +165,31 @@ internal static class MetricRun
     public static int Hash(List<Trajectory> all, string? save, string? against)
     {
         var usable = all.Where(t => t.Humanoid && t.Frames.Length >= 2).ToList();
-        var lines = new string[usable.Count * 8];
+        var profiles = DeathShotProfiles.Choices;
+        var lines = new string[usable.Count * 8 * profiles.Length];
         Parallel.For(0, usable.Count, i =>
         {
             var t = usable[i];
             var world = new RecordedWorld(t);
+            for (var pi = 0; pi < profiles.Length; pi++)
             for (var k = 0; k < 8; k++)
             {
                 var h = 14695981039346656037UL;
                 void Mix(float v) { h = (h ^ BitConverter.SingleToUInt32Bits(v)) * 1099511628211UL; }
-                var cams = Runners.New(t, world, StartCamera.For(t, k), DeathShotProfile.LowThreeQuarter, out _);
+                var cams = Runners.New(t, world, StartCamera.For(t, k), profiles[pi], out _);
                 foreach (var c in cams)
                 {
                     Mix(c.Eye.X); Mix(c.Eye.Y); Mix(c.Eye.Z); Mix(c.LookAt.X); Mix(c.LookAt.Y); Mix(c.LookAt.Z); Mix(c.Fov);
                 }
-                lines[i * 8 + k] = $"{t.Name}|{k}|{h:X16}|{cams[^1].SideChanges}|{cams.Length}";
+                // Low three-quarter keeps the key it had when it was the only profile hashed (older saved lists).
+                var key = profiles[pi] == DeathShotProfile.LowThreeQuarter ? t.Name : t.Name + "/" + profiles[pi];
+                lines[(i * profiles.Length + pi) * 8 + k] = $"{key}|{k}|{h:X16}|{cams[^1].SideChanges}|{cams.Length}";
             }
         });
         if (save != null)
         {
             File.WriteAllLines(save, lines);
-            Console.WriteLine($"{lines.Length} Low three-quarter runs saved to {save}");
+            Console.WriteLine($"{lines.Length} runs (every profile and Auto) saved to {save}");
             return 0;
         }
         if (against == null)
@@ -172,12 +198,14 @@ internal static class MetricRun
             return 0;
         }
         var old = File.ReadAllLines(against).Select(l => l.Split('|')).ToDictionary(p => p[0] + "|" + p[1]);
-        int still = 0, same = 0, differ = 0, moved = 0, movedSame = 0;
+        int still = 0, same = 0, differ = 0, moved = 0, movedSame = 0, compared = 0, identical = 0;
         long stillFrames = 0;
         foreach (var l in lines)
         {
             var p = l.Split('|');
             if (!old.TryGetValue(p[0] + "|" + p[1], out var o)) continue;
+            compared++;
+            if (o[2] == p[2]) identical++;
             if (o[3] == "0")
             {
                 still++;
@@ -193,6 +221,7 @@ internal static class MetricRun
         }
         Console.WriteLine($"Low three-quarter, default options: {still} runs ({stillFrames} poses) never changed side before; {same} of them bit-identical now, {differ} different.");
         Console.WriteLine($"  {moved} runs changed side before (a cut then; an ease, or no change at all, now): {movedSame} of them bit-identical, {moved - movedSame} differ as intended.");
+        Console.WriteLine($"all runs in both lists: {compared}, bit-identical {identical}.");
         Console.WriteLine(differ == 0 ? "== HASH PASS" : "== HASH FAIL");
         return differ == 0 ? 0 : 1;
     }
@@ -273,6 +302,35 @@ internal static class MetricRun
             var own = column.OwnIsChain ? chain : subject switch { ShotSubject.HipsToChest => hipsChest, ShotSubject.Head => head, ShotSubject.ChestToHead => upper, _ => body };
             if (own.Reach <= 1f) a.OwnIn++;
             if (bodySettled) { a.RestFrames++; if (own.Reach <= 1f) a.OwnInRest++; else lostAtRest++; }
+            if (bodySettled && t.HasFace)
+            {
+                // Which side of the body the camera is on, against the face (the head's own direction) and against
+                // what the column's side preference names.
+                var toCamera = cam.Eye - cam.LookAt;
+                toCamera.Y = 0f;
+                var faceNow = f.Face;
+                var faceFlat = new Vector3(faceNow.X, 0f, faceNow.Z);
+                if (toCamera.LengthSquared() > 1e-6f && faceFlat.Length() >= 0.3f)
+                {
+                    a.FaceFrames++;
+                    if (Vector3.Dot(toCamera, faceFlat) > 0f) a.FaceOnSide++;
+                }
+                var lateral = BodyFrame.From(p, ground).Lateral;
+                var lateralFlat = new Vector3(lateral.X, 0f, lateral.Z);
+                Vector3? named = column.Side switch
+                {
+                    DeathShotSide.FaceSide => faceFlat.Length() >= 0.3f ? faceFlat : null,
+                    DeathShotSide.BehindHead => faceFlat.Length() >= 0.3f ? -faceFlat : null,
+                    DeathShotSide.BodyRight => lateralFlat.Length() >= 0.3f ? lateralFlat : null,
+                    DeathShotSide.BodyLeft => lateralFlat.Length() >= 0.3f ? -lateralFlat : null,
+                    _ => null,
+                };
+                if (named is { } side && toCamera.LengthSquared() > 1e-6f)
+                {
+                    a.PreferFrames++;
+                    if (Vector3.Dot(toCamera, side) > 0f) a.PreferOnSide++;
+                }
+            }
             if (own.Reach <= 0.92f) a.OwnSafe++;
             // Subject size: how much of the frame its extent takes, the larger of the two axes; a single point
             // (the head) by the head's size at its depth.
@@ -429,6 +487,7 @@ internal static class MetricRun
             a.BlockedChanges.Add(cams[^1].BlockedChanges);
             a.Pops += cams[^1].Pops;
             if (cams[^1].Fallbacks > 0) a.RunsWithFallback++;
+            if (cams[^1].SideNote?.Contains("not met") == true) a.NotMet++;
             if (lostAtRest > 30 && Verbose)
                 lock (Console.Out) Console.WriteLine($"    {column.Name} {t.Name} start {start.Azimuth / Deg:F0}: subject out of frame on {lostAtRest} frames with the body at rest; " + string.Join("; ", cams.Where(c => c.Event != null).Select(c => c.Event)));
             if (cams[^1].SideChanges > 1 && Verbose)
@@ -486,6 +545,9 @@ internal static class MetricRun
             ("FoV rate max rad/s", a => $"{a.FovRate.Max():F2}"),
             ("side changes per death mean / max", a => a.SideChanges.Count == 0 ? "-" : $"{a.SideChanges.Average():F2}/{a.SideChanges.Max():F0}"),
             ("  of those, not after the body was moved: max", a => a.SideChanges.Count == 0 ? "-" : $"{a.SideChangesUnmoved.Max():F0}"),
+            ("face on the camera's side %, body at rest", a => Pct(a.FaceOnSide, a.FaceFrames)),
+            ("camera on the preferred side %, body at rest", a => a.PreferFrames == 0 ? "-" : Pct(a.PreferOnSide, a.PreferFrames)),
+            ("deaths ending with the preference not met", a => a.PreferFrames == 0 ? "-" : $"{a.NotMet}/{a.Runs}"),
             ("change of side: turn deg median / p95 / max", a => a.Turns.Count == 0 ? "-" : $"{Stats.P(a.Turns, .5f):F0}/{Stats.P(a.Turns, .95f):F0}/{a.Turns.Max():F0}"),
             ("cut frames (not eye-in-terrain)", a => a.SideChanges.Count == 0 ? "-" : (a.CutFrames - a.Pops).ToString(inv)),
             ("eye found inside terrain, put on top (frames)", a => a.SideChanges.Count == 0 ? "-" : a.Pops.ToString(inv)),

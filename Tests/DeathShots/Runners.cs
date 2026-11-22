@@ -18,6 +18,8 @@ internal struct Cam
     public bool SideChanged;
     /// <summary>Changes of side so far that were made because the view was blocked.</summary>
     public int BlockedChanges;
+    /// <summary>What the side preference did at the last choice of side.</summary>
+    public string? SideNote;
     public string? Event;
 }
 
@@ -43,7 +45,8 @@ internal static class Runners
     public const int CoreBones = 7;
 
     /// <summary>The new solver over a trajectory, fed what the plugin would read (bones, then ragdoll bodies).</summary>
-    public static Cam[] New(Trajectory t, RecordedWorld world, StartCamera start, DeathShotProfile profile, out float bodyScale, bool oldSourceAtSwitch = true, bool belowGround = false)
+    public static Cam[] New(Trajectory t, RecordedWorld world, StartCamera start, DeathShotProfile profile, out float bodyScale, bool oldSourceAtSwitch = true, bool belowGround = false,
+        DeathShotSide side = DeathShotSide.Nearest)
     {
         var solver = new DeathShotSolver(world);
         solver.Begin(start.Eye, start.LookAt, start.Fov);
@@ -64,6 +67,8 @@ internal static class Runners
                 PreviousSourceExtra = switching ? f.Bone.Skip(CoreBones).ToArray() : null,
                 Dt = f.Dt, Points = t.Points(f.Runtime), Extra = extra, PhysicsStarted = f.PhysicsStarted, ExpectRagdoll = true,
                 Profile = profile, Aspect = Aspect, UserSize = 1f, AllowBelowGround = belowGround,
+                // The face as the plugin reads it: from the head bone of the pose in the skeleton this frame.
+                SidePreference = side, Face = f.Face,
             });
             if (o.SideChanged && o.Reason == "blocked") blockedChanges++;
             cams[i] = new Cam
@@ -73,7 +78,8 @@ internal static class Runners
                 Holding = o.Holding, PulledIn = o.PulledIn, HasDiagnostics = true, Pose = o.Pose, Shot = o.Shot,
                 SideChanges = o.SideChanges, SideChangesAfterMove = o.SideChangesAfterMove, Pops = o.TerrainPops, Fallbacks = o.Fallbacks,
                 SideChanged = o.SideChanged, SideTurn = o.SideTurn * 180f / MathF.PI,
-                Event = o.SideChanged ? $"{f.Time:F1}s {o.Reason} -> {o.Shot} (turn {o.SideTurn * 180f / MathF.PI:F0} deg) [{o.Pose}]" : null,
+                Event = o.SideChanged ? $"{f.Time:F1}s {o.Reason} -> {o.Shot} (turn {o.SideTurn * 180f / MathF.PI:F0} deg) [{o.Pose}; {o.SideNote}]" : null,
+                SideNote = o.SideNote,
             };
         }
         bodyScale = solver.BodyScale;

@@ -34,6 +34,21 @@ public enum DeathShotProfile
     GrabbedAbove = 21,
 }
 
+/// <summary>The "Side preference" dropdown: which of a shot's sides the camera takes when the shot has more than one.</summary>
+public enum DeathShotSide
+{
+    /// <summary>The side nearest the camera as it is.</summary>
+    Nearest = 0,
+    /// <summary>The side the face points to.</summary>
+    FaceSide = 1,
+    /// <summary>The side the back of the head is on.</summary>
+    BehindHead = 2,
+    /// <summary>The body's own left.</summary>
+    BodyLeft = 3,
+    /// <summary>The body's own right.</summary>
+    BodyRight = 4,
+}
+
 /// <summary>The "When grabbed" dropdown.</summary>
 public enum DeathShotGrabbedFraming
 {
@@ -56,6 +71,8 @@ public static class DeathShotProfiles
     };
 
     public static readonly string[] GrabbedLabels = { "Level", "Slightly above" };
+
+    public static readonly string[] SideLabels = { "Nearest", "Face side", "Behind the head", "Body's left", "Body's right" };
 
     /// <summary>Whether a saved value is one of the dropdown's choices (a removed shot, or anything else, is not).</summary>
     public static bool IsChoice(DeathShotProfile profile) => Array.IndexOf(Choices, profile) >= 0;

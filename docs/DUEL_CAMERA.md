@@ -145,7 +145,7 @@
 ### 7.5 界面与设置
 
 - Camera 页签 → **Camera mode** 下拉：Game / Follow bone / Directed / **Duel**。
-- 选 Duel 后出现折叠栏 **Duel Camera**：一行状态、一个下拉 **Framing**（Tight / Standard / Wide，默认 Standard）；下面一行说明“Duel 模式下倒地时自动死亡镜头接手”，再是自动死亡镜头的三个控件：**Duel death shot** 下拉（Auto + 六个低机位档案）、**When grabbed** 下拉（Level / Slightly above）、**Allow below ground** 勾选。这三个只在这里出现（设置 `DuelDeathShot` / `DuelDeathShotGrabbed` / `DuelDeathShotBelowGround`）；Directed Camera 折叠栏里的 “Death shot” 是 Directed 自己的死亡构图的角度，两者无关（→ [DEATH_SHOTS.md](DEATH_SHOTS.md) §9.4、§9.5）。
+- 选 Duel 后出现折叠栏 **Duel Camera**：一行状态、一个下拉 **Framing**（Tight / Standard / Wide，默认 Standard）；下面一行说明“Duel 模式下倒地时自动死亡镜头接手”，再是自动死亡镜头的三个控件：**Duel death shot** 下拉（Auto + 六个低机位档案）、**Side preference** 下拉（Nearest / Face side / Behind the head / Body's left / Body's right，设置 `DuelDeathShotSide`）、**When grabbed** 下拉（Level / Slightly above）、**Allow below ground** 勾选。这三个只在这里出现（设置 `DuelDeathShot` / `DuelDeathShotGrabbed` / `DuelDeathShotBelowGround`）；Directed Camera 折叠栏里的 “Death shot” 是 Directed 自己的死亡构图的角度，两者无关（→ [DEATH_SHOTS.md](DEATH_SHOTS.md) §9.4、§9.5）。
 - 设置：`EnableDuelCamera`（默认 false）、`DuelCameraFraming`（默认 Standard）。没有改任何已有设置的默认值。
 
 ## 8. 离线检查

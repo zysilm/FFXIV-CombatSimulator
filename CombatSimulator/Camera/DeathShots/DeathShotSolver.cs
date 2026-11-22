@@ -47,6 +47,11 @@ public struct DeathShotInput
     public bool Grabbed;
     /// <summary>The option "When grabbed".</summary>
     public DeathShotGrabbedFraming GrabbedFraming;
+    /// <summary>The option "Side preference": which of a shot's sides is taken when it has more than one.</summary>
+    public DeathShotSide SidePreference;
+    /// <summary>Where the face points (unit vector, world; <see cref="DeathShotFace"/>), from the head bone's rotation.
+    /// Zero = not known: the torso's front stands in. Only read when a side is chosen, never between.</summary>
+    public Vector3 Face;
 }
 
 /// <summary>What the solver hands back each frame: the pose for the game camera (eye and look-at through the pose
@@ -81,6 +86,12 @@ public struct DeathShotOutput
     public float SideTurn;
     /// <summary>The body is framed as a held body (from the grab until it is let go and lies still).</summary>
     public bool Grabbed;
+    /// <summary>What the side preference did at the last choice of side, for the log ("nearest", "face side: met",
+    /// "face side: the face points up, nearest", "body's left: not met, that side is blocked", ...).</summary>
+    public string SideNote;
+    /// <summary>Azimuth of the face's horizontal direction at the last choice of side (NaN: the face pointed up or
+    /// down, or was not looked at).</summary>
+    public float FaceAzimuth;
     /// <summary>Times the eye was found inside the terrain and had to be put on top of it (each is a cut frame).</summary>
     public int TerrainPops;
     /// <summary>The eye was pulled in (and the lens widened) this frame because something stood in the way.</summary>
@@ -146,6 +157,13 @@ public sealed class DeathShotSolver
     public const float SecondChoicePenalty = 20f * Deg;
     /// <summary>A side this close to the one in use is not worth moving to (while the one in use is clear).</summary>
     public const float SmallTurn = 10f * Deg;
+    /// <summary>Side preference: a candidate side counts as on the preferred side when it is within this (as a cosine)
+    /// of the one most toward it; the side in use is on the wrong side only beyond the wider band.</summary>
+    public const float PreferBand = 0.25f, PreferKeepBand = 0.45f;
+    /// <summary>Side preference: how much of the face's direction must be horizontal for it to name a side — a face
+    /// that looks up (17° off straight up is enough), and one that looks into the ground (7°: the way the head is
+    /// turned).</summary>
+    public const float FaceUpSideways = 0.30f, FaceDownSideways = 0.12f;
     /// <summary>After the side was changed because the view was blocked, it is not changed for that reason again
     /// before this long: where nothing is clear the camera stays put instead of trying side after side.</summary>
     public const float BlockedAgainAfter = 6f;
@@ -221,6 +239,7 @@ public sealed class DeathShotSolver
     private readonly SettleDetector calm = new(CalmSpeed, CalmSeconds);
     private readonly List<(Vector3 P, float R)> fit = new();
     private readonly List<Candidate> candidates = new();
+    private readonly List<Candidate> preferred = new(), others = new();
 
     // start camera
     private bool hasStart;
@@ -247,6 +266,13 @@ public sealed class DeathShotSolver
     private float rampAge;
     private string reason = "start";
     private DeathShotProfile lastProfile;
+    // side preference
+    private DeathShotSide sidePreference, lastSidePreference;
+    private Vector3 face;
+    /// <summary>The direction the preference named at the last choice where it named one (the hold: see PreferredDirection).</summary>
+    private Vector3? heldToward;
+    private string sideNote = "nearest";
+    private float faceAzimuth = float.NaN;
 
     // hold
     private bool holding;
@@ -303,6 +329,9 @@ public sealed class DeathShotSolver
         releaseAge = backFor = heldBlend = heldFor = blockedWait = 0f;
         heldSideDone = false;
         reason = "start";
+        heldToward = null;
+        sideNote = "nearest";
+        faceAzimuth = float.NaN;
         holding = false;
         holdFor = 0f;
         motion = motionVelocity = 0f;
@@ -325,6 +354,8 @@ public sealed class DeathShotSolver
         public float Azimuth, Elevation;
         /// <summary>0 = what the side rule asks for; 1 = its second choice.</summary>
         public int Rank;
+        /// <summary>Not on the side the side preference asks for.</summary>
+        public bool Off;
     }
 
     public DeathShotOutput Step(in DeathShotInput input)
@@ -437,9 +468,12 @@ public sealed class DeathShotSolver
         var changed = false;
         var turn = 0f;
         framing = input.GrabbedFraming;
+        sidePreference = input.SidePreference;
+        face = input.Face;
         if (!has)
         {
             lastProfile = input.Profile;
+            lastSidePreference = sidePreference;
             grabbed = input.Grabbed;
             var startAzimuth = hasStart ? Azimuth(startEye - startLook) : Azimuth(subjectFrame.FrontHorizontal);
             Choose(input.Profile, pose, subjectFrame, subjectPoints, subjectExtra, subjectGround, aspect, userSize, startAzimuth, true, 0f, "start", out _);
@@ -501,6 +535,14 @@ public sealed class DeathShotSolver
                 heldSideDone = true;
                 changed = Choose(input.Profile, pose, frame, subjectPoints, subjectExtra, subjectGround, aspect, userSize, azimuth, false, KeepSide, "held", out turn);
             }
+        }
+        else if (sidePreference != lastSidePreference)
+        {
+            // The side preference was changed while dead: the side is looked at again (it stays if it already is
+            // on the side now preferred).
+            lastSidePreference = sidePreference;
+            heldToward = null;
+            changed = Choose(input.Profile, pose, grabbed ? frame : subjectFrame, subjectPoints, subjectExtra, subjectGround, aspect, userSize, azimuth, false, KeepSide, "preference", out turn);
         }
         else if (input.Profile != lastProfile)
         {
@@ -751,6 +793,8 @@ public sealed class DeathShotSolver
         output.SideChangesAfterMove = sideChangesAfterMove;
         output.SideTurn = turn;
         output.Grabbed = grabbed;
+        output.SideNote = sideNote;
+        output.FaceAzimuth = faceAzimuth;
         output.Fallbacks = fallbacks;
         output.TerrainPops = pops;
         output.PulledIn = pulled;
@@ -908,6 +952,33 @@ public sealed class DeathShotSolver
             candidates.Sort((a, b) => (MathF.Abs(AngleDelta(fromAzimuth, a.Azimuth)) + a.Rank * SecondChoicePenalty)
                 .CompareTo(MathF.Abs(AngleDelta(fromAzimuth, b.Azimuth)) + b.Rank * SecondChoicePenalty));
 
+        // The side preference: the candidates on the preferred side come first, in the order they had. A candidate is
+        // on that side when it is as much toward it as the best one, within a band (two sides the same way round count
+        // alike, and the order above decides between them). The side in use is on the wrong side only well outside the
+        // band, so a direction that wavers does not send the camera across.
+        var prefer = PreferredDirection(frame, out var note);
+        var wrongSide = false;
+        var towardBest = float.MinValue;
+        if (prefer is { } toward)
+        {
+            foreach (var c in candidates) towardBest = MathF.Max(towardBest, Vector3.Dot(Horizontal(c.Azimuth), toward));
+            preferred.Clear();
+            others.Clear();
+            foreach (var c in candidates)
+            {
+                var one = c;
+                one.Off = Vector3.Dot(Horizontal(c.Azimuth), toward) < towardBest - PreferBand;
+                (one.Off ? others : preferred).Add(one);
+            }
+            candidates.Clear();
+            candidates.AddRange(preferred);
+            candidates.AddRange(others);
+            wrongSide = !first && Vector3.Dot(Horizontal(lockAzimuth), toward) < towardBest - PreferKeepBand;
+        }
+        sideNote = prefer != null && !wrongSide && !first ? note + ": met" : note;
+        var couldKeep = false;
+        var keepElevation = lockElevation;
+
         if (!first && keepWithin > 0f)
         {
             // A side that was already looked for on the way here (the body would not lie still, or the view was
@@ -919,32 +990,63 @@ public sealed class DeathShotSolver
                 var asked = false;
                 foreach (var c in candidates) asked |= c.Recipe == recipe;
                 if ((asked || !faceDown) && !IsBlocked(recipe, lockAzimuth, lockElevation, frame, points, extra, ground, aspect, userSize))
+                {
+                    // (The preference was applied when that side was looked for; it is not applied a second time.)
+                    if (wrongSide) sideNote = note + ": kept the side chosen earlier";
                     return false;
+                }
             }
-            keepWithin = MathF.Min(keepWithin, recipe.KeepWithin);
-            // Keep the side: the shot is still allowed, the side is near enough to one its rule asks for, the view is clear.
-            var nearest = float.MaxValue;
-            var elevationThere = lockElevation;
-            foreach (var c in candidates)
+            if (!couldKeep)
             {
-                if (c.Recipe != recipe) continue;
-                var off = MathF.Abs(AngleDelta(lockAzimuth, c.Azimuth));
-                if (off < nearest) { nearest = off; elevationThere = c.Elevation; }
-            }
-            if (nearest <= keepWithin && !IsBlocked(recipe, lockAzimuth, lockElevation, frame, points, extra, ground, aspect, userSize))
-            {
-                // (The elevation follows the body where the shot takes it from the body.)
-                lockElevation = elevationThere;
-                return false;
+                keepWithin = MathF.Min(keepWithin, recipe.KeepWithin);
+                // Keep the side: the shot is still allowed, the side is near enough to one its rule asks for, the view is clear.
+                var nearest = float.MaxValue;
+                var elevationThere = lockElevation;
+                foreach (var c in candidates)
+                {
+                    if (c.Recipe != recipe) continue;
+                    var off = MathF.Abs(AngleDelta(lockAzimuth, c.Azimuth));
+                    if (off < nearest) { nearest = off; elevationThere = c.Elevation; }
+                }
+                if (nearest <= keepWithin && !IsBlocked(recipe, lockAzimuth, lockElevation, frame, points, extra, ground, aspect, userSize))
+                {
+                    // (The elevation follows the body where the shot takes it from the body.)
+                    if (!wrongSide)
+                    {
+                        lockElevation = elevationThere;
+                        return false;
+                    }
+                    couldKeep = true;
+                    keepElevation = elevationThere;
+                }
             }
         }
 
         Candidate? pick = null;
-        foreach (var c in candidates)
+        if (couldKeep)
         {
-            if (IsBlocked(c.Recipe, c.Azimuth, c.Elevation, frame, points, extra, ground, aspect, userSize)) continue;
-            pick = c;
-            break;
+            // The side in use is fine but for the preference: it is only left for a clear side on the preferred side.
+            foreach (var c in candidates)
+            {
+                if (c.Off || IsBlocked(c.Recipe, c.Azimuth, c.Elevation, frame, points, extra, ground, aspect, userSize)) continue;
+                pick = c;
+                break;
+            }
+            if (pick == null)
+            {
+                lockElevation = keepElevation;
+                sideNote = note + ": not met, that side is blocked";
+                return false;
+            }
+        }
+        else
+        {
+            foreach (var c in candidates)
+            {
+                if (IsBlocked(c.Recipe, c.Azimuth, c.Elevation, frame, points, extra, ground, aspect, userSize)) continue;
+                pick = c;
+                break;
+            }
         }
         if (pick == null && candidates.Count > 0)
         {
@@ -985,6 +1087,8 @@ public sealed class DeathShotSolver
 
         var chosen = pick.Value;
         reason = why;
+        if (prefer is { } wanted)
+            sideNote = Vector3.Dot(Horizontal(chosen.Azimuth), wanted) >= towardBest - PreferBand ? note + ": met" : note + ": not met, that side is blocked";
         if (first)
         {
             recipe = chosen.Recipe;
@@ -1006,6 +1110,71 @@ public sealed class DeathShotSolver
         lockElevation = chosen.Elevation;
         if (same) turn = 0f;
         return !same;
+    }
+
+    /// <summary>
+    /// The horizontal direction the side preference asks the eye to be toward, or null when it asks for nothing here
+    /// (Nearest; a face that points up or down with nothing sideways to go by; a body lying on its side for "body's
+    /// left / right"). The face is the head's (<see cref="DeathShotInput.Face"/>), the torso's front only when the head
+    /// is not known. A face that points at the sky gives no side; one that points into the ground gives the way the
+    /// head is turned, however little (the cheek that is up). The hold: once the preference has named a side, a face
+    /// that points up or down at a later choice keeps naming that side (it does not fall back to "nearest", and a
+    /// few degrees of tilt the other way do not send the camera across).
+    /// </summary>
+    private Vector3? PreferredDirection(in BodyFrame frame, out string note)
+    {
+        faceAzimuth = float.NaN;
+        switch (sidePreference)
+        {
+            case DeathShotSide.FaceSide:
+            case DeathShotSide.BehindHead:
+            {
+                var name = sidePreference == DeathShotSide.FaceSide ? "face side" : "behind the head";
+                var f = face.LengthSquared() > 0.25f ? Vector3.Normalize(face) : frame.Front;
+                var flat = new Vector3(f.X, 0f, f.Z);
+                var length = flat.Length();
+                if (length < (f.Y > 0f ? FaceUpSideways : FaceDownSideways))
+                {
+                    if (heldToward is { } before)
+                    {
+                        note = name + (f.Y > 0f ? ": the face points up, the side it named before" : ": the face points down, the side it named before");
+                        return before;
+                    }
+                    note = name + (f.Y > 0f ? ": the face points up, nearest" : ": the face points down, nearest");
+                    return null;
+                }
+                flat /= length;
+                faceAzimuth = Azimuth(flat);
+                note = name;
+                heldToward = sidePreference == DeathShotSide.FaceSide ? flat : -flat;
+                return heldToward;
+            }
+            case DeathShotSide.BodyLeft:
+            case DeathShotSide.BodyRight:
+            {
+                var name = sidePreference == DeathShotSide.BodyLeft ? "body's left" : "body's right";
+                // Lateral runs from the left shoulder to the right one.
+                var flat = new Vector3(frame.Lateral.X, 0f, frame.Lateral.Z);
+                var length = flat.Length();
+                if (length < FaceUpSideways)
+                {
+                    if (heldToward is { } before)
+                    {
+                        note = name + ": the body lies on its side, the side it named before";
+                        return before;
+                    }
+                    note = name + ": the body lies on its side, nearest";
+                    return null;
+                }
+                flat /= length;
+                note = name;
+                heldToward = sidePreference == DeathShotSide.BodyRight ? flat : -flat;
+                return heldToward;
+            }
+            default:
+                note = "nearest";
+                return null;
+        }
     }
 
     private bool IsBlocked(ShotRecipe r, float az, float el, in BodyFrame frame, in BodyPoints points, Vector3[] extra, float ground, float aspect, float userSize)

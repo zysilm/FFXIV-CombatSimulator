@@ -28,4 +28,9 @@ public partial class Configuration
     /// <summary>"When grabbed": how a body that is held up (Enemy Control's grab, a corpse being carried off) is
     /// framed.</summary>
     public Camera.DeathShots.DeathShotGrabbedFraming DuelDeathShotGrabbed { get; set; } = Camera.DeathShots.DeathShotGrabbedFraming.Level;
+
+    /// <summary>"Side preference": which of a shot's sides the camera takes when the shot has more than one — the
+    /// nearest to the camera (as before), the side the face points to, the side behind the head, or the body's own
+    /// left or right.</summary>
+    public Camera.DeathShots.DeathShotSide DuelDeathShotSide { get; set; } = Camera.DeathShots.DeathShotSide.Nearest;
 }

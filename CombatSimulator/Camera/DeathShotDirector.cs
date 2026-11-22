@@ -116,6 +116,9 @@ public sealed unsafe class DeathShotDirector : IDisposable
     private readonly bool[] boneKnown = new bool[Bones.Length];
     private readonly int[] boneIndex = new int[Bones.Length];
     private nint indexedSkeleton;
+    private nint headBindSkeleton;
+    private int headIndex = -1;
+    private Quaternion headBind = Quaternion.Identity;
     private int indexedBoneCount;
     private readonly Vector3[] extra = new Vector3[Bones.Length - CoreBones];
     private readonly Vector3[] extraBones = new Vector3[Bones.Length - CoreBones];
@@ -481,7 +484,7 @@ public sealed unsafe class DeathShotDirector : IDisposable
 
         var away = eye - look;
         log.Info($"DeathShot: {(afterWaiting && resumed ? "resumes" : "start")} — profile {Label(profile)}" +
-                 $"{(config.DuelDeathShotBelowGround ? ", below ground allowed" : "")}, when grabbed: {DeathShotProfiles.GrabbedLabels[(int)config.DuelDeathShotGrabbed]}, " +
+                 $"{(config.DuelDeathShotBelowGround ? ", below ground allowed" : "")}, when grabbed: {DeathShotProfiles.GrabbedLabels[(int)config.DuelDeathShotGrabbed]}, side preference: {DeathShotProfiles.SideLabels[(int)config.DuelDeathShotSide]}, " +
                  $"body scale {(bodyScale > 0f ? bodyScale.ToString("0.00") : "from the first frame")}; " +
                  $"from the camera at azimuth {Degrees(DeathShotMath.Azimuth(away)):0}°, {away.Length():0.00} m, lens {Degrees(rendered):0.0}° " +
                  $"(game yaw {Degrees(game->DirH):0}°, FoV field {game->FoV:0.000}, field→lens ratio {fovRatio:0.000}, aspect {aspect:0.00}).");
@@ -575,6 +578,9 @@ public sealed unsafe class DeathShotDirector : IDisposable
             AllowBelowGround = config.DuelDeathShotBelowGround,
             Grabbed = bodyGrabbed(),
             GrabbedFraming = config.DuelDeathShotGrabbed,
+            SidePreference = config.DuelDeathShotSide,
+            // (Only a preference that goes by the face needs it; the solver reads it when it chooses a side.)
+            Face = config.DuelDeathShotSide is DeathShotSide.FaceSide or DeathShotSide.BehindHead ? ReadFace(subject) : default,
         });
 
         var first = !hadFrame;
@@ -622,6 +628,40 @@ public sealed unsafe class DeathShotDirector : IDisposable
     // ------------------------------------------------------------------
     // Positions
     // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Where the face points (DeathShotFace): the head bone's world rotation relative to its bind pose, applied to
+    /// +Z. Read from the skeleton's pose in both phases: before the ragdoll that is the animated pose, after it the
+    /// pose the ragdoll wrote back on the last rendered frame (the ragdoll gives positions only, but its write-back
+    /// carries the head's rotation; the recordings have it on every physics frame). Zero when it cannot be read.
+    /// </summary>
+    private Vector3 ReadFace(nint address)
+    {
+        if (address == nint.Zero || bones.TryGetSkeleton(address) is not { } skeleton) return default;
+        var havok = skeleton.HavokSkeleton;
+        var root = skeleton.CharBase->Skeleton;
+        if (havok == null || root == null) return default;
+        if ((nint)havok != headBindSkeleton)
+        {
+            // The head's model rotation in the reference pose (the character faces +Z there): the local rotations
+            // up the parent chain. Once per skeleton.
+            headIndex = bones.ResolveBoneIndex(skeleton, Bones[2]);
+            headBind = Quaternion.Identity;
+            for (int b = headIndex, guard = 0; b >= 0 && b < havok->ReferencePose.Length && guard < 512; guard++)
+            {
+                var local = havok->ReferencePose.Data[b].Rotation;
+                headBind = Quaternion.Normalize(new Quaternion(local.X, local.Y, local.Z, local.W) * headBind);
+                b = b < havok->ParentIndices.Length ? havok->ParentIndices[b] : -1;
+            }
+            headBindSkeleton = (nint)havok;
+        }
+        if (headIndex < 0 || headIndex >= skeleton.BoneCount) return default;
+        ref var pose = ref skeleton.Pose->ModelPose.Data[headIndex];
+        var model = new Quaternion(pose.Rotation.X, pose.Rotation.Y, pose.Rotation.Z, pose.Rotation.W);
+        var t = root->Transform;
+        var world = new Quaternion(t.Rotation.X, t.Rotation.Y, t.Rotation.Z, t.Rotation.W);
+        return DeathShotFace.Direction(world * model * Quaternion.Inverse(headBind));
+    }
 
     /// <summary>The 22 animated bones into <see cref="boneNow"/>. False when one of the seven of the body frame is
     /// missing; a missing bone of the rest keeps its last value (the chest before it was ever read). The bones'
@@ -818,14 +858,14 @@ public sealed unsafe class DeathShotDirector : IDisposable
         var t = shotTime;
         if (first)
         {
-            log.Info($"DeathShot: first frame — {Label(profile)} → {Label(o.Shot)}, pose {PoseWord(o.Pose)}, {Side(in o, in points)}; " +
+            log.Info($"DeathShot: first frame — {Label(profile)} → {Label(o.Shot)}, pose {PoseWord(o.Pose)}, {Side(in o, in points)}, {Preference(in o)}; " +
                      $"positions from the {(physics ? "ragdoll bodies" : "bones")}, " +
                      $"{(expect ? physics ? "ragdoll running" : "waiting for the ragdoll" : "no ragdoll expected")}, body scale {solver.BodyScale:0.00}.");
         }
         else if (o.SideChanged)
         {
             log.Info($"DeathShot: side at {t:0.0} s — {o.Reason} → {Label(o.Shot)} (eased over {Degrees(o.SideTurn):0}°), pose {PoseWord(o.Pose)}, " +
-                     $"{Side(in o, in points)}; change {o.SideChanges} of this death.");
+                     $"{Side(in o, in points)}, {Preference(in o)}; change {o.SideChanges} of this death.");
         }
 
         if (o.SourceSwitched)
@@ -918,6 +958,10 @@ public sealed unsafe class DeathShotDirector : IDisposable
         var elevation = Degrees(MathF.Asin(Math.Clamp(away.Y / distance, -1f, 1f)));
         return $"side {off:+0;-0}° off the body's front, eye {elevation:+0;-0}° about the subject, {distance:0.00} m";
     }
+
+    /// <summary>What the side preference did at this choice, and where the face pointed.</summary>
+    private static string Preference(in DeathShotOutput o) =>
+        $"preference {o.SideNote}" + (float.IsFinite(o.FaceAzimuth) ? $" (face azimuth {Degrees(o.FaceAzimuth):0}°)" : "");
 
     private static string PoseWord(PoseClass pose) => pose switch
     {

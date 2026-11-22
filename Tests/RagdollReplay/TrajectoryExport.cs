@@ -35,6 +35,8 @@ internal static class TrajectoryExport
     };
 
     private const int RequiredBones = 7;
+    /// <summary>Index of j_kao in <see cref="Bones"/>.</summary>
+    private const int HeadBone = 2;
 
     private sealed class Frame
     {
@@ -43,6 +45,12 @@ internal static class TrajectoryExport
         public byte PoseSource; // 0 none, 1 SkeletonPose PreFrame, 2 PoseOut, 3 SkeletonPose Init/FrameIn (no PoseOut in the frame)
         public Vector3[] Bone = Array.Empty<Vector3>();
         public Vector3[] Body = Array.Empty<Vector3>();
+        /// <summary>World rotation of the head bone (j_kao) relative to its bind pose, in the pose the frame's bone
+        /// positions come from (the animated pose before physics, the pose the ragdoll wrote back after): skeleton
+        /// rotation × the bone's model rotation × the inverse of its model rotation in the reference pose, where
+        /// the character faces +Z. Applied to +Z it is where the face points (DeathShotFace); the plugin computes
+        /// the same from the live skeleton. NaN = no pose in the frame.</summary>
+        public Quaternion HeadRotation = new(float.NaN, float.NaN, float.NaN, float.NaN);
     }
 
     public static int Run(string target, string? outFolder)
@@ -103,6 +111,7 @@ internal static class TrajectoryExport
         var activatePosition = Vector3.Zero;
         int[] boneIndex = Enumerable.Repeat(-1, Bones.Length).ToArray();
         var haveTopology = false;
+        var headBind = Quaternion.Identity;
         var bodyOfHandle = new Dictionary<int, int>(); // body handle -> index into Bones
         var lastPose = new Dictionary<int, byte[]>();   // purpose -> partial 0 bytes
         Frame? frame = null;
@@ -135,6 +144,15 @@ internal static class TrajectoryExport
                             if (at >= 0 && boneIndex[at] < 0) boneIndex[at] = i;
                         }
                         haveTopology = true;
+                        // The head's model rotation in the reference pose: the local rotations up the parent chain.
+                        headBind = Quaternion.Identity;
+                        var parents = r[7 + names];
+                        var reference = MemoryMarshal.Cast<byte, float>(r[8 + names].Data);
+                        for (int b = boneIndex[HeadBone], guard = 0; b >= 0 && (b + 1) * 12 <= reference.Length && guard < 512; guard++)
+                        {
+                            headBind = Quaternion.Normalize(new Quaternion(reference[b * 12 + 4], reference[b * 12 + 5], reference[b * 12 + 6], reference[b * 12 + 7]) * headBind);
+                            b = b < parents.Count ? parents.IntAt(b) : -1;
+                        }
                     }
                     break;
                 case RecordType.RenderFrame:
@@ -168,6 +186,10 @@ internal static class TrajectoryExport
                         var local = new Vector3(floats[i * 12], floats[i * 12 + 1], floats[i * 12 + 2]);
                         frame.Bone[b] = position + Vector3.Transform(local * scale, rotation);
                     }
+                    // The head's rotation: an hkQsTransform is translation (4 floats), rotation (4), scale (4).
+                    var head = boneIndex[HeadBone];
+                    if (head >= 0 && (head + 1) * 12 <= floats.Length)
+                        frame.HeadRotation = Quaternion.Normalize(rotation * new Quaternion(floats[head * 12 + 4], floats[head * 12 + 5], floats[head * 12 + 6], floats[head * 12 + 7]) * Quaternion.Inverse(headBind));
                     frame.PoseSource = isOut ? (byte)2 : purpose == (int)PosePurpose.PreFrame ? (byte)1 : (byte)3;
                     frame.PoseFresh = fresh;
                     break;
@@ -287,18 +309,19 @@ internal static class TrajectoryExport
     }
 
     /// <summary>
-    /// File layout (little-endian): "DSTRAJ01"; name:str; isPlayer:u8; humanoid:u8; facing:f32; activatePosition:3f;
+    /// File layout (little-endian): "DSTRAJ02" (01 had no headRotation); name:str; isPlayer:u8; humanoid:u8; facing:f32; activatePosition:3f;
     /// activateGroundY:f32; water:f32 (NaN = none); boneCount:i32, names:str each; groundRayCount:i32, points:3f each;
     /// triangleVertexCount:i32, vertices:3f each (3 per triangle); frameCount:i32; then per frame: time:f32, dt:f32,
     /// physicsStarted:u8, poseSource:u8 (0 none, 1 SkeletonPose PreFrame, 2 PoseOut, 3 SkeletonPose Init/FrameIn),
-    /// poseFresh:u8, groundY:f32, bone:3f × boneCount (NaN = not available), body:3f × boneCount (NaN = no body).
+    /// poseFresh:u8, groundY:f32, bone:3f × boneCount (NaN = not available), body:3f × boneCount (NaN = no body),
+    /// headRotation:4f (x y z w: the head bone's world rotation relative to its bind pose, NaN = no pose in the frame).
     /// Strings are a 7-bit-encoded length + UTF-8 (BinaryWriter).
     /// </summary>
     private static void Write(string path, string name, Stats stats, float facing, Vector3 activatePosition, float activateGroundY,
         List<Vector3> groundRays, List<Vector3> triangles, List<Frame> frames)
     {
         using var w = new BinaryWriter(File.Create(path), Encoding.UTF8);
-        w.Write("DSTRAJ01"u8);
+        w.Write("DSTRAJ02"u8);
         w.Write(name);
         w.Write(stats.IsPlayer);
         w.Write(stats.Humanoid);
@@ -323,6 +346,10 @@ internal static class TrajectoryExport
             w.Write(f.GroundY);
             foreach (var p in f.Bone) V(w, p);
             foreach (var p in f.Body) V(w, p);
+            w.Write(f.HeadRotation.X);
+            w.Write(f.HeadRotation.Y);
+            w.Write(f.HeadRotation.Z);
+            w.Write(f.HeadRotation.W);
         }
     }
 

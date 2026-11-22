@@ -82,6 +82,48 @@
 7. **阻尼**：相机表示为注视点 + 眼位绕它的轨道（方位、仰角、距离）。注视点弹簧 0.30 s、限速 3 m/s；轨道三个量弹簧 0.60 s，方位 ≤ 45°/s、仰角 ≤ 35°/s、距离 ≤ 2 m/s（长轨道上再按眼位 ≤ 2 m/s 收紧）；FoV ≤ 0.5 rad/s。目标离开 3 cm 才响应（死区；身体静止后死区关闭，精确对准）。进入的前 2.5 s 用更慢的弹簧（注视点 0.60 s、轨道 1.0 s）；开始和每次缓变换边后，限速在 0.6 s 内线性放开（加速度有界）。
 8. **出手**：眼位每帧最多走 3 m/s；自由环绕的档案在接近地面的几厘米内软着陆（高度按 softplus 弯进地面，静止在地上时比净空高 5.5 cm），避免身体下沉、眼位撞地时俯仰突变；前方地面高于一帧能爬的高度（土坎、台阶）时眼位先原地上升再前进，不沿坎面弹起，也不进入地形；视线转速最后再按 60°/s 封顶。若发现眼位已在地形里面（上方 1.5 m 的射线先前看不到的表面），放到表面上并记为一次硬切。
 
+### 5.1 侧向偏好（“Side preference”，2026-11-22，用户要求）
+
+多数档案有两侧可选（Low three-quarter 躺平时是头端的左 / 右）。以前只按“离当前相机最近”取，所以总偏向相机原来所在的那一边，脸朝哪边不参与。现在加一个偏好（设置 `DuelDeathShotSide`，求解器输入 `DeathShotInput.SidePreference`）：
+
+| 选项 | 含义 |
+|---|---|
+| **Nearest**（默认） | 离当前相机最近的一侧——与之前逐位相同 |
+| **Face side** | 脸朝向的那一侧（看得到脸） |
+| **Behind the head** | 后脑勺那一侧 |
+| **Body's left / Body's right** | 固定在身体自己的左 / 右 |
+
+- **脸的朝向取自头，不取躯干**（`Camera/DeathShots/DeathShotFace.cs`，输入 `DeathShotInput.Face`）：头骨 `j_kao` 的世界旋转相对其绑定姿态的旋转（骨架旋转 × 模型空间旋转 × 参考姿态里该骨模型旋转的逆），作用在 +Z 上——参考姿态里角色面朝模型空间 +Z，所以不需要假定骨骼的哪根轴朝前（与头部注视 `HeadLookAtMath` 同一个办法；直接猜骨轴在录像上对不上）。
+  - 物理开始前：骨架里是动画姿态，直接读。
+  - 物理开始后：布娃娃库只给刚体位置，但它每帧把姿态写回骨架，头骨的旋转就在写回的姿态里；插件在框架帧读到的是上一渲染帧写回的姿态。录像证实：46380 个物理帧每帧都有写回的姿态（PoseOut）。
+  - 离线：轨迹导出加了每帧的这个旋转（`.dstraj` 版本 02，`Tests/RagdollReplay/TrajectoryExport.cs`；参考姿态取自录像里的骨架拓扑记录），97 份重新导出。核对（`Tests/DeathShots -- face`）：64 个直立的站姿第一帧上，脸与躯干正面的点积中位 0.71、最小 0.15（没有朝后的），俯仰中位 −13°（刚被打、低着头），水平上偏离躯干正面中位 20°、p90 55°——头确实常常转开，所以不能用躯干代替。
+- **什么时候用**：只在选边的时刻（开始、第一次静止、被移动后再静止、calm、被挡、改档案、改偏好、被抓 1.2 s 后），下落过程中不连续跟。换边照常缓动，没有硬切。
+- **怎么用**（`DeathShotSolver.Choose` / `PreferredDirection`）：偏好给出一个水平方向；候选侧里“朝这个方向的程度”与最好的那个相差不超过 0.25（余弦）的算在偏好一侧，排到前面，它们之间仍按原来的顺序（最近优先）。当前的边只有比最好的差 0.45 以上才算“在错的一侧”而需要换（滞后）；此时只为偏好一侧没被挡的候选而动，否则留在原地。之前因 calm / 被挡已经选过边的，第一次静止时不再为偏好换第二次。
+- **退化情形**：
+  - 脸朝天（脸方向的水平分量 < 0.30，即离竖直不到 17°）→ 没有侧向可言，按 Nearest。
+  - 脸朝地 → 用头转向的方向（水平分量 ≥ 0.12 即可，约 7°）：拍露在上面的那半边脸。完全埋进地面 → Nearest。
+  - 保持：偏好一旦给出过一侧，之后某次选边时脸又朝天 / 朝地，就沿用上次那一侧（不退回 Nearest，也不会因为往另一边偏了几度就把相机送到对面）。
+  - 身体侧躺时 Body's left / right 没有水平的左右 → Nearest。
+  - 偏好的一侧被挡 → 取另一侧，日志写 `not met, that side is blocked`。
+- **与档案的关系**：偏好只在档案自己的合规候选里挑。Low three-quarter 侧躺时两个候选本来都在正面（脸那边），Behind the head 就满足不了（离线 40.5%）；Auto 可以换成后侧的档案（87.5%）。Low on the face 的两侧本来就由脸决定，偏好只起排序作用。被抓的两个机位：Face side 时取头转向的那个三分之二侧。
+- 日志：`DeathShot: side at …` 和 `first frame` 行带 `preference <做了什么> (face azimuth N°)`，例如 `preference face side: met (face azimuth 132°)`、`preference face side: the face points up, nearest`、`preference body's left: not met, that side is blocked`。
+
+离线（95 条轨迹 × 8 个起始方位；“脸在相机一侧”= 身体静止、脸有水平朝向的帧里，相机在脸朝向的半边）：
+
+| | Low3/4 Nearest | Auto Nearest | Low3/4 Face side | Low3/4 Behind | Auto Face side | Auto Behind | Auto left | Auto right |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 脸在相机一侧 %（静止时） | 76.5 | 58.6 | **87.7** | 59.5 | **91.5** | 12.5 | 50.8 | 71.3 |
+| 相机在偏好一侧 %（静止时） | – | – | 87.7 | 40.5 | 91.5 | 87.5 | 84.5 | 95.8 |
+| 结束时偏好没满足的死亡 | – | – | 0/760 | 12/760 | 0/760 | 8/760 | 8/760 | 0/760 |
+| 每次死亡换边 平均 / 最多 | 0.33/2 | 0.33/2 | 0.51/2 | 0.43/3 | 0.52/2 | 0.75/3 | 0.59/2 | 0.31/2 |
+| 换边转角 ° 中位 / p95 / 最大 | 101/130/144 | 22/81/144 | 105/135/144 | 110/136/144 | 90/144/175 | 84/135/147 | 64/144/151 | 70/136/144 |
+| 硬切帧 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| 主体在画面内 % | 99.2 | 99.8 | 99.2 | 99.2 | 99.8 | 99.8 | 99.8 | 99.8 |
+
+- 有偏好时换边更多、转得更远（要去指定的一侧，不再只是“最近”）：Auto 的换边转角中位从 22° 变成 64–90°，身体静止到相机静止的中位从 1.5 s 变成 3.3 s 左右。这是偏好的代价。
+- “相机在偏好一侧”不到 100% 的部分：身体静止后脸 / 身体又慢慢转过去而不触发重新选边（蠕动 < 0.25 m）、偏好一侧被挡、以及之前已为 calm / 被挡选过边。
+- Nearest 逐位相同：`hash --against`，六个档案 + Auto 共 5320 次运行全部逐位相同。其余门槛对新增的六列全部通过。单元检查新增 11 项（各偏好在仰卧转头的身体上、脸朝天 = Nearest、脸朝地转头 14°、完全朝地、偏好一侧有墙、Low on the face、保持、被抓时）。
+
 ## 6. 布娃娃
 
 - 动画期间注视点跟着髋 / 胸走（镜头跟着倒下），不重新选边。
@@ -221,7 +263,7 @@ dotnet run -c Release -- probe <录像名的一部分> <档案> [0..7]   一次�
 - 第一版 60% 的死亡在身体静止那一刻有一次硬切；现在硬切为 0，换边的死亡降到约三分之一（能不动就不动），Auto 换边时中位只转 22°（它可以换成离相机最近的那个档案）；手选单个档案时，要换就是因为当前在背面或被挡，最近的合规一侧必然较远（中位约 100°，按 ≤ 45°/s 缓过去约 3 s）。所以“身体静止 → 相机静止”的中位从 0.8 s 变成 1.5 s。
 - 门槛（全部通过）：离地 < 5 cm 的帧 = 0（bg 列不适用，改为报告深度）；**硬切帧 = 0**；视线角速度 ≤ 60°/s；每次死亡换边 ≤ 1（不计被挡强制的——每 6 s 至多一次——和静止后被移动的）；布娃娃开始跳变 < 2 cm；相机静止后漂移 < 1 mm；构图、净空、平滑不差于两条基线；Low three-quarter 复现旧预设；Low on the face 身体静止后看得到脸 ≥ 90%（90.1%）；bg 列：Low three-quarter 躺地静止时仰 19–26°、1.0–1.35 m。
 - **Low three-quarter 没被改动的证明**（`Tests/DeathShots -- hash --against <改动前保存的列表>`）：改动前 760 次 Low three-quarter 运行里有 284 次（73488 个位姿）从不换边，这 284 次改动后逐位相同；其余 476 次以前在换边那一帧硬切，现在缓动或干脆不换，因此不同（有意的）。
-- 单元检查 50 项（新增：六个档案各自的落点、Auto 各姿态用到的档案、六个档案轮流切换全程无硬切、被移动转 40° 不换 / 转 150° 缓换、地下 → 地上不跳、被抓两个机位各三项）。
+- 单元检查 61 项（侧向偏好 11 项见 §5.1；新增：六个档案各自的落点、Auto 各姿态用到的档案、六个档案轮流切换全程无硬切、被移动转 40° 不换 / 转 150° 缓换、地下 → 地上不跳、被抓两个机位各三项）。
 
 ## 9. 运行时
 
@@ -240,7 +282,7 @@ dotnet run -c Release -- probe <录像名的一部分> <档案> [0..7]   一次�
 1. **位置**：22 根骨骼（前 7 根是身体坐标系，其余供全身档案）。骨骼索引按骨架指针缓存；布娃娃 `IsActive && PhysicsStarted` 且 7 个点的刚体都读得到时改用 `Ragdoll.GetBodyWorldPosition`，此后不再读骨骼。`PhysicsStarted` 输入与位置源由同一个判断产生；切换那一帧把同帧骨骼作为 `PreviousSource` 传入。
 2. **`ExpectRagdoll`** = 布娃娃开着，并且（死亡动画还没开始，或布娃娃已武装且（物理未开始，或正在用它的刚体））。
 3. **`BodyScale`**：开始时用骨骼的脊柱长度 ÷ 0.46 m 算好传入。
-4. **被抓**：`Grabbed = EnemyControl.IsHoldingGrab`，`GrabbedFraming = DuelDeathShotGrabbed`（§6.1）。
+4. **被抓**：`Grabbed = EnemyControl.IsHoldingGrab`，`GrabbedFraming = DuelDeathShotGrabbed`（§6.1）。**脸**：偏好是 Face side / Behind the head 时每帧读头骨相对绑定姿态的世界旋转算出脸的朝向（`ReadFace`，§5.1；头骨的绑定旋转按骨架指针缓存），`SidePreference = DuelDeathShotSide`。
 5. **世界**（`CameraCollisionWorld`）：地面两条射线（眼位上方 1.5 m 起、髋 + 1.5 m 起）；水面（起点上方 4 m 到下方 20 m）；遮挡一条射线并带回挡面法线。同帧相同查询去重，不按网格缓存；每帧射线数在 5 s 汇总里（`rays/frame`）。
 6. **玩家的手**（没有改）：左右环绕 = 游戏 `DirH` 的逐帧变化量累加成 `UserYaw`（一帧 > 1 rad 的丢弃）；滚轮每格约 10% 成 `UserSize`（0.5–3）；俯仰不读。重新选边时归零 / 归一。游戏自己的缩放距离和俯仰在镜头期间保持在开始时的值。
 7. **交接**：眼位 + 注视点走 `ActiveCameraController.PoseOverride`，FoV 走协调者（按开始时量出的“字段 → 实际视角”比例）。求解器输出原样写入。镜头期间强制防淡出。
@@ -266,6 +308,7 @@ dotnet run -c Release -- probe <录像名的一部分> <档案> [0..7]   一次�
 
 - Camera 页签 → **Camera mode** = **Duel** → 折叠栏 **Duel Camera**（只在这里，Directed Camera 里没有）：
   - **Duel death shot**：Auto、Low three-quarter、Low on the face、Hips up to the face、Low from the feet、Low from behind、Low full body（默认 Auto；死亡中改了相机缓到新档案）。设置 `DuelDeathShot`。
+  - **Side preference**：Nearest / Face side / Behind the head / Body's left / Body's right（默认 Nearest，§5.1）。设置 `DuelDeathShotSide`。
   - **When grabbed**：Level / Slightly above（默认 Level）。设置 `DuelDeathShotGrabbed`。
   - **Allow below ground**（默认关）。设置 `DuelDeathShotBelowGround`。
 - 迁移（`Configuration.MigrateDuelDeathShot`）：旧键 `DeathShotProfile` 为 Low three-quarter 的沿用，其余（Auto、已删除的 Face / Along the body / Overhead / Ground profile）→ Auto；`DeathShotBelowGround` 的值沿用；两个旧键退役。`DuelDeathShot` 存了不在下拉里的值 → Auto。
@@ -298,6 +341,7 @@ Duel 模式下 `DynamicCameraController` 整个不工作（它的开关是 Direc
 2. Duel 模式倒下：日志 `DuelCam: end … (the player is down)` 紧接 `DeathShot: start`；全程没有硬切——日志里 `side at … (eased over N°)`，不再有 `(cut)`。
 3. 六个档案各自的样子（§4 的表）；死亡中在下拉里换档案，相机缓过去。
 4. Auto：身体静止那一刻多数时候不动；动的话转得不多。
+4a. **Side preference**：选 Face side，尸体躺下后镜头在脸朝向的那一侧（日志 `side at … preference face side: met (face azimuth N°)`）；脸朝天时与 Nearest 一样（`the face points up, nearest`）；Behind the head / Body's left / Body's right 各看一次；死亡中改偏好，相机缓到新的一侧（已在那一侧就不动）。若 Face side 明显选到了后脑勺那边，说明脸的朝向读反了（离线没法验证游戏里写回的头骨旋转，只验证了录像）。
 5. 被抓起（Enemy Control 抓住尸体举起）：日志 `the body is held`，相机缓到上半身、平视（Level）或略俯（Slightly above），身体晃动时画面稳；放下并静止后 `the body lies still again`，缓回躺地的档案。
 6. Allow below ground：勾上后躺地的低机位到地面以下仰拍（5 s 汇总里 `eye … m BELOW ground`）；被抓起时相机穿过地面升上来、不跳。
 7. `camera check over 60 frames`：眼位 / 注视点差毫米级，镜头差 < 1°。
@@ -310,6 +354,7 @@ Duel 模式下 `DynamicCameraController` 整个不工作（它的开关是 Direc
 - Low on the face 在仰卧的身体上是从头侧高 35° 看过去（再高就不“低”了），不是正对着脸。
 - Hips up to the face 的视线角加速度 p99 比其他档案高（108 对约 100 °/s²），仍在门槛内。
 - 遮挡只查地形和墙，不查角色；被抓时抓它的那只怪可能挡在镜头前。
+- 侧向偏好只在选边的时刻生效：身体静止后头又慢慢转开不会带动镜头。脸的朝向在游戏里读的是上一渲染帧的骨架姿态。
 - 被抓信号只有 Enemy Control 的抓取；私有模块自己的抓取不算。
 - 被抓的机位只在合成的摆动身体上测过（录像里没有抓取）。
 - 凶手双人构图在 Duel 的自动死亡镜头里没有（Directed 的死亡构图里有）。

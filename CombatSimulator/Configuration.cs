@@ -739,6 +739,8 @@ public partial class Configuration : IPluginConfiguration
             DuelDeathShot = Camera.DeathShots.DeathShotProfile.Auto;
         if (!System.Enum.IsDefined(DuelDeathShotGrabbed))
             DuelDeathShotGrabbed = Camera.DeathShots.DeathShotGrabbedFraming.Level;
+        if (!System.Enum.IsDefined(DuelDeathShotSide))
+            DuelDeathShotSide = Camera.DeathShots.DeathShotSide.Nearest;
     }
 
     // "Guided Collapse" was an object with one switch, "Knee buckle on death". It is one choice of "Death guidance"

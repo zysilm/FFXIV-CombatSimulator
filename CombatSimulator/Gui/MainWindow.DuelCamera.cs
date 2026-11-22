@@ -69,6 +69,20 @@ public partial class MainWindow
                    "Low full body: the whole body, lying diagonally across the picture.\n" +
                    "Changing it while you are down moves the camera over to the new shot.");
 
+        var side = (int)config.DuelDeathShotSide;
+        ImGui.SetNextItemWidth(CameraItemWidth());
+        if (PresetCombo("Side preference##duelcam", DeathShotProfiles.SideLabels, side, out var pickedSide))
+        {
+            config.DuelDeathShotSide = (DeathShotSide)pickedSide;
+            config.Save();
+        }
+        HelpMarker("Most shots can be taken from either side of the body. Which one:\n" +
+                   "Nearest: the side nearest to where the camera already is.\n" +
+                   "Face side: the side the face is turned to, so the face is seen.\n" +
+                   "Behind the head: the side the back of the head is on.\n" +
+                   "Body's left / Body's right: always that side of the body.\n" +
+                   "With the face straight up or down, or that side blocked, the camera takes what it can.");
+
         var grabbed = (int)config.DuelDeathShotGrabbed;
         ImGui.SetNextItemWidth(CameraItemWidth());
         if (PresetCombo("When grabbed##duelcam", DeathShotProfiles.GrabbedLabels, grabbed, out var pickedGrabbed))

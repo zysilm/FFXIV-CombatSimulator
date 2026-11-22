@@ -30,7 +30,15 @@ internal sealed class Trajectory
         /// <summary>What the plugin would read this frame: the body centre once physics runs and the bone has a
         /// body, else the bone.</summary>
         public Vector3[] Runtime = Array.Empty<Vector3>();
+        /// <summary>World rotation of the head bone relative to its bind pose in the frame's pose (the last one known
+        /// where a frame has none; NaN in a trajectory exported before the face direction was).</summary>
+        public Quaternion HeadRotation = new(float.NaN, float.NaN, float.NaN, float.NaN);
+        /// <summary>Where the face points (<see cref="DeathShotFace"/>), zero when not known.</summary>
+        public Vector3 Face => float.IsNaN(HeadRotation.X) ? Vector3.Zero : DeathShotFace.Direction(HeadRotation);
     }
+
+    /// <summary>The trajectory has the head's rotation (exported since 2026-11-22).</summary>
+    public bool HasFace => Frames.Length > 0 && !float.IsNaN(Frames[^1].HeadRotation.X);
 
     public int BoneIndex(string name) => Array.IndexOf(Bones, name);
 
@@ -40,7 +48,9 @@ internal sealed class Trajectory
     {
         using var r = new BinaryReader(File.OpenRead(path), Encoding.UTF8);
         var magic = Encoding.ASCII.GetString(r.ReadBytes(8));
-        if (magic != "DSTRAJ01") throw new InvalidDataException("not a death-shot trajectory: " + path);
+        if (magic is not ("DSTRAJ01" or "DSTRAJ02")) throw new InvalidDataException("not a death-shot trajectory: " + path);
+        var withHead = magic == "DSTRAJ02";
+        var lastHead = new Quaternion(float.NaN, float.NaN, float.NaN, float.NaN);
         var t = new Trajectory
         {
             Name = r.ReadString(), IsPlayer = r.ReadBoolean(), Humanoid = r.ReadBoolean(), Facing = r.ReadSingle(),
@@ -69,6 +79,12 @@ internal sealed class Trajectory
                 if (float.IsNaN(f.Bone[b].X) && lastBone != null) f.Bone[b] = lastBone[b];
                 if (float.IsNaN(f.Body[b].X) && lastBody != null) f.Body[b] = lastBody[b];
                 f.Runtime[b] = f.PhysicsStarted && !float.IsNaN(f.Body[b].X) ? f.Body[b] : f.Bone[b];
+            }
+            if (withHead)
+            {
+                var q = new Quaternion(r.ReadSingle(), r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+                if (!float.IsNaN(q.X)) lastHead = q;
+                f.HeadRotation = lastHead;
             }
             lastBone = f.Bone;
             if (f.Body.Any(v => !float.IsNaN(v.X))) lastBody = f.Body;
@@ -100,7 +116,7 @@ internal sealed class Trajectory
         frames[index] = new Frame
         {
             Time = f.Time, Dt = f.Dt, GroundY = f.GroundY, PhysicsStarted = false, PoseFresh = f.PoseFresh, PoseSource = f.PoseSource,
-            Bone = f.Bone, Body = f.Body, Runtime = f.Bone,
+            Bone = f.Bone, Body = f.Body, Runtime = f.Bone, HeadRotation = f.HeadRotation,
         };
         return new Trajectory
         {
@@ -124,6 +140,7 @@ internal sealed class Trajectory
             {
                 Time = f.Time, Dt = f.Dt, GroundY = f.GroundY + move.Y, PhysicsStarted = f.PhysicsStarted, PoseFresh = f.PoseFresh,
                 PoseSource = f.PoseSource, Bone = f.Bone.Select(T).ToArray(), Body = f.Body.Select(T).ToArray(), Runtime = f.Runtime.Select(T).ToArray(),
+                HeadRotation = float.IsNaN(f.HeadRotation.X) ? f.HeadRotation : q * f.HeadRotation,
             }).ToArray(),
         };
     }
