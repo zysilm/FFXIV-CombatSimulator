@@ -30,7 +30,7 @@
 
 - **必须留在画面里的点**：玩家的头、玩家的低点（上表）、对手的头、对手的低点（身高 20% 处，半径取命中半径）。“放不下” = 这四点的包围框超过画面安全区（宽 0.86、高 0.88）。滚轮滚近时低点相应上移（玩家要的是更近，不是让镜头再退回去）。
 - **瞄准**：视线方向在“包围框居中”与“对手居中”之间取 0.6（`AimBias`）：玩家在自己一侧靠外，对手刚过中线。实际落点（Standard，相距 3 m）：玩家 x ≈ −0.40、对手 ≈ +0.10（画面半宽 = 1）。包围框比画面宽时（镜头正绕向新对手、或某人贴着镜头）优先保住玩家，对手随镜头转到位再入画。
-- **没有对手**：单人构图——方位保持在当时的位置，只有玩家拖动才转；距离取表里的“无对手”。
+- **没有对手**：对手没了的头 2 s 是单人构图（方位保持在当时的位置，距离取表里的“无对手”）；满 2 s 仍没有对手，镜头用 0.3 s 过渡还给游戏相机并等待，有对手时再缓入（§7.1）。
 
 ## 3. 侧（不越轴）
 
@@ -92,7 +92,8 @@
 - **位姿交接是三级的**（`CameraModule.CreateDuel`）：决斗镜头先写，自动死亡镜头覆盖它，过场镜头覆盖两者。
 - **玩家倒下**：决斗镜头在致命一击那一帧停下（不过渡），自动死亡镜头从当时的画面开始、同一帧提交 FoV（协调者里 FoV 不会回到游戏值）。Duel 模式下死亡镜头总是开着，用 Directed 页里保存的 **Death shot** 档案（默认 Auto）；`DynamicCameraController` 在 Duel 模式、玩家活着时什么都不做（不做战斗构图，也不从决斗镜头对游戏相机的写入里学缩放 / 俯仰记忆）。复活：死亡镜头 0.3 s 回到游戏相机并释放，随后决斗镜头从那里缓入。
 - **过场镜头**（胜利等）：占着相机时决斗镜头等待；它开始淡出的同一帧（`HandingBack` → `DuelCameraDirector.ResumeNow`）决斗镜头从它留下的画面重新开始并提交 FoV，淡出正好落到决斗镜头的位姿上。
-- **结束**：换模式 / 模拟停止 → 0.3 s 过渡回游戏相机（位姿和 FoV 一起）；换图、登出、卸载、游戏过场、私有场景、玩家倒下 → 立即。`Tick` 超过 0.5 s 没跑就停止写相机（`tick stalled`）。
+- **没有对手**（没选敌人、都倒下了、都在 40 m 外）：不开始；运行中连续 2 s 没有对手（倒下的对手先停 1.4 s）→ 0.3 s 过渡回游戏相机并等待（状态行 `duel camera waits — nobody to fight`），有对手的那一帧重新开始。
+- **结束**：换模式 / 模拟停止 / 没有对手 → 0.3 s 过渡回游戏相机（位姿和 FoV 一起）；立即结束和进入等待时把游戏的俯仰写回开始时的值一次；换图、登出、卸载、游戏过场、私有场景、玩家倒下 → 立即。`Tick` 超过 0.5 s 没跑就停止写相机（`tick stalled`）。
 - “Switch to Directed when a battle starts” 不会把 Duel 模式改成 Directed（它只从 Game / Follow bone 切过去）。
 
 ### 7.2 每帧
@@ -100,11 +101,12 @@
 1. **两个角色**：脚 = 角色位置；头 = `j_kao` 骨骼，没有这根骨骼的怪物取“位置 + Height”；半径 = 命中半径（0.3–4 m）。倒下的对手有布娃娃且物理已开始时改读刚体（头 `j_kao`、髋 `j_kosi`）。
 2. **对手**（`DuelOpponentPicker`）：每个活着的、40 m 内的已选敌人按“到玩家的距离 − 加成”打分（正在打玩家 −3 m；它打向玩家的预警正在蓄力 −6 m；是玩家当前目标 −3 m），最低者当选。回差：别人要比当前对手好 2.5 m 以上并保持 0.8 s 才换；当前对手倒下后镜头在它身上停 1.4 s 再换；超过 50 m 丢弃；没人 → 单人构图。
 3. **玩家的手**：
+   - **只有手真的在相机上时**才把 `DirH` / `DirV` 的变化算作玩家的拖动：鼠标左键或右键按着（`GetAsyncKeyState`；游戏只在按着鼠标键时用鼠标转相机），或手柄右摇杆离开中心（`IGamepadState.RightStick`，死区 0.2），取本帧或上一帧。其余的变化是游戏自己转的——Standard 移动方式下键盘 A / D 转身时相机跟着转、Legacy 下跑动时相机回到角色背后、手柄的自动回正——一律不算，下一帧被写回。（代价：键盘的相机键、鼠标键按着时同时用键盘转身，前者不起作用，后者会被算进去。）
    - 左右 = 游戏相机 `DirH` 相对上一帧写入值的变化（游戏照常积分鼠标 / 手柄，灵敏度和反向都跟游戏走），累加成偏移；停手 1 s 后按 0.8 s 的时间常数回正。
    - 俯仰 = 游戏相机 `DirV` 相对保持值的变化（保持值取开始时的俯仰，夹在游戏限位内侧 1/4 处，两个方向都拖得动）；`DirV` 的正负与眼位仰角的关系在开始时从当时的画面量出（量不出按“相反”）。限位 −14°…+30°，不回正。
    - 滚轮 = ImGui 原始滚轮，每格约 10%，0.6–1.8 倍，不回正，跨战斗保留（不存盘）。游戏自己的缩放距离保持在开始时的值。
 4. **交接**：眼位 + 注视点经 `ActiveCameraController.PoseOverride`；FoV（求解器的垂直视角按开始时量出的“字段 → 实际视角”比例换成字段值）、游戏相机的 `DirH`（见 §7.3）、保持的 `DirV` 和缩放走协调者。镜头期间强制开着防淡出。
-5. **世界**：与死亡镜头相同的三种查询（`BGCollisionModule.RaycastMaterialFilter` 的地面和遮挡、`TryFindWaterSurface` 的水面），同一帧内相同的查询只打一次。只查地形和墙，不查角色。每帧射线数写在 5 s 汇总里。
+5. **世界**：与死亡镜头共用一个类（`Camera/CameraCollisionWorld.cs`，从 `DeathShotDirector` 里原样搬出）的三种查询（`BGCollisionModule.RaycastMaterialFilter` 的地面和遮挡、`TryFindWaterSurface` 的水面），同一帧内相同的查询只打一次。只查地形和墙，不查角色。每帧射线数写在 5 s 汇总里。
 6. **时序**：与死亡镜头一样，求解在框架帧里做，读到的是上一渲染帧的位置。
 
 ### 7.3 移动方向（玩家按什么方向走）
@@ -117,13 +119,17 @@
 - 靠拢之后：镜头在正常位置时 W 正对对手、A / D 是绕对手的正圆（2.8–3.4 m，镜头 90°/s）；镜头在路上（换对手、交叉换位）时移动方向与画面最多差 30°。
 - 玩家自己把镜头拖开时靠拢淡出（拖开 40° 时为 0）：这时移动完全跟画面。没有对手时 `DirH` = 渲染 yaw。
 
+**游戏的移动方式**（角色设置里的 Standard / Legacy，读 `IGameConfig` 的 `UiControlOption.MoveMode`，写在 `start` 一行）：
+- **Legacy**：移动相对相机。W 朝对手、A / D 绕对手转、S 直退——上面说的都成立。
+- **Standard**：A / D 是原地转身（游戏让相机跟着转，决斗镜头把 yaw 写回去，所以画面不动、角色转），不是横移；W 仍按相机方向前进（朝对手），绕对手要用 Q / E（横移）。也就是说 Standard 下做不到“A / D 绕圈”。取的是最不坏的做法：镜头不跟着键盘转身走（否则偏移会顶到 170°，镜头跑到玩家正面），构图保持不变。第一次在 Standard 下开始时日志另写一行说明。**这些是按游戏两种移动方式的已知行为推的，没有在游戏里核对。**
+
 代价：正常构图下“屏幕正上方”与 W 的实际方向差约 20°（W 朝对手走，对手在画面里本来就偏在一侧）。Directed 的战斗构图不改 yaw，没有这个问题；自动死亡镜头期间玩家不移动；Enemy Control 按渲染视线自己算方向。把 `MoveLean` 设为 0 就是“`DirH` = 渲染 yaw”。
 
 ### 7.4 日志（`dalamud.log`，都以 `DuelCam:` 开头）
 
 | 行 | 什么时候 | 内容 |
 |---|---|---|
-| `start —` / `resumes —` | 开始；等待之后重新开始 | Framing、起始相机的方位 / 距离 / 视角、游戏 yaw、俯仰及其保持值和正负关系、FoV 字段、字段→视角比例、宽高比 |
+| `start —` / `resumes —` | 开始；等待之后重新开始 | Framing、起始相机的方位 / 距离 / 视角、游戏 yaw、俯仰及其保持值和正负关系、FoV 字段、字段→视角比例、宽高比、移动方式（Standard / Legacy / unknown） |
 | `cannot start yet —` | 开始不了（每种原因一行） | 原因 |
 | `opponent at … s —` | 对手变了 | 名字、原因（first / it is striking at the player / it is attacking the player / the player targets it / it is nearer / the last one is down / … gone / out of range / nobody left）、距离 |
 | `side at … s — crosses the line …` | 越线 | 原因（player / blocked / hidden）、第几次 |
@@ -131,7 +137,7 @@
 | `view blocked at … s —` / `the usual place is free again` | 同侧让位 / 退回 | 让位角度 |
 | `beat at … s —` | 推近被采纳 | 哪种时刻 |
 | `cut at … s` | 玩家一帧内被移动 > 8 m | |
-| `camera check over 60 frames —` | 开始后前 60 次交接 | 场景相机的眼位 / 注视点与交出位姿之差的最大值、镜头差；**游戏的 yaw 与写入值之差的最大值**（玩家的手，或游戏没保持它）；当时的渲染 yaw 与移动 yaw |
+| `camera check over 60 frames —` | 开始后前 60 次交接 | 场景相机的眼位 / 注视点与交出位姿之差的最大值、镜头差；**游戏的 yaw 与写入值之差的最大值**，以及其中手不在相机上时的最大值（游戏自己转的，被写回）；当时的渲染 yaw 与移动 yaw |
 | `… s — two-shot with …` | 每 5 s | 对手、间距、眼位偏离背后的角度和侧、距离、镜头、眼位离地、收近 / 抬升、渲染 yaw 与移动 yaw、玩家的 yaw / 俯仰 / 倍数、这 5 s 眼位最大速度和视线最大转速、每帧射线数、越线 / 重新选边 / 推近次数、已交接次数 |
 | `waits at … s —` | 让给更高的所有者 | 谁 |
 | `end after … s (<原因>) —` | 结束 | 交接次数、越线、重新选边、推近（被拒数） |
@@ -139,7 +145,7 @@
 ### 7.5 界面与设置
 
 - Camera 页签 → **Camera mode** 下拉：Game / Follow bone / Directed / **Duel**。
-- 选 Duel 后出现折叠栏 **Duel Camera**：一行状态、一个下拉 **Framing**（Tight / Standard / Wide，默认 Standard）。没有别的选项。
+- 选 Duel 后出现折叠栏 **Duel Camera**：一行状态、一个下拉 **Framing**（Tight / Standard / Wide，默认 Standard）；下面一行说明“Duel 模式下倒地时总是播自动死亡镜头”，再是 **Death shot** 下拉和 **Allow below ground** 勾选（与 Directed Camera 折叠栏里的是同两个设置）。
 - 设置：`EnableDuelCamera`（默认 false）、`DuelCameraFraming`（默认 Standard）。没有改任何已有设置的默认值。
 
 ## 8. 离线检查
@@ -258,7 +264,7 @@ dotnet run -c Release -- probe <决斗名的一部分> [tight|standard|wide]   �
 - **好不好看、手感对不对**。地面贴合（2026-11-11）五轮离线指标全达标、游戏内被否决。
 - **真实的打斗**：剧本是光滑的轨迹加一点头部晃动；真实的动作动画、位移技能、击飞、同时好几个敌人贴身，都没有。真实的冲刺可能比剧本的 20 m/s 快。
 - **真实的场景**：墙是无限薄的竖直面，地面是解析函数；柱子、门框、天花板、台阶、其他角色的遮挡都没有。
-- **游戏怎么用 `DirH`**：§7.3 假定游戏在两种移动方式（Standard / Legacy）下都按 `DirH` 定玩家的移动方向，并且在相机更新里只把玩家的输入加到 `DirH` 上。如果游戏自己还会转 `DirH`（例如移动时相机自动回正的设置），会被当成玩家的拖动。看日志 `camera check` 里“the game's yaw up to …° off the one written”：不碰鼠标时应接近 0。
+- **游戏怎么用 `DirH`**：§7.3 假定游戏按 `DirH` 定玩家的移动方向（Legacy 下全部方向键，Standard 下至少 W）。游戏自己转 `DirH` 的情况现在不算玩家拖动（§7.2 第 3 条），看日志 `camera check` 里 “of which up to …° with no hand on the camera”：按着 A / D 或跑动时这个数不为 0 就说明游戏在转、并且被写回了；画面不应跟着转。鼠标键 / 右摇杆的判断本身没在游戏里核对（例如手柄右摇杆被改作他用时）。
 - **`DirV` 的方向**：从开始那一刻的画面量；量不出时按“`DirV` 负 = 眼位在上”。日志 `start` 一行写了结果。
 - **体型**：玩家按身高缩放、怪物按 Height 和命中半径；拉拉菲尔、鲁加、大型怪的实际观感没看过。
 - **镜头换算**：与死亡镜头相同（开始时量“FoV 字段 → 实际视角”）。
@@ -271,16 +277,16 @@ dotnet run -c Release -- probe <决斗名的一部分> [tight|standard|wide]   �
 - **眼位随玩家刚性平移**（0.03 s）：电影感的滞后会让冲刺、击退时玩家出画（试过 0.06 s：击退那一场里玩家有 1.5% 的帧出画，现在是 0）。
 - **俯仰限位、不回正；左右回正**：左右是构图的一部分，必须回到位；俯仰和滚轮是偏好。
 - **玩家倒下后不做 0.3 s 过渡**：直接由死亡镜头从当时的画面接手。复活时经过 0.3 s 的游戏相机再缓入（没有给死亡镜头加新的交接入口）。
-- **Duel 模式下死亡镜头总是开着**，档案取 Directed 页里保存的值；Duel 页里没有放第二个下拉。
-- **世界查询的实现复制了一份**（`DuelCameraDirector.GameWorld`，约 100 行，与 `DeathShotDirector.GameWorld` 相同的三种查询）：没有为了共用去动死亡镜头的文件。
+- **Duel 模式下死亡镜头总是开着**；Death shot 档案和 Allow below ground 在 Duel Camera 折叠栏里也能改（同两个设置）。
+- **没有对手满 2 s 就把相机还给游戏**（用户反馈：单人构图锁着俯仰和缩放，像相机被锁）。Duel 模式下相机碰撞补丁与 Directed 一样一直开着（`ActiveCameraController.UpdateCollisionPolicy`），所以还给游戏的那段时间游戏相机也没有碰撞。
 
 ## 10. 游戏里看什么
 
 前提：Camera 页签 → **Camera mode** 选 **Duel**；开始一场 1v1 模拟。Camera 页签 → 折叠栏 **Duel Camera** 里有状态行和 **Framing**。
 
-1. 日志有 `DuelCam: start`、`DuelCam: opponent at 0.0 s — <名字> (first)`，约 1 s 后有 `DuelCam: camera check over 60 frames`：眼位 / 注视点差应是毫米级，镜头差 < 1°；**不碰鼠标时 “the game's yaw up to …° off the one written” 应接近 0**（大 = 游戏自己在转 `DirH`，见 §8.4）。
+1. 日志有 `DuelCam: start`、`DuelCam: opponent at 0.0 s — <名字> (first)`，约 1 s 后有 `DuelCam: camera check over 60 frames`：眼位 / 注视点差应是毫米级，镜头差 < 1°；`start` 行末尾的 `movement mode` 是 Standard 还是 Legacy；`camera check` 里 “of which up to …° with no hand on the camera” 是游戏自己转、被写回的量（见 §8.4）。
 2. 进入：从游戏相机缓到双人构图（约 1 s），两人分在画面两侧，玩家在前景。
-3. **移动手感**（最重要）：W 是不是朝对手走；A / D 是不是绕着对手转、距离基本不变；S 是不是直退。屏幕正上方与 W 差约 20° 这件事别不别扭。
+3. **移动手感**（最重要）：W 是不是朝对手走；A / D 是不是绕着对手转、距离基本不变；S 是不是直退。屏幕正上方与 W 差约 20° 这件事别不别扭。 另外：**不按鼠标键时按 A / D 或跑动，镜头不应慢慢漂到玩家正面**；Standard 移动方式下 A / D 是原地转身、Q / E 才绕圈（§7.3），看这样能不能接受。
 4. 走近 / 拉开：近时变紧、远时变宽，远到 15 m 以上对手仍在画面里、玩家没有变成小人。
 5. 绕着对手跑：镜头跟着转、不落到正背后、不晕。
 6. 穿过对手（位移技能）：镜头不越到另一边，约 1 s 内转回双人构图；日志 `side … picked again … the fighters crossed over`。
@@ -288,18 +294,19 @@ dotnet run -c Release -- probe <决斗名的一部分> [tight|standard|wide]   �
 8. 多个敌人：镜头锁在正在打你的那个 / 最近的那个，换人时不乱跳（日志 `opponent at …`，原因一栏）；击倒后停约 1.4 s 再换。
 9. 鼠标：左右拖动镜头跟着转、松手约 1 s 后自己回去；拖过玩家背后就留在另一侧（日志 `crosses the line … (player)`）；上下拖动有限的俯仰（方向与游戏相机一致）；滚轮改大小。
 10. 墙边、室内、坡地、水边：镜头不进墙、不进地；背靠墙时约 1 s 内滑到沿墙的侧面（日志 `view blocked … goes N° further round`）；一侧一直被挡时换到另一侧（`crosses the line … (blocked)`）。
-11. 倒下：死亡镜头从当时的画面接手，没有跳（日志 `DuelCam: end … (the player is down)` 紧接 `DeathShot: start`）。复活 / 重置后回到决斗镜头。
+11. 倒下：死亡镜头从当时的画面接手，没有跳（日志 `DuelCam: end … (the player is down)` 紧接 `DeathShot: start`）。复活 / 重置后回到决斗镜头。 全部敌人倒下 / 没选敌人：约 2 s 后镜头缓回游戏相机（日志 `DuelCam: end … (nobody to fight)`），俯仰和缩放自由；再有敌人时缓入。
 12. 胜利过场镜头（Camera 页签 → Cutscene Shots 里选了 Victory）：过场播完后 `DuelCam: resumes`，没有跳。
 13. Enemy Control 附身时：`DuelCam: waits … EnemyControlFollow has the camera`，放开后 `resumes`。
 14. Framing 三档的差别；拉拉菲尔 / 鲁加、大型怪的景别。
-15. Follow bone 和 Directed 两个模式与以前完全一样；“Switch to Directed when a battle starts” 勾着时 Duel 模式不被改掉。
+15. Follow bone 和 Directed 两个模式与以前完全一样；“Switch to Directed when a battle starts” 勾着时 Duel 模式不被改掉。 Duel Camera 折叠栏里的 Death shot、Allow below ground 与 Directed Camera 里的联动。
 16. 开销：5 s 汇总里的 `rays/frame`（平常 4–5 条），以及 `FrameCost:`。
 
 ## 11. 已知的不足
 
 - 位置比画面晚一帧（与死亡镜头相同）。
 - 遮挡只查地形和墙，不查角色：别的敌人、队友挡在镜头前不会触发让位。大战里（很多人）这个模式不合适，它是为 1v1 调的。
-- 没有对手时俯仰仍然限位（−14°…+30°），不能抬头看天。
+- 没有对手的头 2 s 俯仰仍然限位；之后是游戏相机。
+- 玩家倒下的那一帧决斗镜头把游戏的俯仰写回原值，但同一帧开始的死亡镜头已经记下了保持值（原值夹在限位内侧 1/4 处的那个），死亡镜头结束后玩家拿回的是它；两者只在原俯仰贴近限位时不同。
 - 玩家背靠墙、镜头两侧都没有位置时，眼位被收到头顶上方，约 1 s 内画面很挤（离线“wall”一场：玩家出画 2.7%）。
 - 推近的“重击”门槛（目标最大 HP 的 10%，暴击 5%）、“大招”门槛（蓄力 ≥ 1.2 s 或范围 ≥ 4 m）是先定的，要按实际战斗调。
 - 没有“破防 / 硬直”的推近（插件里没有这个事件）。

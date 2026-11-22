@@ -53,6 +53,9 @@ public sealed unsafe class DuelCameraDirector : IDisposable
     /// <summary>A telegraphed attack on the player is a big one with a wind-up this long or an area this wide; the
     /// camera answers it this long before it lands.</summary>
     private const float BigWindup = 1.2f, BigRadius = 4f, ThreatLead = 0.35f;
+    /// <summary>With nobody to frame the player against for this long, the camera goes back to the game.</summary>
+    private const float NobodySeconds = 2f;
+    private const float StickDeadZone = 0.2f;
 
     public static readonly string[] FramingLabels = { "Tight", "Standard", "Wide" };
     public static readonly DuelFraming[] Framings = { DuelFraming.Tight, DuelFraming.Standard, DuelFraming.Wide };
@@ -70,8 +73,10 @@ public sealed unsafe class DuelCameraDirector : IDisposable
     private readonly Func<bool> sceneActive;
     private readonly ICondition condition;
     private readonly IClientState clientState;
+    private readonly IGamepadState gamepad;
+    private readonly IGameConfig gameConfig;
     private readonly IPluginLog log;
-    private readonly GameWorld world = new();
+    private readonly CameraCollisionWorld world = new();
     private readonly DuelCameraSolver solver;
     private readonly DuelOpponentPicker picker = new();
     private readonly List<DuelCandidate> candidates = new();
@@ -99,6 +104,14 @@ public sealed unsafe class DuelCameraDirector : IDisposable
 
     // the player's hand
     private float pendingWheel;
+    private bool handWasOn;
+    private float ignoredYaw;
+
+    // the fighters
+    private HeadBone playerHead, opponentHead;
+    private float nobodyFor;
+    private int statusKey = int.MinValue;
+    private bool saidStandard;
 
     // key moments
     private bool pendingGiven, pendingTaken, pendingFinish;
@@ -136,6 +149,8 @@ public sealed unsafe class DuelCameraDirector : IDisposable
         Func<bool> sceneActive,
         ICondition condition,
         IClientState clientState,
+        IGamepadState gamepad,
+        IGameConfig gameConfig,
         IPluginLog log)
     {
         this.config = config;
@@ -149,6 +164,8 @@ public sealed unsafe class DuelCameraDirector : IDisposable
         this.sceneActive = sceneActive;
         this.condition = condition;
         this.clientState = clientState;
+        this.gamepad = gamepad;
+        this.gameConfig = gameConfig;
         this.log = log;
         solver = new DuelCameraSolver(world);
     }
@@ -212,7 +229,7 @@ public sealed unsafe class DuelCameraDirector : IDisposable
             log.Warning(ex, "DuelCam: frame failed; the duel camera stops and the camera goes back to the game.");
             Stop("error");
             failed = true;
-            status = "duel camera stopped after an error (see the log); pick the mode again to restart it";
+            Say("duel camera stopped after an error (see the log); pick the mode again to restart it");
         }
     }
 
@@ -248,7 +265,7 @@ public sealed unsafe class DuelCameraDirector : IDisposable
         if (off != null)
         {
             if (state is State.Running or State.Waiting) Stop(off, blend);
-            if (state == State.Idle) status = off;
+            if (state == State.Idle) Say(off);
             return;
         }
 
@@ -266,19 +283,44 @@ public sealed unsafe class DuelCameraDirector : IDisposable
         {
             if (state != State.Waiting)
             {
-                if (state == State.Running) log.Info($"DuelCam: waits at {time:0.0} s — {above} has the camera.");
+                if (state == State.Running)
+                {
+                    log.Info($"DuelCam: waits at {time:0.0} s — {above} has the camera.");
+                    // The game gets its own pitch back for whoever has the camera now.
+                    RestorePitch();
+                }
                 coordinator.Release(CameraOwner.Duel);
                 state = State.Waiting;
                 havePose = false;
                 wroteDirH = false;
             }
-            status = $"duel camera waits — {above} has the camera";
+            if (statusKey != -10 - (int)above)
+            {
+                statusKey = -10 - (int)above;
+                status = $"duel camera waits — {above} has the camera";
+            }
+            return;
+        }
+
+        // ---- nobody to frame the player against: the game's own camera, until somebody is ----
+        if (state != State.Running && !AnyOpponent(player!.Address))
+        {
+            if (state == State.Waiting) Stop("nobody to fight");
+            Say("duel camera waits — nobody to fight");
             return;
         }
 
         if (state != State.Running && !Begin(game, player!.Address, state == State.Waiting))
             return;
         Step(game, player!.Address, dt);
+    }
+
+    /// <summary>A status line that is a constant (the ones with names or numbers in them are rebuilt only when what
+    /// they say changes, by <see cref="statusKey"/>).</summary>
+    private void Say(string text)
+    {
+        status = text;
+        statusKey = int.MinValue;
     }
 
     /// <summary>
@@ -297,7 +339,7 @@ public sealed unsafe class DuelCameraDirector : IDisposable
             var player = Core.Services.ObjectTable.LocalPlayer;
             var camMgr = GameCameraManager.Instance();
             if (player == null || player.Address == nint.Zero || camMgr == null || camMgr->Camera == null) return;
-            if (Begin(camMgr->Camera, player.Address, true))
+            if (AnyOpponent(player.Address) && Begin(camMgr->Camera, player.Address, true))
                 Step(camMgr->Camera, player.Address, 0f);
         }
         catch (Exception ex)
@@ -320,7 +362,7 @@ public sealed unsafe class DuelCameraDirector : IDisposable
 
     private bool CannotBegin(string reason)
     {
-        status = "duel camera cannot start — " + reason;
+        if (beginFailure != reason) Say("duel camera cannot start — " + reason);
         if (beginFailure == reason) return false;
         beginFailure = reason;
         log.Info($"DuelCam: cannot start yet — {reason}; trying again every frame.");
@@ -342,7 +384,7 @@ public sealed unsafe class DuelCameraDirector : IDisposable
         var look = new Vector3(sc->LookAtVector.X, sc->LookAtVector.Y, sc->LookAtVector.Z);
         if (!CutsceneView.CanHandOver(eye, look))
             return CannotBegin("the game camera's eye and look-at point are less than 0.1 m apart (first person?) or not finite");
-        if (!ReadSubject(playerAddress, false, out _))
+        if (!ReadSubject(playerAddress, false, ref playerHead, out _))
             return CannotBegin("the player's position cannot be read");
         beginFailure = null;
 
@@ -394,18 +436,30 @@ public sealed unsafe class DuelCameraDirector : IDisposable
         beatsTaken = beatsRefused = 0;
         ResetWindow();
         nextSummaryAt = Environment.TickCount64 + SummaryMs;
+        nobodyFor = 0f;
+        handWasOn = false;
+        ignoredYaw = 0f;
+        statusKey = int.MinValue;
+        var legacy = LegacyMovement();
 
         var from = eye - look;
         log.Info($"DuelCam: {(afterWaiting ? "resumes" : "start")} — framing {config.DuelCameraFraming}; from the camera at azimuth " +
                  $"{Degrees(DeathShotMath.Azimuth(from)):0}°, {from.Length():0.00} m, lens {Degrees(rendered):0.0}° " +
                  $"(game yaw {Degrees(game->DirH):0}°, pitch {Degrees(originalDirV):0}° held at {Degrees(heldDirV):0}° and read {(pitchSense > 0f ? "as" : "against")} the eye's elevation, " +
-                 $"FoV field {game->FoV:0.000}, field→lens ratio {fovRatio:0.000}, aspect {aspect:0.00}).");
+                 $"FoV field {game->FoV:0.000}, field→lens ratio {fovRatio:0.000}, aspect {aspect:0.00}); " +
+                 $"movement mode {(legacy == null ? "unknown" : legacy.Value ? "Legacy" : "Standard")}.");
+        if (legacy == false && !saidStandard)
+        {
+            saidStandard = true;
+            log.Info("DuelCam: the game's movement mode is Standard — expected: W goes at the opponent and Q/E (strafe) go round them, but A/D turn the " +
+                     "character on the spot and the camera does not follow the turn (the duel camera keeps its own yaw). Legacy moves by the camera: W at the opponent, A/D round them.");
+        }
         return true;
     }
 
     private void Step(FFXIVClientStructs.FFXIV.Client.Game.Camera* game, nint playerAddress, float dt)
     {
-        if (!ReadSubject(playerAddress, false, out var player))
+        if (!ReadSubject(playerAddress, false, ref playerHead, out var player))
         {
             // Nothing to solve from this frame (the model is being redrawn): the last pose stays.
             Submit();
@@ -415,8 +469,10 @@ public sealed unsafe class DuelCameraDirector : IDisposable
         // ---- who the player is fighting ----
         candidates.Clear();
         var target = currentTarget();
-        foreach (var npc in npcSelector.SelectedNpcs)
+        var selected = npcSelector.SelectedNpcs;
+        for (var n = 0; n < selected.Count; n++)
         {
+            var npc = selected[n];
             if (npc.BattleChara == null) continue;
             var obj = (GameObject*)npc.BattleChara;
             candidates.Add(new DuelCandidate(IdOf(npc), new Vector3(obj->Position.X, obj->Position.Y, obj->Position.Z),
@@ -425,18 +481,26 @@ public sealed unsafe class DuelCameraDirector : IDisposable
         var id = picker.Pick(candidates, player.Feet, dt, out var why);
         SimulatedNpc? opponent = null;
         if (id != 0)
-            foreach (var npc in npcSelector.SelectedNpcs)
-                if (npc.BattleChara != null && IdOf(npc) == id) opponent = npc;
+            for (var n = 0; n < selected.Count; n++)
+                if (selected[n].BattleChara != null && IdOf(selected[n]) == id) opponent = selected[n];
         if (why != null)
         {
             opponentName = opponent?.Name ?? "";
             log.Info(opponent != null
                 ? $"DuelCam: opponent at {time:0.0} s — {opponentName} ({why}), {Vector3.Distance(player.Feet, Position(opponent)):0.0} m away."
-                : $"DuelCam: opponent at {time:0.0} s — nobody ({why}); the camera frames the player alone.");
+                : $"DuelCam: opponent at {time:0.0} s — nobody ({why}); the camera goes back to the game in {NobodySeconds:0} s unless somebody comes.");
         }
         opponentId = id;
         DuelSubject? other = null;
-        if (opponent != null && ReadSubject(opponent.Address, !opponent.IsAlive, out var body)) other = body;
+        if (opponent != null && ReadSubject(opponent.Address, !opponent.IsAlive, ref opponentHead, out var body)) other = body;
+
+        // Nobody for a while: the game's own camera (free pitch and zoom), until somebody is there again.
+        nobodyFor = other == null ? nobodyFor + dt : 0f;
+        if (nobodyFor >= NobodySeconds)
+        {
+            Stop("nobody to fight", blend: true);
+            return;
+        }
 
         // ---- key moments ----
         if (pendingFinish) Beat(DuelBeat.Finish);
@@ -446,16 +510,19 @@ public sealed unsafe class DuelCameraDirector : IDisposable
         PollTelegraphs();
 
         // ---- the player's hand: yaw and pitch off the game camera's own (since they were written), the wheel ----
+        // Only while a hand is on the camera (HandOnCamera); what the game turns by itself is written over.
+        var hand = HandOnCamera();
         float yawIn = 0f, pitchIn = 0f;
         if (wroteDirH && float.IsFinite(game->DirH))
         {
             var turned = DeathShotMath.AngleDelta(writtenDirH, game->DirH);
-            if (MathF.Abs(turned) <= MaxInputStep) yawIn = turned;
+            if (!hand) ignoredYaw = MathF.Max(ignoredYaw, MathF.Abs(turned));
+            else if (MathF.Abs(turned) <= MaxInputStep) yawIn = turned;
         }
         if (wroteDirH && haveHeldDirV && float.IsFinite(game->DirV))
         {
             var tilted = game->DirV - heldDirV;
-            if (MathF.Abs(tilted) <= MaxInputStep) pitchIn = tilted * pitchSense;
+            if (hand && MathF.Abs(tilted) <= MaxInputStep) pitchIn = tilted * pitchSense;
         }
         var wheel = pendingWheel;
         pendingWheel = 0f;
@@ -498,9 +565,14 @@ public sealed unsafe class DuelCameraDirector : IDisposable
         Submit();
         Report(in o, dt);
         last = o;
-        status = o.TwoShot
-            ? $"duel camera — you and {(opponentName.Length > 0 ? opponentName : "the opponent")}, {o.Separation:0.0} m apart"
-            : "duel camera — nobody to fight: framing you alone";
+        var key = o.TwoShot ? (int)(opponentId & 0x3FFFFFFF) + 1 : 0;
+        if (key != statusKey)
+        {
+            statusKey = key;
+            status = o.TwoShot
+                ? $"duel camera — you and {(opponentName.Length > 0 ? opponentName : "the opponent")}"
+                : "duel camera — nobody to fight";
+        }
     }
 
     private void Beat(DuelBeat kind)
@@ -571,7 +643,7 @@ public sealed unsafe class DuelCameraDirector : IDisposable
     /// A fighter for the solver: where it stands, its head (the head bone of a humanoid; the top of anything else), its
     /// width. A body that is down is read from its ragdoll when it has one (the bones stay where it died).
     /// </summary>
-    private bool ReadSubject(nint address, bool down, out DuelSubject subject)
+    private bool ReadSubject(nint address, bool down, ref HeadBone cache, out DuelSubject subject)
     {
         subject = default;
         if (address == nint.Zero) return false;
@@ -592,9 +664,107 @@ public sealed unsafe class DuelCameraDirector : IDisposable
             if (ragdoll.GetBodyWorldPosition("j_kosi") is { } hips && Finite(hips))
                 feet = new Vector3(hips.X, MathF.Min(hips.Y, fallen.Y) - 0.1f, hips.Z);
         }
-        head ??= bones.GetBoneWorldPos(address, "j_kao") is { } bone && Finite(bone) && MathF.Abs(bone.Y - feet.Y) < 15f ? bone : null;
+        head ??= Head(address, ref cache) is { } bone && Finite(bone) && MathF.Abs(bone.Y - feet.Y) < 15f ? bone : null;
         subject = new DuelSubject(feet, head ?? feet + new Vector3(0f, tall, 0f), radius);
         return subject.IsFinite;
+    }
+
+    /// <summary>Where a character's head bone was found: looked up by name once per character and skeleton (again
+    /// when the model is redrawn with another one); −1: it has none (a monster), and is not looked for again.</summary>
+    private struct HeadBone
+    {
+        public nint Address, Skeleton;
+        public int BoneCount, Index;
+    }
+
+    private Vector3? Head(nint address, ref HeadBone cache)
+    {
+        if (bones.TryGetSkeleton(address) is not { } skeleton) return null;
+        if (cache.Address != address || cache.Skeleton != (nint)skeleton.HavokSkeleton || cache.BoneCount != skeleton.BoneCount)
+        {
+            cache = new HeadBone
+            {
+                Address = address,
+                Skeleton = (nint)skeleton.HavokSkeleton,
+                BoneCount = skeleton.BoneCount,
+                Index = bones.ResolveBoneIndex(skeleton, "j_kao"),
+            };
+        }
+        return cache.Index >= 0 ? bones.GetBoneWorldPos(skeleton, cache.Index) : null;
+    }
+
+    /// <summary>
+    /// Whether the player's hand is on the camera: a mouse button held (the game turns its camera only while one is)
+    /// or the right stick off centre, on this tick or the one before. Only then is a change of the game camera's yaw
+    /// or pitch the player's. The game also turns its camera by itself (keyboard turning in the Standard movement
+    /// mode, the pivot behind the character while running in Legacy, the gamepad's recentring): that is not the
+    /// player dragging the camera, and is written over.
+    /// </summary>
+    private bool HandOnCamera()
+    {
+        var now = false;
+        try
+        {
+            now = (GetAsyncKeyState(0x01) & 0x8000) != 0 || (GetAsyncKeyState(0x02) & 0x8000) != 0 ||
+                  gamepad.RightStick.LengthSquared() > StickDeadZone * StickDeadZone;
+        }
+        catch
+        {
+            // No input state: nobody is dragging.
+        }
+        var on = now || handWasOn;
+        handWasOn = now;
+        return on;
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int virtualKey);
+
+    /// <summary>The game's movement mode (character configuration: Standard turns the character with A/D and the
+    /// camera with it, Legacy moves relative to the camera), or null when the client does not say.</summary>
+    private bool? LegacyMovement()
+    {
+        try
+        {
+            return gameConfig.TryGet(Dalamud.Game.Config.UiControlOption.MoveMode, out uint mode) ? mode == 1 : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Whether somebody is there to frame the player against (alive, selected, in range).</summary>
+    private bool AnyOpponent(nint playerAddress)
+    {
+        var at = ((GameObject*)playerAddress)->Position;
+        var list = npcSelector.SelectedNpcs;
+        for (var i = 0; i < list.Count; i++)
+        {
+            var npc = list[i];
+            if (npc.BattleChara == null || !npc.IsAlive) continue;
+            var obj = (GameObject*)npc.BattleChara;
+            var dx = obj->Position.X - at.X;
+            var dz = obj->Position.Z - at.Z;
+            if (dx * dx + dz * dz <= DuelOpponentPicker.PickRange * DuelOpponentPicker.PickRange) return true;
+        }
+        return false;
+    }
+
+    /// <summary>The game's own pitch, put back once when the duel camera lets go without a blend (it was held at
+    /// <see cref="heldDirV"/> meanwhile; the request that held it is gone, so this one value is written directly).</summary>
+    private void RestorePitch()
+    {
+        if (!haveHeldDirV || !float.IsFinite(originalDirV)) return;
+        try
+        {
+            var camMgr = GameCameraManager.Instance();
+            if (camMgr != null && camMgr->Camera != null) camMgr->Camera->DirV = originalDirV;
+        }
+        catch
+        {
+            // The camera is gone (logout, zone change): nothing to put back.
+        }
     }
 
     // ------------------------------------------------------------------
@@ -724,7 +894,7 @@ public sealed unsafe class DuelCameraDirector : IDisposable
 
         var away = poseEye - poseLook;
         var text = $"DuelCam: camera check over {CheckFrames} frames — scene eye off by up to {checkEye:0.000} m, look-at by {checkLook:0.000} m, " +
-                   $"lens by {checkFov:0.0}°; the game's yaw up to {checkYaw:0.0}° off the one written (the player's hand, or the game not keeping it); " +
+                   $"lens by {checkFov:0.0}°; the game's yaw up to {checkYaw:0.0}° off the one written, of which up to {Degrees(ignoredYaw):0.0}° with no hand on the camera (turned by the game itself; written over); " +
                    $"now: rendered yaw {Degrees(DeathShotMath.Azimuth(away)):0}°, movement yaw {Degrees(writtenDirH):0}°.";
         if (checkEye > 0.05f || checkLook > 0.05f)
             log.Warning(text + " The game did not keep the pose it was handed.");
@@ -742,7 +912,11 @@ public sealed unsafe class DuelCameraDirector : IDisposable
         beginFailure = null;
         if (state is State.Idle or State.BlendOut)
         {
-            if (!blend && state == State.BlendOut) EndBlendOut();
+            if (!blend && state == State.BlendOut)
+            {
+                RestorePitch();
+                EndBlendOut();
+            }
             return;
         }
         if (state == State.Running)
@@ -758,10 +932,12 @@ public sealed unsafe class DuelCameraDirector : IDisposable
         }
         else
         {
+            // Ended at once: the request that held the game's pitch goes with it, so the pitch is put back here.
+            if (state == State.Running) RestorePitch();
             state = State.BlendOut;
             EndBlendOut();
         }
-        status = reason;
+        Say(reason);
     }
 
     // ------------------------------------------------------------------
@@ -840,108 +1016,4 @@ public sealed unsafe class DuelCameraDirector : IDisposable
         m.M31, m.M32, m.M33, m.M34, m.M41, m.M42, m.M43, m.M44);
 
     public void Dispose() => Stop("unloaded");
-
-    // ------------------------------------------------------------------
-    // The world
-    // ------------------------------------------------------------------
-
-    /// <summary>
-    /// The solver's world, answered with the game's collision, the way the death shots' world is: ground and walls by
-    /// <see cref="BGCollisionModule.RaycastMaterialFilter"/>, water by the water-material lookup. Characters are not
-    /// in it. Identical queries within one frame are answered once.
-    /// </summary>
-    private sealed class GameWorld : IDeathShotWorld
-    {
-        private const float RayLength = 80f;
-        private const float WaterSearchAbove = 4f, WaterSearchBelow = 20f;
-
-        private readonly Dictionary<(int, int, int), float?> ground = new();
-        private readonly Dictionary<(int, int, int), float?> water = new();
-        private float subjectY = float.NaN;
-
-        public int Rays { get; private set; }
-
-        public void NewFrame(float subjectHeight)
-        {
-            ground.Clear();
-            water.Clear();
-            Rays = 0;
-            subjectY = subjectHeight;
-        }
-
-        private static (int, int, int) Key(Vector3 p) =>
-            ((int)MathF.Round(p.X * 1000f), (int)MathF.Round(p.Y * 1000f), (int)MathF.Round(p.Z * 1000f));
-
-        /// <summary>The ground under the eye: from where the solver starts the ray, and, when that start is lower
-        /// than the same lift above the player's head, from that height as well (a surface between the two is one
-        /// the first ray started under: the eye is inside a slope or a bank).</summary>
-        public float? GroundBelow(Vector3 from)
-        {
-            var key = Key(from);
-            if (ground.TryGetValue(key, out var known)) return known;
-            var result = Down(from);
-            if (float.IsFinite(subjectY))
-            {
-                var top = subjectY + DuelCameraSolver.GroundRayLift;
-                if (top > from.Y + 0.05f && Down(new Vector3(from.X, top, from.Z)) is { } higher && higher > from.Y)
-                    result = higher;
-            }
-            ground[key] = result;
-            return result;
-        }
-
-        private float? Down(Vector3 from)
-        {
-            try
-            {
-                Rays++;
-                if (BGCollisionModule.RaycastMaterialFilter(from, new Vector3(0f, -1f, 0f), out var hit, RayLength) &&
-                    float.IsFinite(hit.Point.Y))
-                    return hit.Point.Y;
-            }
-            catch
-            {
-                // Collision module unavailable (zone transition): no ground.
-            }
-            return null;
-        }
-
-        public float? WaterBelow(Vector3 from)
-        {
-            var key = Key(from);
-            if (water.TryGetValue(key, out var known)) return known;
-            float? result = null;
-            try
-            {
-                Rays++;
-                if (WorldCollisionMesh.TryFindWaterSurface(from, WaterSearchAbove, WaterSearchBelow, out var surface))
-                    result = surface;
-            }
-            catch
-            {
-            }
-            water[key] = result;
-            return result;
-        }
-
-        public bool Blocked(Vector3 from, Vector3 to, out float distance)
-        {
-            distance = 0f;
-            var along = to - from;
-            var length = along.Length();
-            if (!(length > 1e-3f)) return false;
-            try
-            {
-                Rays++;
-                if (!BGCollisionModule.RaycastMaterialFilter(from, along / length, out var hit, length))
-                    return false;
-                distance = Vector3.Distance(hit.Point, from);
-                return float.IsFinite(distance) && distance < length;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-    }
 }
