@@ -116,6 +116,48 @@ triangles where recorded, the water surface). It prints one line per recording (
 when physics started). `Tests/DeathShots` reads these files (`docs/DEATH_SHOTS.md`). They are derived from the
 user's recordings and do not go into the repository.
 
+### "What if" re-simulation (death guidance, phase P0)
+
+```
+... RagdollReplay.dll <file | folder> --what-if <recorded|limp|hold-legs|hold-pose|slow-slump>
+        [--start-at 0|25|50|75|100] [--out folder] [--seconds 12] [--recorded-dt] [--only text]
+        [--softness x] [--tension-scale x] [--time-scale x]
+```
+
+Not a replay: nothing is compared bit for bit (`WhatIf.cs`). From a recording it takes the character (skeleton, scale,
+hull fits, soft-tissue fits, settings, what the controller carried into the activation) and the death animation (the
+pose of every frame before physics started), starts physics at a chosen point of that animation (`--start-at`, percent
+of the recorded frames before physics; 100 = the recording's own start frame) with a chosen guidance profile, and lets
+the real controller run on for `--seconds` of physics at 1/60 s a frame (`--recorded-dt`: the recording's own frame
+times, to the end of the recording). One recording therefore gives standing, mid-fall and lying starts.
+
+- Profiles: `recorded` leaves the recording's guidance settings and pending collapse alone (for the comparison with
+  the recording itself); `limp` switches every guidance off (the baseline); `hold-legs`, `hold-pose`, `slow-slump` are
+  the library's tension profiles (`GuidedCollapseOptions.TensionProfile`, a prototype: set by name, so this project
+  still builds against a library without it and then refuses those three). `--softness`, `--tension-scale`,
+  `--time-scale` set the prototype's numbers (`PoseHoldPrototype`).
+- Ground: a downward ray the recording cast from the same place is answered as the game answered it (at the recorded
+  start that is every ray, so the ground mesh is the recorded one); any other from the recorded ground triangles or
+  the height field of all recorded hits (the same reconstruction as `Tests/DeathShots/Trajectory.cs` `RecordedWorld`).
+- Not restored: other characters' colliders, grabs and every other call from outside, hair, mesh volumes, weapon
+  strikes. The random source is seeded by the recording's name. A recording that never started physics has no hull
+  fits: its body is built from the default volumes.
+- Output per run, in `<out>/<profile>/s<start>/` (default `%TEMP%\DeathGuidance\whatif`): `<recording>.dstraj` (the
+  trajectory format of `--export-trajectories`, written from the recording the run itself made, which is then
+  deleted) and `<recording>.wi`, "key=value" lines of what only the simulation knows (`PhysicsNumbers`: per joint
+  group the turn of each body against its parent body since the hand-off pose, at 0.5 s, 1 s, 2 s, 4 s and the end; how
+  far the lower legs moved and turned; kinetic-energy spikes; largest angular speed; when the simulation rested;
+  joint-limit stress at the end; what the recording had that the run does not).
+- The tables and contact sheets are made by `Tests/DeathShots` (`guidance`, `guidance-validate`, `guidance-sheets`,
+  see `Guidance.cs` there).
+
+How far it is from the recordings (2026-11-22, `recorded` at 100 % with `--recorded-dt` against the 85 recordings
+with physics; every one of them had 14 to 40 other characters' colliders, which the run does not have): the pelvis is
+within 3 cm on the first physics frame; after 1 s it is within 1 cm in 38 recordings (median error 2 cm), after 3 s in
+33 (median 3 cm); at the end the median error is 9 cm (p90: 0.36 m after 1 s, 0.69 m after 3 s, 0.80 m at the end)
+and the final pose class agrees in 67 of 85. It is a tool for comparing profiles under the same conditions, not a
+predictor of one particular death.
+
 ## What is still not replayed
 
 Recordings made with the private module (DEV_EXPERIMENTAL) need a build with it. The live hair's ground samples are

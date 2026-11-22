@@ -556,7 +556,12 @@ internal sealed class ReplayRandom : IRagdollRandom
 internal sealed class ReplayLog : IRagdollLog
 {
     public readonly List<string> Problems = new();
-    public void Info(string message) { }
+    /// <summary>The death-guidance line of the run, if the controller wrote one.</summary>
+    public string? Guidance;
+    public void Info(string message)
+    {
+        if (message.StartsWith("Ragdoll: guidance", StringComparison.Ordinal)) Guidance = message;
+    }
     public void Warning(string message) => Problems.Add("warning: " + message);
     public void Warning(Exception exception, string message) => Problems.Add($"warning: {message} ({exception.GetType().Name}: {exception.Message})\n{exception.StackTrace}");
     public void Error(string message) => Problems.Add("error: " + message);

@@ -87,7 +87,10 @@ internal static class TrajectoryExport
         public float Seconds, PhysicsStart = -1f, Water = float.NaN;
     }
 
-    private static Stats Export(string path, string outFolder)
+    /// <summary>The trajectory of one recording under another name (the what-if runs: the recording is a temporary file).</summary>
+    internal static void ExportAs(string path, string outFolder, string exportName) => Export(path, outFolder, exportName);
+
+    private static Stats Export(string path, string outFolder, string? exportName = null)
     {
         var stats = new Stats();
         var frames = new List<Frame>();
@@ -247,8 +250,9 @@ internal static class TrajectoryExport
             }
         }
 
-        Write(Path.Combine(outFolder, Path.GetFileNameWithoutExtension(path) + ".dstraj"),
-            Path.GetFileNameWithoutExtension(path), stats, facing, activatePosition, activateGroundY, groundRays, triangles, frames);
+        exportName ??= Path.GetFileNameWithoutExtension(path);
+        Write(Path.Combine(outFolder, exportName + ".dstraj"),
+            exportName, stats, facing, activatePosition, activateGroundY, groundRays, triangles, frames);
         return stats;
     }
 

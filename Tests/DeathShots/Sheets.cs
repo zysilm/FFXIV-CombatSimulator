@@ -16,9 +16,9 @@ namespace DeathShots;
 /// </summary>
 internal static class Sheets
 {
-    private const int CellW = 256, CellH = 144, Pad = 4;
+    internal const int CellW = 256, CellH = 144, Pad = 4;
 
-    private static readonly (string A, string B, int Color)[] Segments =
+    internal static readonly (string A, string B, int Color)[] Segments =
     {
         ("j_kosi", "j_sebo_a", 0), ("j_sebo_a", "j_sebo_b", 0), ("j_sebo_b", "j_sebo_c", 0), ("j_sebo_c", "j_kubi", 0), ("j_kubi", "j_kao", 0),
         ("j_sebo_c", "j_sako_l", 1), ("j_sako_l", "j_ude_a_l", 1), ("j_ude_a_l", "j_ude_b_l", 1), ("j_ude_b_l", "j_te_l", 1),
@@ -27,7 +27,7 @@ internal static class Sheets
         ("j_kosi", "j_asi_a_r", 2), ("j_asi_a_r", "j_asi_b_r", 2), ("j_asi_b_r", "j_asi_c_r", 2), ("j_asi_c_r", "j_asi_d_r", 2),
     };
 
-    private static readonly uint[] Colors = { 0xFFF0F0F0, 0xFF5090FF, 0xFFFF6050 };
+    internal static readonly uint[] Colors = { 0xFFF0F0F0, 0xFF5090FF, 0xFFFF6050 };
 
     public static void Run(List<Trajectory> all, int count)
     {
@@ -128,7 +128,7 @@ internal static class Sheets
     }
 
     /// <summary>A small RGBA canvas with clipped drawing and a PNG writer (zlib + CRC from the framework).</summary>
-    private sealed class Image
+    internal sealed class Image
     {
         private readonly int width, height;
         private readonly uint[] pixels;

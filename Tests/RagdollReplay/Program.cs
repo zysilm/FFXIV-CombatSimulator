@@ -15,6 +15,7 @@ using RagdollReplay;
 //   RagdollReplay <file.rgdrec | folder> [--keep] [--synthetic-meshes | --synthetic-colliders | --synthetic-hair]
 //   RagdollReplay <file.rgdrec | folder> --extensions   (stage A3b: the extension points, see ExtensionCheck.cs)
 //   RagdollReplay <file.rgdrec | folder> --export-trajectories [outFolder]   (read-only, see TrajectoryExport.cs)
+//   RagdollReplay <file.rgdrec | folder> --what-if <profile> [--start-at 0..100] ...   (re-simulation, see WhatIf.cs)
 // Replays each recording through the plugin's RagdollController and reports, per file, "identical" or the
 // first difference. Exit code 0 when every file replayed identically.
 
@@ -24,6 +25,9 @@ if (args.Length < 1)
     return 2;
 }
 if (args.Contains("--extensions")) return ExtensionCheck.Run(args[0]);
+// Not a replay: re-simulates a recording from a chosen point of its death animation with a chosen guidance profile
+// (WhatIf.cs).
+if (args.Contains("--what-if")) return WhatIf.Run(args);
 // Read-only: writes pose trajectories for the death-shot camera check (TrajectoryExport.cs); nothing is replayed.
 var exportAt = Array.IndexOf(args, "--export-trajectories");
 if (exportAt >= 0)
@@ -318,7 +322,7 @@ internal static class ReplayDriver
         return string.Join(", ", parts);
     }
 
-    private static RagdollController.ReplayCarriedState CarriedState(ReplaySource source, ReplayMeshSource meshes)
+    internal static RagdollController.ReplayCarriedState CarriedState(ReplaySource source, ReplayMeshSource meshes)
     {
         var a = source.Activate;
         var s = new RagdollController.ReplayCarriedState

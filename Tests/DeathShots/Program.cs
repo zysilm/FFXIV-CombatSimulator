@@ -19,6 +19,23 @@ var at = Array.IndexOf(args, "--traj");
 if (at >= 0 && at + 1 < args.Length) folder = args[at + 1];
 var command = args.Length > 0 && !args[0].StartsWith("--", StringComparison.Ordinal) ? args[0] : "run";
 
+// Death guidance (ragdoll), phase P0: tables and sheets over the what-if re-simulations of Tests/RagdollReplay
+// (Guidance.cs). They read <root>/<profile>/s<percent>/ (default %TEMP%\DeathGuidance\whatif), not the trajectory folder:
+//   dotnet run -c Release -- guidance [root] [--start 100]      Limp against the tension profiles, per start class
+//   dotnet run -c Release -- guidance-validate [root] --traj <folder>   the "recorded" what-if against the recordings
+//   dotnet run -c Release -- guidance-sheets [root] [n]         stick-figure sheets into <root>\sheets
+if (command is "guidance" or "guidance-validate" or "guidance-sheets")
+{
+    Console.OutputEncoding = System.Text.Encoding.UTF8;
+    var root = args.Length > 1 && !args[1].StartsWith("--", StringComparison.Ordinal) ? args[1] : Path.Combine(Path.GetTempPath(), "DeathGuidance", "whatif");
+    return command switch
+    {
+        "guidance" => Guidance.Table(root, Array.IndexOf(args, "--start") is var startAt and >= 0 && startAt + 1 < args.Length && int.TryParse(args[startAt + 1], out var onlyStart) ? onlyStart : -1),
+        "guidance-validate" => Guidance.Validate(root, folder),
+        _ => Guidance.SheetsRun(root, args.Length > 2 && int.TryParse(args[2], out var sheetCount) ? sheetCount : 6),
+    };
+}
+
 var failures = 0;
 if (command is "unit" or "run") failures += UnitChecks.Run();
 if (command == "unit") return failures == 0 ? 0 : 1;
