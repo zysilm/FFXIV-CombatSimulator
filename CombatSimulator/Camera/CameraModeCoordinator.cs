@@ -18,6 +18,12 @@ public enum CameraOwner
     /// <summary>Dynamic Camera combat framing (over-the-shoulder). Yields to every mode
     /// that owns player movement, including Enemy Control follow.</summary>
     DynamicCam = 15,
+    /// <summary>The duel camera (DuelCameraDirector: the lens, the game camera's yaw kept on the rendered view, zoom
+    /// and pitch held here; eye and look-at through the pose hand-over). It stands where the Directed camera's
+    /// combat framing stands (the two are never on together) and yields to the same things: Enemy Control's creature
+    /// follow (the player is steering a creature, the camera belongs to it), the death shot, a scene, the user's
+    /// Follow-bone camera, a cutscene shot.</summary>
+    Duel = 16,
     /// <summary>Enemy Control creature follow (orbit center only, user keeps rotation/zoom).</summary>
     EnemyControlFollow = 20,
     /// <summary>The automatic death shot (DeathShotDirector: FoV and held zoom here, eye and look-at through the
@@ -94,6 +100,7 @@ public sealed unsafe partial class CameraModeCoordinator
         CameraOwner.External,
         CameraOwner.DynamicDeath,
         CameraOwner.EnemyControlFollow,
+        CameraOwner.Duel,
         CameraOwner.DynamicCam,
     };
 

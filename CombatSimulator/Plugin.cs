@@ -124,6 +124,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     private ActiveCameraController activeCameraController => cameraModule.Active;
     private DynamicCameraController dynamicCameraController => cameraModule.Dynamic;
     private CutsceneShotDirector cutsceneShots => cameraModule.CutsceneShots;
+    private DuelCameraDirector duelCamera => cameraModule.Duel;
     // Combat
     private CombatEngine combatEngine => combatModule.Engine;
     private CombatSimulator.ActionCombat.ActionComboSink actionComboSink => combatModule.ComboSink;
@@ -276,6 +277,10 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         combatEvents.DamageLanded += cutsceneShots.NoteDamage;
         combatEvents.SimulationStarted += cutsceneShots.OnSimulationStarted;
         combatEvents.SimulationReset += cutsceneShots.OnSimulationReset;
+        // The duel camera (docs/DUEL_CAMERA.md), camera mode "Duel": under the death shot and the cutscene shots in the
+        // pose hand-over. Heavy hits and the finishing blow are its key moments.
+        cameraModule.CreateDuel(targetManager, condition, clientState, () => PrivateDirectorActive);
+        combatEvents.DamageLanded += duelCamera.NoteDamage;
         actorsModule.WireActorCallbacks(chatGui);
 
         // Re-register alive spawned NPCs on sim start (they're removed from
@@ -496,6 +501,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         RagdollRecordingSession.Stop();
         boneTransformService.Dispose();
         cutsceneShots.Dispose();
+        duelCamera.Dispose();
         dynamicCameraController.Dispose();
         gameCameraUpdateHook.Dispose();
         cameraModeCoordinator.Reset();
@@ -729,6 +735,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             // then the coordinator resolves priority and writes the camera once, and
             // the orbit hook host reflects whether any mode supplies an orbit center.
             dynamicCameraController.Tick(deltaTime);
+            duelCamera.Tick(deltaTime);
             TickPrivateDirectors(deltaTime);
             cutsceneShots.Tick(deltaTime);
             gameCameraUpdateHook.Tick();
@@ -833,6 +840,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         devExperimental.ResetWorldState();
         enemyControlController.Despawn();
         cutsceneShots.Stop("zone change");
+        duelCamera.Stop("zone change");
         dynamicCameraController.Reset();
 
         if (combatEngine.IsActive)
@@ -866,6 +874,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             devExperimental.ResetWorldState();
             enemyControlController.Despawn();
             cutsceneShots.Stop("logged out");
+            duelCamera.Stop("logged out");
             dynamicCameraController.Reset();
             npcSpawner.DespawnAll();
             companionManager.DespawnAll();

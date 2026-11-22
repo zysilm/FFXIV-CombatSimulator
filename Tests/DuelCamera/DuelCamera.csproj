@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Offline check of the duel camera (docs/DUEL_CAMERA.md): unit checks of the solver and the opponent picker, and
+       the metric run over synthetic duels (there are no recordings of two fighters): scripted approach, circling,
+       dashes through each other, knock-back, a fighter going down, opponent switches, a wall, a bank, a large
+       monster, the player's own camera input, and closed-loop runs where the player moves by the rendered yaw. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The plugin's duel camera code. Every file in that folder is game-free by rule, so this tool and the plugin
+         run one solver. From the death shots it uses the world interface, the angles and the springs. -->
+    <Compile Include="../../CombatSimulator/Camera/Duel/*.cs" Link="Plugin/%(Filename)%(Extension)" />
+    <Compile Include="../../CombatSimulator/Camera/DeathShots/DeathShotDamping.cs" Link="Plugin/DeathShotDamping.cs" />
+    <Compile Include="../../CombatSimulator/Camera/DeathShots/BodyFrame.cs" Link="Plugin/BodyFrame.cs" />
+  </ItemGroup>
+</Project>

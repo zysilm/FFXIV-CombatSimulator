@@ -51,9 +51,14 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
     public Func<bool>? EnabledOverride { get; set; }
     public Func<bool>? ActiveCameraEnabledOverride { get; set; }
     public Func<bool>? ProfileFramingOverride { get; set; }
-    private bool DeathFramingEnabled => (ProfileFramingOverride?.Invoke() ?? false) || config.DynCamDeathFraming;
+    private bool DeathFramingEnabled => (ProfileFramingOverride?.Invoke() ?? false) || config.DynCamDeathFraming || DuelOnly;
     private bool CombatFramingEnabled => (ProfileFramingOverride?.Invoke() ?? false) || config.DynCamCombatFraming;
-    private bool CameraEnabled => EnabledOverride?.Invoke() ?? config.EnableDynamicCamera;
+    private bool DirectedOn => EnabledOverride?.Invoke() ?? config.EnableDynamicCamera;
+    /// <summary>Camera mode Duel (docs/DUEL_CAMERA.md): the duel camera frames the fight; of this controller only the
+    /// automatic death shot runs, whatever the Directed camera's own "Directs" option says. Nothing here changes
+    /// while the mode is Directed (or a scene asks for the Directed camera).</summary>
+    private bool DuelOnly => config.EnableDuelCamera && !DirectedOn;
+    private bool CameraEnabled => DirectedOn || config.EnableDuelCamera;
     private bool ActiveCameraEnabled => ActiveCameraEnabledOverride?.Invoke() ?? config.EnableActiveCamera;
     private readonly CameraModeCoordinator coordinator;
     private readonly CombatEngine combatEngine;
@@ -248,6 +253,20 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
         {
             if (phase != Phase.Off) Reset();
             StatusText = "idle — simulation not running";
+            return;
+        }
+
+        // Camera mode Duel, the player on their feet: the duel camera has the fight. Nothing of the combat framing
+        // runs (it must not learn a zoom or a pitch from what the duel camera does with the game's camera either).
+        if (DuelOnly && combatEngine.State.PlayerState.IsAlive)
+        {
+            if (phase == Phase.Death) deathShots.Stop("revived", blend: true);
+            phase = prevPhase = Phase.Off;
+            hasCurState = false;
+            wroteDistance = false;
+            prevObservedDistance = 0f;
+            coordinator.Release(CameraOwner.DynamicCam);
+            StatusText = "duel camera";
             return;
         }
 
