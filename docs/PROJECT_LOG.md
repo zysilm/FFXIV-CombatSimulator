@@ -130,6 +130,15 @@
 - “Allow below ground”（2026-11-22，用户裁决：到地面以下做成选项，默认关）：Camera 页签 → Directed Camera → **Allow below ground**，设置 `DeathShotBelowGround`。开启后 Low three-quarter（和位置略低时的 Face）在躺地的尸体上保持配方的仰拍位置，眼位在地下（离线：仰 22°、1.25 m、深度中位 0.42 m，对应旧镜头的 19–26°、1.0–1.35 m、0.27–0.48 m）；地面不算遮挡，墙照算（按挡面的法线和高度区分）；其余档案和选项关着时的输出不变（逐位相同）→ [DEATH_SHOTS.md](DEATH_SHOTS.md) §9.6。
 - 旧 Death Cam 仅存的三个镜头有 76–81% 的帧眼位离地不足 5 cm、多数在地面以下（当时关着相机碰撞，尸体躺地后等于从地下仰拍）；新镜头不进地面，同样的侧向在躺地后是贴地平拍（离线复现，`Tests/DeathShots`）。
 
+### 决斗镜头（2026-11-22，用户裁决）
+
+- 新增第三个相机模式 **Duel**（Camera 页签 → Camera mode：Game / Follow bone / Directed / Duel），不改现有两个模式；任何时候可用，为 1v1 调校：玩家与一个对手的双人构图，眼位在玩家背后偏一侧（近 36°、远 20°），近则紧、远则宽，关键时刻短暂推近（用户裁决方案草图，细节由实现定）→ [DUEL_CAMERA.md](DUEL_CAMERA.md)。界面只有一个 **Framing** 下拉（Tight / Standard / Wide）。
+- 所有者 `CameraOwner.Duel = 16`：紧挨 Directed 战斗构图（15）之上，让 Enemy Control 附身（20）、自动死亡镜头（25）、私有场景（45）、Follow bone（50）、过场镜头（60）。位姿交接（`ActiveCameraController.PoseOverride`）现在是**三级**的：决斗镜头先写，自动死亡镜头覆盖，过场镜头再覆盖。玩家倒下的那一帧决斗镜头停下，死亡镜头从当时的画面接手；Duel 模式下死亡镜头总是开着（档案取 Directed 页保存的值），`DynamicCameraController` 在 Duel 模式、玩家活着时什么都不做。
+- 镜头自己不越过两人的连线：交叉换位 / 换对手时重新选边（取离眼位近的一侧，走短路转过去）；只有玩家拖过去、或一侧被挡（先同侧让位 20–60°，不行才换侧）才越线，且从玩家背后绕。没有硬切（传送除外）。
+- **游戏按自己相机的 `DirH` 移动玩家**，位姿交接后画面与 `DirH` 无关，所以决斗镜头每帧经协调者写 `DirH`，并从读回值减去写入值得到玩家的拖动。写的是“渲染 yaw 向‘玩家在连线上的正背后’靠拢，最多 30°”，不是纯渲染 yaw：离线闭环里纯渲染 yaw 下按住 D 是螺旋，向内一侧 1.3 s 收到 1.1–1.7 m、镜头被迫 222°/s 绕转；靠拢后 W 正对对手、A / D 是 2.8–3.4 m 的正圆（[DUEL_CAMERA.md](DUEL_CAMERA.md) §7.3、§8.2）。代价是屏幕正上方与 W 差约 20°；待游戏内判断，`DuelCameraSolver.MoveLean = 0` 即改回。
+- 关键时刻只用插件已有的事件：`CombatEvents.DamageLanded`（重击、击倒）和轮询 `TelegraphSystem.Active`（格挡成功、大招将至）；插件里没有“破防 / 硬直”事件，没有为镜头加玩法。
+- “Switch to Directed when a battle starts” 不把 Duel 模式改成 Directed。
+
 ### 特效 / 语音
 
 - Effects → VFX → “Others' skill effects”：All / Limited（默认，镜头 20 m 内、每秒最多 4 个）/ None；玩家自己的和打到玩家的总是显示。技能特效是插件自己生成的，游戏的战斗特效设置管不到，所以在插件里限（2026-11-14，用户提出问题，档位由协调者定，`def39cd`）。
@@ -312,6 +321,7 @@
 - [ ] 自动死亡镜头（P2 已接入，未在游戏里看过）→ [DEATH_SHOTS.md](DEATH_SHOTS.md) §11：Camera 页签 → Camera mode = Directed，折叠栏 Directed Camera → Directs 含 Death、Death shot 选档案。看：日志 `DeathShot: camera check over 60 frames`（眼位 / 注视点差毫米级、镜头差 < 1°，否则 FoV 字段比例不对）；进入时绕到正面的 3–4 s；`ragdoll at … s` 那一帧画面不跳；身体静止那一刻的换边（约 60% 的死亡有一次硬切）是否突兀；Low three-quarter 在尸体躺地后的贴地平拍是否可接受（旧镜头是从地下仰拍）；左右拖动绕身体转（比手慢：45°/s 上限 + 0.6 s 缓动）、滚轮改景别、上下无效；死亡中换档案立即切换；真实的墙 / 天花板 / 坡 / 水面下的回退（日志 `fallback`、`view blocked`、`the eye was inside terrain`）；过场死亡镜头结束后 `DeathShot: resumes`、画面不跳；复活 0.3 s 回游戏相机；拉拉菲尔 / 鲁加等体型的景别；5 s 汇总里的 `rays/frame`。
 - [ ] Allow below ground（Camera 页签 → Directed Camera → Death shot 下面的勾选，默认关）：勾上后 Low three-quarter / Face / Auto 在尸体躺地后镜头到地面以下仰拍，地面从下面看不见（日志 5 s 汇总里 `eye … m BELOW ground`）；游戏没有把相机推回地面以上（`camera check` 眼位差仍是毫米级）；水边、室内（地面下有别的楼层 / 双面地形）时的画面；墙边仍然换边而不是穿墙；关掉后与之前一样不进地面。
 - [ ] 旧死亡构图删除后：旧配置载入无异常；Camera 页签 → Directed Camera 里没有 Body coverage 和 Show toolbar，“Dynamic Cam” 浮动工具条不再出现；战斗时的 Directed 构图（越肩、敌人入画、缩放 / 俯仰记忆、复活后回到战斗构图）照常。
+- [ ] 决斗镜头（已接入，未在游戏里看过）→ [DUEL_CAMERA.md](DUEL_CAMERA.md) §10：Camera 页签 → Camera mode = Duel，折叠栏 Duel Camera（状态行 + Framing）。看：日志 `DuelCam: camera check over 60 frames`（眼位 / 注视点差毫米级、镜头差 < 1°、不碰鼠标时 “the game's yaw … off the one written” 接近 0）；**移动手感**（W 朝对手、A / D 绕对手转、屏幕正上方与 W 差约 20° 别不别扭）；两人分居画面两侧、近紧远宽；穿过对手后镜头不越线、约 1 s 转回；推近（重击 / 格挡 / 大招 / 击倒）的幅度和频率；多敌人时换对手不乱跳；左右拖动回正、俯仰方向对不对、滚轮；墙边 / 背靠墙 / 坡地；倒下时死亡镜头无跳接手、过场镜头后 `DuelCam: resumes`；Follow bone 与 Directed 不变。
 
 ## 5. 搁置与未完成
 

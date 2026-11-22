@@ -88,6 +88,7 @@ internal sealed class PresentationModule
         mainWindow.HideResultBanner = warBanner.Hide;
         mainWindow.ArmorDetachment = armorDetachmentController;
         mainWindow.CutsceneShots = m.Camera.CutsceneShots;
+        mainWindow.DuelCameraStatus = () => m.Camera.Duel?.Status ?? "off";
         enemyControlController.GrabStarted += mainWindow.HideEnemyControlAnchorMarkers;
     }
 
@@ -158,7 +159,10 @@ internal sealed class PresentationModule
         // Skipped while ImGui wants the mouse (scrolling one of our own windows must not resize the shot).
         var imguiIo = Dalamud.Bindings.ImGui.ImGui.GetIO();
         if (!imguiIo.WantCaptureMouse && imguiIo.MouseWheel != 0f)
+        {
             dynamicCameraController.NotifyMouseWheel(imguiIo.MouseWheel);
+            m.Camera.Duel.NotifyMouseWheel(imguiIo.MouseWheel);
+        }
 
         if (config.ShowShortcuts)
             mainWindow.DrawShortcutsBar();

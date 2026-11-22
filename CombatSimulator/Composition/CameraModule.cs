@@ -12,7 +12,7 @@ namespace CombatSimulator.Composition;
 
 /// <summary>
 /// The camera: the coordinator (the one writer), the game camera hook, the active and the dynamic
-/// camera, the automatic death shots and the cutscene shots (docs/PLUGIN_ARCHITECTURE.md §6.1).
+/// camera, the automatic death shots, the cutscene shots and the duel camera (docs/PLUGIN_ARCHITECTURE.md §6.1).
 /// </summary>
 internal sealed unsafe class CameraModule
 {
@@ -24,6 +24,7 @@ internal sealed unsafe class CameraModule
     private DynamicCameraController dynamicCameraController = null!;
     private DeathShotDirector deathShotDirector = null!;
     private CutsceneShotDirector cutsceneShotDirector = null!;
+    private DuelCameraDirector duelCameraDirector = null!;
 
     public CameraModule(PluginModules modules) => m = modules;
 
@@ -34,6 +35,7 @@ internal sealed unsafe class CameraModule
     public ActiveCameraController Active => activeCameraController;
     public DynamicCameraController Dynamic => dynamicCameraController;
     public DeathShotDirector DeathShots => deathShotDirector;
+    public DuelCameraDirector Duel => duelCameraDirector;
 
     private IPluginLog log => m.Log;
     private CombatEngine combatEngine => m.Combat.Engine;
@@ -113,6 +115,52 @@ internal sealed unsafe class CameraModule
         activeCameraController.PoseOverrideActive = () => cutsceneShotDirector.IsPlaying || deathShotDirector.IsRunning;
     }
 
+    /// <summary>
+    /// The duel camera (docs/DUEL_CAMERA.md), camera mode "Duel": a two-shot of the player and one opponent while a
+    /// simulation runs. Its lens, the game camera's yaw and the held zoom and pitch go through the coordinator (owner
+    /// Duel, just above the Directed camera's combat framing and below everything else); its eye and look-at point
+    /// through the same hand-over as the shots. The pose hand-over has three levels from here on: the duel camera
+    /// writes first, the automatic death shot over it, a cutscene shot over both. A cutscene shot that ends blends out
+    /// to whichever of the two is running below it.
+    /// </summary>
+    public void CreateDuel(ITargetManager targetManager, ICondition condition, IClientState clientState, System.Func<bool> sceneActive)
+    {
+        duelCameraDirector = new DuelCameraDirector(
+            m.Config, cameraModeCoordinator, combatEngine, npcSelector, boneTransformService, m.Combat.Telegraphs,
+            RagdollFor,
+            () => targetManager.Target?.Address ?? nint.Zero,
+            sceneActive,
+            condition,
+            clientState,
+            log);
+        duelCameraDirector.CutsceneOwnsCamera = () => cutsceneShotDirector.OwnsCamera;
+        cutsceneShotDirector.HandingBack = () =>
+        {
+            deathShotDirector.ResumeNow();
+            duelCameraDirector.ResumeNow();
+        };
+        gameCameraUpdateHook.PostCameraUpdate = camera =>
+        {
+            cutsceneShotDirector.OnPostCameraUpdate(camera);
+            deathShotDirector.OnPostCameraUpdate(camera);
+            duelCameraDirector.OnPostCameraUpdate(camera);
+        };
+        activeCameraController.PoseOverride = (ref System.Numerics.Vector3 lookAt, ref System.Numerics.Vector3 eye) =>
+        {
+            var duel = duelCameraDirector.OverridePose(ref lookAt, ref eye);
+            var death = deathShotDirector.OverridePose(ref lookAt, ref eye);
+            if (death) duelCameraDirector.NotePoseSuperseded();
+            var cutscene = cutsceneShotDirector.OverridePose(ref lookAt, ref eye);
+            if (cutscene)
+            {
+                deathShotDirector.NotePoseSuperseded();
+                duelCameraDirector.NotePoseSuperseded();
+            }
+            return duel || death || cutscene;
+        };
+        activeCameraController.PoseOverrideActive = () => cutsceneShotDirector.IsPlaying || deathShotDirector.IsRunning || duelCameraDirector.IsRunning;
+    }
+
     /// <summary>The ragdoll of a body: the player's, or an enemy's / ally's death ragdoll.</summary>
     private RagdollController? RagdollFor(nint address)
     {
@@ -124,10 +172,13 @@ internal sealed unsafe class CameraModule
     /// <summary>Put the camera in Directed mode for a battle, when that is asked for.</summary>
     public void SwitchToDirectedCameraForBattle()
     {
-        if (!m.Config.DirectedCameraOnBattle || (m.Config.EnableDynamicCamera && !m.Config.EnableActiveCamera))
+        // (Not out of Duel mode: that is a battle camera the user picked.)
+        if (!m.Config.DirectedCameraOnBattle || m.Config.EnableDuelCamera && !m.Config.EnableActiveCamera ||
+            (m.Config.EnableDynamicCamera && !m.Config.EnableActiveCamera))
             return;
         m.Config.EnableActiveCamera = false;
         m.Config.EnableDynamicCamera = true;
+        m.Config.EnableDuelCamera = false;
         activeCameraController.SetActive(false);
         m.Config.Save();
     }

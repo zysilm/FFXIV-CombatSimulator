@@ -362,6 +362,7 @@ public partial class MainWindow : IDisposable
             case 2: // Camera
                 DrawActiveCamSection();
                 DrawDynamicCamSection();
+                DrawDuelCamSection();
                 DrawCutsceneShotsSection();
                 break;
             case 3: // Ragdoll
@@ -2837,7 +2838,7 @@ public partial class MainWindow : IDisposable
         }
     }
 
-    private static readonly string[] CameraModeLabels = { "Game", "Follow bone", "Directed" };
+    private static readonly string[] CameraModeLabels = { "Game", "Follow bone", "Directed", "Duel" };
     private static readonly string[] ActiveCamVerticalLabels = { "Free", "Locked: level", "Locked: slight tilt", "Locked: strong tilt" };
     private static readonly float[] ActiveCamVerticalAngles = { 0f, 0f, 0.4f, 0.8f };
 
@@ -2848,18 +2849,20 @@ public partial class MainWindow : IDisposable
     {
         // One mode instead of two Enable switches: Active Camera always took priority over the
         // directed camera when both were on, so "Follow bone" here means exactly that.
-        var mode = config.EnableActiveCamera ? 1 : config.EnableDynamicCamera ? 2 : 0;
+        var mode = config.EnableActiveCamera ? 1 : config.EnableDynamicCamera ? 2 : config.EnableDuelCamera ? 3 : 0;
         ImGui.SetNextItemWidth(CameraItemWidth());
         if (ImGui.Combo("Camera mode##camera", ref mode, CameraModeLabels, CameraModeLabels.Length))
         {
             config.EnableActiveCamera = mode == 1;
             config.EnableDynamicCamera = mode == 2;
+            config.EnableDuelCamera = mode == 3;
             config.Save();
             activeCameraController.SetActive(mode == 1);
         }
         HelpMarker("Game: the game's own camera.\n" +
                    "Follow bone: the camera tracks a bone of your character; you rotate and zoom freely.\n" +
-                   "Directed: the camera frames you over the shoulder in combat and plays an automatic death shot when you go down.");
+                   "Directed: the camera frames you over the shoulder in combat and plays an automatic death shot when you go down.\n" +
+                   "Duel: the camera frames you and one opponent together; made for one-on-one fights.");
 
         var directedOnBattle = config.DirectedCameraOnBattle;
         if (ImGui.Checkbox("Switch to Directed when a battle starts##camera", ref directedOnBattle))
@@ -2867,7 +2870,7 @@ public partial class MainWindow : IDisposable
             config.DirectedCameraOnBattle = directedOnBattle;
             config.Save();
         }
-        HelpMarker("Start or Reset puts the camera in Directed mode, whatever mode it was in.");
+        HelpMarker("Start or Reset puts the camera in Directed mode, unless it is in Duel mode.");
 
         if (!config.EnableActiveCamera)
             return;
