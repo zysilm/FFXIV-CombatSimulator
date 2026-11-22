@@ -182,7 +182,7 @@ dotnet run -c Release -- probe <录像名的一部分> <档案> [0..7]   一次�
 1. **位置**：22 根骨骼（前 7 根是身体坐标系，其余供全身档案；与离线轨迹同名同序）。骨骼索引按骨架指针缓存（开始时按名字查一次，模型重绘换了骨架再查），之后按索引读。该身体的布娃娃 `IsActive && PhysicsStarted` 且 7 个点的刚体都读得到时改用 `Ragdoll.GetBodyWorldPosition`；刚体成为位置源之后不再读骨骼（切换那一帧仍读：读完刚体才知道是切换帧）。`PhysicsStarted` 输入 = “这一帧的位置是刚体给的”，由同一个判断产生，不会不一致。切换那一帧把同帧读到的骨骼作为 `PreviousSource` / `PreviousSourceExtra` 传入。其余 15 根里读不到刚体的用最后读到的骨骼。
 2. **`ExpectRagdoll`** = 布娃娃开着，并且（死亡动画还没开始，或该身体的布娃娃已武装且（物理未开始，或正在用它的刚体））。布娃娃已开始但刚体读不到时不等它（它的姿态反正会写进骨骼）。
 3. **`BodyScale`**：开始时用骨骼的脊柱长度（髋→胸→头）÷ 0.46 m 算好传入（0.4–4），不让求解器自己估：若第一帧已经是刚体，刚体中心沿脊柱的间距与骨骼不同，而配方是按骨骼定的。
-4. **世界**（`DeathShotDirector.GameWorld`）：
+4. **世界**（`Camera/CameraCollisionWorld.cs`，与决斗镜头共用）：
    - 地面：从求解器给的起点（眼位上方 1.5 m）向下一条 `BGCollisionModule.RaycastMaterialFilter`（80 m）；起点若低于“髋 + 1.5 m”，再从那个高度打一条——它打到的表面若高于第一条的起点，就是第一条射线起点以上、看不到的表面（眼位在坡或土坎里面），取它。
    - 水面：`WorldCollisionMesh.TryFindWaterSurface`，起点上方 4 m 到下方 20 m（不再往上：高处平台上的水池不该把眼位抬上去）。
    - 遮挡：主体中心 → 眼位一条 `RaycastMaterialFilter`（地形和墙；不含角色）。

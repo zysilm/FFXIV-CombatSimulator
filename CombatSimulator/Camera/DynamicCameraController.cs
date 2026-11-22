@@ -261,6 +261,13 @@ public sealed unsafe partial class DynamicCameraController : IDisposable
         if (DuelOnly && combatEngine.State.PlayerState.IsAlive)
         {
             if (phase == Phase.Death) deathShots.Stop("revived", blend: true);
+            // Coming from the Directed camera's combat framing (the mode was switched mid-battle): what it learned of
+            // the player's zoom and pitch is saved, as on its other ways out.
+            if (phase == Phase.Combat || prevPhase == Phase.Combat)
+            {
+                PersistCombatZoom();
+                PersistCombatPitch();
+            }
             phase = prevPhase = Phase.Off;
             hasCurState = false;
             wroteDistance = false;

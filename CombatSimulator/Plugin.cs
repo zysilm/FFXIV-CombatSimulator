@@ -169,6 +169,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         ICondition condition,
         IGamepadState gamepadState,
         IKeyState keyState,
+        IGameConfig gameConfig,
         ITargetManager targetManager,
         ISigScanner sigScanner,
         IPluginLog log)
@@ -279,7 +280,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         combatEvents.SimulationReset += cutsceneShots.OnSimulationReset;
         // The duel camera (docs/DUEL_CAMERA.md), camera mode "Duel": under the death shot and the cutscene shots in the
         // pose hand-over. Heavy hits and the finishing blow are its key moments.
-        cameraModule.CreateDuel(targetManager, condition, clientState, () => PrivateDirectorActive);
+        cameraModule.CreateDuel(targetManager, condition, clientState, gamepadState, gameConfig, () => PrivateDirectorActive);
         combatEvents.DamageLanded += duelCamera.NoteDamage;
         actorsModule.WireActorCallbacks(chatGui);
 

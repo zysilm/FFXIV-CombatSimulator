@@ -92,35 +92,40 @@ public partial class MainWindow
         }
 
         if (config.DynCamDeathFraming)
-        {
-            var shot = Array.IndexOf(DeathShotDirector.Profiles, config.DeathShotProfile);
-            ImGui.SetNextItemWidth(CameraItemWidth());
-            if (PresetCombo("Death shot##dyncam", DeathShotDirector.ProfileLabels, shot, out var pickedShot))
-            {
-                config.DeathShotProfile = DeathShotDirector.Profiles[pickedShot];
-                config.Save();
-            }
-            HelpMarker("Auto: picks the shot by how the body lies.\n" +
-                       "Low three-quarter: hips to chest, close, from the front side and from below.\n" +
-                       "Face: close-up of the head.\n" +
-                       "Along the body: the whole body from beyond the feet, low.\n" +
-                       "Overhead: the whole body from above.\n" +
-                       "Ground profile: the whole body from the side, at ground level, looking up.\n" +
-                       "Changing it while you are down switches the shot at once.");
-
-            var below = config.DeathShotBelowGround;
-            if (ImGui.Checkbox("Allow below ground##dyncam", ref below))
-            {
-                config.DeathShotBelowGround = below;
-                config.Save();
-            }
-            HelpMarker("Low three-quarter and Face may put the camera under the ground, looking up at a body lying on it " +
-                       "(the ground is not drawn from below). Off: the camera stays above the ground.");
-        }
+            DrawDeathShotControls("dyncam");
 
         if (ImGui.Button("Reset to Defaults##dyncam"))
             config.ResetDynamicCameraDefaults();
         ImGui.Unindent();
+    }
+
+    /// <summary>The automatic death shot's two options (the profile, and "Allow below ground"): in the Directed
+    /// camera's section, and in the duel camera's, where death shots always run. The same two settings.</summary>
+    private void DrawDeathShotControls(string id)
+    {
+        var shot = Array.IndexOf(DeathShotDirector.Profiles, config.DeathShotProfile);
+        ImGui.SetNextItemWidth(CameraItemWidth());
+        if (PresetCombo($"Death shot##{id}", DeathShotDirector.ProfileLabels, shot, out var pickedShot))
+        {
+            config.DeathShotProfile = DeathShotDirector.Profiles[pickedShot];
+            config.Save();
+        }
+        HelpMarker("Auto: picks the shot by how the body lies.\n" +
+                   "Low three-quarter: hips to chest, close, from the front side and from below.\n" +
+                   "Face: close-up of the head.\n" +
+                   "Along the body: the whole body from beyond the feet, low.\n" +
+                   "Overhead: the whole body from above.\n" +
+                   "Ground profile: the whole body from the side, at ground level, looking up.\n" +
+                   "Changing it while you are down switches the shot at once.");
+
+        var below = config.DeathShotBelowGround;
+        if (ImGui.Checkbox($"Allow below ground##{id}", ref below))
+        {
+            config.DeathShotBelowGround = below;
+            config.Save();
+        }
+        HelpMarker("Low three-quarter and Face may put the camera under the ground, looking up at a body lying on it " +
+                   "(the ground is not drawn from below). Off: the camera stays above the ground.");
     }
 
     private void DrawDynamicCamStatus()

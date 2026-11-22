@@ -123,7 +123,8 @@ internal sealed unsafe class CameraModule
     /// writes first, the automatic death shot over it, a cutscene shot over both. A cutscene shot that ends blends out
     /// to whichever of the two is running below it.
     /// </summary>
-    public void CreateDuel(ITargetManager targetManager, ICondition condition, IClientState clientState, System.Func<bool> sceneActive)
+    public void CreateDuel(ITargetManager targetManager, ICondition condition, IClientState clientState, IGamepadState gamepadState,
+        IGameConfig gameConfig, System.Func<bool> sceneActive)
     {
         duelCameraDirector = new DuelCameraDirector(
             m.Config, cameraModeCoordinator, combatEngine, npcSelector, boneTransformService, m.Combat.Telegraphs,
@@ -132,6 +133,8 @@ internal sealed unsafe class CameraModule
             sceneActive,
             condition,
             clientState,
+            gamepadState,
+            gameConfig,
             log);
         duelCameraDirector.CutsceneOwnsCamera = () => cutsceneShotDirector.OwnsCamera;
         cutsceneShotDirector.HandingBack = () =>

@@ -89,6 +89,10 @@ public unsafe class ActiveCameraController : IDisposable
     private ActiveCameraInputs? Inputs => TemporaryInputs?.Invoke();
     private static float Input(float? value, float fallback) => value.HasValue && float.IsFinite(value.Value) ? value.Value : fallback;
     private bool DynamicCameraEnabled => DynamicCameraEnabledOverride?.Invoke() ?? config.EnableDynamicCamera;
+    /// <summary>Camera mode Duel (the duel camera, and the death shot inside it).</summary>
+    private bool DuelCameraEnabled => config.EnableDuelCamera && !config.EnableActiveCamera;
+    /// <summary>A mode that places its own eye and keeps it clear of terrain itself: the game's camera collision is off.</summary>
+    private bool DirectedOrDuel => DynamicCameraEnabled || DuelCameraEnabled;
     public void ReleaseDistanceOverride() => RestoreMinDistance();
 
     /// <summary>Resolved orbit center from the CameraModeCoordinator (highest-priority
@@ -520,15 +524,16 @@ public unsafe class ActiveCameraController : IDisposable
         }
     }
 
-    // Dynamic Cam always supplies its own terrain clearance. This controller is
+    // The Directed camera and the duel camera always supply their own terrain clearance. This controller is
     // the sole owner of the shared native patch, including when a mode resets.
-    // (So the game's camera collision is off for the whole of a death shot, which only runs in Directed mode. A
+    // (So the game's camera collision is off for the whole of a death shot, in Directed mode and in Duel mode alike. A
     // below-ground death shot does not depend on it: its eye is written after the game's collision has run, into the
     // buffers the game stores without another check. The patch only keeps the game's own orbit camera, which is
-    // what the shot blends back to, from being pulled about meanwhile.)
+    // what the shot blends back to, from being pulled about meanwhile. The duel camera hands its eye over the same
+    // way; in Duel mode the patch also stays on while the camera is back with the game for want of an opponent.)
     public void UpdateCollisionPolicy()
     {
-        if (DynamicCameraEnabled || (IsActive && config.ActiveCameraDisableCollision))
+        if (DirectedOrDuel || (IsActive && config.ActiveCameraDisableCollision))
             EnableCollisionPatch();
         else
             DisableCollisionPatch();
@@ -548,7 +553,7 @@ public unsafe class ActiveCameraController : IDisposable
 
     private void DisableCollisionPatch(bool force = false)
     {
-        if (!force && DynamicCameraEnabled) return;
+        if (!force && DirectedOrDuel) return;
         if (!collisionPatchActive || collisionOriginalBytes == null) return;
         WriteMemory(collisionPatchAddress, collisionOriginalBytes);
         collisionPatchActive = false;
