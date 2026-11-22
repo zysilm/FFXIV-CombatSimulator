@@ -15,9 +15,9 @@ namespace RagdollReplay;
 
 /// <summary>
 /// "What if" re-simulation (death guidance, phase P0; README.md):
-///   RagdollReplay &lt;file.rgdrec | folder&gt; --what-if &lt;recorded|limp|hold-legs|hold-pose|slow-slump&gt;
+///   RagdollReplay &lt;file.rgdrec | folder&gt; --what-if &lt;recorded|limp|knee-buckle|hold-legs|hold-pose|slow-slump|auto&gt;
 ///       [--start-at 0|25|50|75|100] [--out folder] [--seconds 12] [--recorded-dt] [--only text]
-///       [--softness x] [--tension-scale x] [--time-scale x]
+///       [--set Field=value ...] [--label name]
 /// It is not a replay: nothing is compared bit for bit. From a recording it takes the character (skeleton, scale,
 /// hull fits, soft-tissue fits, settings, what the controller carried into the activation) and the death animation
 /// (the pose of every frame before physics started), starts physics at a chosen point of that animation with a
@@ -41,6 +41,8 @@ internal static class WhatIf
         ["hold-legs"] = "HoldLegs",
         ["hold-pose"] = "HoldPose",
         ["slow-slump"] = "SlowSlump",
+        ["knee-buckle"] = "KneeBuckle",
+        ["auto"] = "Auto",
     };
 
     public static int Run(string[] args)
@@ -56,16 +58,17 @@ internal static class WhatIf
         var seconds = float.Parse(Value(args, "--seconds") ?? "12", Inv);
         var recordedDt = args.Contains("--recorded-dt");
         var only = Value(args, "--only");
-        if (Value(args, "--softness") is { } softness) SetPrototype("Softness", float.Parse(softness, Inv));
-        if (Value(args, "--tension-scale") is { } scale) SetPrototype("TensionScale", float.Parse(scale, Inv));
-        if (Value(args, "--time-scale") is { } time) SetPrototype("TimeScale", float.Parse(time, Inv));
+        // The library's guidance numbers (PoseHoldTuning), by field name: --set HoldLegsTension=3 --set GroundHold=false ...
+        for (var i = 0; i + 1 < args.Length; i++)
+            if (args[i] == "--set" && args[i + 1].Split('=') is { Length: 2 } pair) SetTuning(pair[0], pair[1]);
 
         var target = args[0];
         var files = Directory.Exists(target)
             ? Directory.GetFiles(target, "*" + RagdollRecordingFormat.FileExtension).OrderBy(p => p, StringComparer.Ordinal).ToArray()
             : new[] { target };
         if (only != null) files = files.Where(f => Path.GetFileName(f).Contains(only, StringComparison.OrdinalIgnoreCase)).ToArray();
-        var folder = Path.Combine(outRoot, profile.ToLowerInvariant(), "s" + startPercent.ToString(Inv));
+        // --label: the folder of a variant (a profile with other numbers), so the tables can show it beside the others.
+        var folder = Path.Combine(outRoot, (Value(args, "--label") ?? profile).ToLowerInvariant(), "s" + startPercent.ToString(Inv));
         Directory.CreateDirectory(folder);
         int done = 0, skipped = 0, failed = 0;
         foreach (var file in files)
@@ -93,15 +96,15 @@ internal static class WhatIf
         return at >= 0 && at + 1 < args.Length ? args[at + 1] : null;
     }
 
-    // The tension profiles are a prototype in the library (0.1.0-beta.5 will have them); they are reached by name so
-    // this project still builds against a library without them.
-    private static void SetPrototype(string field, float value)
+    // The death guidance arrives with AdvancedRagdoll 0.1.0-beta.5; its members are reached by name so
+    // this project still builds against a library without it.
+    private static void SetTuning(string field, string value)
     {
-        var type = typeof(Ragdoll).Assembly.GetType("AdvancedRagdoll.PoseHoldPrototype")
-                   ?? throw new ReplayUnsupportedException("this AdvancedRagdoll has no tension profiles (PoseHoldPrototype)");
+        var type = typeof(Ragdoll).Assembly.GetType("AdvancedRagdoll.PoseHoldTuning")
+                   ?? throw new ReplayUnsupportedException("this AdvancedRagdoll has no death guidance (PoseHoldTuning)");
         var f = type.GetField(field, BindingFlags.Public | BindingFlags.Static)
-                ?? throw new ReplayUnsupportedException($"PoseHoldPrototype.{field} not found");
-        f.SetValue(null, value);
+                ?? throw new ReplayUnsupportedException($"PoseHoldTuning.{field} not found");
+        f.SetValue(null, f.FieldType == typeof(bool) ? bool.Parse(value) : float.Parse(value, Inv));
     }
 
     internal static void SetTensionProfile(GuidedCollapseOptions options, string? libraryName)
@@ -266,7 +269,7 @@ internal static class WhatIf
             var text = new StringBuilder();
             void Line(string key, string value) => text.Append(key).Append('=').Append(value).Append('\n');
             Line("name", name);
-            Line("profile", profile.ToLowerInvariant());
+            Line("profile", Path.GetFileName(Path.GetDirectoryName(folder))!);
             Line("startPercent", startPercent.ToString(Inv));
             Line("startFrame", startFrame.ToString(Inv));
             Line("preFrames", preFrames.ToString(Inv));

@@ -141,9 +141,12 @@ internal static class Sheets
             Array.Fill(pixels, 0xFF101214);
         }
 
+        /// <summary>The size of the cells drawing is clipped to.</summary>
+        public int ClipW = CellW, ClipH = CellH;
+
         private void Set(int x, int y, uint argb, int cx, int cy)
         {
-            if (x < cx || y < cy || x >= cx + CellW || y >= cy + CellH || x < 0 || y < 0 || x >= width || y >= height) return;
+            if (x < cx || y < cy || x >= cx + ClipW || y >= cy + ClipH || x < 0 || y < 0 || x >= width || y >= height) return;
             pixels[y * width + x] = argb;
         }
 

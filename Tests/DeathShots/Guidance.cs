@@ -9,9 +9,11 @@ namespace DeathShots;
 /// Death guidance, phase P0: the tables and contact sheets over the "what if" re-simulations that
 /// Tests/RagdollReplay --what-if writes (one folder per profile and start point: &lt;root&gt;/&lt;profile&gt;/s&lt;percent&gt;/, a
 /// trajectory and a ".wi" file of simulation numbers per recording).
-///   guidance &lt;root&gt;                          the metric table per start class, Limp against the tension profiles
+///   guidance &lt;root&gt; [--profiles a,b,c]       the metric table per start class, the first profile against the others,
+///                                            the gates, and the library start state against the pose classes
 ///   guidance-validate &lt;root&gt; --traj &lt;folder&gt;  how far the "recorded" what-if is from the recordings themselves
-///   guidance-sheets &lt;root&gt; [n]               stick-figure sheets, Limp beside each profile, into &lt;root&gt;/sheets
+///   guidance-sheets &lt;root&gt; [n] [--zoom]       stick-figure sheets, the profiles beside each other, into &lt;root&gt;/sheets
+///                                            (--zoom: twice the size, each body centred, the first profile in grey underneath)
 /// Start classes (at the hand-off pose, thresholds of the death-shot pose classes: torso within 53° of vertical =
 /// upright, hips at 0.60 m × body scale): "mid-fall" = the pelvis moves faster than 0.5 m/s at hand-off, or the body
 /// is not upright but its hips are still above 0.45 m × scale; otherwise upright with high hips = "standing", upright
@@ -20,8 +22,8 @@ namespace DeathShots;
 internal static class Guidance
 {
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
-    public static readonly string[] Profiles = { "limp", "hold-legs", "hold-pose", "slow-slump" };
-    private static readonly string[] ProfileTitles = { "Limp", "Hold the legs", "Hold the pose", "Slow slump" };
+    /// <summary>The folders compared, the baseline first (--profiles a,b,c replaces them).</summary>
+    public static string[] Profiles = { "limp", "hold-legs", "hold-pose", "slow-slump" };
     private static readonly string[] Classes = { "standing", "mid-fall", "lying", "kneeling" };
 
     /// <summary>One what-if run: its trajectory, its simulation numbers, and what this tool derives from them.</summary>
@@ -40,7 +42,8 @@ internal static class Guidance
         public float[] HipHeight = new float[5];   // start, 0.5 s, 1 s, 2 s, end
         public float[] KneeChange = new float[4];  // 0.5 s, 1 s, 2 s, end: largest change of a knee's bend, degrees
         public float Penetration, Float;
-        public float FallAngle = float.NaN;
+        public float FallAngle = float.NaN, Drift = float.NaN, EndsDrift = float.NaN;
+        public string LibraryClass = "";
         public float Seconds;
 
         public float[] Series(string key)
@@ -192,6 +195,23 @@ internal static class Guidance
             }
         }
         run.Penetration = deepest;
+        {
+            var last = run.Positions(t.Frames.Length - 1);
+            float sum = 0f, ends = 0f;
+            int n = 0, m = 0;
+            for (var b = 0; b < last.Length; b++)
+            {
+                if (float.IsNaN(last[b].X) || float.IsNaN(start[b].X)) continue;
+                var d = Vector3.Distance(last[b], start[b]);
+                sum += d; n++;
+                if (t.Bones[b] is "j_te_l" or "j_te_r" or "j_asi_d_l" or "j_asi_d_r") { ends += d; m++; }
+            }
+            run.Drift = n > 0 ? sum / n : float.NaN;
+            run.EndsDrift = m > 0 ? ends / m : float.NaN;
+            var log = run.Wi.GetValueOrDefault("guidanceLog") ?? "";
+            var at = log.IndexOf("(start ", StringComparison.Ordinal);
+            if (at >= 0) run.LibraryClass = log[(at + 7)..].Split(',')[0];
+        }
         run.Seconds = run.PhysicsTime(t.Frames.Length - 1);
 
         // Which way the body went, against the way the chest was moving at hand-off (horizontal).
@@ -238,7 +258,7 @@ internal static class Guidance
         }
         // A run counts only where every profile ran the same recording from the same start; its class is the Limp run's.
         var byKey = runs.GroupBy(r => (r.Name, r.Percent)).Where(g => Profiles.All(p => g.Any(r => r.Profile == p))).ToList();
-        var classOf = byKey.ToDictionary(g => g.Key, g => g.First(r => r.Profile == "limp").StartClass);
+        var classOf = byKey.ToDictionary(g => g.Key, g => g.First(r => r.Profile == Profiles[0]).StartClass);
         Console.WriteLine($"what-if runs: {runs.Count} in {root}; complete sets (all {Profiles.Length} profiles): {byKey.Count} " +
                           $"from {byKey.Select(g => g.Key.Name).Distinct().Count()} recordings");
         Console.WriteLine("start classes by start point (percent of the recorded animation): " + string.Join("; ",
@@ -247,6 +267,25 @@ internal static class Guidance
         var problems = runs.Where(r => r.Number("problems") > 0).ToList();
         Console.WriteLine($"runs in which the controller logged a warning or an error: {problems.Count}" +
                           (problems.Count > 0 ? "; first: " + problems[0].Name + " " + problems[0].Profile + " s" + problems[0].Percent + ": " + problems[0].Wi.GetValueOrDefault("firstProblem") : ""));
+        // The library's start state (from its guidance log line) against this tool's class and against the plugin's
+        // pose class of the same hand-off pose (PoseClassifier.Raw: upright, hips high).
+        var measured = runs.Where(r => r.LibraryClass.Length > 0).GroupBy(r => (r.Name, r.Percent)).Select(g => g.First()).ToList();
+        if (measured.Count > 0)
+        {
+            string Tool(string c) => c switch { "Standing" => "standing", "Kneeling" => "kneeling", "Falling" => "mid-fall", _ => "lying" };
+            bool Pose(Run r) => r.LibraryClass switch
+            {
+                "Standing" => r.StartPose == PoseClass.Standing,
+                "Kneeling" => r.StartPose == PoseClass.Kneeling,
+                "Lying" => r.StartPose is PoseClass.Side or PoseClass.Supine or PoseClass.Prone,
+                _ => true, // falling is decided by speed, which the pose class does not have
+            };
+            Console.WriteLine($"library start state on {measured.Count} hand-off poses of {measured.Select(r => r.Name).Distinct().Count()} recordings: " +
+                              $"same class as this tool {measured.Count(r => Tool(r.LibraryClass) == r.StartClass)}; " +
+                              $"consistent with the plugin's pose class (upright / hips high) {measured.Count(Pose)}; " +
+                              "differences: " + string.Join(", ", measured.Where(r => Tool(r.LibraryClass) != r.StartClass)
+                                  .GroupBy(r => $"library {r.LibraryClass} / tool {r.StartClass}").Select(g => $"{g.Key} {g.Count()}").DefaultIfEmpty("none")));
+        }
         Console.WriteLine();
 
         foreach (var c in Classes)
@@ -260,7 +299,7 @@ internal static class Guidance
                 continue;
             }
             var columns = Profiles.Select(p => sets.Select(g => g.First(r => r.Profile == p)).ToList()).ToArray();
-            Console.WriteLine("| metric | " + string.Join(" | ", ProfileTitles) + " |");
+            Console.WriteLine("| metric | " + string.Join(" | ", Profiles) + " |");
             Console.WriteLine("|---|" + string.Concat(Enumerable.Repeat("---:|", Profiles.Length)));
             void Row(string title, Func<List<Run>, string> cell) => Console.WriteLine($"| {title} | " + string.Join(" | ", columns.Select(cell)) + " |");
             string At(List<Run> rs, string key, int slot) => F(Median(rs.Select(r => r.Series(key) is { Length: > 0 } s && slot < s.Length ? s[slot] : float.NaN)));
@@ -303,6 +342,14 @@ internal static class Guidance
             Row("largest kinetic energy after 4 s, J — median / max", rs => $"{F(Median(rs.Select(r => r.Number("maxEnergyLate"))), "F3")} / {F(rs.Max(r => r.Number("maxEnergyLate")), "F2")}");
             Row("fall direction against the chest's hand-off velocity, ° — median (runs with ≥ 0.3 m/s)", rs =>
                 $"{F(Median(rs.Select(r => r.FallAngle)))} ({rs.Count(r => !float.IsNaN(r.FallAngle))})");
+            Row("limb drift: mean distance of the 22 bodies from where they were at hand-off, m — median / p90", rs =>
+                $"{F(Median(rs.Select(r => r.Drift)), "F3")} / {F(Percentile(rs.Select(r => r.Drift), 0.9f), "F3")}");
+            Row("hands and feet: mean distance from where they were at hand-off, m — median", rs => F(Median(rs.Select(r => r.EndsDrift)), "F3"));
+            // The gates: no more runs with five or more energy spikes, and no more runs that moved again after settling, than the baseline.
+            var baseSpikes = columns[0].Count(r => r.Number("energySpikes") >= 5);
+            var baseMoved = columns[0].Count(r => r.MovedAgain > 0);
+            Row("GATE: runs with ≥ 5 energy spikes and runs that moved again, not worse than the first column", rs =>
+                rs.Count(r => r.Number("energySpikes") >= 5) <= baseSpikes && rs.Count(r => r.MovedAgain > 0) <= baseMoved ? "pass" : "FAIL");
             Console.WriteLine();
         }
         return 0;
@@ -418,7 +465,7 @@ internal static class Guidance
     /// hand-off pose and 0.5 s, 1 s, 2 s, 4 s of physics and the end. The view is fixed on where the hips were at
     /// hand-off, so what moves in the picture moved in the world. Bones only.
     /// </summary>
-    public static int SheetsRun(string root, int count)
+    public static int SheetsRun(string root, int count, bool zoom = false)
     {
         var runs = Load(root, Profiles);
         var byKey = runs.GroupBy(r => (r.Name, r.Percent)).Where(g => Profiles.All(p => g.Any(r => r.Profile == p))).ToList();
@@ -434,7 +481,7 @@ internal static class Guidance
         var third = Math.Max(1, count / 3);
         foreach (var (c, perClass) in new[] { ("lying", third), ("kneeling", third), ("standing", Math.Max(1, (count - 2 * third + 1) / 2)), ("mid-fall", Math.Max(1, (count - 2 * third) / 2)) })
         {
-            var ofClass = byKey.Where(g => g.First(r => r.Profile == "limp").StartClass == c)
+            var ofClass = byKey.Where(g => g.First(r => r.Profile == Profiles[0]).StartClass == c)
                 .OrderByDescending(g => g.First().T.IsPlayer).ThenByDescending(g => g.Key.Percent == 100).ThenBy(g => g.Key.Name, StringComparer.Ordinal).ThenBy(g => g.Key.Percent);
             var taken = 0;
             foreach (var g in ofClass)
@@ -445,27 +492,31 @@ internal static class Guidance
                 taken++;
             }
         }
-        var folder = Path.Combine(root, "sheets");
+        var folder = Path.Combine(root, zoom ? "sheets-zoom" : "sheets");
         Directory.CreateDirectory(folder);
         var legend = new StringBuilder();
-        legend.AppendLine("rows 1-4: side view of Limp, Hold the legs, Hold the pose, Slow slump; rows 5-8: the same from above");
+        legend.AppendLine($"rows 1-{Profiles.Length}: side view of {string.Join(", ", Profiles)}; rows {Profiles.Length + 1}-{Profiles.Length * 2}: the same from above");
         legend.AppendLine("columns: hand-off pose, then 0.5 s, 1 s, 2 s, 4 s of physics and the end of the run");
-        legend.AppendLine("spine white, left limbs blue, right limbs red, head a ring; grey line = the ground under the hips at hand-off; yellow cross = where the hips were at hand-off");
+        legend.AppendLine(zoom
+            ? "zoomed (2 m across a cell, twice the size), every cell centred on that body's own hips: the pose itself. Grey underneath = the first profile's body at the same moment, hips on hips. Spine white, left limbs blue, right limbs red, head a ring; grey line = the ground under the hips"
+            : "spine white, left limbs blue, right limbs red, head a ring; grey line = the ground under the hips at hand-off; yellow cross = where the hips were at hand-off");
         var moments = new[] { 0f, 0.5f, 1f, 2f, 4f, float.MaxValue };
+        var cellW = Sheets.CellW * (zoom ? 2 : 1);
+        var cellH = Sheets.CellH * (zoom ? 2 : 1);
         foreach (var set in picks)
         {
-            var limp = set.First(r => r.Profile == "limp");
+            var limp = set.First(r => r.Profile == Profiles[0]);
             var t0 = limp.T;
-            var hips = limp.Positions(limp.HandOff)[t0.BoneIndex("j_kosi")];
+            var hips0 = limp.Positions(limp.HandOff)[t0.BoneIndex("j_kosi")];
             var world = new RecordedWorld(t0);
-            var ground = world.HasGround ? world.FieldHeight(hips.X, hips.Z) : t0.Frames[limp.HandOff].GroundY;
-            // Across the screen: where the Limp body's chest ends up, seen from the hand-off hips (else its facing).
-            var end = limp.Positions(t0.Frames.Length - 1)[t0.BoneIndex("j_sebo_c")] - hips;
+            float Ground(Vector3 p) => world.HasGround ? world.FieldHeight(p.X, p.Z) : t0.Frames[limp.HandOff].GroundY;
+            // Across the screen: where the first profile's chest ends up, seen from the hand-off hips (else its facing).
+            var end = limp.Positions(t0.Frames.Length - 1)[t0.BoneIndex("j_sebo_c")] - hips0;
             end.Y = 0f;
             var u = end.Length() > 0.15f ? Vector3.Normalize(end) : new Vector3(MathF.Sin(t0.Facing), 0f, MathF.Cos(t0.Facing));
             var w = new Vector3(-u.Z, 0f, u.X);
-            var image = new Sheets.Image((Sheets.CellW + Sheets.Pad) * moments.Length + Sheets.Pad, (Sheets.CellH + Sheets.Pad) * Profiles.Length * 2 + Sheets.Pad);
-            const float scale = Sheets.CellW / 3.6f;
+            var image = new Sheets.Image((cellW + Sheets.Pad) * moments.Length + Sheets.Pad, (cellH + Sheets.Pad) * Profiles.Length * 2 + Sheets.Pad) { ClipW = cellW, ClipH = cellH };
+            var scale = cellW / (zoom ? 2.0f : 3.6f);
             for (var p = 0; p < Profiles.Length; p++)
             {
                 var run = set.First(r => r.Profile == Profiles[p]);
@@ -473,35 +524,51 @@ internal static class Guidance
                 {
                     var frame = moments[c] == float.MaxValue ? run.T.Frames.Length - 1 : run.FrameAt(moments[c]);
                     var positions = run.T.Frames[frame].Bone; // joint origins: the stick figure's own joints
+                    var limpFrame = moments[c] == float.MaxValue ? limp.T.Frames.Length - 1 : limp.FrameAt(moments[c]);
+                    var limpPositions = limp.T.Frames[limpFrame].Bone;
                     for (var view = 0; view < 2; view++)
                     {
-                        var x0 = Sheets.Pad + c * (Sheets.CellW + Sheets.Pad);
-                        var y0 = Sheets.Pad + (p + view * Profiles.Length) * (Sheets.CellH + Sheets.Pad);
-                        image.Fill(x0, y0, Sheets.CellW, Sheets.CellH, view == 0 ? 0xFF202428 : 0xFF181C20);
-                        (float, float) Map(Vector3 q)
+                        var x0 = Sheets.Pad + c * (cellW + Sheets.Pad);
+                        var y0 = Sheets.Pad + (p + view * Profiles.Length) * (cellH + Sheets.Pad);
+                        image.Fill(x0, y0, cellW, cellH, view == 0 ? 0xFF202428 : 0xFF181C20);
+                        void Draw(Trajectory t, Vector3[] bones, bool ghost)
                         {
-                            var d = q - hips;
-                            var sx = x0 + Sheets.CellW * 0.5f + Vector3.Dot(d, u) * scale;
-                            var sy = view == 0
-                                ? y0 + Sheets.CellH - 12f - (q.Y - ground) * scale
-                                : y0 + Sheets.CellH * 0.5f - Vector3.Dot(d, w) * scale;
-                            return (sx, sy);
+                            // Zoomed: centred on this body's own hips. Otherwise: fixed on the hand-off hips.
+                            var centre = zoom ? bones[t.BoneIndex("j_kosi")] : hips0;
+                            var ground = Ground(centre);
+                            (float, float) Map(Vector3 q)
+                            {
+                                var d = q - centre;
+                                var sx = x0 + cellW * 0.5f + Vector3.Dot(d, u) * scale;
+                                var sy = view == 0
+                                    ? y0 + cellH - 12f - (q.Y - ground) * scale
+                                    : y0 + cellH * 0.5f - Vector3.Dot(d, w) * scale;
+                                return (sx, sy);
+                            }
+                            if (!ghost)
+                            {
+                                if (view == 0) image.Line(x0, y0 + cellH - 12f, x0 + cellW, y0 + cellH - 12f, 0xFF55606A, x0, y0);
+                                if (!zoom)
+                                {
+                                    var (cx, cy) = Map(view == 0 ? new Vector3(hips0.X, ground, hips0.Z) : hips0);
+                                    image.Line(cx - 4, cy, cx + 4, cy, 0xFFE0C040, x0, y0);
+                                    image.Line(cx, cy - 4, cx, cy + 4, 0xFFE0C040, x0, y0);
+                                }
+                            }
+                            foreach (var (a, b, color) in Sheets.Segments)
+                            {
+                                var (ax, ay) = Map(bones[t.BoneIndex(a)]);
+                                var (bx, by) = Map(bones[t.BoneIndex(b)]);
+                                image.Line(ax, ay, bx, by, ghost ? 0xFF707880 : Sheets.Colors[color], x0, y0);
+                            }
+                            var head = bones[t.BoneIndex("j_kao")];
+                            var neck = bones[t.BoneIndex("j_kubi")];
+                            var (hx, hy) = Map(head + (head - neck) * 0.6f);
+                            image.Ring(hx, hy, 0.11f * scale, ghost ? 0xFF707880 : 0xFFF0F0F0, x0, y0);
                         }
-                        if (view == 0) image.Line(x0, y0 + Sheets.CellH - 12f, x0 + Sheets.CellW, y0 + Sheets.CellH - 12f, 0xFF55606A, x0, y0);
-                        var (cx, cy) = Map(view == 0 ? new Vector3(hips.X, ground, hips.Z) : hips);
-                        image.Line(cx - 4, cy, cx + 4, cy, 0xFFE0C040, x0, y0);
-                        image.Line(cx, cy - 4, cx, cy + 4, 0xFFE0C040, x0, y0);
-                        foreach (var (a, b, color) in Sheets.Segments)
-                        {
-                            var (ax, ay) = Map(positions[run.T.BoneIndex(a)]);
-                            var (bx, by) = Map(positions[run.T.BoneIndex(b)]);
-                            image.Line(ax, ay, bx, by, Sheets.Colors[color], x0, y0);
-                        }
-                        var head = positions[run.T.BoneIndex("j_kao")];
-                        var neck = positions[run.T.BoneIndex("j_kubi")];
-                        var (hx, hy) = Map(head + (head - neck) * 0.6f);
-                        image.Ring(hx, hy, 0.11f * scale, 0xFFF0F0F0, x0, y0);
-                        image.Box(x0, y0, Sheets.CellW, Sheets.CellH, 0xFF606870);
+                        if (zoom && p > 0) Draw(limp.T, limpPositions, true);
+                        Draw(run.T, positions, false);
+                        image.Box(x0, y0, cellW, cellH, 0xFF606870);
                     }
                 }
             }

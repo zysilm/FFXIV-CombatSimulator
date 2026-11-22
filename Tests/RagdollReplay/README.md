@@ -119,9 +119,9 @@ user's recordings and do not go into the repository.
 ### "What if" re-simulation (death guidance, phase P0)
 
 ```
-... RagdollReplay.dll <file | folder> --what-if <recorded|limp|hold-legs|hold-pose|slow-slump>
+... RagdollReplay.dll <file | folder> --what-if <recorded|limp|knee-buckle|hold-legs|hold-pose|slow-slump|auto>
         [--start-at 0|25|50|75|100] [--out folder] [--seconds 12] [--recorded-dt] [--only text]
-        [--softness x] [--tension-scale x] [--time-scale x]
+        [--set Field=value ...] [--label name]
 ```
 
 Not a replay: nothing is compared bit for bit (`WhatIf.cs`). From a recording it takes the character (skeleton, scale,
@@ -132,10 +132,12 @@ the real controller run on for `--seconds` of physics at 1/60 s a frame (`--reco
 times, to the end of the recording). One recording therefore gives standing, mid-fall and lying starts.
 
 - Profiles: `recorded` leaves the recording's guidance settings and pending collapse alone (for the comparison with
-  the recording itself); `limp` switches every guidance off (the baseline); `hold-legs`, `hold-pose`, `slow-slump` are
-  the library's tension profiles (`GuidedCollapseOptions.TensionProfile`, a prototype: set by name, so this project
-  still builds against a library without it and then refuses those three). `--softness`, `--tension-scale`,
-  `--time-scale` set the prototype's numbers (`PoseHoldPrototype`).
+  the recording itself); `limp` switches every guidance off (the baseline); `knee-buckle`, `hold-legs`, `hold-pose`,
+  `slow-slump` and `auto` are the library's death guidance profiles (`GuidedCollapseOptions.TensionProfile`, in
+  AdvancedRagdoll from 0.1.0-beta.5: set by name, so this project still builds against a library without it and then
+  refuses them). `--set Field=value` (repeatable) sets one of the library's guidance numbers (`PoseHoldTuning`) for
+  the run; `--label name` writes the run into `<out>/<name>/` instead of `<out>/<profile>/`, so a variant can stand
+  beside the profiles in the tables (`Tests/DeathShots guidance --profiles limp,hold-legs,<name>`).
 - Ground: a downward ray the recording cast from the same place is answered as the game answered it (at the recorded
   start that is every ray, so the ground mesh is the recorded one); any other from the recorded ground triangles or
   the height field of all recorded hits (the same reconstruction as `Tests/DeathShots/Trajectory.cs` `RecordedWorld`).

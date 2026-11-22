@@ -28,11 +28,13 @@ if (command is "guidance" or "guidance-validate" or "guidance-sheets")
 {
     Console.OutputEncoding = System.Text.Encoding.UTF8;
     var root = args.Length > 1 && !args[1].StartsWith("--", StringComparison.Ordinal) ? args[1] : Path.Combine(Path.GetTempPath(), "DeathGuidance", "whatif");
+    // --profiles a,b,c: the folders to compare, the baseline first (default limp,hold-legs,hold-pose,slow-slump).
+    if (Array.IndexOf(args, "--profiles") is var profilesAt and >= 0 && profilesAt + 1 < args.Length) Guidance.Profiles = args[profilesAt + 1].Split(',');
     return command switch
     {
         "guidance" => Guidance.Table(root, Array.IndexOf(args, "--start") is var startAt and >= 0 && startAt + 1 < args.Length && int.TryParse(args[startAt + 1], out var onlyStart) ? onlyStart : -1),
         "guidance-validate" => Guidance.Validate(root, folder),
-        _ => Guidance.SheetsRun(root, args.Length > 2 && int.TryParse(args[2], out var sheetCount) ? sheetCount : 6),
+        _ => Guidance.SheetsRun(root, args.Length > 2 && int.TryParse(args[2], out var sheetCount) ? sheetCount : 6, args.Contains("--zoom")),
     };
 }
 
