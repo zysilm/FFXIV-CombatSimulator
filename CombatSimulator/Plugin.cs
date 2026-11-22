@@ -391,7 +391,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         movementBlockHook.Enable();
         // The cold-zone breath stops on simulated bodies (the game only stops it for Mode == Dead).
         coldBreathSuppressor = new Effects.ColdBreathSuppressor(gameInterop, sigScanner, combatEngine, npcSelector, companionManager,
-            dismembermentController.IsHelperCloneIndex, log);
+            dismembermentController.IsHelperClone, log);
 
         activeCameraController.SetActive(config.EnableActiveCamera);
 

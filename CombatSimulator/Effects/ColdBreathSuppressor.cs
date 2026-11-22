@@ -52,15 +52,21 @@ public sealed unsafe class ColdBreathSuppressor : IDisposable
     // Bodies already logged in this death; an owner leaves the set the first time it breathes again.
     private readonly HashSet<nint> logged = new();
     private bool detourFailureLogged;
-    private bool cloneSuppressionLogged;
 
-    // Whether a client object index is one of our hidden helper clones (DismembermentController).
-    private readonly Func<int, bool> isHelperCloneIndex;
+    // Diagnostics: while the player is dead, the first owner of each kind (clone skipped, dead body skipped,
+    // client actor let through) is logged once per session, so an in-game test shows who still breathes.
+    private readonly HashSet<string> diagnosedKinds = new();
+
+    /// <summary>First object-table index of client-created actors (ClientObjectManager slot 0).</summary>
+    private const int ClientObjectIndexStart = 200;
+
+    // Whether an actor address is one of our hidden helper clones (DismembermentController).
+    private readonly Func<nint, bool> isHelperClone;
 
     public ColdBreathSuppressor(IGameInteropProvider gameInterop, ISigScanner sigScanner, CombatEngine engine,
-        NpcSelector npcSelector, CombatCompanionManager companions, Func<int, bool> isHelperCloneIndex, IPluginLog log)
+        NpcSelector npcSelector, CombatCompanionManager companions, Func<nint, bool> isHelperClone, IPluginLog log)
     {
-        this.isHelperCloneIndex = isHelperCloneIndex;
+        this.isHelperClone = isHelperClone;
         this.engine = engine;
         this.npcSelector = npcSelector;
         this.companions = companions;
@@ -107,37 +113,29 @@ public sealed unsafe class ColdBreathSuppressor : IDisposable
     {
         try
         {
+            var owner = vfxContainer != 0 ? *(nint*)(vfxContainer + 8) : 0;
+
             // Our hidden helper clones (separated parts, armour and garment pieces) never breathe, in or out of a
-            // battle. Their index is registered at creation, before they are set up or drawn.
-            if (vfxContainer != 0)
+            // battle. Matched by address against the live clone list, which is filled before a clone is drawn.
+            if (owner != 0 && isHelperClone(owner))
             {
-                var owner = *(nint*)(vfxContainer + 8);
-                if (owner != 0 && isHelperCloneIndex(((GameObject*)owner)->ObjectIndex))
-                {
-                    if (!cloneSuppressionLogged)
-                    {
-                        cloneSuppressionLogged = true;
-                        log.Info("ColdBreath: helper clones (separated parts, armour pieces) never breathe; first one skipped.");
-                    }
-                    return;
-                }
+                Diagnose("clone skipped", owner);
+                return;
             }
 
-            if (engine.IsActive && vfxContainer != 0)
+            if (engine.IsActive && owner != 0)
             {
-                var owner = *(nint*)(vfxContainer + 8);
-                if (owner != 0)
+                RefreshDeadBodies();
+                if (deadBodies.TryGetValue(owner, out var name))
                 {
-                    RefreshDeadBodies();
-                    if (deadBodies.TryGetValue(owner, out var name))
-                    {
-                        if (IsColdZone() && logged.Add(owner))
-                            log.Info($"ColdBreath: suppressed on {name} (simulated death)");
-                        return; // the game's own "owner is dead" early return
-                    }
-
-                    logged.Remove(owner);
+                    if (IsColdZone() && logged.Add(owner))
+                        log.Info($"ColdBreath: suppressed on {name} (simulated death)");
+                    Diagnose("dead body skipped", owner);
+                    return; // the game's own "owner is dead" early return
                 }
+
+                logged.Remove(owner);
+                Diagnose("client actor breathes", owner);
             }
             else if (!engine.IsActive && logged.Count > 0)
             {
@@ -154,6 +152,22 @@ public sealed unsafe class ColdBreathSuppressor : IDisposable
         }
 
         hook!.Original(vfxContainer);
+    }
+
+    /// <summary>
+    /// Logs the first owner of each kind seen while the player is dead in a cold zone: the kinds that are
+    /// skipped, and client-created actors (spawned enemies, allies, spectators) that are let through.
+    /// </summary>
+    private void Diagnose(string kind, nint owner)
+    {
+        if (diagnosedKinds.Contains(kind) || !engine.IsActive || engine.State.PlayerState.IsAlive || !IsColdZone())
+            return;
+        var obj = (GameObject*)owner;
+        int index = obj->ObjectIndex;
+        if (kind == "client actor breathes" && index < ClientObjectIndexStart)
+            return; // only client-created actors are of interest
+        diagnosedKinds.Add(kind);
+        log.Info($"ColdBreath: while the player is dead, {kind}: object idx={index} '{obj->NameString}' kind={obj->ObjectKind}");
     }
 
     private bool IsColdZone()
@@ -191,5 +205,6 @@ public sealed unsafe class ColdBreathSuppressor : IDisposable
         hook?.Dispose();
         deadBodies.Clear();
         logged.Clear();
+        diagnosedKinds.Clear();
     }
 }

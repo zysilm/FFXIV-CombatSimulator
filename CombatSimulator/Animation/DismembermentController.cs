@@ -453,12 +453,20 @@ public unsafe partial class DismembermentController : IDisposable
     private readonly HashSet<int> allocatedIndices = new();
 
     /// <summary>
-    /// True when this client object index is one of our helper clones (separated parts, armour and garment
-    /// pieces). The index is registered the moment CreateBattleCharacter returns it, before the clone is set up
-    /// or drawn, and leaves when the clone is deleted.
+    /// True when this actor address is one of our live helper clones (separated parts, armour and garment
+    /// pieces). Checked against the clone list itself, which every delete path leaves through. Not by index:
+    /// <c>allocatedIndices</c> holds ClientObjectManager slots (200–248), whereas <c>GameObject.ObjectIndex</c>
+    /// of a client actor is that slot + 200 (clone slot 200 is object 400, while a spawned enemy in slot 0 is
+    /// object 200), so an index comparison misses the clones and hits living enemies.
     /// </summary>
-    public bool IsHelperCloneIndex(int objectIndex)
-        => objectIndex >= CloneSlotStart && objectIndex < CloneSlotEndExclusive && allocatedIndices.Contains(objectIndex);
+    public bool IsHelperClone(nint address)
+    {
+        if (address == 0) return false;
+        foreach (var c in clones)
+            if ((nint)c.Chara == address)
+                return true;
+        return false;
+    }
 
     private static readonly string[] BodyGearHandoffBones =
     {
