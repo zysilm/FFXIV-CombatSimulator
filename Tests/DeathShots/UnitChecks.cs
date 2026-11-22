@@ -238,15 +238,10 @@ internal static class UnitChecks
     private static Vector3 HeadCentre(BodyPoints p) => p.Head + Vector3.Normalize(p.Head - p.Chest) * 0.09f;
     private static Vector3 HeadTop(BodyPoints p) => p.Head + Vector3.Normalize(p.Head - p.Chest) * 0.18f;
 
-    /// <summary>The middle of the thighs as the solver takes it (reference body).</summary>
+    /// <summary>The middle of the thighs: from the hips toward the feet, 0.30 m (reference body).</summary>
     private static Vector3 MidThighs(BodyPoints p)
     {
-        Vector3 One(Vector3 foot)
-        {
-            var leg = foot - p.Hips;
-            var length = leg.Length();
-            return p.Hips + leg * (MathF.Min(DeathShotSolver.MidThighLength, length * 0.5f) / length);
-        }
+        Vector3 One(Vector3 foot) => p.Hips + Vector3.Normalize(foot - p.Hips) * 0.30f;
         return (One(p.FootL) + One(p.FootR)) * 0.5f;
     }
 
@@ -614,7 +609,8 @@ internal static class UnitChecks
             var level = framing == DeathShotGrabbedFraming.Level;
             var shot = level ? DeathShotProfile.GrabbedLevel : DeathShotProfile.GrabbedAbove;
 
-            // A body hanging still: the frame from the top of the head to mid-thigh.
+            // A body hanging still: the distance of the upper body (as before b2f76d7: Level 1.515 m, Slightly above
+            // 1.545 m on this body), the head near the top of the frame.
             {
                 var still = Map(Standing, v => v + new Vector3(0f, 0.45f, 0f));
                 var solver = new DeathShotSolver(world);
@@ -626,17 +622,22 @@ internal static class UnitChecks
                 var basePose = o;
                 basePose.Eye = o.BaseEye;
                 basePose.LookAt = o.BaseLookAt;
-                float top = UpFrame(basePose, HeadTop(still)), thigh = UpFrame(basePose, MidThighs(still)), hips = UpFrame(basePose, still.Hips);
-                var aim = o.BaseLookAt.Y;
-                Check($"grabbed, {(level ? "Level" : "Slightly above")}, a body hanging still: the frame runs from the top of the head to mid-thigh, headroom 5-10 % of the frame's height, the aim point between the chest and the hips",
-                    o.Shot == shot && 1f - top is >= 0.05f and <= 0.10f && thigh is >= 0.04f and <= 0.16f && hips > thigh + 0.1f && aim < still.Chest.Y && aim > still.Hips.Y &&
-                    MathF.Abs(DeathShotMath.AngleDelta(FollowStart, o.Azimuth)) < 1e-5f,
-                    $"head top at {top * 100f:F1} % of the frame's height (headroom {100f - top * 100f:F1} %), mid-thigh at {thigh * 100f:F1} %, hips at {hips * 100f:F1} %; aim {aim - still.Hips.Y:F2} m above the hips " +
-                    $"(chest {still.Chest.Y - still.Hips.Y:F2} m), {Vector3.Distance(o.BaseEye, o.BaseLookAt):F2} m away");
+                float top = UpFrame(basePose, HeadTop(still)), thigh = UpFrame(basePose, MidThighs(still)), hips = UpFrame(basePose, still.Hips), chest = UpFrame(basePose, still.Chest);
+                var topPushed = UpFrame(o, HeadTop(still));
+                var distanceNow = Vector3.Distance(o.BaseEye, o.BaseLookAt);
+                var wantDistance = level ? 1.515f : 1.545f;
+                // How far down the body the frame's lower edge reaches (on the line hips → mid-thigh → feet).
+                var feet = (still.FootL + still.FootR) * 0.5f;
+                var downTo = UpFrame(basePose, feet) >= 0f ? "the feet" : thigh < 0f ? hips < 0f ? "above the hips" : "between the hips and mid-thigh" : "just below mid-thigh";
+                Check($"grabbed, {(level ? "Level" : "Slightly above")}, a body hanging still: the distance of before b2f76d7 ({wantDistance:F3} m), headroom 8-10 % of the frame's height (also after the push-in), the chest about the middle of the frame",
+                    o.Shot == shot && MathF.Abs(distanceNow - wantDistance) < 0.002f && 1f - top is >= 0.08f and <= 0.10f && 1f - topPushed is >= 0.03f and <= 0.10f &&
+                    chest is > 0.4f and < 0.85f && MathF.Abs(DeathShotMath.AngleDelta(FollowStart, o.Azimuth)) < 1e-5f,
+                    $"{distanceNow:F3} m away, FoV {o.Fov:F2}; head top at {top * 100f:F1} % of the frame's height (headroom {100f - top * 100f:F1} %; {100f - topPushed * 100f:F1} % after the push-in), " +
+                    $"chest at {chest * 100f:F1} %, hips at {hips * 100f:F1} %, mid-thigh at {thigh * 100f:F1} %: the frame reaches {downTo} " +
+                    $"({hips * Vector3.Dot(still.Hips - o.BaseEye, Vector3.Normalize(o.BaseLookAt - o.BaseEye)) * 2f * MathF.Tan(o.Fov * 0.5f):F2} m of the frame's height below the hips)");
             }
 
-            long held = 0, framed = 0, headIn = 0;
-            var worstThigh = 0f;
+            long held = 0, headIn = 0, hipsIn = 0;
             float minDown = float.MaxValue, maxDown = float.MinValue, eyeTravel = 0f, bodyTravel = 0f, minHeadroom = float.MaxValue, maxHeadroom = 0f;
             Vector3 lastEye = default, lastChest = default;
             var trace = Follow(world, Scene, (t, input) => input with { Grabbed = t is >= 4f and < 16f, GrabbedFraming = framing }, 26f, (t, o, p) =>
@@ -644,9 +645,8 @@ internal static class UnitChecks
                 if (t is >= 9f and < 16f)
                 {
                     held++;
-                    if (Reach(o, HeadTop(p), MidThighs(p), p.Chest, p.Hips) <= 1f) framed++;
-                    if (Reach(o, HeadTop(p), HeadCentre(p), p.Chest, p.Hips) <= 1f) headIn++;
-                    worstThigh = MathF.Max(worstThigh, Reach(o, MidThighs(p)));
+                    if (Reach(o, HeadTop(p), HeadCentre(p), p.Chest) <= 1f) headIn++;
+                    if (Reach(o, p.Hips) <= 1f) hipsIn++;
                     var headroom = 1f - UpFrame(o, HeadTop(p));
                     minHeadroom = MathF.Min(minHeadroom, headroom);
                     maxHeadroom = MathF.Max(maxHeadroom, headroom);
@@ -662,12 +662,10 @@ internal static class UnitChecks
             });
             var grabbedEvent = trace.Events.FirstOrDefault(e => e.Contains("grabbed")) ?? "";
             var releasedEvent = trace.Events.FirstOrDefault(e => e.Contains("released")) ?? "";
-            // (The camera is calmer than the body, so on the far ends of a swing the frame's lower edge crosses the
-            // thighs a little above their middle: the head, the chest and the hips never leave it.)
-            Check($"  caught, lifted, swinging ±20 deg and twisting ±30 deg: eased into the held framing; head top, chest and hips in frame on every held frame, the lower edge at mid-thigh within 15 % of the half frame, " +
+            Check($"  caught, lifted, swinging ±20 deg and twisting ±30 deg: eased into the held framing; head top and chest in frame on every held frame, " +
                   (level ? "the view level" : "looking down 12-22 deg"),
-                grabbedEvent.Contains(shot.ToString()) && headIn == held && worstThigh <= 1.15f && (level ? minDown > -6f && maxDown < 6f : minDown > 12f && maxDown < 22f),
-                $"{grabbedEvent}; head to hips in frame {100.0 * headIn / held:F1}% of the held frames, down to mid-thigh {100.0 * framed / held:F1}% (the mid-thigh point at most {worstThigh:F2} of the half frame out); headroom {minHeadroom * 100f:F1}..{maxHeadroom * 100f:F1} % of the frame's height as it swings; view {minDown:F1}..{maxDown:F1} deg down");
+                grabbedEvent.Contains(shot.ToString()) && headIn == held && minHeadroom > 0f && (level ? minDown > -6f && maxDown < 6f : minDown > 12f && maxDown < 22f),
+                $"{grabbedEvent}; head top and chest in frame {100.0 * headIn / held:F1}% of the held frames, the hips {100.0 * hipsIn / held:F1}%; headroom {minHeadroom * 100f:F1}..{maxHeadroom * 100f:F1} % of the frame's height as it swings; view {minDown:F1}..{maxDown:F1} deg down");
             Check("  the azimuth is not touched by the grab, the swings or the release; the camera moves less than the body; no cut frame, view <= 60 deg/s",
                 trace.MaxAzimuthOff < 1e-4f && eyeTravel < bodyTravel * 0.7f && trace.CutFrames == 0 && trace.MaxViewRate <= 60.5f,
                 $"shot azimuth changed {trace.MaxAzimuthOff:F5} deg; the eye travelled {eyeTravel:F2} m, the chest {bodyTravel:F2} m; max view rate {trace.MaxViewRate:F1} deg/s");

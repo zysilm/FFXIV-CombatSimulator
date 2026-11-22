@@ -321,6 +321,9 @@ public sealed class DeathShotSolver
     {
         public Vector3 Eye, LookAt, Centre;
         public float Fov, Distance, Azimuth, Elevation;
+        /// <summary>The point the vertical placement was solved from (<see cref="ShotRecipe.Anchor"/>), less its radius.</summary>
+        public Vector3 Anchor;
+        public float AnchorRadius;
         /// <summary>How far the shot's points reach toward the frame edge (1 = the edge, more = outside).</summary>
         public float Reach;
     }
@@ -612,8 +615,20 @@ public sealed class DeathShotSolver
         var baseEye = look + OrbitDirection(azimuth, elevation) * distance;
         if (!below) baseEye = Land(baseEye);
         var eye = look + OrbitDirection(azimuth, elevation) * outDistance;
-        if (!below) eye = Land(eye);
         var lookAt = look;
+        if (recipe.Anchor != ShotAnchor.Centre && outDistance < distance)
+        {
+            // The push-in keeps the anchor where it was in the frame: eye and aim move along the frame's up by what
+            // the nearer eye would otherwise carry it toward the edge.
+            DynamicCameraSolver.BasisFromForward(-OrbitDirection(azimuth, elevation), out _, out var frameUp);
+            var tanV = MathF.Tan(fov * 0.5f);
+            var fwd = -OrbitDirection(azimuth, elevation);
+            var at = recipe.AnchorAt;
+            var keep = ShiftTo(goal.Anchor, goal.AnchorRadius, at, eye, fwd, frameUp, tanV) - ShiftTo(goal.Anchor, goal.AnchorRadius, at, look + OrbitDirection(azimuth, elevation) * distance, fwd, frameUp, tanV);
+            eye += frameUp * keep;
+            lookAt += frameUp * keep;
+        }
+        if (!below) eye = Land(eye);
         var popped = false;
         // The caps on the eye's speed and on the view's turn are for the program's own moves. The player's orbit is
         // not held back by them: last frame's eye and view are first carried round by this frame's turn of the hand.
@@ -702,12 +717,14 @@ public sealed class DeathShotSolver
     {
         var tanV = MathF.Tan(goal.Fov * 0.5f);
         var tanH = tanV * aspect;
+        motionAmount = 0f;
+        // A shot placed by the body's lowest point keeps its composition: no push-in.
+        if (recipe.Anchor == ShotAnchor.Lowest) return;
         foreach (var amount in stackalloc[] { 1f, 0.5f })
         {
             var end = goal.LookAt + (goal.Eye - goal.LookAt) * (1f - ShotRecipe.PushInAmount * amount);
             if (ReachOf(end, goal.LookAt, tanH, tanV) <= PushInReach) { motionAmount = amount; return; }
         }
-        motionAmount = 0f;
     }
 
     private void Snap(in Goal goal)
@@ -821,6 +838,7 @@ public sealed class DeathShotSolver
         var floorY = ground + 0.03f;
         fit.Clear();
         Vector3 centre;
+        var heldTop = default(Vector3);
         var headAxis = p.Head - p.Chest;
         headAxis = headAxis.LengthSquared() > 1e-6f ? Vector3.Normalize(headAxis) : frame.Axis;
         switch (r.Subject)
@@ -835,20 +853,15 @@ public sealed class DeathShotSolver
                 centre = p.Head + headAxis * (0.09f * scale);
                 fit.Add((centre, 0.14f * scale));
                 break;
-            case ShotSubject.HeadToThigh:
+            case ShotSubject.HeldBody:
             {
-                // A held body, from the top of the head down to the middle of the thighs. The aim point is half way
-                // between the two (about the lower chest / belly on a hanging body), so the frame's margin above the
-                // head and below the thighs is the same and the distance is what that extent takes: no empty band
-                // above the head. The two ends are fitted as they are (2 cm), the trunk with its width.
-                var top = p.Head + headAxis * (0.18f * scale);
-                var thighs = (MidThigh(p.Hips, p.FootL) + MidThigh(p.Hips, p.FootR)) * 0.5f;
-                centre = (top + thighs) * 0.5f;
-                fit.Add((top, 0.02f * scale));
-                fit.Add((thighs, 0.02f * scale));
-                fit.Add((p.Head + headAxis * (0.09f * scale), 0.11f * scale));
+                // A held body: the distance is that of the upper body (chest and head, the orbit about a point nearer
+                // the chest); the aim is then moved down the frame (HeldAim below) so the head is near the top edge.
+                var head = p.Head + headAxis * (0.09f * scale);
+                centre = Vector3.Lerp(p.Chest, head, 0.2f);
                 fit.Add((p.Chest, 0.16f * scale));
-                fit.Add((p.Hips, 0.16f * scale));
+                fit.Add((head, 0.14f * scale));
+                heldTop = p.Head + headAxis * (0.18f * scale);
                 break;
             }
             default:
@@ -883,7 +896,8 @@ public sealed class DeathShotSolver
         var tanV = MathF.Tan(fovNow * 0.5f);
         var tanH = tanV * aspect;
         var kx = r.SafeFrame * tanH;
-        var ky = r.SafeFrame * tanV;
+        // (A shot placed by its lowest point fits the subject into the part of the frame above it.)
+        var ky = (r.Anchor == ShotAnchor.Lowest && r.AnchorSpan > 0f ? r.AnchorSpan : r.SafeFrame) * tanV;
         var sized = r.FrameHeight > 0f ? r.FrameHeight * scale * 0.5f / tanV : 0f;
         var least = MathF.Max(sized, r.MinDistance * scale);
         var most = r.MaxDistance * scale * MathF.Max(1f, userSize);
@@ -893,6 +907,8 @@ public sealed class DeathShotSolver
         // (the shot "degrades to ground level") and the distance is fitted again for the new direction.
         var elevationNow = el;
         var eye = centre;
+        var aim = centre;
+        var anchor = centre;
         var d = least;
         for (var pass = 0; pass < 4; pass++)
         {
@@ -909,31 +925,87 @@ public sealed class DeathShotSolver
                 d = MathF.Max(d, 0.3f - z);
             }
             d = MathF.Min(d * userSize, most);
-            eye = centre + away * d;
+            // The vertical placement: the eye and the aim move together along the frame's up, so the distance and
+            // the direction are the subject's and only where the subject sits in the frame changes.
+            var shift = AnchorShift(r, centre + away * d, fwd, up, tanV, floorY, heldTop, p.Chest, Below(r, el), out anchor);
+            aim = centre + up * shift;
+            eye = aim + away * d;
             // A below-ground shot keeps the recipe's placement: nothing gives way to the ground.
             if (Below(r, el)) break;
             var floor = FloorAt(eye);
             if (eye.Y >= floor - 1e-4f) break;
-            elevationNow = MathF.Asin(Math.Clamp((floor - centre.Y) / d, -1f, 1f));
+            elevationNow = MathF.Asin(Math.Clamp((floor - aim.Y) / d, -1f, 1f));
         }
-        goal.LookAt = centre;
+        goal.Centre = aim;
+        goal.LookAt = aim;
+        goal.Anchor = anchor;
         goal.Eye = Below(r, el) ? eye : Floor(eye);
         FromEye(ref goal);
         goal.Reach = ReachOf(goal.Eye, goal.LookAt, tanH, tanV);
         return goal;
     }
 
-    /// <summary>The middle of a thigh: from the hips toward that leg's foot, half a thigh's length (the thigh is
-    /// about half the leg; a leg folded shorter than that gives the point half way to the foot).</summary>
-    private Vector3 MidThigh(Vector3 hips, Vector3 foot)
+    /// <summary>
+    /// The vertical placement of the frame, as a move of the eye and the aim along the frame's up (0 = the subject's
+    /// centre in the middle). Head top: the top of the head at the recipe's height, the chest and the head kept in the
+    /// frame, and the eye not taken under the ground for it. Lowest: the lowest point of the subject (each fitted
+    /// point less its radius, nothing under the ground) at the recipe's height; a move along up does not change a
+    /// point's depth, so the least of the moves that put each point there puts every point on or above it.
+    /// </summary>
+    private float AnchorShift(ShotRecipe r, Vector3 eye, Vector3 fwd, Vector3 up, float tanV, float floorY, Vector3 headTop, Vector3 chest, bool below, out Vector3 anchor)
     {
-        var leg = foot - hips;
-        var length = leg.Length();
-        return length < 1e-4f ? hips : hips + leg * (MathF.Min(MidThighLength * scale, length * 0.5f) / length);
+        anchor = eye + fwd;
+        switch (r.Anchor)
+        {
+            case ShotAnchor.HeadTop:
+            {
+                anchor = headTop;
+                var s = ShiftTo(headTop, 0f, r.AnchorAt, eye, fwd, up, tanV);
+                foreach (var point in stackalloc[] { headTop, chest })
+                {
+                    s = MathF.Max(s, ShiftTo(point, 0f, 0.5f - 0.5f * HeldKeepIn, eye, fwd, up, tanV) - 2f * Vector3.Dot(point - eye, fwd) * HeldKeepIn * tanV);
+                    s = MathF.Min(s, ShiftTo(point, 0f, 0.5f - 0.5f * HeldKeepIn, eye, fwd, up, tanV));
+                }
+                if (!below && s < 0f && up.Y > 1e-3f)
+                {
+                    // A lower eye is not taken under the ground: the head then sits lower in the frame.
+                    var floor = FloorAt(eye + up * s);
+                    if (eye.Y + up.Y * s < floor) s = MathF.Min(0f, (floor - eye.Y) / up.Y);
+                }
+                return s;
+            }
+            case ShotAnchor.Lowest:
+            {
+                var s = float.MaxValue;
+                foreach (var (point, radius) in fit)
+                {
+                    var low = new Vector3(point.X, MathF.Max(point.Y - radius, MathF.Min(point.Y, floorY)), point.Z);
+                    var si = ShiftTo(low, 0f, r.AnchorAt, eye, fwd, up, tanV);
+                    if (si < s)
+                    {
+                        s = si;
+                        anchor = low;
+                    }
+                }
+                return s == float.MaxValue ? 0f : s;
+            }
+            default:
+                return 0f;
+        }
     }
 
-    /// <summary>Hips bone to the middle of the thigh on the reference body (about a third of the way to the sole).</summary>
-    public const float MidThighLength = 0.30f;
+    /// <summary>A held body: how far toward the frame's top and bottom edges (1 = the edge) the head top and the
+    /// chest are kept when the head is placed.</summary>
+    private const float HeldKeepIn = 0.92f;
+
+    /// <summary>How far to move the eye (and the aim with it) along the frame's up so that a point, less
+    /// <paramref name="radius"/> below it, sits at <paramref name="at"/> of the frame's height (0 = bottom, 1 = top).</summary>
+    private static float ShiftTo(Vector3 point, float radius, float at, Vector3 eye, Vector3 fwd, Vector3 up, float tanV)
+    {
+        var q = point - eye;
+        var z = MathF.Max(0.05f, Vector3.Dot(q, fwd));
+        return Vector3.Dot(q, up) - radius - (2f * at - 1f) * z * tanV;
+    }
 
     /// <summary>How far the points of the last <see cref="Solve"/> reach toward the frame edge from a pose (1 = the
     /// edge; more, or a point behind the eye = outside).</summary>

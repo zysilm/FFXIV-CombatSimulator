@@ -33,6 +33,8 @@ internal static class MetricRun
         /// <summary>The column's own subject is the head-to-feet chain (the Directed camera's anchors: no arms).</summary>
         public bool OwnIsChain;
         public ShotSubject Subject;
+        /// <summary>The shot is placed by the body's lowest point (the ground-line shots): measure where that point sits.</summary>
+        public ShotRecipe? GroundLine;
         public Func<Trajectory, RecordedWorld, StartCamera, (Cam[] Cams, float Scale)> Run = null!;
         public readonly Acc A = new();
     }
@@ -40,7 +42,7 @@ internal static class MetricRun
     /// <summary>Everything measured for one column, pooled over its runs.</summary>
     private sealed class Acc
     {
-        public long ChainIn, RestFrames, OwnInRest, Frames, OwnIn, OwnSafe, HipsChestIn, HeadIn, WholeIn, ThighIn, Below5, TriFrames, TriBlocked, PulledIn, CutFrames;
+        public long ChainIn, RestFrames, OwnInRest, Frames, OwnIn, OwnSafe, HipsChestIn, HeadIn, WholeIn, HeldIn, Below5, TriFrames, TriBlocked, PulledIn, CutFrames;
         public float MinClearance = float.MaxValue;
         public readonly List<float> Size = new(), EyeSpeed = new(), ViewSpeed = new(), Jerk = new(), ViewAccel = new(), FovRate = new();
         public readonly List<float> Travel = new(), EyeJump = new(), LookJump = new(), SettleLag = new(), Drift = new(), DistanceRange = new();
@@ -58,12 +60,16 @@ internal static class MetricRun
         /// a lying body at rest (looking-up angle, distance for the reference body).</summary>
         public long BelowGround, BelowGroundAtRest, LyingFrames;
         public readonly List<float> Depth = new(), LyingUp = new(), LyingDistance = new();
+        /// <summary>Ground-line columns: the subject's lowest projected point above the frame's bottom edge (fraction of
+        /// the frame's height; negative = below the edge), with the body at rest and while it falls.</summary>
+        public readonly List<float> LowRest = new(), LowFall = new();
 
         public void Merge(Acc o)
         {
             BelowGround += o.BelowGround; BelowGroundAtRest += o.BelowGroundAtRest; LyingFrames += o.LyingFrames;
             Depth.AddRange(o.Depth); LyingUp.AddRange(o.LyingUp); LyingDistance.AddRange(o.LyingDistance);
-            ChainIn += o.ChainIn; RestFrames += o.RestFrames; OwnInRest += o.OwnInRest; Frames += o.Frames; OwnIn += o.OwnIn; OwnSafe += o.OwnSafe; HipsChestIn += o.HipsChestIn; HeadIn += o.HeadIn; WholeIn += o.WholeIn; ThighIn += o.ThighIn;
+            LowRest.AddRange(o.LowRest); LowFall.AddRange(o.LowFall);
+            ChainIn += o.ChainIn; RestFrames += o.RestFrames; OwnInRest += o.OwnInRest; Frames += o.Frames; OwnIn += o.OwnIn; OwnSafe += o.OwnSafe; HipsChestIn += o.HipsChestIn; HeadIn += o.HeadIn; WholeIn += o.WholeIn; HeldIn += o.HeldIn;
             Below5 += o.Below5; TriFrames += o.TriFrames; TriBlocked += o.TriBlocked;
             PulledIn += o.PulledIn; CutFrames += o.CutFrames;
             MinClearance = MathF.Min(MinClearance, o.MinClearance);
@@ -80,7 +86,9 @@ internal static class MetricRun
 
     private static string Short(DeathShotProfile p) => p switch
     {
-        DeathShotProfile.LowClose => "Close", DeathShotProfile.LowFace => "Face", DeathShotProfile.LowFullBody => "Full", _ => p.ToString(),
+        DeathShotProfile.LowClose => "Close", DeathShotProfile.LowFace => "Face", DeathShotProfile.LowFullBody => "Full",
+        DeathShotProfile.LevelClose => "Level", DeathShotProfile.HighClose => "High", DeathShotProfile.HighFullBody => "High full",
+        DeathShotProfile.GroundLineClose => "GL close", DeathShotProfile.GroundLineFullBody => "GL full", _ => p.ToString(),
     };
 
     public static int Run(List<Trajectory> all, bool verbose)
@@ -94,11 +102,12 @@ internal static class MetricRun
             columns.Add(new Column
             {
                 Name = Short(p), IsNew = true, Subject = ShotRecipe.Of(p).Subject,
+                GroundLine = ShotRecipe.Of(p).Anchor == ShotAnchor.Lowest ? ShotRecipe.Of(p) : null,
                 Run = (t, w, s) => { var c = Runners.New(t, w, s, p, out var scale); return (c, scale); },
             });
         }
-        // The option "Allow below ground": all three are low shots.
-        foreach (var profile in DeathShotProfiles.Choices)
+        // The option "Allow below ground": the low shots (the others keep the eye above the ground either way).
+        foreach (var profile in DeathShotProfiles.Choices.Where(p => DeathShotSolver.GoesBelow(ShotRecipe.Of(p))))
         {
             var p = profile;
             columns.Add(new Column
@@ -123,13 +132,13 @@ internal static class MetricRun
             Name = "Close recall", IsNew = true, Recall = 140f * Deg, Subject = ShotSubject.HipsToChest,
             Run = (t, w, s) => { var c = Runners.New(t, w, s, DeathShotProfile.LowClose, out var scale, remembered: 140f * Deg); return (c, scale); },
         });
-        // The framings of a held body, on the recorded (falling) bodies: head top to mid-thigh.
+        // The framings of a held body, on the recorded (falling) bodies.
         foreach (var framing in new[] { DeathShotGrabbedFraming.Level, DeathShotGrabbedFraming.SlightlyAbove })
         {
             var g = framing;
             columns.Add(new Column
             {
-                Name = g == DeathShotGrabbedFraming.Level ? "Grab level" : "Grab above", IsNew = true, Subject = ShotSubject.HeadToThigh,
+                Name = g == DeathShotGrabbedFraming.Level ? "Grab level" : "Grab above", IsNew = true, Subject = ShotSubject.HeldBody,
                 Run = (t, w, s) => { var c = Runners.New(t, w, s, DeathShotProfile.LowClose, out var scale, grabbed: g); return (c, scale); },
             });
         }
@@ -287,18 +296,12 @@ internal static class MetricRun
             var hipsChest = Span(stackalloc[] { p.Hips, p.Chest }, cam.Eye, dir, right, up, lens);
             var head = Span(stackalloc[] { headCentre }, cam.Eye, dir, right, up, lens);
             var body = Span(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(whole), cam.Eye, dir, right, up, lens);
-            // A held body's extent: the top of the head, the chest, the hips, the middle of the thighs.
-            Vector3 MidThigh(Vector3 foot)
-            {
-                var leg = foot - p.Hips;
-                var length = leg.Length();
-                return length < 1e-4f ? p.Hips : p.Hips + leg * (MathF.Min(DeathShotSolver.MidThighLength * scale, length * 0.5f) / length);
-            }
-            var thigh = Span(stackalloc[] { top, p.Chest, p.Hips, (MidThigh(p.FootL) + MidThigh(p.FootR)) * 0.5f }, cam.Eye, dir, right, up, lens);
+            // A held body: the top of the head and the chest.
+            var held = Span(stackalloc[] { top, p.Chest }, cam.Eye, dir, right, up, lens);
             if (hipsChest.Reach <= 1f) a.HipsChestIn++;
             if (head.Reach <= 1f) a.HeadIn++;
             if (body.Reach <= 1f) a.WholeIn++;
-            if (thigh.Reach <= 1f) a.ThighIn++;
+            if (held.Reach <= 1f) a.HeldIn++;
             // The Directed camera's own anchors: head top, head, chest, hips, knees, feet (no arms).
             Vector3 Lifted(Vector3 v) => new(v.X, MathF.Max(v.Y, ground + 0.03f), v.Z);
             var chain = Span(stackalloc[]
@@ -307,9 +310,31 @@ internal static class MetricRun
             }, cam.Eye, dir, right, up, lens);
             if (chain.Reach <= 1f) a.ChainIn++;
             var subject = column.Subject;
-            var own = column.OwnIsChain ? chain : subject switch { ShotSubject.HipsToChest => hipsChest, ShotSubject.Head => head, ShotSubject.HeadToThigh => thigh, _ => body };
+            var own = column.OwnIsChain ? chain : subject switch { ShotSubject.HipsToChest => hipsChest, ShotSubject.Head => head, ShotSubject.HeldBody => held, _ => body };
             if (own.Reach <= 1f) a.OwnIn++;
             if (bodySettled) { a.RestFrames++; if (own.Reach <= 1f) a.OwnInRest++; else lostAtRest++; }
+            if (column.GroundLine is { } line)
+            {
+                // The lowest point as the shot takes it: each subject point less its radius, nothing under the ground.
+                var lowest = float.MaxValue;
+                void Low(Vector3 v, float radius)
+                {
+                    var q = new Vector3(v.X, MathF.Max(v.Y - radius, MathF.Min(v.Y, ground + 0.03f)), v.Z);
+                    var ndc = DynamicCameraSolver.Project(q, cam.Eye, dir, right, up, lens);
+                    if (ndc.Z > 0.05f) lowest = MathF.Min(lowest, (ndc.Y + 1f) * 0.5f);
+                }
+                if (line.Subject == ShotSubject.HipsToChest)
+                {
+                    Low(p.Hips, 0.16f * scale);
+                    Low(p.Chest, 0.16f * scale);
+                }
+                else
+                {
+                    foreach (var b in whole) Low(b, 0.10f * scale); // (lifted out of the ground, as the shot takes them)
+                    // (the head top is in the lifted list)
+                }
+                if (lowest != float.MaxValue) (bodySettled ? a.LowRest : a.LowFall).Add(lowest);
+            }
             if (own.Reach <= 0.92f) a.OwnSafe++;
             // Subject size: how much of the frame its extent takes, the larger of the two axes; a single point
             // (the head) by the head's size at its depth.
@@ -362,7 +387,7 @@ internal static class MetricRun
             if (world.HasTriangles)
             {
                 a.TriFrames++;
-                var centre = subject switch { ShotSubject.HipsToChest => (p.Hips + p.Chest) * 0.5f, ShotSubject.Head => headCentre, ShotSubject.HeadToThigh => p.Chest, _ => p.Hips };
+                var centre = subject switch { ShotSubject.HipsToChest => (p.Hips + p.Chest) * 0.5f, ShotSubject.Head => headCentre, ShotSubject.HeldBody => p.Chest, _ => p.Hips };
                 if (world.BlockedByTriangles(cam.Eye, centre)) a.TriBlocked++;
             }
             if (cam.PulledIn) a.PulledIn++;
@@ -508,7 +533,7 @@ internal static class MetricRun
             ("own subject in safe frame (0.92) %", c => Pct(c.A.OwnSafe, c.A.Frames)),
             ("hips+chest in frame %", c => Pct(c.A.HipsChestIn, c.A.Frames)),
             ("head in frame %", c => Pct(c.A.HeadIn, c.A.Frames)),
-            ("head top to mid-thigh in frame %", c => Pct(c.A.ThighIn, c.A.Frames)),
+            ("head top and chest in frame %", c => Pct(c.A.HeldIn, c.A.Frames)),
             ("head-to-feet chain in frame % (no arms)", c => Pct(c.A.ChainIn, c.A.Frames)),
             ("whole body in frame % (with arms)", c => Pct(c.A.WholeIn, c.A.Frames)),
             ("min eye clearance m", c => c.A.MinClearance.ToString("F3", inv)),
@@ -516,6 +541,8 @@ internal static class MetricRun
             ("eye below ground % of frames (body at rest)", c => $"{Pct(c.A.BelowGround, c.A.Frames)} ({Pct(c.A.BelowGroundAtRest, c.A.RestFrames)})"),
             ("eye depth below ground median / max m", c => c.A.Depth.Count == 0 ? "-" : $"{Stats.P(c.A.Depth, .5f):F2}/{c.A.Depth.Max():F2}"),
             ("Low close, lying at rest: looking up deg p5..p95", c => c.A.LyingUp.Count == 0 ? "-" : $"{Stats.P(c.A.LyingUp, .05f):F1}..{Stats.P(c.A.LyingUp, .95f):F1}"),
+            ("ground line: lowest pt at rest med/p95dev/min", c => c.A.LowRest.Count == 0 ? "-" : LowStats(c.A.LowRest, c.GroundLine!.AnchorAt)),
+            ("  while falling", c => c.A.LowFall.Count == 0 ? "-" : LowStats(c.A.LowFall, c.GroundLine!.AnchorAt)),
             ("  distance m (reference body) p5..p95", c => c.A.LyingDistance.Count == 0 ? "-" : $"{Stats.P(c.A.LyingDistance, .05f):F2}..{Stats.P(c.A.LyingDistance, .95f):F2}"),
             ("view blocked by ground tris % (player)", c => Pct(c.A.TriBlocked, c.A.TriFrames)),
             ("subject size p5 / p95 (frame fraction)", c => $"{Stats.P(c.A.Size, .05f):F2}/{Stats.P(c.A.Size, .95f):F2}"),
@@ -559,6 +586,10 @@ internal static class MetricRun
                               $"looking up {low.OldUp.Min():F1}..{low.OldUp.Max():F1} deg, distance {low.OldDistance.Min():F2}..{low.OldDistance.Max():F2} m for the reference body ({low.OldRaw.Min():F2}..{low.OldRaw.Max():F2} m as built: {Stats.P(low.OldRawPlayer, .5f):F2} m on the player's own body)"));
     }
 
+    /// <summary>Where the lowest point sits: median, p95 of its distance from the shot's line, lowest.</summary>
+    private static string LowStats(List<float> v, float at) =>
+        string.Create(CultureInfo.InvariantCulture, $"{Stats.P(v, .5f):F3}/{Stats.P(v.Select(x => MathF.Abs(x - at)).ToList(), .95f):F3}/{v.Min():F2}");
+
     private static string Pct(long part, long total) => total == 0 ? "-" : (100.0 * part / total).ToString("F1", CultureInfo.InvariantCulture);
 
     private static int Gates(List<Column> columns)
@@ -572,7 +603,7 @@ internal static class MetricRun
         var directed = columns.First(c => c.Name == "Directed").A;
         var old = new Acc();
         foreach (var c in columns.Where(c => c.Name.StartsWith("DC-", StringComparison.Ordinal))) old.Merge(c.A);
-        double In(Acc a, ShotSubject s) => 100.0 * (s switch { ShotSubject.HipsToChest => a.HipsChestIn, ShotSubject.Head => a.HeadIn, ShotSubject.HeadToThigh => a.ThighIn, _ => a.WholeIn }) / a.Frames;
+        double In(Acc a, ShotSubject s) => 100.0 * (s switch { ShotSubject.HipsToChest => a.HipsChestIn, ShotSubject.Head => a.HeadIn, ShotSubject.HeldBody => a.HeldIn, _ => a.WholeIn }) / a.Frames;
         Console.WriteLine("gates (baselines: Directed = the Directed camera's death framing; Old = the three old Death Cam shots pooled):");
         foreach (var c in columns.Where(c => c.IsNew))
         {
@@ -602,7 +633,15 @@ internal static class MetricRun
                 Gate("the turn ends on facing at death + the remembered angle, the shorter way round, at no more than 150 deg/s",
                     a.RecallTurn.Count > 0 && a.RecallEndOff < 1e-3f && a.RecallTurn.Max() <= 180.01f && a.RecallFastest <= 151f,
                     a.RecallTurn.Count == 0 ? "no run" : $"{a.RecallTurn.Count} deaths: off by at most {a.RecallEndOff:F5} deg at the end; turns of {a.RecallTurn.Min():F0}..{a.RecallTurn.Max():F0} deg (median {Stats.P(a.RecallTurn, .5f):F0}), done after {a.RecallTime.Min():F2}..{a.RecallTime.Max():F2} s, fastest {a.RecallFastest:F0} deg/s");
-            // (The rendered eye can trail the shot's azimuth while the caps on its speed and on the view's turn hold
+            if (c.GroundLine is { } line)
+            {
+                // The lowest point on its line (a fraction of the frame's height above the bottom edge), with the body at rest.
+                var median = a.LowRest.Count > 0 ? Stats.P(a.LowRest, .5f) : float.NaN;
+                var dev = a.LowRest.Count > 0 ? Stats.P(a.LowRest.Select(x => MathF.Abs(x - line.AnchorAt)).ToList(), .95f) : float.NaN;
+                Gate($"the body's lowest point on the bottom edge at rest ({line.AnchorAt:F2} of the frame's height): median within 0.02, p95 off it <= 0.10",
+                    MathF.Abs(median - line.AnchorAt) <= 0.02f && dev <= 0.10f,
+                    string.Create(CultureInfo.InvariantCulture, $"median {median:F3}, p95 off {dev:F3}, lowest {(a.LowRest.Count > 0 ? a.LowRest.Min() : 0f):F2}; while falling median {(a.LowFall.Count > 0 ? Stats.P(a.LowFall, .5f) : 0f):F3}, p95 off {(a.LowFall.Count > 0 ? Stats.P(a.LowFall.Select(x => MathF.Abs(x - line.AnchorAt)).ToList(), .95f) : 0f):F3}"));
+            }            // (The rendered eye can trail the shot's azimuth while the caps on its speed and on the view's turn hold
             // it back in a fast fall; once it has settled it is on it.)
             if (!c.Orbit)
                 Gate("the rendered eye is on the shot's azimuth once the camera has settled on a body at rest (< 0.1 deg)", a.RenderedOffAtRest < 0.1f,
@@ -614,7 +653,7 @@ internal static class MetricRun
             Gate("ragdoll-start jump < 2 cm", a.EyeJump.Max() < 0.02f && a.LookJump.Max() < 0.02f, $"eye {a.EyeJump.Max() * 100f:F2} cm, view {a.LookJump.Max() * 100f:F2} cm at 1 m");
             // (A held body is followed on springs four times slower: the last of the way in is slower than the
             // 2 mm/s that counts as "settled" here, so its limit is 2 mm.)
-            var driftLimit = c.Subject == ShotSubject.HeadToThigh ? 0.002f : 0.001f;
+            var driftLimit = c.Subject == ShotSubject.HeldBody ? 0.002f : 0.001f;
             if (!c.Orbit)
                 Gate($"drift after camera settled = 0 (< {driftLimit * 1000f:F0} mm)", a.Drift.Count > 0 && a.Drift.Max() < driftLimit, a.Drift.Count == 0 ? "no settled window" : $"max {a.Drift.Max() * 1000f:F2} mm");
             // framing: the shot's own subject, like for like

@@ -67,6 +67,10 @@ public partial class MainWindow
                    "Low close: hips to chest, close, from below.\n" +
                    "Low on the face: the head, close, low.\n" +
                    "Low full body: the whole body, from further back, low.\n" +
+                   "Level close: hips to chest, close, level with them.\n" +
+                   "High close: hips to chest, close, from above.\n" +
+                   "High full body: the whole body from high above.\n" +
+                   "Ground line close / full body: low, the body on the bottom edge of the picture, the surroundings above it.\n" +
                    "Changing it while you are down eases the camera over to the new shot.");
 
         var grabbed = (int)config.DuelDeathShotGrabbed;
@@ -76,7 +80,7 @@ public partial class MainWindow
             config.DuelDeathShotGrabbed = (DeathShotGrabbedFraming)pickedGrabbed;
             config.Save();
         }
-        HelpMarker("While an enemy holds your body up: the camera frames you from the head down to mid-thigh, level with you or " +
+        HelpMarker("While an enemy holds your body up: the camera frames you from the head down, level with you or " +
                    "from slightly above, and comes back to the shot above once you are let go and lie still. " +
                    "Left and right stay yours here too.");
 
