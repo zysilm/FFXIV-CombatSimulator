@@ -853,6 +853,9 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             }
             mapEnemyController.Tick(deltaTime);
             combatEngine.Tick(deltaTime);
+            // Dev-only (hidden unless the dev features are unlocked; never in a public build).
+            if (config.DevHpDrainEnabled && mainWindow.DevExperimentalUnlocked)
+                combatEngine.DrainPlayerHp(config.DevHpDrainPercentPerSecond, deltaTime);
             corpseModule.ProcessPendingNpcRagdolls(deltaTime);
             battleModule.TickWar(deltaTime);
             npcAiController.Tick(deltaTime, npcSelector.SelectedNpcs);

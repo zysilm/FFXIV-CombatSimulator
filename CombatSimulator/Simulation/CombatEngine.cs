@@ -1044,6 +1044,34 @@ public partial class CombatEngine : IDisposable, Combat.ICombatLoopEngine
         instantRagdollOverride = false;
     }
 
+    private float devHpDrainCarry;
+
+    /// <summary>
+    /// Dev "HP drain": takes <paramref name="percentPerSecond"/> % of the player's max HP per second off the
+    /// SIMULATED HP, smoothly per frame (the fraction of a point carries over). No damage number or hit reaction
+    /// (it skips OnDamageLanded); reaching 0 goes through the normal death path. Nothing is sent to the server.
+    /// </summary>
+    public void DrainPlayerHp(float percentPerSecond, float deltaTime)
+    {
+        var ps = State.PlayerState;
+        if (!State.IsActive || !ps.IsAlive || ps.IsCaptive || ps.MaxHp <= 0 || playerDeathTriggered)
+        {
+            devHpDrainCarry = 0;
+            return;
+        }
+
+        devHpDrainCarry += ps.MaxHp * Math.Clamp(percentPerSecond, 0.1f, 10f) / 100f * deltaTime;
+        var amount = (int)devHpDrainCarry;
+        if (amount <= 0)
+            return;
+        devHpDrainCarry -= amount;
+        amount = Math.Min(amount, ps.CurrentHp);
+        ps.CurrentHp -= amount;
+        State.TotalDamageTaken += amount;
+        if (!ps.IsAlive)
+            OnEntityDeath(ps);
+    }
+
     public void TriggerEnemyVictoryIfPartyDefeated()
     {
         if (enemyVictoryTriggered)

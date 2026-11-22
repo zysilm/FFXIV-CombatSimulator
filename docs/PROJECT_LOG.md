@@ -81,6 +81,8 @@
 - 血条前缀是固定状态词，由状态自动决定；自定义 Sim Label / Dead Label 输入框已删（2026-11-13，用户裁决，`7e27feb`）。
 - 结果 banner 一直显示到重置，下面一行写原因，称呼用 you / your；标题：DISGRACED（尸体被抢）、ROUTED（被俘者被处决）、ANNIHILATED（全灭）、REMAINS SECURED（战国主公阵亡但尸体守住）、VICTORY；新模式由规则部件实现 `DescribeOutcome`（问全部部件，后答覆盖先答；B6 起）；Settings → GUI Settings → Show Battle Result Banner 可关（2026-11-13，用户裁决，`8a8d4ea`、`66d23b7`）。
 - 状态词：Killed in battle / Executed / Corpse captured，不用 Fallen（2026-11-13，用户裁决，`8a8d4ea`）。
+- 开发者隐藏功能 HP drain：Combat 页签 → Simulation Controls → “HP drain (Dev)” + “% max HP per second” 滑条（0.1–10，默认 1），只在开发者功能解锁时显示（公开版不出现、不生效）；模拟进行中每帧平滑扣**模拟** HP（`CombatEngine.DrainPlayerHp`，不走 `OnDamageLanded`，无伤害数字/受击），到 0 走正常 `OnEntityDeath`；被俘、已死、未开始时不扣；设置 `DevHpDrainEnabled`（默认关）/`DevHpDrainPercentPerSecond`（2026-11-22，用户要求）。
+- Ragdoll 页签 → Ragdoll Trigger → “Activation Delay (s)” 滑条旁加 “-”/“+” 按钮，每次 ±0.1 s，夹在滑条范围内、取整到 0.1、立即保存（2026-11-22，用户要求）。
 
 ### 默认值 / 配置
 

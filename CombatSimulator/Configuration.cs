@@ -327,6 +327,9 @@ public partial class Configuration : IPluginConfiguration
     public bool RagdollVerboseLog { get; set; } = false;
     public bool DevCompanionAppearanceVariant { get; set; } = false;
     public bool DevPartyApproachDebugLog { get; set; } = false;
+    // Dev HP drain: the player's SIMULATED HP loses this % of max HP per second while a simulation runs.
+    public bool DevHpDrainEnabled { get; set; } = false;
+    public float DevHpDrainPercentPerSecond { get; set; } = 1.0f;
     public bool RagdollNpcCollision { get; set; } = true;
     public bool RagdollNpcCollisionAutoSize { get; set; } = true;
     public float RagdollNpcCollisionScale { get; set; } = 0.0001f;

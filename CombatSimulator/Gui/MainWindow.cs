@@ -2070,6 +2070,27 @@ public partial class MainWindow : IDisposable
             }
             HelpMarker("Attacks can randomly land as critical and/or direct hits. Off = every hit deals its base damage.");
 
+            if (DevExperimentalUnlocked)
+            {
+                var drain = config.DevHpDrainEnabled;
+                if (ImGui.Checkbox("HP drain (Dev)", ref drain))
+                {
+                    config.DevHpDrainEnabled = drain;
+                    config.Save();
+                }
+                HelpMarker("While a simulation runs, your simulated HP drops by this share of max HP every second until you fall. No damage numbers.");
+                if (drain)
+                {
+                    var percent = config.DevHpDrainPercentPerSecond;
+                    ImGui.SetNextItemWidth(220);
+                    if (ImGui.SliderFloat("% max HP per second##devhpdrain", ref percent, 0.1f, 10f, "%.1f"))
+                    {
+                        config.DevHpDrainPercentPerSecond = MathF.Round(Math.Clamp(percent, 0.1f, 10f), 1);
+                        config.Save();
+                    }
+                }
+            }
+
             if (isActive)
             {
                 var ps = combatEngine.State.PlayerState;
@@ -2997,11 +3018,24 @@ public partial class MainWindow : IDisposable
                 {
                     var delay = config.RagdollActivationDelay;
                     ImGui.SetNextItemWidth(360);
-                    if (ImGui.SliderFloat("Activation Delay (s)##ragdoll", ref delay, 0.0f, RagdollTrigger.MaximumWait, "%.1f"))
+                    if (ImGui.SliderFloat("##ragdoll_activation_delay", ref delay, 0.0f, RagdollTrigger.MaximumWait, "%.1f"))
                     {
                         config.RagdollActivationDelay = delay;
                         config.Save();
                     }
+                    var step = 0f;
+                    ImGui.SameLine();
+                    if (ImGui.Button("-##ragdoll_delay_dec")) step = -0.1f;
+                    ImGui.SameLine();
+                    if (ImGui.Button("+##ragdoll_delay_inc")) step = 0.1f;
+                    if (step != 0f)
+                    {
+                        config.RagdollActivationDelay = MathF.Round(
+                            Math.Clamp(config.RagdollActivationDelay + step, 0.0f, RagdollTrigger.MaximumWait), 1);
+                        config.Save();
+                    }
+                    ImGui.SameLine();
+                    ImGui.TextUnformatted("Activation Delay (s)");
                     HelpMarker("Seconds after death before ragdoll physics take over.");
                 }
 
