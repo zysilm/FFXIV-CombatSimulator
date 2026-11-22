@@ -134,8 +134,7 @@ times, to the end of the recording). One recording therefore gives standing, mid
 - Profiles: `recorded` leaves the recording's guidance settings and pending collapse alone (for the comparison with
   the recording itself); `limp` switches every guidance off (the baseline); `knee-buckle`, `hold-legs`, `hold-pose`,
   `slow-slump` and `auto` are the library's death guidance profiles (`GuidedCollapseOptions.TensionProfile`, in
-  AdvancedRagdoll from 0.1.0-beta.5: set by name, so this project still builds against a library without it and then
-  refuses them). `--set Field=value` (repeatable) sets one of the library's guidance numbers (`PoseHoldTuning`) for
+  AdvancedRagdoll from 0.1.0-beta.5; the plugin's setting is "Death guidance", `docs/RAGDOLL_DEATH_GUIDANCE.md`). `--set Field=value` (repeatable) sets one of the library's guidance numbers (`PoseHoldTuning`) for
   the run; `--label name` writes the run into `<out>/<name>/` instead of `<out>/<profile>/`, so a variant can stand
   beside the profiles in the tables (`Tests/DeathShots guidance --profiles limp,hold-legs,<name>`).
 - Ground: a downward ray the recording cast from the same place is answered as the game answered it (at the recorded
@@ -159,6 +158,19 @@ within 3 cm on the first physics frame; after 1 s it is within 1 cm in 38 record
 33 (median 3 cm); at the end the median error is 9 cm (p90: 0.36 m after 1 s, 0.69 m after 3 s, 0.80 m at the end)
 and the final pose class agrees in 67 of 85. It is a tool for comparing profiles under the same conditions, not a
 predictor of one particular death.
+
+## The saved "Death guidance" setting (`--config-migration`)
+
+```
+... RagdollReplay.dll --config-migration [saved CombatSimulator.json]
+```
+
+No recording (`ConfigMigrationCheck.cs`). It reads the plugin's real `Configuration` the way Dalamud does, runs
+`Initialize` (nothing is saved) and checks: the retired `GuidedCollapse` object becomes `RagdollDeathGuidance` (on =
+Knee buckle, off = Limp) and is purged; a saved choice survives; "Reset All to Defaults" gives Limp; each choice
+reaches the library as its `RagdollTensionProfile` with `GuidedCollapseOptions.Enabled` off. With a file (only read)
+it prints what that saved configuration becomes. It lives here because this is the test project that loads the built
+plugin. Exit code 0 when every check passed.
 
 ## What is still not replayed
 

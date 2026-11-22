@@ -73,7 +73,7 @@
 
 - 界面极简：调试和内部参数不进界面（斜杠命令可以），选择用下拉，不让用户手填编号或文本（2026-10-24，用户裁决）。
 - Professional Mode 精简：删掉的控件改为常量，常量取用户已保存的值；用户改过的偏好保留为控件（2026-11-09，用户裁决，`6da2a1e`…`0a7b2fe`）。
-- 精简时的取舍：Enemy Control 的攻击功能删除；Guided Collapse 只留膝盖跪下；逐骨表和 Bone Profiles 删除；近战同时攻击上限滑条保留（2026-11-09，用户裁决）。
+- 精简时的取舍：Enemy Control 的攻击功能删除；Guided Collapse 只留膝盖跪下（2026-11-22 起是 “Death guidance” 下拉里的 Knee buckle 一档，折叠栏已删，见下面“死亡引导”）；逐骨表和 Bone Profiles 删除；近战同时攻击上限滑条保留（2026-11-09，用户裁决）。
 - Glamourer 的死亡/重置套装功能已删；Targets、Party 并入 Combat 页签；Armor Detachment 移到 Ragdoll 页签（2026-11-11，`cbe891d`）。
 - Armor Detachment 的 “Still-attached pieces follow the body” 已删除，连同它为 true 时才走的路径（尸体被投到抓取/托举上时，还穿在身上的衣物跟着搬走：`DismembermentController.ShouldCarryExternalRig`、`IsGarmentWorn`，以及交给库的 `CarryExternalRigOnAnchor` 回调——库里回调为 null 即“什么都不带”，与原来选项关时一样）；用户保存的值是 false，行为不变；退役键 `KoStripGarmentFollowsBody`（2026-11-21，用户裁决）。
 - 伤害数字由插件自己画（客户端角色不显示游戏的 flytext）；别人的数字不弱化，只强化玩家自己的：打出去橙金粗描边不飘动，挨打红色带负号、在胸口高度（2026-11-13，用户裁决，`a371a6e`、`66d23b7`）。
@@ -175,6 +175,14 @@
 
 - Armor Detachment 触发：Off / On KO（倒地当下）/ On ragdoll activated（该角色布娃娃物理开始时）；“每次受击”删除。设置 `KoStripTrigger`，旧键 `KoStripEnabled`/`KoStripOnHitEnabled` 迁移后退役。
 - 分离 Timing：On death（默认，死亡当下；身体上的部位在布娃娃开始前由插件逐帧收起）/ On ragdoll activated。设置 `DismemberTiming`，玩家与敌人共用。
+
+### 死亡引导（2026-11-22，用户裁决）
+
+- Ragdoll 页签 → Ragdoll Trigger 新增下拉 **Death guidance**（Auto / Limp / Knee buckle / Hold the legs / Hold the pose / Slow slump），取代 “Guided Collapse” 折叠栏（勾选、黄字提示、“Start at once” 按钮同批删除）；“Ragdoll starts” 和延迟滑条不变；玩家、队友、敌人同一个设置 → [RAGDOLL_DEATH_GUIDANCE.md](RAGDOLL_DEATH_GUIDANCE.md)。库 0.1.0-beta.5（`PoseHold`）。
+- 设置 `RagdollDeathGuidance`（插件枚举，存数字）。默认 Limp，用户在游戏里认可 Auto 之前不改默认；旧 `GuidedCollapse.Enabled` true → Knee buckle、false → Limp（用户保存的是 false → Limp），旧键迁移后退役。交给库时 `GuidedCollapseOptions.Enabled` 恒为 false（Knee buckle 档自己启动跪下，且只在站着时；两个都开会启动两次）。
+- “膝盖和小腿基本不动” = 腿部关节保持角度（摩擦式：马达力矩上限调高、软度 0，超过就滑、停在滑到的位置；不是弹簧）。Knee buckle 原样保留为一档，只多了“物理启动时站着才启动”。
+- 库实现相对设计的四处偏离（按离线结果）：① 保持到被碰为止（抓取立刻结束；打 / 踢 / 踩 0.3 s 内放开），不按时间放完——撤掉保持会让没躺稳的身体很久以后再塌一次；② 地面保持用有上限的速度马达（小腿和脚对世界的摩擦，0.5 × 体重），不是硬约束；③ “支撑侧取较重一边”的力矩单位关掉（蹲着的身体会像雕像一样站住）；④ 两个 Hold 档在站着启动时不起作用（同样会成雕像）。
+- 离线结论（97 份录制 × 3 个启动点 × 6 档，门槛 = 动能尖峰和静止后再动不比 Limp 多）：躺着启动 Hold the legs 过门槛且腿型、漂移都好于 Limp；跪 / 蹲启动小腿留住了（41 / 74，Limp 5）但更抖、身体向前折，不过门槛；Slow slump 保住倒向但略抖（站、正在倒不过）；Knee buckle 数值没动，站着启动仍然抖（不过）；Auto 四类起始状态里三类不过——所以默认 Limp。数值待 P3 用 `Tests/RagdollReplay --what-if` + `Tests/DeathShots guidance` 调。
 
 ## 3. 教训与死路
 
@@ -325,6 +333,8 @@
 - [ ] Allow below ground（Camera 页签 → Directed Camera → Death shot 下面的勾选，默认关）：勾上后 Low three-quarter / Face / Auto 在尸体躺地后镜头到地面以下仰拍，地面从下面看不见（日志 5 s 汇总里 `eye … m BELOW ground`）；游戏没有把相机推回地面以上（`camera check` 眼位差仍是毫米级）；水边、室内（地面下有别的楼层 / 双面地形）时的画面；墙边仍然换边而不是穿墙；关掉后与之前一样不进地面。
 - [ ] 旧死亡构图删除后：旧配置载入无异常；Camera 页签 → Directed Camera 里没有 Body coverage 和 Show toolbar，“Dynamic Cam” 浮动工具条不再出现；战斗时的 Directed 构图（越肩、敌人入画、缩放 / 俯仰记忆、复活后回到战斗构图）照常。
 - [ ] 决斗镜头（已接入，未在游戏里看过）→ [DUEL_CAMERA.md](DUEL_CAMERA.md) §10：Camera 页签 → Camera mode = Duel，折叠栏 Duel Camera（状态行 + Framing）。看：日志 `DuelCam: camera check over 60 frames`（眼位 / 注视点差毫米级、镜头差 < 1°）；**移动手感**（日志 `start` 行的 movement mode；Legacy：W 朝对手、A / D 绕对手转；Standard：A / D 原地转身、Q / E 绕圈；不按鼠标键时镜头不漂到玩家正面；屏幕正上方与 W 差约 20° 别不别扭）；没有敌人约 2 s 后镜头回到游戏相机；两人分居画面两侧、近紧远宽；穿过对手后镜头不越线、约 1 s 转回；推近（重击 / 格挡 / 大招 / 击倒）的幅度和频率；多敌人时换对手不乱跳；左右拖动回正、俯仰方向对不对、滚轮；墙边 / 背靠墙 / 坡地；倒下时死亡镜头无跳接手、过场镜头后 `DuelCam: resumes`；Follow bone 与 Directed 不变。
+- [ ] 死亡引导（库 0.1.0-beta.5，未在游戏里看过）→ [RAGDOLL_DEATH_GUIDANCE.md](RAGDOLL_DEATH_GUIDANCE.md) §6：Ragdoll 页签 → Ragdoll Trigger → **Death guidance**。旧配置载入后是 Limp、行为与以前一样，Ragdoll 页签不再有 “Guided Collapse” 折叠栏。选 Hold the legs：日志每具身体一行 `Ragdoll: guidance HoldLegs -> HoldLegs (start Lying, …): N joint(s) held, M body(ies) held to the ground`；躺下的尸体腿型保住、不再慢慢滚成俯 / 仰、不比 Limp 抖；跪 / 蹲结束的死亡动画小腿留在原地，但前折和抖是否难看（离线不过门槛）；踩 / 打 / 踢后 0.3 s 松开、抓起立刻松开；很久以后没有“第二次塌下去”。Auto：日志里每具身体选了哪一档。Knee buckle：延迟 0 时与以前的 “Knee buckle on death” 一样，延迟 3.7 s 时日志是 `-> None`。敌人、队友尸体同样生效，`FrameCost:` 无明显变化。
+- [ ] 库 0.1.0-beta.5：Limp 下布娃娃、抓取、头发、武器照常（回放三模式 97/97、扩展 6/6 已过）。
 
 ## 5. 搁置与未完成
 

@@ -33,16 +33,16 @@ internal static class WhatIf
 {
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
-    /// <summary>The profiles; the library's name of each (GuidedCollapseOptions.TensionProfile), null = none.</summary>
-    private static readonly Dictionary<string, string?> Profiles = new(StringComparer.OrdinalIgnoreCase)
+    /// <summary>The profiles; the library's profile of each (GuidedCollapseOptions.TensionProfile).</summary>
+    private static readonly Dictionary<string, RagdollTensionProfile> Profiles = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["recorded"] = null,     // the recording's own guidance settings and pending state, untouched
-        ["limp"] = null,         // nothing is guided (the baseline)
-        ["hold-legs"] = "HoldLegs",
-        ["hold-pose"] = "HoldPose",
-        ["slow-slump"] = "SlowSlump",
-        ["knee-buckle"] = "KneeBuckle",
-        ["auto"] = "Auto",
+        ["recorded"] = RagdollTensionProfile.None, // the recording's own guidance settings and pending state, untouched
+        ["limp"] = RagdollTensionProfile.None,     // nothing is guided (the baseline)
+        ["hold-legs"] = RagdollTensionProfile.HoldLegs,
+        ["hold-pose"] = RagdollTensionProfile.HoldPose,
+        ["slow-slump"] = RagdollTensionProfile.SlowSlump,
+        ["knee-buckle"] = RagdollTensionProfile.KneeBuckle,
+        ["auto"] = RagdollTensionProfile.Auto,
     };
 
     public static int Run(string[] args)
@@ -96,26 +96,12 @@ internal static class WhatIf
         return at >= 0 && at + 1 < args.Length ? args[at + 1] : null;
     }
 
-    // The death guidance arrives with AdvancedRagdoll 0.1.0-beta.5; its members are reached by name so
-    // this project still builds against a library without it.
+    // One of the library's guidance numbers (AdvancedRagdoll 0.1.0-beta.5), by the name given on the command line.
     private static void SetTuning(string field, string value)
     {
-        var type = typeof(Ragdoll).Assembly.GetType("AdvancedRagdoll.PoseHoldTuning")
-                   ?? throw new ReplayUnsupportedException("this AdvancedRagdoll has no death guidance (PoseHoldTuning)");
-        var f = type.GetField(field, BindingFlags.Public | BindingFlags.Static)
+        var f = typeof(PoseHoldTuning).GetField(field, BindingFlags.Public | BindingFlags.Static)
                 ?? throw new ReplayUnsupportedException($"PoseHoldTuning.{field} not found");
         f.SetValue(null, f.FieldType == typeof(bool) ? bool.Parse(value) : float.Parse(value, Inv));
-    }
-
-    internal static void SetTensionProfile(GuidedCollapseOptions options, string? libraryName)
-    {
-        var property = typeof(GuidedCollapseOptions).GetProperty("TensionProfile");
-        if (property == null)
-        {
-            if (libraryName == null) return;
-            throw new ReplayUnsupportedException("this AdvancedRagdoll has no tension profiles (GuidedCollapseOptions.TensionProfile)");
-        }
-        property.SetValue(options, Enum.Parse(property.PropertyType, libraryName ?? "None"));
     }
 
     private static string RunOne(string path, string profile, int startPercent, float seconds, bool recordedDt, string folder)
@@ -619,10 +605,10 @@ internal sealed class WhatIfColliders : IHostColliders
 internal sealed class WhatIfSettings : IHostSettingsSource
 {
     private readonly IHostSettingsSource inner;
-    private readonly string? libraryProfile;
+    private readonly RagdollTensionProfile libraryProfile;
     private readonly bool keepRecorded;
 
-    public WhatIfSettings(IHostSettingsSource inner, string? libraryProfile, bool keepRecorded)
+    public WhatIfSettings(IHostSettingsSource inner, RagdollTensionProfile libraryProfile, bool keepRecorded)
     {
         this.inner = inner;
         this.libraryProfile = libraryProfile;
@@ -633,10 +619,7 @@ internal sealed class WhatIfSettings : IHostSettingsSource
     {
         inner.Refresh(settings);
         if (!keepRecorded)
-        {
-            settings.GuidedCollapse = new GuidedCollapseOptions();
-            WhatIf.SetTensionProfile(settings.GuidedCollapse, libraryProfile);
-        }
+            settings.GuidedCollapse = new GuidedCollapseOptions { TensionProfile = libraryProfile };
         settings.RagdollMeshVolumes = false;
         settings.RagdollHairPhysics = false;
         settings.RagdollHairBodyMesh = false;

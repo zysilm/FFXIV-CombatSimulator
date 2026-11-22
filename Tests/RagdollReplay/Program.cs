@@ -16,6 +16,7 @@ using RagdollReplay;
 //   RagdollReplay <file.rgdrec | folder> --extensions   (stage A3b: the extension points, see ExtensionCheck.cs)
 //   RagdollReplay <file.rgdrec | folder> --export-trajectories [outFolder]   (read-only, see TrajectoryExport.cs)
 //   RagdollReplay <file.rgdrec | folder> --what-if <profile> [--start-at 0..100] ...   (re-simulation, see WhatIf.cs)
+//   RagdollReplay --config-migration [saved config.json]   (the "Death guidance" setting, see ConfigMigrationCheck.cs)
 // Replays each recording through the plugin's RagdollController and reports, per file, "identical" or the
 // first difference. Exit code 0 when every file replayed identically.
 
@@ -24,6 +25,8 @@ if (args.Length < 1)
     Console.Error.WriteLine("usage: RagdollReplay <file.rgdrec | folder> [--keep] [--synthetic-meshes | --synthetic-colliders | --synthetic-hair]");
     return 2;
 }
+// No recording: the plugin's saved "Death guidance" setting, migrated and handed to the library.
+if (args.Contains("--config-migration")) return ConfigMigrationCheck.Run(args);
 if (args.Contains("--extensions")) return ExtensionCheck.Run(args[0]);
 // Not a replay: re-simulates a recording from a chosen point of its death animation with a chosen guidance profile
 // (WhatIf.cs).

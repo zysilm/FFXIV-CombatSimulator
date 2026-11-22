@@ -8,7 +8,7 @@
 - **行为必须完全一致**。新功能和行为变更不混进重构提交；确实要变的，单独提交并先问用户。
 - 插件侧架构由协调者设计（本文件 §4）。
 - 不重写：小步搬移，每一步都能编译、都过验证。
-- **写进用户配置文件的类型不能换程序集**：配置按“类型名, 程序集名”保存（`$type`），类型搬进库后旧配置就读不回来。现存的有 `GuidedCollapseSettings`、`DeathCamPreset`、`RecentNpcEntry`、`EnemyControlGrabProfile`、`EnemyControlGrabPairConfig` 等。库的设置对象（`RagdollSettings`）是运行时快照，不直接序列化。
+- **写进用户配置文件的类型不能换程序集**：配置按“类型名, 程序集名”保存（`$type`），类型搬进库后旧配置就读不回来。现存的有 `DeathCamPreset`、`RecentNpcEntry`、`EnemyControlGrabProfile`、`EnemyControlGrabPairConfig` 等。库的设置对象（`RagdollSettings`）是运行时快照，不直接序列化。
 
 ## 2. “行为一致”怎么验证
 

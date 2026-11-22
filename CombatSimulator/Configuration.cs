@@ -15,14 +15,6 @@ using Newtonsoft.Json.Linq;
 namespace CombatSimulator;
 
 [Serializable]
-public class GuidedCollapseSettings
-{
-    // Knee buckle on death. The knee power-loss pattern is the only guided collapse; its tuning is
-    // fixed at the GuidedCollapseKneePowerLossSettings defaults.
-    public bool Enabled { get; set; } = false;
-}
-
-[Serializable]
 public class RecentNpcEntry
 {
     public uint BNpcBaseId { get; set; }
@@ -294,9 +286,10 @@ public partial class Configuration : IPluginConfiguration
     // PC Dismemberment and Enemy Dismemberment: "Timing".
     public SeparationTiming DismemberTiming { get; set; } = SeparationTiming.OnDeath;
 
-    // Death collapse — physics-driven guided collapse on death (relaxation family + directed
-    // knee power-loss). Config lives in GuidedCollapse; see DEATH_COLLAPSE_RESEARCH.md.
-    public GuidedCollapseSettings GuidedCollapse { get; set; } = new();
+    // Ragdoll Trigger: "Death guidance" - what the body does when physics takes it over (player, allies and
+    // enemies alike; docs/RAGDOLL_DEATH_GUIDANCE.md). Replaced the GuidedCollapse object and its one switch,
+    // "Knee buckle on death" (2026-11-22, MigrateRagdollDeathGuidance).
+    public RagdollDeathGuidance RagdollDeathGuidance { get; set; } = RagdollDeathGuidance.Limp;
     // Weapon drop physics — runs as part of ragdoll; weapon detaches and falls on death
     public bool WeaponDropMeshCollision { get; set; } = false;
     public bool HidePlayerLeftWeapon { get; set; }
@@ -543,6 +536,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateHpBarLabelSwitches(); // before the purge below: it reads the retired switches
         MigrateKoStripHangChoices(); // reads retired keys, so before they are purged
         MigrateKoStripTrigger(); // reads retired keys, so before they are purged
+        MigrateRagdollDeathGuidance(); // reads a retired key, so before they are purged
         RemoveRetiredOptions();
         MigrateSplitVfxToggles();
         MigrateKoStripClothHoldPreset();
@@ -554,7 +548,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateEnemyTacticsMeleeCap();
         MigrateNpcCollisionConvexHullDefault(); // after the mesh default above: it overrides that verdict
         NormalizeNpcCollisionMode();
-        GuidedCollapse ??= new GuidedCollapseSettings();
+        RagdollDeathGuidance = RagdollDeathGuidances.Clamp(RagdollDeathGuidance);
         MigrateRagdollLegModelRebuild();
     }
 
@@ -583,6 +577,8 @@ public partial class Configuration : IPluginConfiguration
         "KoStripDelay", "KoStripDelaySeconds", "KoStripLHand", "KoStripRHand", "KoStripLFoot", "KoStripRFoot",
         // "Detach armor" became one setting (KoStripTrigger), 2026-11-22.
         "KoStripEnabled", "KoStripOnHitEnabled",
+        // "Knee buckle on death" became one choice of "Death guidance" (RagdollDeathGuidance), 2026-11-22.
+        "GuidedCollapse",
         // Ragdoll pages, simplified 2026-11 (values fixed in RagdollTuning or the ON side of a switch).
         "PartyEnemyDeathRagdoll", "NpcRagdollActivationDelay", "MaxNpcRagdolls", "RagdollGravity", "RagdollDamping",
         "RagdollSolverIterations", "RagdollSolverSubsteps", "NpcRagdollSolverIterations", "NpcRagdollSolverSubsteps",
@@ -724,6 +720,18 @@ public partial class Configuration : IPluginConfiguration
         KoStripTrigger = Dev.ArmorDetachmentTriggers.FromRetiredSwitches(Flag(PrivateConfigFields, "KoStripEnabled"), Flag(PrivateConfigFields, "KoStripOnHitEnabled"));
     }
 
+    // "Guided Collapse" was an object with one switch, "Knee buckle on death". It is one choice of "Death guidance"
+    // now: a saved on becomes Knee buckle, a saved off becomes Limp.
+    private void MigrateRagdollDeathGuidance()
+    {
+        if (PrivateConfigFields == null || !PrivateConfigFields.TryGetValue("GuidedCollapse", out var saved))
+            return;
+
+        var enabled = saved is JObject guided && guided.TryGetValue("Enabled", out var token)
+                      && token.Type == JTokenType.Boolean && token.Value<bool>();
+        RagdollDeathGuidance = RagdollDeathGuidances.FromRetiredKneeBuckleSwitch(enabled);
+    }
+
     private void RemoveRetiredOptions()
     {
         if (PrivateConfigFields == null)
@@ -820,7 +828,7 @@ public partial class Configuration : IPluginConfiguration
     }
 
     /// <summary>
-    /// Restore everything on the Ragdoll page — the ragdoll options themselves, guided collapse, NPC
+    /// Restore everything on the Ragdoll page — the ragdoll options themselves, death guidance, NPC
     /// collision and its settle pass, Armor Detachment's options (not its trigger) — to defaults.
     ///
     /// Done by reflection against a fresh Configuration rather than by a hand-written list of
@@ -843,7 +851,6 @@ public partial class Configuration : IPluginConfiguration
             property.SetValue(this, property.GetValue(defaults));
         }
 
-        GuidedCollapse = new GuidedCollapseSettings();
         Save();
     }
 

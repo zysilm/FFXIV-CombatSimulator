@@ -25,10 +25,13 @@ internal sealed class ConfigRagdollSettings : IHostSettingsSource
             s.DismemberPocBones = c.DismemberPocBones == null ? null! : new List<string>(c.DismemberPocBones);
             changed = true;
         }
-        if (s.GuidedCollapse.Enabled != c.GuidedCollapse.Enabled)
+        // Death guidance: the profile alone. Enabled (the library's own knee-buckle switch, armed at activation
+        // whatever the pose) stays off: the Knee buckle profile starts the same buckle itself, and only on a body
+        // that stands when physics starts; both on would start it twice.
+        var guidance = RagdollDeathGuidances.ToLibrary(c.RagdollDeathGuidance);
+        if (s.GuidedCollapse.Enabled || s.GuidedCollapse.TensionProfile != guidance)
         {
-            // GuidedCollapseSettings has this one property; a new one must be copied here as well.
-            s.GuidedCollapse = new GuidedCollapseOptions { Enabled = c.GuidedCollapse.Enabled };
+            s.GuidedCollapse = new GuidedCollapseOptions { TensionProfile = guidance };
             changed = true;
         }
         if (s.EnableCombatCompanions != c.EnableCombatCompanions) { s.EnableCombatCompanions = c.EnableCombatCompanions; changed = true; }

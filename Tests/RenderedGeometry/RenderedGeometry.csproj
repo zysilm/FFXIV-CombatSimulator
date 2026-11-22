@@ -5,7 +5,7 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <!-- The library's rendered-geometry snapshot types are internal; the library grants this test InternalsVisibleTo
          (from 0.1.0-beta.2). Keep the version equal to CombatSimulator.csproj's. -->
-    <PackageReference Include="AdvancedRagdoll" Version="0.1.0-beta.4" />
+    <PackageReference Include="AdvancedRagdoll" Version="0.1.0-beta.5" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../../CombatSimulator/Animation/ModelGeometryData.cs" Link="Production/ModelGeometryData.cs" />

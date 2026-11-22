@@ -4,9 +4,9 @@
     "net10.0-windows7.0": {
       "AdvancedRagdoll": {
         "type": "Direct",
-        "requested": "[0.1.0-beta.4, )",
-        "resolved": "0.1.0-beta.4",
-        "contentHash": "/CaiSR+tEMd7kbvbOqT2aU6autKVU0T72OGcgu9aQ90tyTD3u5+Dh3ViLoUtYtTnhqWPhuTFNAIp+NRi5IVpHQ==",
+        "requested": "[0.1.0-beta.5, )",
+        "resolved": "0.1.0-beta.5",
+        "contentHash": "1MXeSCSU8wvdwLfD4QpaWijQKa5qBaaaRbGarru3czs+a+Qft+SQ0Sq/fn6yuI/i+Nbp9WMRaGV8hUbg3eStdA==",
         "dependencies": {
           "BepuPhysics": "[2.5.0-beta.22]"
         }

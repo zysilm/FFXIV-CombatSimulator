@@ -367,7 +367,6 @@ public partial class MainWindow : IDisposable
                 break;
             case 3: // Ragdoll
                 DrawRagdollSection();
-                DrawGuidedCollapseSection();
                 DrawNpcCollisionSection();
                 DrawArmorDetachmentEntrySection();
                 DrawArmorDetachmentOthersSection();
@@ -2943,36 +2942,6 @@ public partial class MainWindow : IDisposable
         ImGui.Unindent();
     }
 
-    private void DrawGuidedCollapseSection()
-    {
-        if (!ImGui.CollapsingHeader("Guided Collapse##guidedcollapse"))
-            return;
-
-        var guided = config.GuidedCollapse;
-        var enabled = guided.Enabled;
-        if (ImGui.Checkbox("Knee buckle on death##guidedcollapse", ref enabled))
-        {
-            guided.Enabled = enabled;
-            config.Save();
-        }
-        HelpMarker("On death the knees give way first and the body folds forward over them, instead of dropping straight into a limp ragdoll. Requires Enable Ragdoll.");
-
-        if (guided.Enabled && !config.EnableRagdoll)
-            ImGui.TextColored(new Vector4(1f, 0.75f, 0.25f, 1f), "Enable Ragdoll above; the knee buckle only arms during ragdoll activation.");
-
-        if (guided.Enabled && (config.RagdollActivationDelay > 0.001f || config.RagdollTriggerMode != (int)RagdollTriggerMode.FixedDelay))
-        {
-            ImGui.TextColored(new Vector4(1f, 0.75f, 0.25f, 1f), "The ragdoll does not start at once; the buckle starts from the death-animation pose it starts in.");
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Start at once##guidedcollapseDelay"))
-            {
-                config.RagdollTriggerMode = (int)RagdollTriggerMode.FixedDelay;
-                config.RagdollActivationDelay = 0f;
-                config.Save();
-            }
-        }
-    }
-
     private void DrawRagdollSection()
     {
         if (ImGui.CollapsingHeader("Ragdoll Trigger"))
@@ -3035,6 +3004,18 @@ public partial class MainWindow : IDisposable
                     }
                     HelpMarker("Seconds after death before ragdoll physics take over.");
                 }
+
+                var guidance = Math.Max(0, Array.IndexOf(RagdollDeathGuidances.DropdownOrder, config.RagdollDeathGuidance));
+                ImGui.SetNextItemWidth(360);
+                if (ImGui.Combo("Death guidance##ragdoll", ref guidance, RagdollDeathGuidances.DropdownLabels, RagdollDeathGuidances.DropdownLabels.Length))
+                {
+                    config.RagdollDeathGuidance = RagdollDeathGuidances.DropdownOrder[guidance];
+                    config.Save();
+                }
+                HelpMarker("What the body does when physics takes it over. The same for you, allies and enemies.\n" +
+                           "A hold lasts until the body is touched: a grab ends it at once, a hit, a kick or someone\n" +
+                           "walking over the body within 0.3 s. The two Hold choices do nothing on a body that still stands.\n" +
+                           string.Join("\n", RagdollDeathGuidances.DropdownHelp));
 
                 ImGui.Unindent();
             }

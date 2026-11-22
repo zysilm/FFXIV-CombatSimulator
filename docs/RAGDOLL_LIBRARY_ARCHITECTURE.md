@@ -398,7 +398,7 @@ sequenceDiagram
 
 ## 6. 设置
 
-规则：**保存进用户配置的类型留在插件程序集**（`GuidedCollapseSettings`、`RagdollNpcCollisionMode` 等，`Configuration.cs:50/108`）。库有自己的对应类型，`ConfigRagdollSettings` 负责拷贝。`RagdollSettings` 不序列化。
+规则：**保存进用户配置的类型留在插件程序集**（`RagdollDeathGuidance`、`RagdollNpcCollisionMode` 等；写本文时还有 `GuidedCollapseSettings`，2026-11-22 被枚举 `RagdollDeathGuidance` 取代，见 [RAGDOLL_DEATH_GUIDANCE.md](RAGDOLL_DEATH_GUIDANCE.md)）。库有自己的对应类型，`ConfigRagdollSettings` 负责拷贝。`RagdollSettings` 不序列化。
 
 现用的 34 个配置属性（名单与 `Rec:59–92` 一致），按“什么时候读”分：
 
