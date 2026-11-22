@@ -74,6 +74,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     private bool hookSafetyScanned;
     // The read-only scene diagnostic (/combatsim sceneprobe); made on first use.
     private SceneProbe? sceneProbe;
+    // Stops the cold-zone breath on bodies dead in the simulation; null when the game function was not found.
+    private Effects.ColdBreathSuppressor? coldBreathSuppressor;
     private bool wasLoggedIn;
 
     // ---- The feature modules (docs/PLUGIN_ARCHITECTURE.md §6.1) ----
@@ -387,6 +389,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         combatModule.CreateUseActionHook(gameInterop);
         useActionHook.Enable();
         movementBlockHook.Enable();
+        // The cold-zone breath stops on simulated bodies (the game only stops it for Mode == Dead).
+        coldBreathSuppressor = new Effects.ColdBreathSuppressor(gameInterop, sigScanner, combatEngine, npcSelector, companionManager, log);
 
         activeCameraController.SetActive(config.EnableActiveCamera);
 
@@ -480,6 +484,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
 
         // Resource disposal (BEPU sims, hooks, event handlers) — always safe; any game-memory
         // access inside is itself guarded.
+        // The breath hook first: its detour reads the engine, the selector and the allies.
+        coldBreathSuppressor?.Dispose();
         companionManager.Dispose();
         spectatorController.Dispose();
         npcScaleController.Dispose();

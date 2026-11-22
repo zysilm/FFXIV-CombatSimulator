@@ -155,6 +155,7 @@
 - 弓/枪普攻在箭到达时结算（0.6 s + 飞行时间）；箭用弓模型自带的 `atr_arrow` 子网格（2026-11-01，`c8b60e1`、`aa35fbf`）。
 - 台词分类只按日文意思判断，英文不管（2026-10-25，用户裁决）。
 - 一个敌人只有一个声音，不跨声线借台词；缺台词就静默（2026-10-25，用户裁决，`2c831de`）。
+- 寒冷地区的呼气白雾在模拟死亡的身体上停掉（2026-11-22）：钩住游戏生成白雾的 VfxContainer 每帧函数（`Effects/ColdBreathSuppressor.cs`，签名扫描，模块偏移约 `0x8CF2E0`），主人在模拟里已死（战斗进行中，且玩家 `PlayerState`、`NpcSelector.SelectedNpcs` 里的敌人、`Companions` 里的队友 `State.IsAlive` 为 false）就在调原函数之前返回——和游戏自己对 `Mode == Dead` 的提前返回一样，计时器不走；不写任何游戏状态。签名找不到时只记一条警告、功能关闭。复活 / 重置 / 停战后照常呼气。
 
 ### 敌人行为层 / Enemy Control（2026-11-15）
 
@@ -242,6 +243,7 @@
 
 ### 游戏数据 / 逆向
 
+- 2026-11-22：寒冷地区的呼气白雾不是动画，是 VFX（行 301 `wh_breath00f` / 478 `wh_breath01f`）：VfxContainer 的每帧函数每 2.5 s 重新生成一次，生成后不存进容器的槽位，唯一的停止条件是主人 `IsDead()`（`Mode == Dead`）。所以删除已有实例、冻结动画槽位都停不住它；早先的 `ed61fda`（`SetMode(Dead)`）/ `a21dff9`（把附加 / 嘴唇 / 叠加槽速度清零）处理的是呼吸动画，不是这个白雾。正解是在这个函数入口按模拟死亡提前返回（见 §2“特效 / 语音”）。
 - 2026-11-01：Lumina 的 `MdlFile` 解析当前 v6（0x01000006）模型会抛异常 → 用 `RagdollController.TryReadModelGeometryData(byte[])`；`MtrlFile`/`TexFile` 正常。
 - 2026-11-01：NPC 布娃娃是延迟订阅 `OnRenderFrame` 的，挂在它上面读姿态拿到的是动画姿态而不是布娃娃姿态。
 - 2026-11-10：地面 raycast（材质位 `0x4000`）永远打不到水面；水面是材质位 `0x8000` 的碰撞体。
@@ -334,6 +336,7 @@
 
 ### 2026-11-22 批次
 
+- [ ] **寒冷地区呼气白雾**（无界面选项）：加载时日志 `ColdBreath: hook installed at 0x… (module offset 0x8CF2E0)`（找不到时是一条 `ColdBreath: … not found … (feature off)` 警告）；Diagnose 的 “Functions we hook” 表里有 `ColdBreathSuppressor.Detour`。到有白雾的寒冷地区（例：库尔札斯中央高地 / 西部高地）开战：玩家、敌人、队友死后白雾停（每具身体第一次被跳过时一行 `ColdBreath: suppressed on <名字> (simulated death)`），活着的人照常呼气；复活 / 重置 / 停战后又开始呼气；`FrameCost:` 无变化。
 - [ ] Detach armor 三档时机；On KO 倒地当下脱（Body/Legs 选 “Drop when the body settles” 时上衣裤子仍等身体静止）；On ragdoll activated 等物理开始。
 - [ ] 分离 Timing：On death 时部件当下飞出、身上部位同时消失，布娃娃启动时不重现不闪；敌人不再有部件已飞出而身上仍在的约 3 s。
 - [ ] 用 Glamourer 换种族和装备后，分离部件与护甲克隆是当前外观（含 Penumbra 模组）；日志无 `skeleton did not match` / `never resolved`。
