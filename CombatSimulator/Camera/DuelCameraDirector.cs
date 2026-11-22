@@ -96,7 +96,21 @@ public sealed unsafe class DuelCameraDirector : IDisposable
     private float poseFov;
     private bool havePose;
     private float fovRatio = 1f, aspect = 16f / 9f;
-    private float heldDistance, originalDirV, heldDirV, pitchSense = -1f;
+    private float heldDistance, originalDirV, heldDirV;
+    /// <summary>
+    /// The game's pitch field against the eye's elevation about what it looks at: opposite. The camera struct documents
+    /// the field as "positive is looking up", i.e. the eye below. A constant, not measured: read off the picture at a
+    /// start it came out wrong whenever the camera was close and nearly level (the game tilts its look-at point with
+    /// the zoom, so the eye can sit above it with a positive pitch), and the drag was then inverted.
+    /// The player's own "invert vertical" setting needs no handling: the game has applied it by the time it changes
+    /// its pitch field, and only that change is read.
+    /// </summary>
+    private const float PitchSense = -1f;
+    /// <summary>The game's FoV field → rendered lens ratio, measured with the lens at rest and kept for the session.</summary>
+    private float? sessionRatio;
+    private bool lensAtRest;
+    private float lastField = float.NaN;
+    private int fieldStableTicks;
     private bool haveHeldDistance, haveHeldDirV;
     private float writtenDirH;
     private bool wroteDirH;
@@ -211,6 +225,7 @@ public sealed unsafe class DuelCameraDirector : IDisposable
     public void Tick(float dt)
     {
         lastTickAt = Environment.TickCount64;
+        TrackLens();
         updatesSinceTick = 0;
         if (state == State.BlendOut)
         {
@@ -230,6 +245,30 @@ public sealed unsafe class DuelCameraDirector : IDisposable
             Stop("error");
             failed = true;
             Say("duel camera stopped after an error (see the log); pick the mode again to restart it");
+        }
+    }
+
+    /// <summary>Every tick: whether the camera's lens is at rest, i.e. nobody's FoV request is applied and the game's
+    /// FoV field has not changed over the last ticks (so the picture last rendered was rendered with it).</summary>
+    private void TrackLens()
+    {
+        lensAtRest = false;
+        try
+        {
+            var camMgr = GameCameraManager.Instance();
+            if (camMgr == null || camMgr->Camera == null)
+            {
+                fieldStableTicks = 0;
+                return;
+            }
+            var field = camMgr->Camera->FoV;
+            fieldStableTicks = float.IsFinite(field) && MathF.Abs(field - lastField) < 1e-5f ? Math.Min(fieldStableTicks + 1, 1000) : 0;
+            lastField = field;
+            lensAtRest = fieldStableTicks >= 3 && coordinator.SavedFov == null;
+        }
+        catch
+        {
+            fieldStableTicks = 0;
         }
     }
 
@@ -378,8 +417,20 @@ public sealed unsafe class DuelCameraDirector : IDisposable
         if (rc == null) return CannotBegin("no render camera");
         var projection = ToNumerics(rc->ProjectionMatrix);
         var rendered = CutsceneView.VerticalFovOf(projection);
-        if (CutsceneView.FovRatio(rendered, game->FoV) is not { } ratio)
-            return CannotBegin("the lens cannot be measured (projection or FoV field unusable)");
+        if (!float.IsFinite(rendered) || rendered <= 0.01f)
+            return CannotBegin("the lens cannot be measured (projection unusable)");
+        // How the game's FoV field maps to the lens it renders is a property of the game, not of this start. It can
+        // only be measured with the camera's lens at rest: right after another owner let go (a death shot, a cutscene
+        // shot) the field is already the game's own again while the picture last rendered still has that owner's
+        // lens, and the two do not belong together. So: measured when at rest, kept for the session otherwise.
+        var measuredNow = false;
+        if (lensAtRest && CutsceneView.FovRatio(rendered, game->FoV) is { } fresh && fresh > 0.5f && fresh < 2f)
+        {
+            sessionRatio = fresh;
+            measuredNow = true;
+        }
+        if (sessionRatio is not { } ratio)
+            return CannotBegin("the lens is not at rest yet (another camera's lens was on a moment ago)");
         var eye = new Vector3(sc->Position.X, sc->Position.Y, sc->Position.Z);
         var look = new Vector3(sc->LookAtVector.X, sc->LookAtVector.Y, sc->LookAtVector.Z);
         if (!CutsceneView.CanHandOver(eye, look))
@@ -408,11 +459,6 @@ public sealed unsafe class DuelCameraDirector : IDisposable
             var room = (game->DirVMax - game->DirVMin) * 0.25f;
             if (haveHeldDirV && float.IsFinite(room) && room > 0.05f)
                 heldDirV = Math.Clamp(originalDirV, game->DirVMin + room, game->DirVMax - room);
-            // Which way the game's pitch runs, from the camera as it is: the eye's elevation about what it looks at
-            // against the pitch field (the game's convention has the field negative with the eye above).
-            var away = eye - look;
-            var elevation = MathF.Asin(Math.Clamp(away.Y / MathF.Max(away.Length(), 1e-3f), -1f, 1f));
-            pitchSense = MathF.Abs(elevation) > 0.05f && MathF.Abs(originalDirV) > 0.05f ? MathF.Sign(elevation * originalDirV) : -1f;
         }
 
         solver.Begin(eye, look, rendered);
@@ -445,8 +491,9 @@ public sealed unsafe class DuelCameraDirector : IDisposable
         var from = eye - look;
         log.Info($"DuelCam: {(afterWaiting ? "resumes" : "start")} — framing {config.DuelCameraFraming}; from the camera at azimuth " +
                  $"{Degrees(DeathShotMath.Azimuth(from)):0}°, {from.Length():0.00} m, lens {Degrees(rendered):0.0}° " +
-                 $"(game yaw {Degrees(game->DirH):0}°, pitch {Degrees(originalDirV):0}° held at {Degrees(heldDirV):0}° and read {(pitchSense > 0f ? "as" : "against")} the eye's elevation, " +
-                 $"FoV field {game->FoV:0.000}, field→lens ratio {fovRatio:0.000}, aspect {aspect:0.00}); " +
+                 $"(game yaw {Degrees(game->DirH):0}°, pitch {Degrees(originalDirV):0}° held at {Degrees(heldDirV):0}°; a drag is read off the game's pitch as the game counts it, " +
+                 $"positive = looking up = the eye goes down, so it moves the view as it does in the game's own camera, inverted or not; " +
+                 $"FoV field {game->FoV:0.000}, field→lens ratio {fovRatio:0.000} ({(measuredNow ? "measured now" : "kept from an earlier start: the lens was not at rest")}), aspect {aspect:0.00}); " +
                  $"movement mode {(legacy == null ? "unknown" : legacy.Value ? "Legacy" : "Standard")}.");
         if (legacy == false && !saidStandard)
         {
@@ -522,7 +569,7 @@ public sealed unsafe class DuelCameraDirector : IDisposable
         if (wroteDirH && haveHeldDirV && float.IsFinite(game->DirV))
         {
             var tilted = game->DirV - heldDirV;
-            if (hand && MathF.Abs(tilted) <= MaxInputStep) pitchIn = tilted * pitchSense;
+            if (hand && MathF.Abs(tilted) <= MaxInputStep) pitchIn = tilted * PitchSense;
         }
         var wheel = pendingWheel;
         pendingWheel = 0f;
