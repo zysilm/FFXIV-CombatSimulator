@@ -101,6 +101,21 @@ a Timestep of the context's simulation; a step extension that handles the step b
 does nothing stops every Timestep; a contact extension that handles the manifold skips the controller's own
 configuration; in every case an extension registered after the one that handled it is never called.
 
+### Pose trajectories for the death-shot camera (read-only)
+
+```
+... RagdollReplay.dll <file | folder> --export-trajectories [outFolder]
+```
+
+Replays nothing. `TrajectoryExport.cs` reads each recording and writes one small `.dstraj` file (default
+`%TEMP%DeathShots	raj`, about 32 MB for the 97 recordings, a few seconds): per render frame the time, whether
+physics had started, and the world positions of 22 bones (hips, spine, neck, head, clavicles, arms, legs) from the
+frame's SkeletonPose record before physics and its PoseOut record after, plus the centre of each bone's rigid body
+from the frame's last BodyStates record; and the ground the recording knows (every ground ray hit, the exact ground
+triangles where recorded, the water surface). It prints one line per recording (frames, seconds, poses present,
+when physics started). `Tests/DeathShots` reads these files (`docs/DEATH_SHOTS.md`). They are derived from the
+user's recordings and do not go into the repository.
+
 ## What is still not replayed
 
 Recordings made with the private module (DEV_EXPERIMENTAL) need a build with it. The live hair's ground samples are

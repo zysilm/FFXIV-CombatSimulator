@@ -118,6 +118,12 @@
 - `CameraModeCoordinator` 是唯一的镜头写入方，按优先级仲裁（2026-07-03）。
 - Camera 页新增 “Switch to Directed when a battle starts”，默认关；Camera 页控件占页面宽度 60%（2026-11-13，用户裁决，`3a90949`）。
 
+### 自动死亡镜头（2026-11-22，用户裁决）
+
+- 自动死亡镜头取代 Directed 相机的死亡构图：5 个档案（Low three-quarter、Face、Along the body、Overhead、Ground profile）+ Auto，只用骨骼位置逐帧求解；第一版只拍尸体（凶手双人构图随旧构图删除，以后可作为档案回来）；“Death shot” 下拉改为档案下拉，Body coverage 滑条去掉，“Looking up” 以 Ground profile 保留；死亡镜头期间玩家只保留左右环绕和滚轮，俯仰锁定；默认一条连续镜头，无滚转 → [DEATH_SHOTS.md](DEATH_SHOTS.md)。P0/P1（轨迹导出 + 纯计算求解器 `Camera/DeathShots/` + `Tests/DeathShots`）已做，离线门槛全过；P2（接进游戏、界面、同批删旧死亡构图和 `DynCamDeath*`）未做。
+- 眼位阻尼作用在绕注视点的轨道坐标上（直角坐标的缓动会穿过身体，也封不住视线转速）；换边只在开始、第一次静止、被移动后再静止、被挡 1.5 s、改档案时发生，每次死亡在身体被移动前最多一次 → [DEATH_SHOTS.md](DEATH_SHOTS.md) §5、§7。
+- 旧 Death Cam 仅存的三个镜头有 76–81% 的帧眼位离地不足 5 cm、多数在地面以下（当时关着相机碰撞，尸体躺地后等于从地下仰拍）；新镜头不进地面，同样的侧向在躺地后是贴地平拍（离线复现，`Tests/DeathShots`）。
+
 ### 特效 / 语音
 
 - Effects → VFX → “Others' skill effects”：All / Limited（默认，镜头 20 m 内、每秒最多 4 个）/ None；玩家自己的和打到玩家的总是显示。技能特效是插件自己生成的，游戏的战斗特效设置管不到，所以在插件里限（2026-11-14，用户提出问题，档位由协调者定，`def39cd`）。
@@ -298,6 +304,7 @@
 - [ ] 分离 Timing：On death 时部件当下飞出、身上部位同时消失，布娃娃启动时不重现不闪；敌人不再有部件已飞出而身上仍在的约 3 s。
 - [ ] 用 Glamourer 换种族和装备后，分离部件与护甲克隆是当前外观（含 Penumbra 模组）；日志无 `skeleton did not match` / `never resolved`。
 - [ ] 液体效果：Reset 后日志不再连续出现 “World fluid layer”；离倒地点 10–20 m 转镜头不掉帧；再次出现时不卡。
+- [ ] 自动死亡镜头 → [DEATH_SHOTS.md](DEATH_SHOTS.md)：**尚未接进游戏**（P2 未做），目前只有离线结果。接入后要看：Low three-quarter 在尸体躺地后的贴地平拍是否可接受（旧镜头是从地下仰拍）；进入时绕到正面的 3–4 s；身体静止那一刻的换边（约 60% 的死亡有一次硬切）是否突兀；真实的墙 / 天花板 / 水面下遮挡回退是否成立（录像里没有这些）；FoV 字段与实际视角的比例；物理开始那一帧画面不跳；拉拉菲尔 / 鲁加等体型的景别。
 
 ## 5. 搁置与未完成
 

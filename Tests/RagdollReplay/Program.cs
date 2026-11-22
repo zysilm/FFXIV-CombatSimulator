@@ -14,6 +14,7 @@ using RagdollReplay;
 // Usage:
 //   RagdollReplay <file.rgdrec | folder> [--keep] [--synthetic-meshes | --synthetic-colliders | --synthetic-hair]
 //   RagdollReplay <file.rgdrec | folder> --extensions   (stage A3b: the extension points, see ExtensionCheck.cs)
+//   RagdollReplay <file.rgdrec | folder> --export-trajectories [outFolder]   (read-only, see TrajectoryExport.cs)
 // Replays each recording through the plugin's RagdollController and reports, per file, "identical" or the
 // first difference. Exit code 0 when every file replayed identically.
 
@@ -23,6 +24,10 @@ if (args.Length < 1)
     return 2;
 }
 if (args.Contains("--extensions")) return ExtensionCheck.Run(args[0]);
+// Read-only: writes pose trajectories for the death-shot camera check (TrajectoryExport.cs); nothing is replayed.
+var exportAt = Array.IndexOf(args, "--export-trajectories");
+if (exportAt >= 0)
+    return TrajectoryExport.Run(args[0], exportAt + 1 < args.Length && !args[exportAt + 1].StartsWith("--", StringComparison.Ordinal) ? args[exportAt + 1] : null);
 var keep = args.Contains("--keep");
 var synthetic = args.Contains("--synthetic-meshes") || args.Contains("--synthetic-colliders") || args.Contains("--synthetic-hair");
 SyntheticSettings.MeshVolumes = args.Contains("--synthetic-meshes");
