@@ -452,6 +452,14 @@ public unsafe partial class DismembermentController : IDisposable
     private readonly List<Pending> pending = new();
     private readonly HashSet<int> allocatedIndices = new();
 
+    /// <summary>
+    /// True when this client object index is one of our helper clones (separated parts, armour and garment
+    /// pieces). The index is registered the moment CreateBattleCharacter returns it, before the clone is set up
+    /// or drawn, and leaves when the clone is deleted.
+    /// </summary>
+    public bool IsHelperCloneIndex(int objectIndex)
+        => objectIndex >= CloneSlotStart && objectIndex < CloneSlotEndExclusive && allocatedIndices.Contains(objectIndex);
+
     private static readonly string[] BodyGearHandoffBones =
     {
         "j_kosi", "j_sebo_a", "j_sebo_b", "j_sebo_c",

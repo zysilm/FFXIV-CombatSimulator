@@ -9,6 +9,7 @@ using CombatSimulator.Npcs;
 using CombatSimulator.Simulation;
 using Dalamud.Hooking;
 using Dalamud.Plugin.Services;
+using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using FFXIVClientStructs.FFXIV.Client.System.Framework;
 
 namespace CombatSimulator.Effects;
@@ -51,10 +52,15 @@ public sealed unsafe class ColdBreathSuppressor : IDisposable
     // Bodies already logged in this death; an owner leaves the set the first time it breathes again.
     private readonly HashSet<nint> logged = new();
     private bool detourFailureLogged;
+    private bool cloneSuppressionLogged;
+
+    // Whether a client object index is one of our hidden helper clones (DismembermentController).
+    private readonly Func<int, bool> isHelperCloneIndex;
 
     public ColdBreathSuppressor(IGameInteropProvider gameInterop, ISigScanner sigScanner, CombatEngine engine,
-        NpcSelector npcSelector, CombatCompanionManager companions, IPluginLog log)
+        NpcSelector npcSelector, CombatCompanionManager companions, Func<int, bool> isHelperCloneIndex, IPluginLog log)
     {
+        this.isHelperCloneIndex = isHelperCloneIndex;
         this.engine = engine;
         this.npcSelector = npcSelector;
         this.companions = companions;
@@ -101,6 +107,22 @@ public sealed unsafe class ColdBreathSuppressor : IDisposable
     {
         try
         {
+            // Our hidden helper clones (separated parts, armour and garment pieces) never breathe, in or out of a
+            // battle. Their index is registered at creation, before they are set up or drawn.
+            if (vfxContainer != 0)
+            {
+                var owner = *(nint*)(vfxContainer + 8);
+                if (owner != 0 && isHelperCloneIndex(((GameObject*)owner)->ObjectIndex))
+                {
+                    if (!cloneSuppressionLogged)
+                    {
+                        cloneSuppressionLogged = true;
+                        log.Info("ColdBreath: helper clones (separated parts, armour pieces) never breathe; first one skipped.");
+                    }
+                    return;
+                }
+            }
+
             if (engine.IsActive && vfxContainer != 0)
             {
                 var owner = *(nint*)(vfxContainer + 8);
