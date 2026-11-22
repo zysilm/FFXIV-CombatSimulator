@@ -448,7 +448,7 @@ public static class BattleRuleFactory
 | `CombatModule` | `damageCalculator`、`combatEngine`、`npcAiController`、`npcCorpseFootIkSolver`、`combatModeRouter`、`telegraphSystem`、`enemyAreaMarkers`、`playerGuardController`、`actionComboSink`、`actionModeController`、`hitFeedbackController`、`playerTargetController`、`useActionHook`、`virtualEnemyLookAt` | `TargetingService`、`CombatEvents` |
 | `BattleModule` | `Plugin.War.cs` 的全部字段（`warBanner`、夺尸进度与名单、抓取重试）、`victoryCelebration` | `BattleRuleSet` |
 | `CorpseModule` | `ragdollController`、`npcRagdolls`、`pendingNpcRagdolls`、`pendingNpcRagdollAddresses`、`npcRagdollStaggerBudget`、`weaponDropController`、`dismembermentController`、`armorDetachmentController`、`arrowImpactController`、`playerWeaponVisibilityController` | `ICorpseQuery（2026-11-15 起在 `Combat/ICorpseQuery.cs`，public，由构造注入队友管理器）` |
-| `CameraModule` | `cameraModeCoordinator`、`gameCameraUpdateHook`、`activeCameraController`、`dynamicCameraController` | — |
+| `CameraModule` | `cameraModeCoordinator`、`gameCameraUpdateHook`、`activeCameraController`、`dynamicCameraController`、`deathShotDirector`（2026-11-22，自动死亡镜头，由 `dynamicCameraController` 驱动）、`cutsceneShotDirector` | — |
 | `FightingModule`（2026-11-15 删除） | `fightingModeController`、`fightingCombatController`、`enemyControlController`（后者已移到 `ActorsModule`） | `ICorpseGrab`、“谁被外部接管”的查询 |
 | `PresentationModule` | `mainWindow`、`hpBarOverlay`、`damageNumbers`、`combatLogWindow`、各 overlay、`enemyOmenVfx`、`voiceDirector`、`updateLogPopupController` | — |
 | `SafetyDevModule` | `hookSafetyChecker`、`devExperimental`、`Plugin.cs:80-96` 的 partial 钩子 | — |

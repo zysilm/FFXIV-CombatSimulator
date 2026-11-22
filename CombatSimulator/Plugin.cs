@@ -259,18 +259,17 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         // NpcAiController's constructor subscribes its own SimulationStarted #1 and SimulationReset #4.
         combatModule.CreateEnemyAi();
         combatModule.CreateHardTargetGuard(gameInterop);
-        cameraModule.CreateDynamic(sigScanner);
+        cameraModule.CreateDynamic(sigScanner, condition, clientState);
         actorsModule.CreateMapEnemies(objectTable);
         combatEvents.BeforePlayerDeath = () =>
         {
-            // The killing blow was recorded when it landed; deaths resolve on a delay, so by
-            // now the engine knows exactly who to frame alongside the body.
-            dynamicCameraController.HandlePlayerDeath(
-                combatEngine.LastPlayerKillerAddress, combatEngine.LastPlayerKillerEntityId);
+            // The death animation starts now and the ragdoll is armed with it: the automatic death shot (running
+            // since the killing blow; deaths resolve on a delay) is told.
+            dynamicCameraController.HandlePlayerDeath();
             devExperimental.BeforePlayerDeath();
         };
-        // Cutscene follow shots for death and victory (docs/CUTSCENE_SHOTS.md). After the Directed camera has armed its
-        // death framing above: the shot holds that framing while it plays and hands the camera back to it. (These
+        // Cutscene follow shots for death and victory (docs/CUTSCENE_SHOTS.md). A cutscene shot outranks the automatic
+        // death shot: that one waits while this plays and takes the camera back from where this leaves it. (These
         // listeners run before the SimulationStarted / SimulationReset handlers numbered #2 / #5 and on below.)
         cameraModule.CreateCutsceneShots(targetManager, dataManager, condition, clientState, pluginInterface.GetPluginConfigDirectory(), () => PrivateDirectorActive);
         combatEvents.BeforePlayerDeath += cutsceneShots.OnPlayerDeath;

@@ -76,8 +76,63 @@ internal static class UnitChecks
         Classes();
         SettleAndSprings();
         SolverStatic();
+        PlayerHand();
         Console.WriteLine(failures == 0 ? "unit checks: all ok" : $"unit checks: {failures} FAILED");
         return failures;
+    }
+
+    /// <summary>What the plugin feeds from the player during a shot (DeathShotDirector): the left/right orbit as
+    /// <see cref="DeathShotInput.UserYaw"/>, the wheel as <see cref="DeathShotInput.UserSize"/>.</summary>
+    private static void PlayerHand()
+    {
+        var world = new FlatWorld();
+        var body = Lying(90f * Deg);
+        var extra = All(body);
+
+        // Orbit: the shot turns by what the player turned, at the solver's own pace, without re-picking a side,
+        // leaving the ground or losing the body.
+        {
+            var solver = new DeathShotSolver(world);
+            solver.Begin(body.Chest + DeathShotMath.OrbitDirection(0f, 15f * Deg) * 5f, body.Chest, 0.78f);
+            DeathShotOutput o = default;
+            Vector3 lastDir = default;
+            float before = 0f, maxRate = 0f, minClear = float.MaxValue;
+            var sides = 0;
+            for (var i = 0; i < 60 * 20; i++)
+            {
+                var yaw = i < 60 * 10 ? 0f : 60f * Deg;
+                o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = body, Extra = extra, Profile = DeathShotProfile.GroundProfile, Aspect = 16f / 9f, UserYaw = yaw, UserSize = 1f });
+                if (i == 60 * 10 - 1)
+                {
+                    before = DeathShotMath.Azimuth(o.BaseEye - o.BaseLookAt);
+                    sides = o.SideChanges;
+                }
+                var dir = Vector3.Normalize(o.LookAt - o.Eye);
+                if (i > 0 && !o.Cut) maxRate = MathF.Max(maxRate, MathF.Acos(Math.Clamp(Vector3.Dot(dir, lastDir), -1f, 1f)) * 60f / Deg);
+                lastDir = dir;
+                minClear = MathF.Min(minClear, o.Eye.Y);
+            }
+            var turned = DeathShotMath.AngleDelta(before, DeathShotMath.Azimuth(o.BaseEye - o.BaseLookAt)) / Deg;
+            Check("player orbit of 60 deg: the shot turns 60 deg about the body, same side choice, view <= 60 deg/s, eye >= 10 cm up, body in frame",
+                MathF.Abs(turned - 60f) < 2f && o.SideChanges == sides && maxRate <= 60.5f && minClear >= 0.0999f && Reach(o, extra) <= 1f,
+                $"turned {turned:F1} deg, max view rate {maxRate:F1} deg/s, min eye height {minClear:F3} m, reach {Reach(o, extra):F2}, side changes {o.SideChanges - sides}");
+        }
+
+        // Wheel: the frame at the subject grows and shrinks with the size.
+        {
+            float At(float size)
+            {
+                var solver = new DeathShotSolver(world);
+                solver.Begin(Standing.Chest + DeathShotMath.OrbitDirection(0f, 15f * Deg) * 5f, Standing.Chest, 0.78f);
+                DeathShotOutput o = default;
+                for (var i = 0; i < 60 * 12; i++)
+                    o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = Standing, Profile = DeathShotProfile.LowThreeQuarter, Aspect = 16f / 9f, UserSize = size });
+                return Vector3.Distance(o.BaseEye, o.BaseLookAt);
+            }
+            float one = At(1f), wide = At(2f), tight = At(0.5f);
+            Check("player wheel: size 2 is twice as far, size 0.5 half as far", MathF.Abs(wide / one - 2f) < 0.1f && MathF.Abs(tight / one - 0.5f) < 0.05f,
+                $"{one:F2} m, x2 {wide:F2} m, x0.5 {tight:F2} m");
+        }
     }
 
     private static void BodyFrames()

@@ -15,7 +15,9 @@ public sealed record ActiveCameraInputs
     public float? VerticalAngle { get; init; }
 }
 
-/// <summary>Temporary death-shot inputs. Distance and lens remain outputs of the native fit.</summary>
+/// <summary>Temporary death-shot inputs, in the terms of the death framing they were written for. The automatic death
+/// shots read <see cref="Angle"/> (as a profile), <see cref="BodyVisibility"/> (as the shot size) and
+/// <see cref="IgnoreActor"/>; the rest has no counterpart (DynamicCameraController.Inputs.cs, docs/DEATH_SHOTS.md §10).</summary>
 public sealed record DynamicDeathCameraInputs
 {
     public float? BodyVisibility { get; init; }
@@ -27,5 +29,5 @@ public sealed record DynamicDeathCameraInputs
     public float? Transition { get; init; }
 }
 
-/// <summary>Identity checked before a temporary secondary actor is used by the native death fit.</summary>
+/// <summary>Identity checked before a temporary actor is used as the death shot's subject.</summary>
 public readonly record struct NativeCameraActor(nint Address, uint EntityId);

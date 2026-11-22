@@ -120,8 +120,11 @@
 
 ### 自动死亡镜头（2026-11-22，用户裁决）
 
-- 自动死亡镜头取代 Directed 相机的死亡构图：5 个档案（Low three-quarter、Face、Along the body、Overhead、Ground profile）+ Auto，只用骨骼位置逐帧求解；第一版只拍尸体（凶手双人构图随旧构图删除，以后可作为档案回来）；“Death shot” 下拉改为档案下拉，Body coverage 滑条去掉，“Looking up” 以 Ground profile 保留；死亡镜头期间玩家只保留左右环绕和滚轮，俯仰锁定；默认一条连续镜头，无滚转 → [DEATH_SHOTS.md](DEATH_SHOTS.md)。P0/P1（轨迹导出 + 纯计算求解器 `Camera/DeathShots/` + `Tests/DeathShots`）已做，离线门槛全过；P2（接进游戏、界面、同批删旧死亡构图和 `DynCamDeath*`）未做。
+- 自动死亡镜头取代 Directed 相机的死亡构图：5 个档案（Low three-quarter、Face、Along the body、Overhead、Ground profile）+ Auto，只用骨骼位置逐帧求解；第一版只拍尸体（凶手双人构图随旧构图删除，以后可作为档案回来）；“Death shot” 下拉改为档案下拉，Body coverage 滑条去掉，“Looking up” 以 Ground profile 保留；死亡镜头期间玩家只保留左右环绕和滚轮，俯仰锁定；默认一条连续镜头，无滚转 → [DEATH_SHOTS.md](DEATH_SHOTS.md)。P0/P1（轨迹导出 + 纯计算求解器 `Camera/DeathShots/` + `Tests/DeathShots`）离线门槛全过；P2（2026-11-22）已接进游戏：`Camera/DeathShotDirector.cs`，由 `DynamicCameraController` 驱动，旧死亡构图（`TickDeath`/`SolveDeathFraming`/锁俯仰钉缩放/`OverrideDeathLookAt`/`HoldForCutscene`/凶手双人构图/调试叠层/浮动工具条）同批删除，待游戏内验证。
 - 眼位阻尼作用在绕注视点的轨道坐标上（直角坐标的缓动会穿过身体，也封不住视线转速）；换边只在开始、第一次静止、被移动后再静止、被挡 1.5 s、改档案时发生，每次死亡在身体被移动前最多一次 → [DEATH_SHOTS.md](DEATH_SHOTS.md) §5、§7。
+- 运行时的约定（[DEATH_SHOTS.md](DEATH_SHOTS.md) §9）：位姿交接（`ActiveCameraController.PoseOverride`）是两级的，自动死亡镜头先写、过场镜头（owner 60）后写并覆盖；过场镜头占着相机时自动死亡镜头等待，交还后从过场留下的画面重新开始。玩家的左右环绕取游戏相机 `DirH` 的逐帧变化量、滚轮取 ImGui 原始滚轮（景别），俯仰锁定，重新选边时归零；游戏自己的缩放距离在镜头期间保持不变。设置 `DeathShotProfile` 默认 Auto，不从旧选项迁移（用户裁决）；`DynCamDeathFraming`（Directs 里的 Death）保留；退役键 `DynCamDeathIgnoreKiller`、`DynCamDeathBodyVisibility`、`DynCamDeathBodyBand`、`DynCamDeathAngle`、`ShowDynamicCamToolbar`、`DynCamDebugOverlay`。
+- 地面查询不按网格缓存：求解器在阻尼之后才把眼位压到地面以上，网格化的地面高度在坡上会让眼位一格一格跳；只对同一帧内完全相同的查询去重，每帧射线数写在 `DeathShot:` 的 5 s 汇总里。
+- 私有模块的三个入口（`ProfileFramingOverride` / `TemporaryDeathInputs` / `TemporaryDeathActor`）名字和类型不变，含义改为强制开启 / 选档案和景别 / 换主体 → [DEATH_SHOTS.md](DEATH_SHOTS.md) §10。
 - 旧 Death Cam 仅存的三个镜头有 76–81% 的帧眼位离地不足 5 cm、多数在地面以下（当时关着相机碰撞，尸体躺地后等于从地下仰拍）；新镜头不进地面，同样的侧向在躺地后是贴地平拍（离线复现，`Tests/DeathShots`）。
 
 ### 特效 / 语音
@@ -177,7 +180,7 @@
 - 2026-11-13：抢尸 2 s 就完成但没人被抓起，日志显示布娃娃 3.8 s 才启动 → 依赖布娃娃的动作要等布娃娃（`244246f`）。
 - 2026-10-25：合并和编译串在一条命令里，冲突标记被打进 DLL 的嵌入资源 → 合并后先确认没有 CONFLICT 再编译。
 - 2026-07-04：migration 别复用已经被消费过的标志位（`KneeHingeStiffnessMigrated20260704`）。
-- 工具：PowerShell 连续两个 `-match` 会覆盖 `$Matches`，用 `[regex]::Match`；源码是 CRLF，sed/perl 多行替换会损坏文件，用 Edit。
+- 工具：PowerShell 连续两个 `-match` 会覆盖 `$Matches`，用 `[regex]::Match`；源码是 CRLF，sed/perl 多行替换会损坏文件，用 Edit。Git Bash 里单行的 `sed -i` 也会把整份 CRLF 文件写成 LF（2026-11-22），同样别用。
 
 ### 物理 / 布娃娃
 
@@ -283,7 +286,6 @@
 
 - [ ] 库 0.1.0-beta.3（A6 拆分，插件 `090f549`）：布娃娃、头发、软组织、抓取、尸体穿行、武器、肢解照常。
 - [ ] 过场跟拍镜头（Camera → Cutscene Shots）：Play Now 画面切进机位；日志 `CutShot: camera check` 误差小、`pose handed … in N` N>0；FoV 是否对；近景角色不淡出。
-- [ ] Directed 死亡构图：日志 `DynamicCam look-at override` 的 `sceneChi` 与 `commandedChi`/`renderedChi` 对比，定位 0.26 rad 偏差出在哪一步。
 - [ ] 敌人行为层：多对多开巡逻时全员巡逻（日志 `patrolling`，不再 `idle 100%`）；Enemy Control 只在战败后接管；1v1 战败立刻接管；被救起不接管。
 - [ ] 可达生成：不再刷到墙外/崖上/地下；日志 `spawn spot moved`、`post moved`。
 - [ ] Enemy Control 精简（只控制一个敌人）：Effects → Enemy Control → Show Enemy Control GUI 打开的窗口里不再有 Swarm 折叠栏；控制、镜头切换、Release、抓取照常。（手臂姿势部分已被 2026-11-21 的恢复取代，见下一节。）
@@ -304,7 +306,8 @@
 - [ ] 分离 Timing：On death 时部件当下飞出、身上部位同时消失，布娃娃启动时不重现不闪；敌人不再有部件已飞出而身上仍在的约 3 s。
 - [ ] 用 Glamourer 换种族和装备后，分离部件与护甲克隆是当前外观（含 Penumbra 模组）；日志无 `skeleton did not match` / `never resolved`。
 - [ ] 液体效果：Reset 后日志不再连续出现 “World fluid layer”；离倒地点 10–20 m 转镜头不掉帧；再次出现时不卡。
-- [ ] 自动死亡镜头 → [DEATH_SHOTS.md](DEATH_SHOTS.md)：**尚未接进游戏**（P2 未做），目前只有离线结果。接入后要看：Low three-quarter 在尸体躺地后的贴地平拍是否可接受（旧镜头是从地下仰拍）；进入时绕到正面的 3–4 s；身体静止那一刻的换边（约 60% 的死亡有一次硬切）是否突兀；真实的墙 / 天花板 / 水面下遮挡回退是否成立（录像里没有这些）；FoV 字段与实际视角的比例；物理开始那一帧画面不跳；拉拉菲尔 / 鲁加等体型的景别。
+- [ ] 自动死亡镜头（P2 已接入，未在游戏里看过）→ [DEATH_SHOTS.md](DEATH_SHOTS.md) §11：Camera 页签 → Camera mode = Directed，折叠栏 Directed Camera → Directs 含 Death、Death shot 选档案。看：日志 `DeathShot: camera check over 60 frames`（眼位 / 注视点差毫米级、镜头差 < 1°，否则 FoV 字段比例不对）；进入时绕到正面的 3–4 s；`ragdoll at … s` 那一帧画面不跳；身体静止那一刻的换边（约 60% 的死亡有一次硬切）是否突兀；Low three-quarter 在尸体躺地后的贴地平拍是否可接受（旧镜头是从地下仰拍）；左右拖动绕身体转（比手慢：45°/s 上限 + 0.6 s 缓动）、滚轮改景别、上下无效；死亡中换档案立即切换；真实的墙 / 天花板 / 坡 / 水面下的回退（日志 `fallback`、`view blocked`、`the eye was inside terrain`）；过场死亡镜头结束后 `DeathShot: resumes`、画面不跳；复活 0.3 s 回游戏相机；拉拉菲尔 / 鲁加等体型的景别；5 s 汇总里的 `rays/frame`。
+- [ ] 旧死亡构图删除后：旧配置载入无异常；Camera 页签 → Directed Camera 里没有 Body coverage 和 Show toolbar，“Dynamic Cam” 浮动工具条不再出现；战斗时的 Directed 构图（越肩、敌人入画、缩放 / 俯仰记忆、复活后回到战斗构图）照常。
 
 ## 5. 搁置与未完成
 

@@ -42,12 +42,15 @@ public unsafe class ActiveCameraController : IDisposable
     private Hook<GetCameraPositionDelegate>? getCameraPosHook;
     private delegate void SetCameraLookAtDelegate(nint camera, Vector3* lookAt, Vector3* cameraPosition, Vector3* scratch);
     private Hook<SetCameraLookAtDelegate>? setCameraLookAtHook;
+    /// <summary>Replaces the main camera's look-at point only, while this controller is active (the private module's
+    /// scenes; the plugin itself sets none).</summary>
     public Func<Vector3, Vector3, Vector3?>? ModeLookAtOverride { get; set; }
 
     public delegate bool CameraPoseOverride(ref Vector3 lookAt, ref Vector3 eye);
 
     /// <summary>Replaces the main camera's eye and look-at point inside the game's camera update, whether or not this
-    /// controller is active (cutscene shots). Returns true when it changed them; must not throw.</summary>
+    /// controller is active. Two levels behind the one delegate (Composition/CameraModule): the automatic death shot
+    /// writes first, a cutscene shot writes over it. Returns true when it changed them; must not throw.</summary>
     public CameraPoseOverride? PoseOverride { get; set; }
 
     /// <summary>True while <see cref="PoseOverride"/> may move the eye close to a character: models are kept drawn.</summary>
@@ -96,7 +99,7 @@ public unsafe class ActiveCameraController : IDisposable
     /// <summary>Current camera write authority, from the CameraModeCoordinator. The
     /// min-distance/vertical-lock overrides only apply when an active-camera
     /// personality (user bone follow or monster follow) is in charge — not when the
-    /// Directed camera, a cutscene shot or an external provider drive angles and zoom themselves.</summary>
+    /// Directed camera, a death shot, a cutscene shot or an external provider drive angles and zoom themselves.</summary>
     public Func<CameraOwner>? GetCurrentOwner;
 
     public ActiveCameraController(IGameInteropProvider gameInterop, IClientState clientState,
@@ -322,7 +325,8 @@ public unsafe class ActiveCameraController : IDisposable
         // The camera update stores these two buffers (its locals) as the scene camera's position and look-at
         // point right after this call, and builds its view from them: a pose written here is the one rendered.
         // Both overrides therefore write the caller's buffers after the original returns (handing the original
-        // a copy, as this hook once did, changed nothing the game kept). The cutscene pose runs last and wins.
+        // a copy, as this hook once did, changed nothing the game kept). The pose override (death shot, then a
+        // cutscene shot over it) runs last and wins.
         if (isMain && IsActive && ModeLookAtOverride != null)
         {
             try

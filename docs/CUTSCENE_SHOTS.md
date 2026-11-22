@@ -70,8 +70,8 @@ dotnet run -c Release -- curate out.json   # 写到别处
 
 - 一段 = 清单里的几个镜头首尾相接；按 30 帧/秒的时间轴帧换算，每帧用曲线连续采样（Hermite），到 span 边界立即切到下一个镜头（硬切，不混合）。
 - 相机：播放期间是 `CameraModeCoordinator` 里优先级最高的 `CutsceneShot`（60）；它向协调者要与目标视角匹配的游戏 FoV（游戏 FoV 字段与实际渲染视角的比例在开播时从投影矩阵量出）、冻结鼠标/手柄转视角。眼位和注视点在游戏相机更新**之中**交给游戏：`ActiveCameraController` 早已挂着的 `SetCameraLookAt` 钩子在原函数返回后，把镜头的注视点和眼位写进调用方的两个缓冲区——反汇编确认（7.x，`Camera::Update` 里 `call [vtbl+78h]` 之后），游戏紧接着把这两个缓冲区存为场景相机的 `Position`/`LookAtVector`（只做有限值检查），并由它们自己生成视图和投影矩阵。插件不写任何矩阵。**不做滚转**（c117）：游戏相机没有插件已知可用的滚转字段。受击震屏仍在更新之后叠加。日志：开播约 1 s 后一行 `CutShot: camera check over 60 frames — scene eye off by … m, look-at by … m, lens by …°`（眼位或注视点差超过 5 cm 时为警告），结束行带 `pose handed to the game in N camera update(s)`。
-- 进入时从当时的画面 0.3 s 平滑过渡；结束时先把相机还给原来的主人（协调者），再用 0.3 s 过渡到游戏此刻自己的相机。
-- Directed 相机的死亡构图：镜头播放期间暂停（`DynamicCameraController.HoldForCutscene`），交还时从镜头最后的画面重新开始它的平移。Enemy Control、Follow-bone 相机在镜头期间被压住，结束后照常。私有场景占用相机时不播。
+- 进入时从当时的画面 0.3 s 平滑过渡；结束时先把相机还给原来的主人（协调者），再用 0.3 s 过渡到此刻缓冲区里的位姿：游戏自己的相机，或者正在跑的自动死亡镜头的位姿。
+- 自动死亡镜头（[DEATH_SHOTS.md](DEATH_SHOTS.md) §9，2026-11-22 起取代 Directed 相机的死亡构图）：位姿交接是两级的——同一个 `PoseOverride` 里自动死亡镜头先写，过场镜头后写并覆盖它。过场镜头占着相机（`CutsceneShotDirector.OwnsCamera`，即未开始淡出）时自动死亡镜头等待、不求解；过场镜头一开始淡出，它就从过场镜头留下的画面重新开始（日志 `DeathShot: resumes`），过场镜头的 0.3 s 淡出正好落到它的位姿上。原来的 `DynamicCameraController.HoldForCutscene` 已删除。Enemy Control、Follow-bone 相机在镜头期间被压住，结束后照常。私有场景占用相机时不播。
 - 保护：游戏自己的过场（`OccupiedInCutSceneEvent` / `WatchingCutscene` / `WatchingCutscene78`）或 GPose 开始时立即交还相机（不过渡），这时也不开播；`Tick` 超过 0.5 s 没跑（且已过不止一次相机更新）时停止写相机（`tick stalled`）；眼位/注视点非有限或相距不足 0.1 m 时该帧不交接，要的 FOV 夹在 1°–170°；镜头的绑定父链在读取时检查（最多 16 层、不许成环），坏的条目跳过。
 - 选定胜利/死亡镜头时（以及插件加载后的第一帧，针对已保存的选择）预读 `.cutb` 和参考种族 `.eid`，第一次触发不再卡一帧；都在主线程。
 
@@ -105,7 +105,7 @@ Camera 页签 → 折叠栏 **Cutscene Shots**：一个可搜索的下拉菜单�
 ### 6.7 假设与局限（待游戏内定标）
 
 - c116 按**垂直** FOV（度）处理，是 `CutsceneLens.FovIsVertical` 一个常量，探针数据出来后可翻转。c117 不播放（见 §6.2）。
-- 眼位交给游戏后，游戏自己的近景淡出、剔除都按镜头眼位算；播放期间强制开着 ShouldDrawGameObject 钩子（与 Active Camera 的“防淡出”同一个），镜头贴近时角色应不会被淡出（待游戏内验证）。穿墙/穿地不做碰撞检测，只有眼位不低于地面一条。镜头结束时协调者立即还原 FoV，未跟随 0.3 s 的位置过渡（Directed 死亡构图自己从镜头的 FoV 开始过渡，不受影响）。
+- 眼位交给游戏后，游戏自己的近景淡出、剔除都按镜头眼位算；播放期间强制开着 ShouldDrawGameObject 钩子（与 Active Camera 的“防淡出”同一个），镜头贴近时角色应不会被淡出（待游戏内验证）。穿墙/穿地不做碰撞检测，只有眼位不低于地面一条。镜头结束时协调者立即还原 FoV，未跟随 0.3 s 的位置过渡（自动死亡镜头接手时从镜头当时的 FoV 开始按自己的速率变化，不受影响）。
 - 倒地时为站姿构图的镜头会被地面限制压低：离线检查中躺地尸体的采样有约 42%（适合尸体的条目也约 42%）需要抬到地面以上。
 - 布娃娃只有主要骨骼的刚体，布娃娃生效时骨骼挂点的小偏移（≤0.15 m）不再按骨骼旋转。
 - 离线检查：`Tests/CutsceneCamera -- verify`（解析器回归哈希、149 条全部可读、首/中/尾采样有限、站姿平移旋转不变性、躺姿重映射、五种角色情形、FoV 字段换算往返、FOV 夹取、交接位姿检查、坏绑定父链被拒）。

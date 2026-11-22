@@ -34,9 +34,10 @@ namespace CombatSimulator.Camera;
 /// the shot's eye and look-at point (<see cref="OverridePose"/>, from the SetCameraLookAt detour the plugin already
 /// hooks), so the game builds its own view and projection from them. No roll (the game camera has no roll field the
 /// plugin knows to work). It blends in from the camera it found over <see cref="BlendSeconds"/>, and at the end releases
-/// the coordinator and blends back over the same time to whatever camera the game then produces (the Directed camera's
-/// death framing, which waits while the shot plays, Enemy Control's follow, ...). Not while a
-/// private scene runs.
+/// the coordinator and blends back over the same time to whatever camera is there then: the automatic death shot
+/// (<see cref="DeathShotDirector"/>), which waits while this shot holds the camera and starts again from the camera it
+/// leaves, its pose written just before this one's in the same hand-over; otherwise the game's own camera (Enemy
+/// Control's follow, ...). Not while a private scene runs.
 ///
 /// Log: one <c>CutShot:</c> line when a shot starts (shot, roles, actors, duration) and one when it ends (time, reason,
 /// remaps and fallbacks used).
@@ -56,7 +57,6 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
 
     private readonly Configuration config;
     private readonly CameraModeCoordinator coordinator;
-    private readonly DynamicCameraController dynamicCamera;
     private readonly CombatEngine engine;
     private readonly NpcSelector npcSelector;
     private readonly CombatCompanionManager companions;
@@ -95,7 +95,6 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
     private int checkCount;
     private int overrideCount;
     private float checkEye, checkLook, checkFov;
-    private bool heldDynamic;
     private readonly HashSet<string> notes = new(StringComparer.Ordinal);
     private readonly Dictionary<nint, float> heightScales = new();
     private string? pendingPlayNow;
@@ -111,7 +110,6 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
     public CutsceneShotDirector(
         Configuration config,
         CameraModeCoordinator coordinator,
-        DynamicCameraController dynamicCamera,
         CombatEngine engine,
         NpcSelector npcSelector,
         CombatCompanionManager companions,
@@ -128,7 +126,6 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
     {
         this.config = config;
         this.coordinator = coordinator;
-        this.dynamicCamera = dynamicCamera;
         this.engine = engine;
         this.npcSelector = npcSelector;
         this.companions = companions;
@@ -167,6 +164,9 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
     }
 
     public bool IsPlaying => phase != Phase.Idle;
+
+    /// <summary>The shot holds the camera (it is not blending out yet): the automatic death shot waits.</summary>
+    public bool OwnsCamera => phase == Phase.Playing;
 
     // ------------------------------------------------------------------
     // Triggers
@@ -275,11 +275,6 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
         notes.Clear();
         heightScales.Clear();
         phase = Phase.Playing;
-        if (!heldDynamic)
-        {
-            dynamicCamera.HoldForCutscene(true);
-            heldDynamic = true;
-        }
 
         var follow = CutsceneRoles.ActorFor(entry, entry.FollowActor, roles);
         var look = entry.LookActor is { } la ? CutsceneRoles.ActorFor(entry, la, roles) : nint.Zero;
@@ -342,14 +337,12 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
         phase = Phase.BlendOut;
         blendOutTime = 0f;
         coordinator.Release(CameraOwner.CutsceneShot);
-        ReleaseDynamic();
     }
 
     private void Finish(string reason)
     {
         var entry = shot?.Entry;
         coordinator.Release(CameraOwner.CutsceneShot);
-        ReleaseDynamic();
         phase = Phase.Idle;
         if (entry != null)
             log.Info($"CutShot: end {entry.Id} ({trigger}) after {time:0.00} s ({endReason ?? reason}); " +
@@ -358,13 +351,6 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
         shot = null;
         haveCut = false;
         endReason = null;
-    }
-
-    private void ReleaseDynamic()
-    {
-        if (!heldDynamic) return;
-        heldDynamic = false;
-        dynamicCamera.HoldForCutscene(false);
     }
 
     // ------------------------------------------------------------------
@@ -481,7 +467,8 @@ public sealed unsafe class CutsceneShotDirector : IDisposable
     /// Inside the game's camera update, right after it chose its eye and look-at point (ActiveCameraController's
     /// SetCameraLookAt detour, main camera only): replace them with the shot's. The game then stores them as the scene
     /// camera's position and look-at point and builds its own view from them; the FoV goes through the coordinator.
-    /// Blends in from the camera found at the start, and out to whatever the game produces now.
+    /// Blends in from the camera found at the start, and out to the pose in the buffers now: the game's own, or the
+    /// automatic death shot's when one runs (it writes before this).
     /// </summary>
     public bool OverridePose(ref Vector3 lookAt, ref Vector3 eye)
     {

@@ -646,6 +646,11 @@ public partial class Configuration : IPluginConfiguration
         // Armor Detachment's "Still-attached pieces follow the body", removed (2026-11-21, user's decision):
         // pieces never ride along when the body is relocated onto a grab or hold.
         "KoStripGarmentFollowsBody",
+        // The Directed camera's old death framing (corpse + killer fit), replaced by the automatic death shots
+        // (2026-11-22, user's decision; docs/DEATH_SHOTS.md): its coverage, band, angle and ignore-killer settings,
+        // the floating toolbar that only held two of them, and its tuning overlay. Everyone starts on the Auto profile.
+        "DynCamDeathIgnoreKiller", "DynCamDeathBodyVisibility", "DynCamDeathBodyBand", "DynCamDeathAngle",
+        "ShowDynamicCamToolbar", "DynCamDebugOverlay",
         // Fighting Mode (the experimental 1v1 side-view lane, its weapon hitboxes, AI and cameras), removed
         // (2026-11-15, user's decision: no longer used).
         "FightingMode", "FightingModeLaneHalfWidth", "FightingModeMinSeparation", "FightingModeMaxSeparation",

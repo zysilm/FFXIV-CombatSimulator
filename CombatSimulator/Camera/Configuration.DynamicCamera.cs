@@ -5,7 +5,7 @@
 namespace CombatSimulator;
 
 /// <summary>
-/// Dynamic Camera settings. Kept in their own partial so its combat and death framing
+/// Dynamic Camera settings. Kept in their own partial so its combat framing and death shot
 /// options remain separate from the always-on Active Camera controls.
 /// </summary>
 public partial class Configuration
@@ -13,8 +13,6 @@ public partial class Configuration
     // ---- Master ----
 
     public bool EnableDynamicCamera { get; set; } = false;
-    public bool ShowDynamicCamToolbar { get; set; } = false;
-    public bool DynCamDebugOverlay { get; set; } = false;
 
     // ---- Combat framing (God of War-style over-the-shoulder) ----
 
@@ -59,56 +57,19 @@ public partial class Configuration
     public float DynCamCombatZoomMemory { get; set; } = 1.0f;
 
     /// <summary>The camera pitch (game DirV) the player last held in combat, persisted so it
-    /// survives the death shot (which forces its own angle) and is restored when combat
-    /// framing resumes — the same memory the combat zoom already has, now for the angle.</summary>
+    /// survives a death and is restored when combat framing resumes — the same memory the
+    /// combat zoom already has, now for the angle.</summary>
     public float DynCamCombatPitchMemory { get; set; } = 0f;
     public bool DynCamCombatPitchMemoryValid { get; set; } = false;
 
-    // ---- Death framing (prone-photographer shot) ----
+    // ---- Death: the automatic death shot (docs/DEATH_SHOTS.md) ----
 
+    /// <summary>The Directed camera directs deaths too ("Directs": Combat and death / Death only).</summary>
     public bool DynCamDeathFraming { get; set; } = true;
 
-    /// <summary>Frame only the controlled character during the death shot. When enabled the
-    /// killer contributes no required anchors and cannot force a wider lens or longer shot.</summary>
-    public bool DynCamDeathIgnoreKiller { get; set; } = false;
-
-    /// <summary>How much of the corpse must stay in frame: 1.0 = head to feet,
-    /// 0.5 ≈ half the body, 0.25 = head and chest only.</summary>
-    public float DynCamDeathBodyVisibility { get; set; } = 1.0f;
-
-    /// <summary>Where the body sits on screen, in NDC (−1 = bottom edge, 0 = centre). The
-    /// camera HEIGHT is derived from this each frame — placing the body low is the whole
-    /// fallen-hero look, and solving the height from it beats hand-tuning a height that only
-    /// works for one angle. Testing bore this out: a manually-dialled height left the body
-    /// dead-centre and the shot feeling like a portrait, not a knockdown.</summary>
-    public float DynCamDeathBodyBand { get; set; } = -0.45f;
-
-    /// <summary>Camera angle in radians. POSITIVE tips the lens down (the photographer
-    /// raises up on their elbows); NEGATIVE tips it up (flat on the ground, looking up past
-    /// the body at the killer standing over it). Tilting further down needs more height and
-    /// distance to still hold the killer in frame — the fit does that for you.</summary>
-    public float DynCamDeathAngle { get; set; } = 0.45f;
-
-    /// <summary>Fill the frame with the body: the camera comes in as close as the constraints
-    /// allow (every required body point, plus the killer, still in frame), with no distance
-    /// floor. A body lying across the view ends up spanning the frame edge to edge. When off,
-    /// the close-up distance below acts as the floor instead.</summary>
-    [Newtonsoft.Json.JsonIgnore] public bool DynCamDeathMaximizeBody => true;
-
-    /// <summary>How close the shot wants to sit to the body, in yalms. The fit only backs
-    /// away from this when the killer will not otherwise fit. Ignored while
-    /// <see cref="DynCamDeathMaximizeBody"/> is on.</summary>
-    [Newtonsoft.Json.JsonIgnore] public float DynCamDeathCloseUpDistance => 1.5f;
-
-    [Newtonsoft.Json.JsonIgnore] public float DynCamDeathTranslateDuration => 2.0f;
-
-
-    // The safe margin, lens band, give-up distance and zoom headroom used to be sliders here.
-    // They are internal solver bounds now (constants on DynamicCameraController): in testing
-    // they either did nothing a player could see or, worse, could be mis-set in ways that
-    // silently broke the shot (an inverted lens range pinned the whole composition to a
-    // super-wide 1.2 rad and shrank everyone). What the shot LOOKS like is fully expressed by
-    // the sliders that remain — body coverage, body position, angle, close-up, duration.
+    /// <summary>The profile of the automatic death shot; Auto picks one by the body's pose. The old death framing's
+    /// own settings (coverage, band, angle, ignore-killer) are retired: everyone starts on Auto.</summary>
+    public Camera.DeathShots.DeathShotProfile DeathShotProfile { get; set; } = Camera.DeathShots.DeathShotProfile.Auto;
 
     /// <summary>Restore every Dynamic Camera option to its shipped default, leaving the master
     /// switch alone (resetting it would switch the feature off and take the page with it,
@@ -130,12 +91,7 @@ public partial class Configuration
         DynCamCombatPitchMemoryValid = d.DynCamCombatPitchMemoryValid;
 
         DynCamDeathFraming = d.DynCamDeathFraming;
-        DynCamDeathIgnoreKiller = d.DynCamDeathIgnoreKiller;
-        DynCamDeathBodyVisibility = d.DynCamDeathBodyVisibility;
-        DynCamDeathBodyBand = d.DynCamDeathBodyBand;
-        DynCamDeathAngle = d.DynCamDeathAngle;
-
-        DynCamDebugOverlay = d.DynCamDebugOverlay;
+        DeathShotProfile = d.DeathShotProfile;
 
         Save();
     }

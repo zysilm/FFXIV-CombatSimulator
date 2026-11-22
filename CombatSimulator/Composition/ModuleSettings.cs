@@ -76,12 +76,10 @@ internal interface IPresentationModuleSettings :
     ICombatLinkSettings,
     IEnemyAreaDisplaySettings,
     IActionOverlaySettings,
-    IDynamicCameraDebugSettings,
     IRagdollDebugSettings
 {
     bool ShowShortcuts { get; }
     bool ShowFastCombatToolbar { get; }
-    bool ShowDynamicCamToolbar { get; }
     bool ShowActiveCamToolbar { get; }
     bool ShowEnemyControlGui { get; }
     bool ShowMainWindow { get; }

@@ -20,7 +20,8 @@ public enum CameraOwner
     DynamicCam = 15,
     /// <summary>Enemy Control creature follow (orbit center only, user keeps rotation/zoom).</summary>
     EnemyControlFollow = 20,
-    /// <summary>Dynamic Camera DEATH shot. Deliberately above EnemyControlFollow: the marquee use
+    /// <summary>The automatic death shot (DeathShotDirector: FoV and held zoom here, eye and look-at through the
+    /// pose hand-over). Deliberately above EnemyControlFollow: the marquee use
     /// of Enemy Control after a death is the creature handling the corpse, and testing showed
     /// the follow centre stealing the camera away from the body the moment a grab started —
     /// the death shot is the one framing that scene and must keep the camera through it.</summary>
