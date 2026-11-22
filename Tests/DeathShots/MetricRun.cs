@@ -87,7 +87,7 @@ internal static class MetricRun
     private static string Short(DeathShotProfile p) => p switch
     {
         DeathShotProfile.LowClose => "Close", DeathShotProfile.LowFace => "Face", DeathShotProfile.LowFullBody => "Full",
-        DeathShotProfile.LevelClose => "Level", DeathShotProfile.HighClose => "High", DeathShotProfile.HighFullBody => "High full",
+        DeathShotProfile.MidClose => "Mid", DeathShotProfile.MidFullBody => "Mid full", DeathShotProfile.HighClose => "High", DeathShotProfile.HighFullBody => "High full",
         DeathShotProfile.GroundLineClose => "GL close", DeathShotProfile.GroundLineFullBody => "GL full", _ => p.ToString(),
     };
 

@@ -12,7 +12,7 @@ namespace CombatSimulator.Camera.DeathShots;
 /// in the dropdown keep theirs unused, so a saved choice of one of them is not read as something else: Auto 0 (dropped
 /// with the automatic side choice: there is nothing left for it to decide), Face 2, Along the body 3, Overhead 4,
 /// Ground profile 5, and the three that differed from the others only by direction: Hips up to the face 11, Low from
-/// the feet 12, Low from behind 13 (<see cref="DeathShotProfiles.Migrate"/>).
+/// the feet 12, Low from behind 13; Level close 15 (no different enough from the others) (<see cref="DeathShotProfiles.Migrate"/>).
 /// </summary>
 public enum DeathShotProfile
 {
@@ -22,8 +22,7 @@ public enum DeathShotProfile
     LowFace = 10,
     /// <summary>The whole body, farther, low.</summary>
     LowFullBody = 14,
-    /// <summary>Hips to chest, close, the camera level with them.</summary>
-    LevelClose = 15,
+
     /// <summary>Hips to chest, close, from above.</summary>
     HighClose = 16,
     /// <summary>The whole body from high above (not straight down).</summary>
@@ -36,6 +35,10 @@ public enum DeathShotProfile
     GrabbedLevel = 20,
     /// <summary>A held-up body, from slightly above.</summary>
     GrabbedAbove = 21,
+    /// <summary>Hips to chest, close, from a little above.</summary>
+    MidClose = 22,
+    /// <summary>The whole body from a little above.</summary>
+    MidFullBody = 23,
 }
 
 /// <summary>The "When grabbed" dropdown.</summary>
@@ -51,13 +54,14 @@ public static class DeathShotProfiles
     public static readonly DeathShotProfile[] Choices =
     {
         DeathShotProfile.LowClose, DeathShotProfile.LowFace, DeathShotProfile.LowFullBody,
-        DeathShotProfile.LevelClose, DeathShotProfile.HighClose, DeathShotProfile.HighFullBody,
+        DeathShotProfile.MidClose, DeathShotProfile.MidFullBody, DeathShotProfile.HighClose, DeathShotProfile.HighFullBody,
         DeathShotProfile.GroundLineClose, DeathShotProfile.GroundLineFullBody,
     };
 
     public static readonly string[] ChoiceLabels =
     {
-        "Low close", "Low on the face", "Low full body", "Level close", "High close", "High full body", "Ground line close", "Ground line full body",
+        "Low close", "Low on the face", "Low full body", "Mid close", "Mid full body", "High close", "High full body",
+        "Ground line close", "Ground line full body",
     };
 
     public static readonly string[] GrabbedLabels = { "Level", "Slightly above" };
@@ -157,11 +161,16 @@ public sealed record ShotRecipe(
         Fov: 0.62f, FrameHeight: 0f, SafeFrame: 0.85f, Elevation: -12f * Deg,
         MinDistance: 1.2f, MaxDistance: 9f);
 
-    /// <summary>Hips to chest at Low close's distance, the camera level with the subject. Not a low shot: "Allow below
-    /// ground" does not apply.</summary>
-    public static readonly ShotRecipe LevelClose = new(DeathShotProfile.LevelClose, ShotSubject.HipsToChest,
-        Fov: 0.62f, FrameHeight: 0.80f, SafeFrame: 0.85f, Elevation: 0f,
+    /// <summary>Hips to chest at Low close's distance, looking down 16°. Not a low shot: "Allow below ground" does
+    /// not apply (nor to the high and ground-line shots below).</summary>
+    public static readonly ShotRecipe MidClose = new(DeathShotProfile.MidClose, ShotSubject.HipsToChest,
+        Fov: 0.62f, FrameHeight: 0.80f, SafeFrame: 0.85f, Elevation: 16f * Deg,
         MinDistance: 0.8f, MaxDistance: 4f, Low: false);
+
+    /// <summary>The whole body looking down 25°, as far as it takes to keep all of it in the frame.</summary>
+    public static readonly ShotRecipe MidFullBody = new(DeathShotProfile.MidFullBody, ShotSubject.WholeBody,
+        Fov: 0.62f, FrameHeight: 0f, SafeFrame: 0.85f, Elevation: 25f * Deg,
+        MinDistance: 1.2f, MaxDistance: 9f, Low: false);
 
     /// <summary>Hips to chest at the same distance, looking down 35°.</summary>
     public static readonly ShotRecipe HighClose = new(DeathShotProfile.HighClose, ShotSubject.HipsToChest,
@@ -174,17 +183,17 @@ public sealed record ShotRecipe(
         Fov: 0.62f, FrameHeight: 0f, SafeFrame: 0.85f, Elevation: 50f * Deg,
         MinDistance: 1.2f, MaxDistance: 9f, Low: false);
 
-    /// <summary>Hips to chest at Low close's distance, low (looking up 8°), the frame raised so the subject's lowest
+    /// <summary>Hips to chest at Low close's distance, low (looking up 14°), the frame raised so the subject's lowest
     /// point sits on the bottom edge (4% above it) and the rest of the frame shows what is above. The eye stays above
     /// the ground ("Allow below ground" does not apply: under the ground the bottom edge would be the ground's underside).</summary>
     public static readonly ShotRecipe GroundLineClose = new(DeathShotProfile.GroundLineClose, ShotSubject.HipsToChest,
-        Fov: 0.62f, FrameHeight: 0.80f, SafeFrame: 0.85f, Elevation: -8f * Deg,
+        Fov: 0.62f, FrameHeight: 0.80f, SafeFrame: 0.85f, Elevation: -14f * Deg,
         MinDistance: 0.8f, MaxDistance: 4f, Low: false, Anchor: ShotAnchor.Lowest, AnchorAt: 0.04f, AnchorSpan: 0.70f);
 
-    /// <summary>The whole body, low (looking up 6°), its lowest point on the bottom edge (4% above it), the body in the
+    /// <summary>The whole body, low (looking up 12°), its lowest point on the bottom edge (4% above it), the body in the
     /// lower 60% of the frame.</summary>
     public static readonly ShotRecipe GroundLineFullBody = new(DeathShotProfile.GroundLineFullBody, ShotSubject.WholeBody,
-        Fov: 0.62f, FrameHeight: 0f, SafeFrame: 0.85f, Elevation: -6f * Deg,
+        Fov: 0.62f, FrameHeight: 0f, SafeFrame: 0.85f, Elevation: -12f * Deg,
         MinDistance: 1.2f, MaxDistance: 9f, Low: false, Anchor: ShotAnchor.Lowest, AnchorAt: 0.04f, AnchorSpan: 0.60f);
 
     /// <summary>A held-up body, camera level with it: the distance of the upper body (chest to head, frame 0.95 m
@@ -206,7 +215,8 @@ public sealed record ShotRecipe(
     {
         DeathShotProfile.LowFace => LowFace,
         DeathShotProfile.LowFullBody => LowFullBody,
-        DeathShotProfile.LevelClose => LevelClose,
+        DeathShotProfile.MidClose => MidClose,
+        DeathShotProfile.MidFullBody => MidFullBody,
         DeathShotProfile.HighClose => HighClose,
         DeathShotProfile.HighFullBody => HighFullBody,
         DeathShotProfile.GroundLineClose => GroundLineClose,

@@ -54,6 +54,7 @@
 - 迁移（`DeathShotProfiles.Migrate`，在 `Configuration.MigrateDuelDeathShot` 里调用）：保存的值不在下拉里时，按主体归到现有档案——Hips up to the face（胸到头）→ Low on the face；Low from the feet、Low from behind（髋到胸）→ Low close；Auto（0）和更早删除的 2–5 → Low close。数字不重用。`DuelDeathShotSide` 退役。
 - 被抓起时的两个机位不在下拉里，见 §6.1。
 - **新增五个档案（2026-11-22 夜，用户要求“角度变化、尸体下沿贴画面下沿”）**，存的数字 15–19（追加，不重排）：**Level close**（髋到胸，1.25 m，平视 0°）、**High close**（髋到胸，1.25 m，俯 35°）、**High full body**（全身贴合，俯 50°，不正俯，画面上方向保持世界竖直）、**Ground line close**（髋到胸的距离，仰 8°，画面上移到主体最低点落在画面底边上方 4%，其余是周围环境）、**Ground line full body**（全身，仰 6°，最低点在底边上方 4%，身体占画面下部 60%）。“贴底边”= 每帧按主体最低的投影点（各贴合点减半径，沉进地面的不算）求出眼位和注视点沿画面上方向的平移（`ShotAnchor.Lowest`，距离和方向不变），由注视点的弹簧缓动；贴底边的两个不推近。五个都不是低机位：**Allow below ground 对它们无效**（地下看时“底边”是地面的背面）。离线：主体在画面内（全程 / 静止）Level 99.9/100、High 99.6/100、High full 98.0/98.7、Ground line close 98.5/99.1、Ground line full 96.0/96.8；离地 < 5 cm 0 帧、硬切 0；最低点离底边（画面高的比例）静止中位 0.039 / 0.036，p95 偏差 0.021 / 0.059；下落中中位 0.047 / 0.053，p95 偏差 0.37 / 0.16。原三个档案与 `cb1b0e6` 逐位相同（`hash --against`，2280 次）。
+- 2026-11-22 夜（游戏内反馈）：**Level close 删除**（与其他档案看不出区别；数字 15 保留不用，存的 15 迁移到 Low close）；新增中间一档 **Mid close**（髋到胸，1.25 m，俯 16°，数字 22）和 **Mid full body**（全身贴合，俯 25°，数字 23）；Ground line 两个眼位放低：close 仰 8° → 14°、full body 仰 6° → 12°（贴底边构图和离地净空不变）。
 - 全身的贴合点带半径（0.10 m × scale；头顶 0.18 m 处另加一点），沉进地面的点抬到地面 + 3 cm。
 
 各档案在参考体型（1.7 m）、平地上的落点（`Tests/DeathShots -- where`；方位是相机原来的，这里取横在身体一侧）：

@@ -67,7 +67,8 @@ public partial class MainWindow
                    "Low close: hips to chest, close, from below.\n" +
                    "Low on the face: the head, close, low.\n" +
                    "Low full body: the whole body, from further back, low.\n" +
-                   "Level close: hips to chest, close, level with them.\n" +
+                   "Mid close: hips to chest, close, from a little above.\n" +
+                   "Mid full body: the whole body from a little above.\n" +
                    "High close: hips to chest, close, from above.\n" +
                    "High full body: the whole body from high above.\n" +
                    "Ground line close / full body: low, the body on the bottom edge of the picture, the surroundings above it.\n" +
