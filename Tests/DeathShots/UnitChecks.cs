@@ -80,6 +80,7 @@ internal static class UnitChecks
         BelowGround();
         SoftChanges();
         Grabbed();
+        Remembered();
         Console.WriteLine(failures == 0 ? "unit checks: all ok" : $"unit checks: {failures} FAILED");
         return failures;
     }
@@ -701,6 +702,108 @@ internal static class UnitChecks
                 var away = o.BaseEye - o.BaseLookAt;
                 Console.WriteLine($"{DeathShotProfiles.Label(profile) + (below ? " (below ground)" : ""),-32} {away.Length(),5:F2} {MathF.Asin(away.Y / away.Length()) / Deg,14:F0} {o.BaseEye.Y,13:F2}  {ShotRecipe.Of(o.Shot).Subject}");
             }
+        }
+    }
+
+    /// <summary>The remembered direction: a shot given one turns to it from the camera's own azimuth
+    /// (DeathShotSolver.Begin; the plugin gives the body's facing at death + the angle the player left the last
+    /// death's shot on).</summary>
+    private static void Remembered()
+    {
+        var world = new FlatWorld();
+        var body = Lying(90f * Deg);
+        var extra = All(body);
+        // One run: start azimuth, remembered azimuth (none = null), the player's orbit over time.
+        (List<DeathShotOutput> Frames, int Cuts) Run(float start, float? target, Func<float, float>? yaw = null, float seconds = 6f, BodyPoints? other = null)
+        {
+            var p = other ?? body;
+            var solver = new DeathShotSolver(world);
+            solver.Begin(p.Chest + DeathShotMath.OrbitDirection(start, 15f * Deg) * 5f, p.Chest, 0.78f, target);
+            var frames = new List<DeathShotOutput>();
+            var cuts = 0;
+            for (var i = 0; i < (int)(seconds * 60f); i++)
+            {
+                var o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = p, Extra = other == null ? extra : All(p), Profile = DeathShotProfile.LowClose, Aspect = 16f / 9f, UserSize = 1f, UserYaw = yaw?.Invoke(i / 60f) ?? 0f });
+                if (o.Cut && i > 0) cuts++;
+                frames.Add(o);
+            }
+            return (frames, cuts);
+        }
+        static float Travel(List<DeathShotOutput> f) => f.Zip(f.Skip(1), (a, b) => MathF.Abs(DeathShotMath.AngleDelta(a.Azimuth, b.Azimuth))).Sum() / Deg;
+        static float Fastest(List<DeathShotOutput> f) => f.Zip(f.Skip(1), (a, b) => MathF.Abs(DeathShotMath.AngleDelta(a.Azimuth, b.Azimuth))).Max() * 60f / Deg;
+
+        // 140 deg to go: reaches it, on a smooth profile, in about a second and a half, and stays.
+        {
+            var (f, cuts) = Run(30f * Deg, 170f * Deg);
+            var arrived = f.FindIndex(o => !o.Recalling) / 60f;
+            var last = f[^1];
+            var firstStep = MathF.Abs(DeathShotMath.AngleDelta(f[0].Azimuth, f[1].Azimuth)) * 60f / Deg;
+            Check("a remembered direction 140 deg from the camera: the shot turns to it (exactly), eased from rest to rest in 1.2-1.6 s, never faster than 150 deg/s, no cut frame, the rendered eye on it at the end",
+                MathF.Abs(DeathShotMath.AngleDelta(170f * Deg, last.Azimuth)) < 1e-5f && RenderedOff(last, 170f * Deg) < 0.05f && arrived is >= 1.2f and <= 1.6f && Fastest(f) <= 151f && firstStep < 5f &&
+                MathF.Abs(Travel(f) - 140f) < 0.01f && cuts == 0 && Reach(last, body.Hips, body.Chest) <= 1f,
+                $"arrived after {arrived:F2} s, fastest {Fastest(f):F0} deg/s (first frame {firstStep:F1} deg/s), turned {Travel(f):F1} deg in all");
+        }
+
+        // The shorter way round, across the +-180 deg seam, and the longest turn there is.
+        {
+            var (f, _) = Run(170f * Deg, -170f * Deg);
+            var (half, _) = Run(0f, 179f * Deg);
+            Check("from 170 deg to -170 deg: 20 deg the short way (not 340); a turn of 179 deg takes longer instead of going faster than 150 deg/s",
+                MathF.Abs(Travel(f) - 20f) < 0.01f && MathF.Abs(DeathShotMath.AngleDelta(-170f * Deg, f[^1].Azimuth)) < 1e-5f &&
+                MathF.Abs(Travel(half) - 179f) < 0.01f && Fastest(half) <= 151f && half.FindIndex(o => !o.Recalling) / 60f is > 1.7f and < 1.9f,
+                $"turned {Travel(f):F1} deg; the 179 deg turn: {half.FindIndex(o => !o.Recalling) / 60f:F2} s, fastest {Fastest(half):F0} deg/s");
+        }
+
+        // The player's hand during the turn: it ends the turn where it is, and the azimuth is theirs from there.
+        {
+            // From 0.5 s the player drags 30 deg over half a second, then holds still.
+            float Hand(float t) => 30f * Deg * Math.Clamp((t - 0.5f) / 0.5f, 0f, 1f);
+            var (f, cuts) = Run(30f * Deg, 170f * Deg, Hand);
+            var cancelled = f.FindIndex(o => !o.Recalling);
+            var offsetThen = f[cancelled].RecallOffset;
+            var worst = 0f;
+            var jump = 0f;
+            for (var i = cancelled; i < f.Count; i++)
+            {
+                worst = MathF.Max(worst, MathF.Abs(DeathShotMath.AngleDelta(30f * Deg + offsetThen + Hand(i / 60f), f[i].Azimuth)) / Deg);
+                jump = MathF.Max(jump, MathF.Abs(DeathShotMath.AngleDelta(f[i - 1].Azimuth, f[i].Azimuth)) / Deg - MathF.Abs(Hand(i / 60f) - Hand((i - 1) / 60f)) / Deg);
+            }
+            var still = MathF.Abs(DeathShotMath.AngleDelta(f[^1].Azimuth, f[90].Azimuth)) / Deg;
+            Check("the player drags during the turn: the turn stops there (it does not go on to the remembered direction), nothing jumps, and from then on the azimuth moves with the hand alone",
+                cancelled / 60f is > 0.5f and < 0.6f && worst < 1e-3f && jump < 1e-3f && still < 1e-3f && cuts == 0 && MathF.Abs(DeathShotMath.AngleDelta(170f * Deg, f[^1].Azimuth)) > 20f * Deg,
+                $"stopped at {cancelled / 60f:F2} s, {offsetThen / Deg:F1} deg of the 140 done; after that off the hand by at most {worst:F5} deg; 1 s after the hand stopped the camera had moved {still:F5} deg");
+            // A hand that barely moves (under 1 deg in all) does not stop it.
+            var (g, _) = Run(30f * Deg, 170f * Deg, t => 0.5f * Deg * MathF.Sin(t * 20f));
+            Check("a hand that moves less than 1 deg does not stop the turn", MathF.Abs(g.Last(o => o.Recalling).RecallOffset / Deg - 140f) < 5f && !g[^1].Recalling && MathF.Abs(g[^1].RecallOffset / Deg - 140f) < 1e-3f);
+        }
+
+        // Nothing remembered: the shot of before, bit for bit; and a remembered direction equal to the camera's own
+        // changes nothing either.
+        {
+            var (a, _) = Run(30f * Deg, null);
+            var solver = new DeathShotSolver(world);
+            solver.Begin(body.Chest + DeathShotMath.OrbitDirection(30f * Deg, 15f * Deg) * 5f, body.Chest, 0.78f);
+            var same = true;
+            foreach (var o in a)
+            {
+                var b = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = body, Extra = extra, Profile = DeathShotProfile.LowClose, Aspect = 16f / 9f, UserSize = 1f });
+                same &= o.Eye == b.Eye && o.LookAt == b.LookAt && o.Fov == b.Fov && o.RecallOffset == 0f && !o.Recalling;
+            }
+            var (c, _) = Run(30f * Deg, 30f * Deg);
+            Check("nothing remembered: the same output as a shot started the old way, bit for bit, and the azimuth never changes; a remembered direction equal to the camera's: no turn",
+                same && Travel(a) < 1e-4f && Travel(c) < 1e-3f);
+        }
+
+        // The same angle from the facing gives the same picture on a body that faced another way: what the plugin
+        // stores is relative to the facing at death.
+        {
+            const float angle = 140f * Deg;
+            var turned = Turn(body, Vector3.UnitY, 75f * Deg);
+            var (a, _) = Run(30f * Deg, 0f + angle);
+            var (b, _) = Run(200f * Deg, 75f * Deg + angle, other: turned);
+            var q = Quaternion.CreateFromAxisAngle(Vector3.UnitY, 75f * Deg);
+            var error = Vector3.Distance(Vector3.Transform(a[^1].Eye, q), b[^1].Eye) + Vector3.Distance(Vector3.Transform(a[^1].LookAt, q), b[^1].LookAt);
+            Check("facing + the same remembered angle on a body that faced 75 deg another way, from another start camera: the same picture, turned with the body", error < 2e-3f, $"difference {error * 1000f:F2} mm");
         }
     }
 

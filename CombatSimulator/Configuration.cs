@@ -741,6 +741,8 @@ public partial class Configuration : IPluginConfiguration
                 DuelDeathShotBelowGround = below.Value<bool>();
         }
         DuelDeathShot = Camera.DeathShots.DeathShotProfiles.Migrate(DuelDeathShot);
+        if (DuelDeathShotAngle is { } angle && !float.IsFinite(angle))
+            DuelDeathShotAngle = null;
         if (!System.Enum.IsDefined(DuelDeathShotGrabbed))
             DuelDeathShotGrabbed = Camera.DeathShots.DeathShotGrabbedFraming.Level;
     }

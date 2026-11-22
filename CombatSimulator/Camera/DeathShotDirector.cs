@@ -138,6 +138,16 @@ public sealed unsafe class DeathShotDirector : IDisposable
     private float userYaw, userSize = 1f, lastDirH, pendingWheel;
     private bool haveDirH;
 
+    // The remembered direction (config.DuelDeathShotAngle): the shot's azimuth relative to the body's facing at
+    // death. Of this death: the facing (the character's root yaw when its shot first started), the shot's angle
+    // from it as last seen (kept here every frame, so it is there to store whenever and however the shot ends),
+    // whether the player turned the camera, whether a stored angle was used, and what the player turned while the
+    // body was held (left out of what is stored).
+    private float deathFacing, shotAngle, grabYaw, turnedTotal;
+    private bool haveDeathFacing, haveShotAngle, usedRemembered;
+    /// <summary>The player has turned the camera when they have turned it this far in all.</summary>
+    private const float TurnedAtAll = 2f * MathF.PI / 180f;
+
     // blend back to the game's camera
     private float blendOutTime;
 
@@ -210,6 +220,62 @@ public sealed unsafe class DeathShotDirector : IDisposable
     /// blow; deaths resolve on a delay) knows a ragdoll is still to come.</summary>
     public void OnDeathAnimation() => deathAnimationStarted = true;
 
+    /// <summary>
+    /// Stores the direction the player left this death's shot on (relative to the facing at death), so the next
+    /// death's shot turns to it. Called at the top of every <see cref="Stop"/>, whatever state the shot is in, with
+    /// values kept up to date while it ran. Stored on the ordinary ends: the simulation is reset or restarted
+    /// ("simulation reset"), stopped ("no simulation"), the player is revived, the camera mode is changed, a scene
+    /// takes the camera, the plugin unloads, the shot is no longer asked for. Not stored, and forgotten for this
+    /// death, where the view may be garbage: zone change, logout, an error, a stalled tick, an unreadable body, no
+    /// player. Where the game takes the camera for a while (its own cutscene, group pose) nothing is stored yet and
+    /// the death's angle is kept for when the shot comes back.
+    /// Only when the player turned the camera during the shot, or a stored angle was in use.
+    /// </summary>
+    private void RememberAngle(string reason)
+    {
+        if (!haveDeathFacing && !haveShotAngle) return;
+        var store = reason is "simulation reset" or "no simulation" or "revived" or "not in Duel mode" or "a scene has the camera"
+            or "no longer wanted" or "unloaded" or "stopped";
+        var discard = reason is "zone change" or "logged out" or "error" or "tick stalled" or "the body cannot be read" or "no player";
+        if (!store && !discard) return;
+        if (store && haveShotAngle && float.IsFinite(shotAngle))
+        {
+            var turned = turnedTotal > TurnedAtAll;
+            var before = config.DuelDeathShotAngle;
+            if (turned || usedRemembered && before.HasValue)
+            {
+                if (before is not { } old || MathF.Abs(DeathShotMath.AngleDelta(old, shotAngle)) > 0.002f)
+                {
+                    config.DuelDeathShotAngle = shotAngle;
+                    config.Save();
+                }
+                log.Info($"DeathShot: remembered {Degrees(shotAngle):+0;-0}° from the facing at death ({reason}; " +
+                         $"{(before is { } was ? $"was {Degrees(was):+0;-0}°" : "nothing was remembered before")}" +
+                         $"{(MathF.Abs(grabYaw) > TurnedAtAll ? $"; {Degrees(grabYaw):+0;-0}° turned while the body was held is left out" : "")}).");
+            }
+            else
+            {
+                log.Info($"DeathShot: no angle remembered ({reason}) — the camera was not turned during the shot.");
+            }
+        }
+        else if (discard && turnedTotal > TurnedAtAll)
+        {
+            log.Info($"DeathShot: the angle of this death is not remembered ({reason}).");
+        }
+        haveDeathFacing = haveShotAngle = usedRemembered = false;
+        grabYaw = turnedTotal = 0f;
+    }
+
+    /// <summary>The Duel Camera header's "Forget angle": the next death shot stays where the camera is again.</summary>
+    public void ForgetAngle()
+    {
+        config.DuelDeathShotAngle = null;
+        config.Save();
+        usedRemembered = false;
+        turnedTotal = 0f;
+        log.Info("DeathShot: the remembered angle is forgotten.");
+    }
+
     /// <summary>CombatEvents.SimulationReset: everyone is put back; the shot ends at once.</summary>
     public void OnSimulationReset() => Stop("simulation reset");
 
@@ -232,6 +298,7 @@ public sealed unsafe class DeathShotDirector : IDisposable
         if (alive)
         {
             if (state is State.Running or State.Waiting) Stop("revived", blend: true);
+            else RememberAngle("revived"); // (a death whose shot had already given way to the game's own cutscene)
             failed = false;
             return;
         }
@@ -444,7 +511,24 @@ public sealed unsafe class DeathShotDirector : IDisposable
             if (float.IsFinite(s) && s > 0.2f) bodyScale = Math.Clamp(s, 0.4f, 4f);
         }
 
-        solver.Begin(eye, look, rendered);
+        // The direction the player left the last death's shot on, from this body's facing (its root yaw now, at
+        // death: the death animation plays from it, so the same angle gives the same picture). A shot that comes
+        // back within one death (after a cutscene shot) returns to where it was.
+        if (!haveDeathFacing)
+        {
+            deathFacing = ((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)body)->Rotation;
+            haveDeathFacing = float.IsFinite(deathFacing);
+        }
+        float? recall = null;
+        if (haveDeathFacing && (haveShotAngle ? shotAngle : config.DuelDeathShotAngle) is { } angle && float.IsFinite(angle))
+        {
+            recall = DeathShotMath.WrapAngle(deathFacing + angle);
+            usedRemembered |= !haveShotAngle;
+            shotAngle = angle;
+            haveShotAngle = true;
+        }
+        grabYaw = 0f;
+        solver.Begin(eye, look, rendered, recall);
         state = State.Running;
         shotTime = 0f;
         hadFrame = false;
@@ -485,7 +569,11 @@ public sealed unsafe class DeathShotDirector : IDisposable
         log.Info($"DeathShot: {(afterWaiting && resumed ? "resumes" : "start")} — profile {Label(profile)}" +
                  $"{(config.DuelDeathShotBelowGround ? ", below ground allowed" : "")}, when grabbed: {DeathShotProfiles.GrabbedLabels[(int)config.DuelDeathShotGrabbed]}, " +
                  $"body scale {(bodyScale > 0f ? bodyScale.ToString("0.00") : "from the first frame")}; " +
-                 $"from the camera at azimuth {Degrees(DeathShotMath.Azimuth(away)):0}° (kept: left and right are the player's), {away.Length():0.00} m, lens {Degrees(rendered):0.0}° " +
+                 $"from the camera at azimuth {Degrees(DeathShotMath.Azimuth(away)):0}° " +
+                 (recall is { } to
+                     ? $"(remembered angle {Degrees(shotAngle):+0;-0}° from the facing {Degrees(deathFacing):0}°; easing {Degrees(DeathShotMath.AngleDelta(DeathShotMath.Azimuth(away), to)):+0;-0}° to azimuth {Degrees(to):0}°), "
+                     : "(kept, nothing remembered: left and right are the player's), ") +
+                 $"{away.Length():0.00} m, lens {Degrees(rendered):0.0}° " +
                  $"(game yaw {Degrees(game->DirH):0}°, FoV field {game->FoV:0.000}, field→lens ratio {fovRatio:0.000}, aspect {aspect:0.00}).");
         resumed = false;
         return true;
@@ -538,6 +626,9 @@ public sealed unsafe class DeathShotDirector : IDisposable
             {
                 userYaw = DeathShotMath.WrapAngle(userYaw + turned);
                 windowYaw += MathF.Abs(turned);
+                // (What is turned while the body is held is about where the holder has put it, and is not remembered.)
+                if (last.Grabbed) grabYaw += turned;
+                else turnedTotal += MathF.Abs(turned);
             }
         }
         if (float.IsFinite(dirH))
@@ -583,6 +674,14 @@ public sealed unsafe class DeathShotDirector : IDisposable
             Grabbed = bodyGrabbed(),
             GrabbedFraming = config.DuelDeathShotGrabbed,
         });
+
+        // This death's angle from the facing, for RememberAngle (while the turn to a remembered angle is under way
+        // it is that angle, not where the turn has got to).
+        if (haveDeathFacing && (!o.Recalling || !haveShotAngle))
+        {
+            shotAngle = DeathShotMath.WrapAngle(o.Azimuth - grabYaw - deathFacing);
+            haveShotAngle = true;
+        }
 
         var first = !hadFrame;
         hadFrame = true;
@@ -775,6 +874,8 @@ public sealed unsafe class DeathShotDirector : IDisposable
     /// otherwise the game's camera is back on the next update (reset, zone change, logout, unload, a game cutscene).</summary>
     public void Stop(string reason = "stopped", bool blend = false)
     {
+        // First of all, before the camera is released or anything is put back: the angle the player left the shot on.
+        RememberAngle(reason);
         failed = false;
         pendingWheel = 0f;
         beginFailure = null;
@@ -890,7 +991,7 @@ public sealed unsafe class DeathShotDirector : IDisposable
         log.Info($"DeathShot: {t:0.0} s — {Label(o.Shot)} [{PoseWord(o.Pose)}], " +
                  $"{(o.Holding ? "holding" : expect && !physics ? "waiting for the ragdoll" : "following")}, {(physics ? "ragdoll bodies" : "bones")}; " +
                  $"{Side(in o, in points)}, eye {(ground is { } g ? o.Eye.Y >= g ? $"{o.Eye.Y - g:0.00} m above ground" : $"{g - o.Eye.Y:0.00} m BELOW ground" : "over no ground")}, " +
-                 $"lens {Degrees(o.Fov):0.0}°; player's orbit {Degrees(userYaw):+0;-0}° since the start ({Degrees(windowYaw):0}° turned in the last 5 s), azimuth {Degrees(o.Azimuth):0}°, size ×{userSize:0.00}; " +
+                 $"lens {Degrees(o.Fov):0.0}°; player's orbit {Degrees(userYaw):+0;-0}° since the start ({Degrees(windowYaw):0}° turned in the last 5 s), azimuth {Degrees(o.Azimuth):0}°{(haveShotAngle ? $" = {Degrees(shotAngle):+0;-0}° from the facing" : "")}{(o.Recalling ? " (turning to the remembered angle)" : "")}, size ×{userSize:0.00}; " +
                  $"last 5 s: eye up to {windowEyeSpeed:0.00} m/s, view up to {windowViewRate:0}°/s, " +
                  $"{(windowFrames > 0 ? (float)windowRays / windowFrames : 0f):0.0} rays/frame (max {windowRaysMax}); " +
                  $"{(o.Grabbed ? "held; " : "")}{(o.PulledIn ? "view blocked, pulled in; " : "")}handed {overrideCount}.");

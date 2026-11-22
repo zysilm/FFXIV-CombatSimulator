@@ -15,6 +15,9 @@ internal struct Cam
     public int ShotChanges, Pops;
     /// <summary>The shot's azimuth (the start camera's plus the player's orbit), and the orbit fed this frame.</summary>
     public float Azimuth, UserYaw;
+    /// <summary>How far the turn to a remembered direction has got (radians), and whether it is still under way.</summary>
+    public float RecallOffset;
+    public bool Recalling;
     public bool Grabbed;
     public string? Event;
 }
@@ -48,10 +51,11 @@ internal static class Runners
     /// <paramref name="yaw"/>: the player's orbit over time (none = no input); <paramref name="grabbed"/>: the body
     /// is told to be held all the way (the recordings have no grabs: this is the held framing on a falling body).</summary>
     public static Cam[] New(Trajectory t, RecordedWorld world, StartCamera start, DeathShotProfile profile, out float bodyScale, bool oldSourceAtSwitch = true, bool belowGround = false,
-        Func<float, float>? yaw = null, DeathShotGrabbedFraming? grabbed = null)
+        Func<float, float>? yaw = null, DeathShotGrabbedFraming? grabbed = null, float? remembered = null)
     {
         var solver = new DeathShotSolver(world);
-        solver.Begin(start.Eye, start.LookAt, start.Fov);
+        // A remembered angle is from the body's facing at death, as the plugin stores it.
+        solver.Begin(start.Eye, start.LookAt, start.Fov, remembered is { } angle ? DeathShotMath.WrapAngle(t.Facing + angle) : null);
         var cams = new Cam[t.Frames.Length];
         var extra = new Vector3[t.Bones.Length - CoreBones];
         var wasPhysics = false;
@@ -72,7 +76,7 @@ internal static class Runners
             });
             cams[i] = new Cam
             {
-                Azimuth = o.Azimuth, UserYaw = yaw?.Invoke(f.Time) ?? 0f, Grabbed = o.Grabbed,
+                Azimuth = o.Azimuth, UserYaw = yaw?.Invoke(f.Time) ?? 0f, Grabbed = o.Grabbed, RecallOffset = o.RecallOffset, Recalling = o.Recalling,
                 Eye = o.Eye, LookAt = o.LookAt, Fov = o.Fov, Cut = o.Cut, BaseEye = o.BaseEye, GoalEye = o.GoalEye, GoalLookAt = o.GoalLookAt,
                 Holding = o.Holding, PulledIn = o.PulledIn, HasDiagnostics = true, Pose = o.Pose, Shot = o.Shot,
                 ShotChanges = o.ShotChanges, Pops = o.TerrainPops,

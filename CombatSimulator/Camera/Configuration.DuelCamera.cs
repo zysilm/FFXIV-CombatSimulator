@@ -29,4 +29,9 @@ public partial class Configuration
     /// <summary>"When grabbed": how a body that is held up (Enemy Control's grab, a corpse being carried off) is
     /// framed.</summary>
     public Camera.DeathShots.DeathShotGrabbedFraming DuelDeathShotGrabbed { get; set; } = Camera.DeathShots.DeathShotGrabbedFraming.Level;
+
+    /// <summary>The direction the player left the last death shot on: the azimuth of the eye about the body minus the
+    /// body's facing at death, radians. The next death's shot turns to it. Null: nothing remembered (the shot stays
+    /// where the camera is). Written by the death shot when the player turned the camera; "Forget angle" clears it.</summary>
+    public float? DuelDeathShotAngle { get; set; }
 }

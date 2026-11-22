@@ -27,6 +27,9 @@ internal static class MetricRun
         /// <summary>Run with the player orbiting (<see cref="Runners.Orbit"/>): the caps on the view's turn and the
         /// smoothness comparison are about the program's own moves and are not gated here.</summary>
         public bool Orbit;
+        /// <summary>Run with a remembered angle (from the facing at death, radians): the shot turns to it at the
+        /// start, which is a move of the program's own that is not under the 60 deg/s cap.</summary>
+        public float? Recall;
         /// <summary>The column's own subject is the head-to-feet chain (the Directed camera's anchors: no arms).</summary>
         public bool OwnIsChain;
         public ShotSubject Subject;
@@ -47,6 +50,10 @@ internal static class MetricRun
         /// the rendered eye's azimuth about the rendered look-at point against the shot's: over the whole run, and
         /// with the body at rest.</summary>
         public float AzimuthOff, RenderedOff, RenderedOffAtRest;
+        /// <summary>Recall columns: how far from facing + remembered the shot's azimuth is at the end of the run (runs
+        /// longer than 3 s), how far the turns were, how long they took, how fast they went at most.</summary>
+        public float RecallEndOff, RecallFastest;
+        public readonly List<float> RecallTurn = new(), RecallTime = new();
         /// <summary>Below-ground columns: frames with the eye under the ground, how deep, and where Low close sits on
         /// a lying body at rest (looking-up angle, distance for the reference body).</summary>
         public long BelowGround, BelowGroundAtRest, LyingFrames;
@@ -60,6 +67,8 @@ internal static class MetricRun
             Below5 += o.Below5; TriFrames += o.TriFrames; TriBlocked += o.TriBlocked;
             PulledIn += o.PulledIn; CutFrames += o.CutFrames;
             MinClearance = MathF.Min(MinClearance, o.MinClearance);
+            RecallEndOff = MathF.Max(RecallEndOff, o.RecallEndOff); RecallFastest = MathF.Max(RecallFastest, o.RecallFastest);
+            RecallTurn.AddRange(o.RecallTurn); RecallTime.AddRange(o.RecallTime);
             AzimuthOff = MathF.Max(AzimuthOff, o.AzimuthOff); RenderedOff = MathF.Max(RenderedOff, o.RenderedOff); RenderedOffAtRest = MathF.Max(RenderedOffAtRest, o.RenderedOffAtRest);
             Size.AddRange(o.Size); EyeSpeed.AddRange(o.EyeSpeed); ViewSpeed.AddRange(o.ViewSpeed); Jerk.AddRange(o.Jerk); ViewAccel.AddRange(o.ViewAccel); FovRate.AddRange(o.FovRate);
             Travel.AddRange(o.Travel); EyeJump.AddRange(o.EyeJump); LookJump.AddRange(o.LookJump);
@@ -108,6 +117,12 @@ internal static class MetricRun
                 Run = (t, w, s) => { var c = Runners.New(t, w, s, p, out var scale, yaw: Runners.Orbit); return (c, scale); },
             });
         }
+        // A remembered angle (140 deg from the facing at death, behind and to one side): the shot turns to it.
+        columns.Add(new Column
+        {
+            Name = "Close recall", IsNew = true, Recall = 140f * Deg, Subject = ShotSubject.HipsToChest,
+            Run = (t, w, s) => { var c = Runners.New(t, w, s, DeathShotProfile.LowClose, out var scale, remembered: 140f * Deg); return (c, scale); },
+        });
         // The framings of a held body, on the recorded (falling) bodies: head top to mid-thigh.
         foreach (var framing in new[] { DeathShotGrabbedFraming.Level, DeathShotGrabbedFraming.SlightlyAbove })
         {
@@ -303,7 +318,9 @@ internal static class MetricRun
             // the azimuth: the shot's against the start camera's plus the hand's; the rendered eye's against the shot's
             if (cam.HasDiagnostics)
             {
-                a.AzimuthOff = MathF.Max(a.AzimuthOff, MathF.Abs(DeathShotMath.AngleDelta(start.Azimuth + cam.UserYaw, cam.Azimuth)) / Deg);
+                a.AzimuthOff = MathF.Max(a.AzimuthOff, MathF.Abs(DeathShotMath.AngleDelta(start.Azimuth + cam.RecallOffset + cam.UserYaw, cam.Azimuth)) / Deg);
+                if (i > 0 && cams[i - 1].Recalling)
+                    a.RecallFastest = MathF.Max(a.RecallFastest, MathF.Abs(cam.RecallOffset - cams[i - 1].RecallOffset) / MathF.Max(MathF.Min(f.Dt, 0.1f), 1e-4f) / Deg);
                 var away = cam.Eye - cam.LookAt;
                 if (away.X * away.X + away.Z * away.Z > 1e-4f)
                 {
@@ -444,6 +461,13 @@ internal static class MetricRun
         }
         CloseWindow(t.Frames[^1].Time);
         a.Travel.Add(travel);
+        if (column.Recall is { } remembered && t.Frames[^1].Time > 3f)
+        {
+            a.RecallEndOff = MathF.Max(a.RecallEndOff, MathF.Abs(DeathShotMath.AngleDelta(t.Facing + remembered, cams[^1].Azimuth)) / Deg);
+            a.RecallTurn.Add(MathF.Abs(cams[^1].RecallOffset) / Deg);
+            var done = Array.FindIndex(cams, c => !c.Recalling);
+            if (done >= 0) a.RecallTime.Add(t.Frames[done].Time);
+        }
         if (cams[^1].HasDiagnostics)
         {
             a.Pops += cams[^1].Pops;
@@ -570,8 +594,14 @@ internal static class MetricRun
                 $"{a.CutFrames - a.Pops} cut frames; eye in terrain {a.Pops}; changes of shot {a.ShotChanges}");
             Gate(c.Orbit
                     ? "the azimuth is the player's: the shot's azimuth = the start camera's + the hand's on every frame (one to one)"
-                    : "no azimuth change without input: the shot's azimuth = the start camera's on every frame, through fall, ragdoll and settle",
-                a.AzimuthOff <= 1e-3f, $"off by at most {a.AzimuthOff:F5} deg over {a.Frames} frames");
+                    : c.Recall.HasValue
+                        ? "no azimuth change without input other than the turn to the remembered angle: the shot's azimuth = the start camera's + that turn on every frame"
+                        : "no azimuth change without input (unless a remembered angle is being eased to: none here): the shot's azimuth = the start camera's on every frame, through fall, ragdoll and settle",
+                a.AzimuthOff <= 1e-3f && (c.Recall.HasValue || a.RecallFastest == 0f), $"off by at most {a.AzimuthOff:F5} deg over {a.Frames} frames");
+            if (c.Recall.HasValue)
+                Gate("the turn ends on facing at death + the remembered angle, the shorter way round, at no more than 150 deg/s",
+                    a.RecallTurn.Count > 0 && a.RecallEndOff < 1e-3f && a.RecallTurn.Max() <= 180.01f && a.RecallFastest <= 151f,
+                    a.RecallTurn.Count == 0 ? "no run" : $"{a.RecallTurn.Count} deaths: off by at most {a.RecallEndOff:F5} deg at the end; turns of {a.RecallTurn.Min():F0}..{a.RecallTurn.Max():F0} deg (median {Stats.P(a.RecallTurn, .5f):F0}), done after {a.RecallTime.Min():F2}..{a.RecallTime.Max():F2} s, fastest {a.RecallFastest:F0} deg/s");
             // (The rendered eye can trail the shot's azimuth while the caps on its speed and on the view's turn hold
             // it back in a fast fall; once it has settled it is on it.)
             if (!c.Orbit)
@@ -579,7 +609,7 @@ internal static class MetricRun
                     $"settled {a.RenderedOffAtRest:F3} deg; over all frames (the speed caps at work) at most {a.RenderedOff:F2} deg");
             else
                 Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  info  rendered eye azimuth against the hand's: at most {a.RenderedOff:F2} deg off; view up to {a.ViewSpeed.Max():F0} deg/s, eye up to {a.EyeSpeed.Max():F2} m/s (the hand's own speed is not capped)"));
-            if (!c.Orbit)
+            if (!c.Orbit && !c.Recall.HasValue)
                 Gate("view angular speed <= 60 deg/s outside cuts", a.ViewSpeed.Max() <= 60.5f, $"max {a.ViewSpeed.Max():F1}");
             Gate("ragdoll-start jump < 2 cm", a.EyeJump.Max() < 0.02f && a.LookJump.Max() < 0.02f, $"eye {a.EyeJump.Max() * 100f:F2} cm, view {a.LookJump.Max() * 100f:F2} cm at 1 m");
             // (A held body is followed on springs four times slower: the last of the way in is slower than the
@@ -603,13 +633,13 @@ internal static class MetricRun
                     $"below 5 cm: {a.Below5} vs Directed {directed.Below5}, Old {old.Below5}; min {a.MinClearance:F3} vs {directed.MinClearance:F3}, {old.MinClearance:F3} m");
             var jerk = Stats.P(a.Jerk, .99f);
             var accel = Stats.P(a.ViewAccel, .99f);
-            if (!c.Orbit)
+            if (!c.Orbit && !c.Recall.HasValue)
                 Gate("smoothness not worse than both baselines (eye jerk p99, view angular acceleration p99)",
                     jerk <= Stats.P(directed.Jerk, .99f) * 1.05f && jerk <= Stats.P(old.Jerk, .99f) * 1.05f &&
                     accel <= Stats.P(directed.ViewAccel, .99f) * 1.05f && accel <= Stats.P(old.ViewAccel, .99f) * 1.05f,
                     $"jerk {jerk:F0} vs Directed {Stats.P(directed.Jerk, .99f):F0}, Old {Stats.P(old.Jerk, .99f):F0} m/s3; accel {accel:F0} vs {Stats.P(directed.ViewAccel, .99f):F0}, {Stats.P(old.ViewAccel, .99f):F0} deg/s2");
             else
-                Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  info  with the hand moving: eye jerk p99 {jerk:F0} m/s3, view angular acceleration p99 {accel:F0} deg/s2 (Directed {Stats.P(directed.Jerk, .99f):F0} / {Stats.P(directed.ViewAccel, .99f):F0}, Old {Stats.P(old.Jerk, .99f):F0} / {Stats.P(old.ViewAccel, .99f):F0})"));
+                Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  info  with the {(c.Orbit ? "hand moving" : $"turn to the remembered angle (view up to {a.ViewSpeed.Max():F0} deg/s)")}: eye jerk p99 {jerk:F0} m/s3, view angular acceleration p99 {accel:F0} deg/s2 (Directed {Stats.P(directed.Jerk, .99f):F0} / {Stats.P(directed.ViewAccel, .99f):F0}, Old {Stats.P(old.Jerk, .99f):F0} / {Stats.P(old.ViewAccel, .99f):F0})"));
             if (c.Name == "Close")
                 Gate("old presets' height and distance on a standing or kneeling body (19-26 deg up, 1.0-1.35 m)",
                     a.OldUp.Count > 0 && a.OldUp.Min() >= 19f && a.OldUp.Max() <= 26f && a.OldDistance.Min() >= 1.0f && a.OldDistance.Max() <= 1.35f &&

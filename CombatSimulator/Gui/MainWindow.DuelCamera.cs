@@ -19,6 +19,9 @@ public partial class MainWindow
     /// <summary>The duel camera's one-line status (set by the composition root).</summary>
     public Func<string>? DuelCameraStatus { get; set; }
 
+    /// <summary>"Forget angle": drops the direction the death shot remembers (set by the composition root).</summary>
+    public Action? ForgetDuelDeathShotAngle { get; set; }
+
     private void DrawDuelCamSection()
     {
         if (!config.EnableDuelCamera || config.EnableActiveCamera || config.EnableDynamicCamera)
@@ -60,7 +63,7 @@ public partial class MainWindow
             config.Save();
         }
         HelpMarker("Which way the camera looks from is yours: drag left or right to go round the body, as with the game's camera. " +
-                   "It stays where you leave it. The shot sets what is framed, how close and how low; the wheel changes the size.\n" +
+                   "It stays where you leave it, and the next death shot turns to the same side by itself. The shot sets what is framed, how close and how low; the wheel changes the size.\n" +
                    "Low close: hips to chest, close, from below.\n" +
                    "Low on the face: the head, close, low.\n" +
                    "Low full body: the whole body, from further back, low.\n" +
@@ -85,5 +88,14 @@ public partial class MainWindow
         }
         HelpMarker("The camera may go under the ground to look up at a body lying on it (the ground is not drawn from below). " +
                    "Off: the camera stays above the ground.");
+
+        // Only while there is something to forget.
+        if (config.DuelDeathShotAngle.HasValue)
+        {
+            if (ImGui.Button("Forget angle##duelcam"))
+                ForgetDuelDeathShotAngle?.Invoke();
+            HelpMarker("The death shot remembers the side you last turned it to, measured from the way you were facing when you fell, " +
+                       "and turns to it at the start of the next one. Forget it, and the next death shot stays where the camera is.");
+        }
     }
 }

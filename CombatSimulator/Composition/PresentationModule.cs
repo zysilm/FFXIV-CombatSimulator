@@ -90,6 +90,7 @@ internal sealed class PresentationModule
         mainWindow.ArmorDetachment = armorDetachmentController;
         mainWindow.CutsceneShots = m.Camera.CutsceneShots;
         mainWindow.DuelCameraStatus = () => m.Camera.Duel?.Status ?? "off";
+        mainWindow.ForgetDuelDeathShotAngle = () => m.Camera.DeathShots.ForgetAngle();
         enemyControlController.GrabStarted += mainWindow.HideEnemyControlAnchorMarkers;
     }
 

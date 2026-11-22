@@ -77,8 +77,13 @@ public struct DeathShotOutput
     public bool ShotChanged;
     public int ShotChanges;
     /// <summary>The azimuth of the eye about the look-at point that the shot is on: the camera's own when the shot
-    /// began plus the player's orbit, and nothing else.</summary>
+    /// began, plus the ease to a remembered direction when the shot was given one (<see cref="RecallOffset"/>), plus
+    /// the player's orbit, and nothing else.</summary>
     public float Azimuth;
+    /// <summary>How far the ease to the remembered direction has turned the shot so far (radians, signed; 0 when
+    /// none was given), and whether it is still under way.</summary>
+    public float RecallOffset;
+    public bool Recalling;
     /// <summary>The body is framed as a held body (from the grab until it is let go and lies still).</summary>
     public bool Grabbed;
     /// <summary>Times the eye was found inside the terrain and had to be put on top of it (each is a cut frame).</summary>
@@ -148,6 +153,10 @@ public sealed class DeathShotSolver
     public const float HandSmoothTime = 0.15f, HandSeconds = 0.5f;
     public const float MaxFovWiden = 1.35f;
     public const float PushInReach = 0.95f;
+    /// <summary>The ease to a remembered direction (<see cref="Begin"/>): a smoothstep over this long, longer where
+    /// the turn is so far that its fastest moment (1.5 × the mean) would pass <see cref="MaxRecallRate"/>; the
+    /// player's hand ends it once it has turned the camera by <see cref="RecallCancel"/>.</summary>
+    public const float RecallSeconds = 1.2f, MaxRecallRate = 150f * Deg, RecallCancel = 1f * Deg;
     public const float MotionDelay = 1.0f;
     public const float RampSeconds = 0.6f;
     public const float OutOfFrame = 1.02f;
@@ -234,6 +243,10 @@ public sealed class DeathShotSolver
     private ShotRecipe recipe = ShotRecipe.LowClose;
     /// <summary>The azimuth of the camera the shot began from: the player's orbit is added to it, nothing else.</summary>
     private float baseAzimuth;
+    // the ease to a remembered direction
+    private float? recallTarget;
+    private float recallDelta, recallSeconds, recallAge, recallOffset;
+    private bool recalling;
     private bool wasSettled;
     private int shotChanges, pops;
     private float rampAge;
@@ -260,10 +273,14 @@ public sealed class DeathShotSolver
     public float BodyScale => scale;
 
     /// <summary>Starts a death shot from the camera as it is now (the shot eases in from it). Without it the first
-    /// frame is the solved shot itself.</summary>
-    public void Begin(Vector3 eye, Vector3 lookAt, float verticalFov)
+    /// frame is the solved shot itself. <paramref name="rememberedAzimuth"/>: a direction (world azimuth of the eye
+    /// about the body) the player left the last death shot on: the shot turns to it from the camera's own, the
+    /// shorter way round, on a smooth profile, while the height and the distance ease in. The player's hand ends that
+    /// turn where it is and takes over. None: the shot stays on the camera's own azimuth.</summary>
+    public void Begin(Vector3 eye, Vector3 lookAt, float verticalFov, float? rememberedAzimuth = null)
     {
         Reset();
+        recallTarget = rememberedAzimuth is { } a && float.IsFinite(a) ? a : null;
         hasStart = true;
         startEye = eye;
         startLook = lookAt;
@@ -288,6 +305,9 @@ public sealed class DeathShotSolver
         shotChanges = pops = 0;
         grabbed = releasing = wasBelow = emerging = false;
         releaseAge = heldBlend = handBlend = 0f;
+        recallTarget = null;
+        recallDelta = recallSeconds = recallAge = recallOffset = 0f;
+        recalling = false;
         reason = "start";
         holding = false;
         holdFor = 0f;
@@ -443,8 +463,32 @@ public sealed class DeathShotSolver
             baseAzimuth = hasStart && startAway.X * startAway.X + startAway.Z * startAway.Z > 1e-6f
                 ? Azimuth(startAway)
                 : Azimuth(subjectFrame.FrontHorizontal);
+            if (recallTarget is { } target)
+            {
+                // A remembered direction: the shorter way round to it, eased. (Without a camera to start from there
+                // is nothing to ease from: the shot starts on it.)
+                if (!hasStart) baseAzimuth = target;
+                recallDelta = AngleDelta(baseAzimuth, target);
+                recallSeconds = MathF.Max(RecallSeconds, 1.5f * MathF.Abs(recallDelta) / MaxRecallRate);
+                recalling = MathF.Abs(recallDelta) > 1e-4f;
+            }
         }
-        var wantedAzimuth = WrapAngle(baseAzimuth + input.UserYaw);
+        else if (recalling)
+        {
+            // The player's hand on the camera ends the turn where it is: from here the azimuth is theirs alone.
+            if (MathF.Abs(input.UserYaw) > RecallCancel) recalling = false;
+            else
+            {
+                recallAge += dt;
+                recallOffset = recallDelta * SmoothStep(recallAge / recallSeconds);
+                if (recallAge >= recallSeconds)
+                {
+                    recallOffset = recallDelta;
+                    recalling = false;
+                }
+            }
+        }
+        var wantedAzimuth = WrapAngle(baseAzimuth + recallOffset + input.UserYaw);
         var goal = Solve(recipe, wantedAzimuth, recipe.Elevation, subjectFrame, subjectPoints, subjectExtra, subjectGround, aspect, userSize);
         var pulled = false;
         if (Obstructed(recipe, goal.Centre, goal.Eye, subjectGround, out var hit, out var groundLike))
@@ -635,6 +679,8 @@ public sealed class DeathShotSolver
         output.ShotChanged = changed;
         output.ShotChanges = shotChanges;
         output.Azimuth = azimuth;
+        output.RecallOffset = recallOffset;
+        output.Recalling = recalling;
         output.Grabbed = grabbed;
         output.TerrainPops = pops;
         output.PulledIn = pulled;
