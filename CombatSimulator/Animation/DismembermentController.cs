@@ -153,6 +153,14 @@ public unsafe partial class DismembermentController : IDisposable
     public Func<IReadOnlyList<nint>>? PcDismemberNpcCollisionProvider { get; set; }
     public RagdollController? PlayerRagdollController { get; set; }
 
+    /// <summary>The death ragdoll driving the character at an address (the player's or an enemy's), or null
+    /// while it has none. A separated part scheduled "on ragdoll activated" waits until this ragdoll's
+    /// physics has started; a part separated at death keeps its piece hidden on the body until then.</summary>
+    public Func<nint, RagdollController?>? RagdollFor { get; set; }
+
+    // A part scheduled for the ragdoll's start is dropped if no ragdoll starts for its body by then.
+    private const float MaxRagdollWaitSeconds = 60f;
+
     /// <summary>Optional sink for the body-side recoil: (sourceAddress, body-side bone, angular
     /// velocity). When the piece is kicked away with the activation impulse, the stump above the cut
     /// is spun so it visibly flicks up instead of being pushed straight into the body.</summary>
@@ -403,7 +411,9 @@ public unsafe partial class DismembermentController : IDisposable
     {
         public nint SourceAddress;
         public string LimbRootBone = "";
-        public float Delay;
+        // Spawn once the body's ragdoll physics has started (RagdollFor), not at once.
+        public bool WaitForRagdoll;
+        public float WaitedSeconds;
         public string? GlamourBase64;
         public HandoffSnapshot? LastSample;
         // Source identity captured at SCHEDULE time (the source is still alive then). Reading it
@@ -420,12 +430,22 @@ public unsafe partial class DismembermentController : IDisposable
         public int SourceSkeletonBoneCount;
         public int SourceSkeletonParentCount;
         public int SourceSkeletonSignature;
+        // What a human source RENDERS (race, body, face, equipment), captured with the identity above.
+        // The game-side setup that CopyFromCharacter copies is the actor's own data, which Glamourer
+        // and similar tools leave untouched. Null when the source does not draw a human model.
+        public RenderedHumanAppearance? SourceRenderedHuman;
         public int GearKeepModelSlot = -1;
         public string? GearExpectedAppearanceSignature;
         public bool GearHideSkin;
         public string? GearHiddenOppositeRootBone;
         public bool GearRealAttachmentRequested;
         public bool GearTethered;
+    }
+
+    private sealed class RenderedHumanAppearance
+    {
+        public CustomizeData Customize;
+        public readonly EquipmentModelId[] Equipment = new EquipmentModelId[10];
     }
 
     private readonly List<Clone> clones = new();
@@ -473,6 +493,7 @@ public unsafe partial class DismembermentController : IDisposable
         this.config = config;
         this.log = log;
         boneService.OnRenderFrame += OnRenderFrame;
+        boneService.OnFinalPoseModifiers += HideSeparatedPartsOnBodies;
     }
 
     public bool HasAny => clones.Count > 0 || pending.Count > 0;
@@ -547,12 +568,13 @@ public unsafe partial class DismembermentController : IDisposable
 
         foreach (var bone in selected)
             if (!HasTrackedBone(sourceAddress, bone))
-                SpawnFor(sourceAddress, bone, 0f, glamourBase64);
+                SpawnFor(sourceAddress, bone, glamourBase64, waitForRagdoll: false);
     }
 
-    /// <summary>Schedule a severed-limb clone for <paramref name="limbRootBone"/> on the given character,
-    /// firing after <paramref name="delay"/> (matches the ragdoll activation delay).</summary>
-    public void SpawnFor(nint sourceAddress, string limbRootBone, float delay, string? glamourBase64)
+    /// <summary>Schedule a separated-part clone for <paramref name="limbRootBone"/> on the given character:
+    /// on the next render frame, or, with <paramref name="waitForRagdoll"/>, the moment the body's ragdoll
+    /// physics starts (<see cref="RagdollFor"/>).</summary>
+    public void SpawnFor(nint sourceAddress, string limbRootBone, string? glamourBase64, bool waitForRagdoll)
     {
         if (sourceAddress == nint.Zero || string.IsNullOrEmpty(limbRootBone)) return;
         if (clones.Exists(c => c.SourceAddress == sourceAddress && c.LimbRootBone == limbRootBone && c.GearKeepModelSlot < 0)) return;
@@ -561,7 +583,7 @@ public unsafe partial class DismembermentController : IDisposable
         {
             SourceAddress = sourceAddress,
             LimbRootBone = limbRootBone,
-            Delay = MathF.Max(0f, delay),
+            WaitForRagdoll = waitForRagdoll,
             GlamourBase64 = glamourBase64,
         };
         CaptureSourceIdentity(p);
@@ -579,12 +601,109 @@ public unsafe partial class DismembermentController : IDisposable
         {
             SourceAddress = sourceAddress,
             LimbRootBone = limbRootBone,
-            Delay = 0f,
             GlamourBase64 = glamourBase64,
         };
         CaptureSourceIdentity(p);
         TryRefreshHandoff(p, 1f / 60f);
         TrySpawn(p);
+    }
+
+    // Parts separated at death, hidden on their body until its ragdoll's physics starts (from then on the
+    // ragdoll hides them itself: it was given the same bones through SetDismemberedBones).
+    private sealed class BodyHide
+    {
+        public nint Address;
+        public uint EntityId;
+        public string Bone = "";
+        public bool SawRagdoll;
+        public float Age;
+    }
+    private readonly List<BodyHide> bodyHides = new();
+    private readonly System.Diagnostics.Stopwatch bodyHideClock = System.Diagnostics.Stopwatch.StartNew();
+    private const float MaxBodyHideSeconds = 60f;
+
+    /// <summary>
+    /// Separation at death: hide <paramref name="bones"/>' pieces on the body at <paramref name="address"/>
+    /// from now on, while the death animation still drives it. Stops once its ragdoll's physics has started
+    /// (the ragdoll then hides them), if its ragdoll goes away (revived), or after a minute without one.
+    /// </summary>
+    public void HideOnBodyUntilRagdoll(nint address, IEnumerable<string> bones)
+    {
+        if (address == nint.Zero) return;
+        var entityId = ((GameObject*)address)->EntityId;
+        foreach (var bone in bones)
+        {
+            if (string.IsNullOrWhiteSpace(bone) ||
+                bodyHides.Exists(h => h.Address == address && h.Bone == bone)) continue;
+            bodyHides.Add(new BodyHide { Address = address, EntityId = entityId, Bone = bone });
+        }
+    }
+
+    // Runs after the animation and the ragdolls have written the pose (BoneTransformService.OnFinalPoseModifiers).
+    private void HideSeparatedPartsOnBodies()
+    {
+        var dt = (float)bodyHideClock.Elapsed.TotalSeconds;
+        bodyHideClock.Restart();
+        if (bodyHides.Count == 0) return;
+
+        for (var i = bodyHides.Count - 1; i >= 0; i--)
+        {
+            var hide = bodyHides[i];
+            hide.Age += Math.Clamp(dt, 0f, 0.1f);
+            var obj = (GameObject*)hide.Address;
+            var ragdoll = RagdollFor?.Invoke(hide.Address);
+            if (ragdoll != null) hide.SawRagdoll = true;
+            var done = obj->EntityId != hide.EntityId || obj->DrawObject == null ||
+                       ragdoll is { PhysicsStarted: true } ||
+                       (hide.SawRagdoll && ragdoll == null) ||
+                       hide.Age > MaxBodyHideSeconds;
+            if (done)
+            {
+                bodyHides.RemoveAt(i);
+                continue;
+            }
+            if (boneService.TryGetSkeleton(hide.Address) is { } skel)
+                CollapseBodyPiece(skel, hide.Bone);
+        }
+    }
+
+    // The ragdoll's own hide (collapse the part's bone subtree, and the partial skeletons on it, to ~0
+    // scale at its joint), for a body the ragdoll does not drive yet.
+    private void CollapseBodyPiece(SkeletonAccess skel, string rootBone)
+    {
+        var rootIdx = boneService.ResolveBoneIndex(skel, rootBone);
+        if (rootIdx < 0) return;
+        var pose = skel.Pose;
+        ref var rootM = ref pose->ModelPose.Data[rootIdx];
+        var cx = rootM.Translation.X;
+        var cy = rootM.Translation.Y;
+        var cz = rootM.Translation.Z;
+        var n = Math.Min(skel.BoneCount, skel.ParentCount);
+        for (var i = 0; i < n; i++)
+        {
+            if (!IsDescendantOrSelf(skel, i, rootIdx)) continue;
+            ref var m = ref pose->ModelPose.Data[i];
+            m.Translation.X = cx; m.Translation.Y = cy; m.Translation.Z = cz;
+            m.Scale.X = 0.0001f; m.Scale.Y = 0.0001f; m.Scale.Z = 0.0001f; // NOT 0 — singular matrix => NaN glitch
+        }
+
+        var skeleton = skel.CharBase->Skeleton;
+        if (skeleton == null) return;
+        for (var ps = 1; ps < skeleton->PartialSkeletonCount; ps++)
+        {
+            var ppose = skeleton->PartialSkeletons[ps].GetHavokPose(0);
+            if (ppose == null || ppose->Skeleton == null || ppose->ModelInSync == 0) continue;
+            var count = ppose->ModelPose.Length;
+            if (count < 1 || ppose->Skeleton->Bones.Length < 1) continue;
+            var mainIdx = boneService.ResolveBoneIndex(skel, ppose->Skeleton->Bones[0].Name.String ?? "");
+            if (mainIdx < 0 || !IsDescendantOrSelf(skel, mainIdx, rootIdx)) continue;
+            for (var b = 0; b < count; b++)
+            {
+                ref var m = ref ppose->ModelPose.Data[b];
+                m.Translation.X = cx; m.Translation.Y = cy; m.Translation.Z = cz;
+                m.Scale.X = 0.0001f; m.Scale.Y = 0.0001f; m.Scale.Z = 0.0001f;
+            }
+        }
     }
 
     /// <summary>Drop a single equipment piece as a falling rigid body. Spawns a clone
@@ -624,7 +743,6 @@ public unsafe partial class DismembermentController : IDisposable
         {
             SourceAddress = sourceAddress,
             LimbRootBone = attachBone,
-            Delay = 0f,
             GlamourBase64 = glamourBase64,
             GearKeepModelSlot = keepModelSlot,
             // Preset 5 is "half off, hanging on the body": the limp rig with some segments left on the body
@@ -668,10 +786,23 @@ public unsafe partial class DismembermentController : IDisposable
             var s = srcDraw->Scale;
             if (s.X > 0f && s.Y > 0f && s.Z > 0f)
                 p.SourceScale = s;
+            p.SourceRenderedHuman = CaptureRenderedHuman((CharacterBase*)srcDraw);
         }
         if (boneService.TryGetSkeleton(p.SourceAddress) is { } skel)
             CaptureSourceSkeletonFingerprint(p, skel);
         p.IdentityCaptured = true;
+    }
+
+    private static RenderedHumanAppearance? CaptureRenderedHuman(CharacterBase* draw)
+    {
+        if (draw->GetModelType() != CharacterBase.ModelType.Human)
+            return null;
+        var human = (Human*)draw;
+        var appearance = new RenderedHumanAppearance { Customize = human->Customize };
+        var equipment = human->EquipmentModels;
+        for (var i = 0; i < appearance.Equipment.Length && i < equipment.Length; i++)
+            appearance.Equipment[i] = equipment[i];
+        return appearance;
     }
 
     private static void CaptureSourceSkeletonFingerprint(Pending p, SkeletonAccess skel)
@@ -736,6 +867,7 @@ public unsafe partial class DismembermentController : IDisposable
     public void RemoveAll()
     {
         pending.Clear();
+        bodyHides.Clear();
         if (clones.Count == 0)
         {
             ClearPcNpcCollisionStatics();
@@ -758,27 +890,24 @@ public unsafe partial class DismembermentController : IDisposable
 
             TickCloneSlotCooldowns();
 
-            // Tick pending spawns (delay countdown).
+            // Pending spawns: at once, or (timing "On ragdoll activated") the instant physics takes the
+            // body over, whatever start moment the ragdoll uses.
             for (int i = pending.Count - 1; i >= 0; i--)
             {
                 var p = pending[i];
                 var dt = frameDt;
                 TryRefreshHandoff(p, dt);
-                // A ragdoll that picks its own moment has no delay known in advance: the severed
-                // part waits for it, and goes the instant physics takes the body over.
-                if (PlayerRagdollController is { IsActive: true, StartsOnItsOwn: true } ragdoll &&
-                    ragdoll.TargetCharacterAddress == p.SourceAddress)
+                if (p.WaitForRagdoll && RagdollFor?.Invoke(p.SourceAddress) is not { PhysicsStarted: true })
                 {
-                    if (!ragdoll.PhysicsStarted)
+                    p.WaitedSeconds += dt;
+                    if (p.WaitedSeconds <= MaxRagdollWaitSeconds)
                         continue;
-                    p.Delay = 0f;
-                }
-                p.Delay -= dt;
-                if (p.Delay <= 0f)
-                {
                     pending.RemoveAt(i);
-                    TrySpawn(p);
+                    log.Info($"Dismember: no ragdoll started for 0x{p.SourceAddress:X} within {MaxRagdollWaitSeconds:F0} s; part '{p.LimbRootBone}' dropped");
+                    continue;
                 }
+                pending.RemoveAt(i);
+                TrySpawn(p);
             }
 
             if (clones.Count == 0) return;
@@ -875,12 +1004,12 @@ public unsafe partial class DismembermentController : IDisposable
         // Appearance must be decided from actor/model identity, not just skeleton
         // topology. Some monster models use human-like skeletons; routing those
         // through the humanoid copy path bootstraps them as player-shaped clones.
-        // A piece of armour taken off a human (an ally's or an enemy's, not only the player's) is cloned
-        // from what that human renders right now, like the player's: the BNpc row would rebuild its
-        // Excel outfit, not necessarily the one it is wearing.
-        var gearFromRenderedHuman = p.GearKeepModelSlot >= 0 &&
-            skel.CharBase->GetModelType() == CharacterBase.ModelType.Human;
-        var useMonsterAppearance = !isPlayerControlledSource && !gearFromRenderedHuman &&
+        // A part of a human (the player's, an ally's or an enemy's; a separated part or a piece of
+        // armour) is cloned from what that human rendered when it was scheduled: the BNpc row would
+        // rebuild its Excel outfit and CopyFromCharacter its game-side look, neither necessarily the
+        // one it shows (Glamourer changes only what is rendered, race included).
+        var renderedHuman = p.SourceRenderedHuman;
+        var useMonsterAppearance = !isPlayerControlledSource && renderedHuman == null &&
             (ids.BNpcBaseId > 0 || sourceModelCharaId > 0);
 
         var clientObjMgr = ClientObjectManager.Instance();
@@ -906,7 +1035,7 @@ public unsafe partial class DismembermentController : IDisposable
         WriteCloneName((GameObject*)obj, index);
 
         SetupCloneAppearance(character, src, (GameObject*)obj, sourceIsHumanoid,
-            useMonsterAppearance, ids, sourceModelCharaId, p.GearKeepModelSlot >= 0);
+            useMonsterAppearance, ids, sourceModelCharaId, renderedHuman);
         character->SetMode(CharacterModes.Normal, 0);
         if (p.GearKeepModelSlot >= 0) character->Timeline.OverallSpeed = 1f;
 
@@ -1099,7 +1228,7 @@ public unsafe partial class DismembermentController : IDisposable
 
     private void SetupCloneAppearance(Character* target, Character* source, GameObject* obj,
         bool sourceIsHumanoid, bool useMonsterAppearance,
-        (uint BNpcBaseId, uint BNpcNameId) ids, int sourceModelCharaId, bool useRenderedHuman = false)
+        (uint BNpcBaseId, uint BNpcNameId) ids, int sourceModelCharaId, RenderedHumanAppearance? renderedHuman)
     {
         if (useMonsterAppearance || !sourceIsHumanoid)
         {
@@ -1128,15 +1257,14 @@ public unsafe partial class DismembermentController : IDisposable
                 ? CharacterSetupContainer.CopyFlags.None
                 : CharacterSetupContainer.CopyFlags.ClassJob | CharacterSetupContainer.CopyFlags.WeaponHiding;
             target->CharacterSetup.CopyFromCharacter(source, flags);
-            if (useRenderedHuman && source->DrawObject != null &&
-                ((CharacterBase*)source->DrawObject)->GetModelType() == CharacterBase.ModelType.Human)
+            if (renderedHuman != null)
             {
-                // Seed the second setup with the LIVE human, not the game's unglamoured race
-                // and equipment. Otherwise an asynchronous race redraw is required just to
-                // load the intended garment; IPC acceptance alone cannot guarantee that redraw.
-                var human = (Human*)source->DrawObject;
-                target->DrawData.CustomizeData = human->Customize;
-                human->EquipmentModels.CopyTo(target->DrawData.EquipmentModelIds);
+                // Seed the second setup with the RENDERED human, not the game's unglamoured race
+                // and equipment. Otherwise the clone is built with the actor's real look, and only
+                // an asynchronous race redraw after Glamourer's ApplyState could change it; IPC
+                // acceptance alone cannot guarantee that redraw lands before the part is armed.
+                target->DrawData.CustomizeData = renderedHuman.Customize;
+                renderedHuman.Equipment.CopyTo(target->DrawData.EquipmentModelIds);
                 target->ModelContainer.ModelCharaId = 0;
             }
             target->CharacterSetup.CopyFromCharacter(target, CharacterSetupContainer.CopyFlags.None);
@@ -1873,88 +2001,6 @@ public unsafe partial class DismembermentController : IDisposable
             4 => $"j_asi_b_{side}",
             _ => null,
         };
-    }
-
-    // === Is the garment still being worn? (see ShouldCarryExternalRig) ===
-    // Chain rig: a piece is still on its bone while it is within this far of that bone's capsule.
-    private const float WornChainMargin = 0.12f;
-    // How much of a garment must still be on the body for the whole thing to come along. Half, so a
-    // coat hanging off one shoulder with its hem on the floor still counts as worn.
-    private const float WornFraction = 0.5f;
-
-    /// <summary>
-    /// Should this garment rig ride along when the corpse is picked up? Handed to the ragdoll, which
-    /// calls it while projecting the body onto a grab or a hold.
-    ///
-    /// Nothing ties a garment to the body but contact, so a projection that teleports the corpse into
-    /// a fist leaves the clothes standing on the ground. Carrying them fixes that — but only the ones
-    /// still ON the body. See <see cref="IsGarmentWorn"/> for how that is decided.
-    /// </summary>
-    internal bool ShouldCarryExternalRig(RagdollController.ExternalRigHandle rig)
-    {
-        if (!config.KoStripGarmentFollowsBody) return false;
-
-        foreach (var clone in clones)
-        {
-            if (!ReferenceEquals(clone.GearRagdollRig, rig)) continue;
-            return IsGarmentWorn(clone);
-        }
-        return false; // not a piece of ours
-    }
-
-    /// <summary>
-    /// Is this garment still on the body, rather than lying on the floor next to it?
-    ///
-    /// Geometry, not proximity: a fallen coat is often DIRECTLY under the corpse, so distance says
-    /// nothing. A piece counts as on its bone while its rig body sits within cloth thickness of that
-    /// bone's skin.
-    /// </summary>
-    private bool IsGarmentWorn(Clone c)
-    {
-        var on = 0;
-        var total = 0;
-
-        var rig = c.GearGarmentRig;
-        var ragdoll = PlayerRagdollController;
-        if (rig == null || ragdoll == null || c.GearRagdollRig == null) return false;
-
-        foreach (var body in rig.Bodies)
-        {
-            if (string.IsNullOrEmpty(body.BoneName)) continue;
-            var meshBody = ragdoll.IsMeshBody(body.BoneName);
-            if (!ragdoll.TryGetBoneCapsule(body.BoneName, out var capsule) && !meshBody) continue;
-            if (!TryGetGarmentRigBodyPose(c, body, out var position, out _, out _, out _)) continue;
-            total++;
-
-            // How far clear of the skin it is, so cloth thickness is all that has to be tolerated.
-            float surfaceGap;
-            if (meshBody)
-            {
-                if (!ragdoll.TryGetCharacterSurface(body.BoneName, position,
-                        CharacterSurfaceUsage.Physics, out var hit)) continue;
-                surfaceGap = Vector3.Distance(position, hit.Point);
-            }
-            else surfaceGap = MathF.Max(0f, DistanceToCapsuleAxis(capsule, position) - capsule.Radius);
-            if (surfaceGap <= WornChainMargin) on++;
-        }
-
-        return total > 0 && on >= total * WornFraction;
-    }
-
-    /// <summary>Shortest distance from a point to the capsule's axis segment — i.e. how far off the
-    /// bone it is, with the bone's own length taken out of the answer.</summary>
-    private static float DistanceToCapsuleAxis(in RagdollController.BoneCapsule capsule, Vector3 point)
-    {
-        var axis = Vector3.Transform(Vector3.UnitY, capsule.Orientation);
-        var a = capsule.Center - axis * capsule.HalfLength;
-        var b = capsule.Center + axis * capsule.HalfLength;
-
-        var ab = b - a;
-        var lengthSq = ab.LengthSquared();
-        if (lengthSq < 1e-8f) return Vector3.Distance(point, capsule.Center);
-
-        var t = Math.Clamp(Vector3.Dot(point - a, ab) / lengthSq, 0f, 1f);
-        return Vector3.Distance(point, a + ab * t);
     }
 
     /// <summary>Create the garment rig inside the DismembermentController's own local simulation, used when
@@ -7745,6 +7791,7 @@ public unsafe partial class DismembermentController : IDisposable
     public void Dispose()
     {
         boneService.OnRenderFrame -= OnRenderFrame;
+        boneService.OnFinalPoseModifiers -= HideSeparatedPartsOnBodies;
         RemoveAll();
         DestroySimulation();
     }

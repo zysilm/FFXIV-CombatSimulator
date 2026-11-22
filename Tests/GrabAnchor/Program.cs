@@ -194,5 +194,84 @@ var settings = new JsonSerializerSettings
     Check(EnemyControlGrabPairList.Deduplicate(empty, ensureOne: true) && empty.Count == 1 && empty[0].NpcAnchor == null, "empty list gets the default pair");
 }
 
+// ── 5. Arm pose override in profiles (restored 2026-11-21): stored next to the anchors ──
+string[] armNames =
+{
+    "LeftArmUpperPitch", "LeftArmUpperYaw", "LeftArmUpperRoll", "LeftArmLowerPitch", "LeftArmLowerYaw", "LeftArmLowerRoll",
+    "RightArmUpperPitch", "RightArmUpperYaw", "RightArmUpperRoll", "RightArmLowerPitch", "RightArmLowerYaw", "RightArmLowerRoll",
+};
+float[] ArmValues(EnemyControlGrabProfile p) => armNames.Select(n => (float)typeof(EnemyControlGrabProfile).GetProperty(n)!.GetValue(p)!).ToArray();
+{
+    // A profile in the shape the plugin saved before the 2026-11-15 removal (angles based on a real saved profile, two made fractional),
+    // plus an anchored pair as saved since.
+    const string saved = """
+        {"Name":"doublegrab",
+         "Pairs":[{"NpcBone":"j_te_r","PlayerBone":"j_kubi",
+                   "NpcAnchor":{"Bone":"j_te_r","OffsetX":0.05,"OffsetY":0.0,"OffsetZ":0.02,"NormalX":0.0,"NormalY":1.0,"NormalZ":0.0,"PickScale":1.0},
+                   "PlayerAnchor":{"Bone":"j_kubi","OffsetX":0.01,"OffsetY":-0.02,"OffsetZ":0.071,"NormalX":0.0,"NormalY":0.0,"NormalZ":1.0,"PickScale":1.25}},
+                  {"NpcBone":"j_te_l","PlayerBone":"j_kosi","NpcAnchor":null,"PlayerAnchor":null}],
+         "GrabEmoteId":0,"GrabAnyBone":true,"GrabGripReach":1.55,
+         "ArmPoseEnabled":true,
+         "LeftArmUpperPitch":-7.0,"LeftArmUpperYaw":-5.0,"LeftArmUpperRoll":-73.0,
+         "LeftArmLowerPitch":0.5,"LeftArmLowerYaw":-0.25,"LeftArmLowerRoll":-56.0,
+         "RightArmUpperPitch":24.0,"RightArmUpperYaw":-51.0,"RightArmUpperRoll":10.0,
+         "RightArmLowerPitch":21.0,"RightArmLowerYaw":-90.0,"RightArmLowerRoll":-41.0}
+        """;
+    float[] expected = { -7f, -5f, -73f, 0.5f, -0.25f, -56f, 24f, -51f, 10f, 21f, -90f, -41f };
+    var loaded = JsonConvert.DeserializeObject<EnemyControlGrabProfile>(saved, settings)!;
+    Check(loaded.ArmPoseEnabled && ArmValues(loaded).SequenceEqual(expected), "arm pose: all 13 values load");
+    Check(loaded.Pairs.Count == 2 && loaded.Pairs[0].PlayerAnchor is { Bone: "j_kubi", PickScale: 1.25f } && loaded.Pairs[0].NpcAnchor is { Bone: "j_te_r" }
+          && loaded.Pairs[1].NpcAnchor == null, "arm pose: anchors load alongside");
+
+    // Load → save → load again, the way the profile list does it (pairs copied deep and de-duplicated).
+    var resaved = new EnemyControlGrabProfile { Name = loaded.Name, ArmPoseEnabled = loaded.ArmPoseEnabled };
+    foreach (var pair in EnemyControlGrabPairList.CopyForUse(loaded.Pairs)) resaved.Pairs.Add(EnemyControlGrabPairList.Clone(pair));
+    foreach (var n in armNames)
+    {
+        var prop = typeof(EnemyControlGrabProfile).GetProperty(n)!;
+        prop.SetValue(resaved, prop.GetValue(loaded));
+    }
+    var json = JsonConvert.SerializeObject(resaved, settings);
+    Check(armNames.All(n => json.Contains($"\"{n}\":")) && json.Contains("\"ArmPoseEnabled\":true"), "arm pose: all 13 names written");
+    var back = JsonConvert.DeserializeObject<EnemyControlGrabProfile>(json, settings)!;
+    Check(back.ArmPoseEnabled && ArmValues(back).SequenceEqual(expected), "arm pose: all 13 values survive load → save → load");
+    var pa = back.Pairs[0].PlayerAnchor;
+    Check(pa != null && pa.Offset == new Vector3(0.01f, -0.02f, 0.071f) && pa.Normal == Vector3.UnitZ && pa.PickScale == 1.25f
+          && back.Pairs[0].NpcAnchor is { Bone: "j_te_r" } na && na.Offset == new Vector3(0.05f, 0f, 0.02f)
+          && back.Pairs.Count == 2 && back.Pairs[1].NpcAnchor == null && back.Pairs[1].PlayerAnchor == null,
+        "arm pose: anchors survive the same round trip");
+}
+{
+    // A profile saved without arm fields (between 2026-11-15 and 2026-11-21) loads with the override off.
+    const string withoutArms = """{"Name":"plain","Pairs":[{"NpcBone":"j_te_r","PlayerBone":"j_kubi"}],"GrabGripReach":1.75}""";
+    var p = JsonConvert.DeserializeObject<EnemyControlGrabProfile>(withoutArms, settings)!;
+    Check(!p.ArmPoseEnabled && ArmValues(p).All(v => v == 0f), "profile without arm fields: override off, angles 0");
+}
+{
+    // The profile list's Save/Load (MainWindow, not compilable offline) must copy every arm field both ways.
+    var dir = new DirectoryInfo(AppContext.BaseDirectory);
+    while (dir != null && !File.Exists(Path.Combine(dir.FullName, "CombatSimulator", "Gui", "MainWindow.EnemyControl.cs"))) dir = dir.Parent;
+    Check(dir != null, "found CombatSimulator/Gui/MainWindow.EnemyControl.cs");
+    if (dir != null)
+    {
+        var src = File.ReadAllText(Path.Combine(dir.FullName, "CombatSimulator", "Gui", "MainWindow.EnemyControl.cs"));
+        string Body(string method)
+        {
+            var start = src.IndexOf($"private void {method}(", StringComparison.Ordinal);
+            if (start < 0) return string.Empty;
+            var end = src.IndexOf("\n    }", start, StringComparison.Ordinal);
+            return end < 0 ? src[start..] : src[start..end];
+        }
+        var save = Body("SaveEnemyControlGrabProfile");
+        var load = Body("LoadEnemyControlGrabProfile");
+        foreach (var n in armNames.Prepend("ArmPoseEnabled"))
+        {
+            var cfg = n == "ArmPoseEnabled" ? "EnemyControlArmPoseEnabled" : $"EnemyControl{n}";
+            Check(save.Contains($"snapshot.{n} = config.{cfg};"), $"Save copies {n}");
+            Check(load.Contains($"config.{cfg} = p.{n};"), $"Load copies {n}");
+        }
+    }
+}
+
 Console.WriteLine(failures == 0 ? $"Grab anchor: {checks} checks passed." : $"Grab anchor: {failures} of {checks} checks FAILED.");
 return failures == 0 ? 0 : 1;

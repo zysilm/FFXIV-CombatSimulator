@@ -38,6 +38,15 @@ public enum RagdollNpcCollisionMode
     Mesh = 2,
 }
 
+/// <summary>When a separated part comes off (PC and enemy separation alike).</summary>
+public enum SeparationTiming
+{
+    /// <summary>At the death itself: the part comes off and is hidden on the body while the death animation still plays.</summary>
+    OnDeath = 0,
+    /// <summary>The moment the body's ragdoll physics starts.</summary>
+    OnRagdollActivated = 1,
+}
+
 [Serializable]
 public partial class Configuration : IPluginConfiguration
 {
@@ -113,9 +122,10 @@ public partial class Configuration : IPluginConfiguration
     // behavior when Glamourer is not installed.
     public string PartyCompanionGlamourerDesignId { get; set; } = "";
 
-    // Armor Detachment (Ragdoll tab). "Detach armor" is one dropdown over these two exclusive switches.
-    public bool KoStripEnabled { get; set; } = false;
-    public bool KoStripOnHitEnabled { get; set; } = false;
+    // Armor Detachment (Ragdoll tab): "Detach armor" - Off, On KO (at the knockout itself), or On ragdoll
+    // activated (the moment the body's ragdoll physics starts). Replaced KoStripEnabled / KoStripOnHitEnabled
+    // (2026-11-22, MigrateKoStripTrigger).
+    public Dev.ArmorDetachmentTrigger KoStripTrigger { get; set; } = Dev.ArmorDetachmentTrigger.Off;
     public bool KoStripHead { get; set; } = true;
     public bool KoStripBody { get; set; } = true;
     public bool KoStripHands { get; set; } = true;
@@ -142,11 +152,6 @@ public partial class Configuration : IPluginConfiguration
     // transition is the known crash exposure this exists to reduce.
     public bool KoStripCloneAutoExpireEnabled { get; set; } = false;
     public float KoStripCloneAutoExpireSeconds { get; set; } = 2f;
-
-    // Pieces still attached to the body travel with it when the body is moved as a whole. Pieces that
-    // have already come away stay put; which is which is decided by whether the piece still wraps the
-    // bones it was built around, not by how near the body it happens to lie.
-    public bool KoStripGarmentFollowsBody { get; set; } = false;
 
     // Body/Legs garment behaviour. Stored values keep their historic numbering:
     // 1 drop when the body settles, 5 Visual only (enhanced).
@@ -179,8 +184,7 @@ public partial class Configuration : IPluginConfiguration
         // The master switch. Resetting it would turn the whole feature off and take the page with
         // it, which reads as the button having broken something rather than having restored it —
         // same reasoning as EnableRagdoll on the Ragdoll page (see RagdollPageResetExclusions).
-        nameof(KoStripEnabled),
-        nameof(KoStripOnHitEnabled),
+        nameof(KoStripTrigger),
     };
 
     private static bool IsArmorDetachmentOption(string name)
@@ -287,6 +291,8 @@ public partial class Configuration : IPluginConfiguration
     public bool EnableEnemyDismemberment { get; set; } = false;
     public int EnemyHumanoidDismembermentCount { get; set; } = 0;
     public float EnemyMonsterDismembermentBonePercent { get; set; } = 100.0f;
+    // PC Dismemberment and Enemy Dismemberment: "Timing".
+    public SeparationTiming DismemberTiming { get; set; } = SeparationTiming.OnDeath;
 
     // Death collapse — physics-driven guided collapse on death (relaxation family + directed
     // knee power-loss). Config lives in GuidedCollapse; see DEATH_COLLAPSE_RESEARCH.md.
@@ -536,6 +542,7 @@ public partial class Configuration : IPluginConfiguration
         pluginInterface = pi;
         MigrateHpBarLabelSwitches(); // before the purge below: it reads the retired switches
         MigrateKoStripHangChoices(); // reads retired keys, so before they are purged
+        MigrateKoStripTrigger(); // reads retired keys, so before they are purged
         RemoveRetiredOptions();
         MigrateSplitVfxToggles();
         MigrateKoStripClothHoldPreset();
@@ -574,6 +581,8 @@ public partial class Configuration : IPluginConfiguration
         // Glamourer presets on death / reset, removed 2026-11.
         "ApplyGlamourerOnDeath", "DeathGlamourerDesignId", "ApplyGlamourerOnReset", "ResetGlamourerDesignId",
         "KoStripDelay", "KoStripDelaySeconds", "KoStripLHand", "KoStripRHand", "KoStripLFoot", "KoStripRFoot",
+        // "Detach armor" became one setting (KoStripTrigger), 2026-11-22.
+        "KoStripEnabled", "KoStripOnHitEnabled",
         // Ragdoll pages, simplified 2026-11 (values fixed in RagdollTuning or the ON side of a switch).
         "PartyEnemyDeathRagdoll", "NpcRagdollActivationDelay", "MaxNpcRagdolls", "RagdollGravity", "RagdollDamping",
         "RagdollSolverIterations", "RagdollSolverSubsteps", "NpcRagdollSolverIterations", "NpcRagdollSolverSubsteps",
@@ -628,16 +637,15 @@ public partial class Configuration : IPluginConfiguration
         // Enemy Control's "spawn a creature on death", removed (2026-11-15, user's decision): Enemy
         // Control only ever takes over one enemy of the fight.
         "EnemyControlSpawnOnDeath", "EnemyControlModelId", "EnemyControlModelNameId",
-        // Enemy Control's swarm (other enemies following and climbing corpses) and its arm-pose override,
-        // removed (2026-11-15, user's decision): Enemy Control only controls its one enemy.
+        // Enemy Control's swarm (other enemies following and climbing corpses), removed (2026-11-15, user's
+        // decision): Enemy Control only controls its one enemy. (The arm-pose override removed with it was
+        // restored on 2026-11-21 at the user's request; its keys are live again.)
         "EnemyControlSwarmEnabled", "EnemyControlSwarmFollowDistance", "EnemyControlSwarmCompactness",
         "EnemyControlSwarmClimbCorpses", "EnemyControlSwarmRepositionOnCorpse",
         "EnemyControlSwarmLandmarkChangeFrequency",
-        "EnemyControlArmPoseEnabled",
-        "EnemyControlLeftArmUpperPitch", "EnemyControlLeftArmUpperYaw", "EnemyControlLeftArmUpperRoll",
-        "EnemyControlLeftArmLowerPitch", "EnemyControlLeftArmLowerYaw", "EnemyControlLeftArmLowerRoll",
-        "EnemyControlRightArmUpperPitch", "EnemyControlRightArmUpperYaw", "EnemyControlRightArmUpperRoll",
-        "EnemyControlRightArmLowerPitch", "EnemyControlRightArmLowerYaw", "EnemyControlRightArmLowerRoll",
+        // Armor Detachment's "Still-attached pieces follow the body", removed (2026-11-21, user's decision):
+        // pieces never ride along when the body is relocated onto a grab or hold.
+        "KoStripGarmentFollowsBody",
         // Fighting Mode (the experimental 1v1 side-view lane, its weapon hitboxes, AI and cameras), removed
         // (2026-11-15, user's decision: no longer used).
         "FightingMode", "FightingModeLaneHalfWidth", "FightingModeMinSeparation", "FightingModeMaxSeparation",
@@ -695,6 +703,20 @@ public partial class Configuration : IPluginConfiguration
             KoStripTopHolds = AdvancedRagdoll.Attachment.GarmentTether.HoldsFromLegacyChoice(1, (int)top);
         if (PrivateConfigFields.TryGetValue("KoStripLowerHangFrom", out var lower) && lower.Type == JTokenType.Integer)
             KoStripLowerHolds = AdvancedRagdoll.Attachment.GarmentTether.HoldsFromLegacyChoice(3, (int)lower);
+    }
+
+    // "Detach armor" was two exclusive switches (On KO; On each enemy hit). On each enemy hit is gone; a saved
+    // choice of it becomes On ragdoll activated, a saved On KO stays On KO (at the knockout), Off stays Off.
+    private void MigrateKoStripTrigger()
+    {
+        if (PrivateConfigFields == null)
+            return;
+
+        static bool Flag(IDictionary<string, JToken> fields, string name)
+            => fields.TryGetValue(name, out var token) && token.Type == JTokenType.Boolean && token.Value<bool>();
+        if (!PrivateConfigFields.ContainsKey("KoStripEnabled") && !PrivateConfigFields.ContainsKey("KoStripOnHitEnabled"))
+            return;
+        KoStripTrigger = Dev.ArmorDetachmentTriggers.FromRetiredSwitches(Flag(PrivateConfigFields, "KoStripEnabled"), Flag(PrivateConfigFields, "KoStripOnHitEnabled"));
     }
 
     private void RemoveRetiredOptions()

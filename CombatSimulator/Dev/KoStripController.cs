@@ -13,6 +13,28 @@ using FFXIVClientStructs.FFXIV.Client.Game.Object;
 
 namespace CombatSimulator.Dev;
 
+/// <summary>Armor Detachment's "Detach armor".</summary>
+public enum ArmorDetachmentTrigger
+{
+    Off = 0,
+    /// <summary>At the knockout itself, without waiting for the ragdoll.</summary>
+    OnKo = 1,
+    /// <summary>The moment the body's ragdoll physics starts.</summary>
+    OnRagdollActivated = 2,
+}
+
+public static class ArmorDetachmentTriggers
+{
+    /// <summary>
+    /// The setting from the two retired switches (KoStripEnabled, KoStripOnHitEnabled; the dropdown kept them
+    /// exclusive). "On each enemy hit" no longer exists: a saved choice of it becomes On ragdoll activated.
+    /// </summary>
+    public static ArmorDetachmentTrigger FromRetiredSwitches(bool koStripEnabled, bool koStripOnHitEnabled)
+        => koStripOnHitEnabled ? ArmorDetachmentTrigger.OnRagdollActivated
+            : koStripEnabled ? ArmorDetachmentTrigger.OnKo
+            : ArmorDetachmentTrigger.Off;
+}
+
 /// <summary>
 /// Hidden dev mode: "Strip KO". On knockout, visually unequips the selected gear /
 /// accessory slots — a dramatic fighting-game style strip. Tier 1: purely visual, no
@@ -35,7 +57,21 @@ public unsafe class KoStripController : IDisposable
 
     // Addresses already stripped this session — so auto-KO doesn't re-fire every frame.
     private readonly HashSet<nint> stripped = new();
-    private readonly Dictionary<nint, HashSet<byte>> onHitStripped = new();
+    // Knocked out with "On ragdoll activated": waiting for the body's ragdoll physics to start.
+    private sealed class AwaitingRagdoll
+    {
+        public nint Address;
+        public uint ObjectIndex;
+        public uint EntityId;
+        public bool Other;
+        public float Age;
+    }
+    private readonly List<AwaitingRagdoll> awaitingRagdoll = new();
+    // A knocked-out body whose ragdoll has not started by then keeps its armour.
+    internal const float MaxRagdollWaitSeconds = 60f;
+
+    /// <summary>True once the death ragdoll driving the character at an address has started its physics.</summary>
+    public Func<nint, bool>? RagdollPhysicsStarted { get; set; }
     private sealed class PreparedStrip
     {
         public nint Address;
@@ -110,8 +146,6 @@ public unsafe class KoStripController : IDisposable
         new(14, DrawDataContainer.EquipmentSlot.LFinger, c => c.KoStripLFinger, 9),
     };
 
-    private static readonly byte[] OnHitOrder = { 3, 9, 10, 11, 12, 14, 4, 5, 7, 8 };
-
     // Slots whose model can be isolated on a clone and physically dropped instead of just vanishing.
     // Hands and Feet are paired equipment models, so each produces TWO clones. HiddenOppositeRootBone
     // identifies only the other arm/leg subtree to hide; the visible side keeps its complete bind pose.
@@ -139,49 +173,78 @@ public unsafe class KoStripController : IDisposable
     };
 
     /// <summary>
-    /// Strip the configured slots on the knocked-out player. Fires once per actor.
+    /// The player was knocked out. "On KO": the selected pieces come off now, at the knockout. "On ragdoll
+    /// activated": they come off the moment the body's ragdoll physics starts (<see cref="Tick"/>). Once per actor.
     /// </summary>
     public void StripOnKo(nint characterAddress)
     {
-        if (!config.KoStripEnabled || IsOnHitDetachActive()) return;
+        if (config.KoStripTrigger == ArmorDetachmentTrigger.Off || characterAddress == nint.Zero) return;
         if (stripped.Contains(characterAddress)) return;
-        DoStrip(characterAddress, other: false);
+        Knocked(characterAddress, other: false);
     }
 
     /// <summary>
-    /// An ally (<paramref name="ally"/>) or an enemy fell: with "Allies" / "Enemies" ticked and the
-    /// player's trigger On KO, strip it with the player's settings. Humanoids wearing real equipment
-    /// only; once per actor, like the player.
+    /// An ally (<paramref name="ally"/>) or an enemy fell: with "Allies" / "Enemies" ticked, the same as
+    /// the player (the player's trigger and settings). Humanoids wearing real equipment only; once per actor.
     /// </summary>
     public void StripOtherOnKo(nint characterAddress, bool ally)
     {
-        if (!OthersEnabled(ally) || !config.KoStripEnabled || IsOnHitDetachActive()) return;
+        if (!OthersEnabled(ally) || config.KoStripTrigger == ArmorDetachmentTrigger.Off) return;
         if (!AdmitOther(characterAddress)) return;
         if (stripped.Contains(characterAddress)) return;
-        DoStrip(characterAddress, other: true);
+        Knocked(characterAddress, other: true);
+    }
+
+    private void Knocked(nint characterAddress, bool other)
+    {
+        if (config.KoStripTrigger == ArmorDetachmentTrigger.OnKo)
+        {
+            DoStrip(characterAddress, other);
+            return;
+        }
+
+        if (awaitingRagdoll.Exists(a => a.Address == characterAddress)) return;
+        var gameObj = (GameObject*)characterAddress;
+        awaitingRagdoll.Add(new AwaitingRagdoll
+        {
+            Address = characterAddress, ObjectIndex = gameObj->ObjectIndex, EntityId = gameObj->EntityId, Other = other,
+        });
+        log.Info($"KoStrip: 0x{characterAddress:X} (idx={gameObj->ObjectIndex}) knocked out; detaching when its ragdoll starts");
     }
 
     /// <summary>Strip now, ignoring the once-per-actor guard (manual test button).</summary>
     public void StripNow(nint characterAddress) => DoStrip(characterAddress, other: false);
 
-    public void Tick(float deltaTime) => TickPreparedStrips(deltaTime);
-
-    public bool TryStripNextOnHit(nint characterAddress)
+    public void Tick(float deltaTime)
     {
-        if (!IsOnHitDetachActive() || characterAddress == nint.Zero) return false;
-        return StripNextOnHit(characterAddress, other: false);
+        TickAwaitingRagdoll(deltaTime);
+        TickPreparedStrips(deltaTime);
     }
 
-    /// <summary>
-    /// An ally (<paramref name="ally"/>) or an enemy was hit by the other side: with "Allies" /
-    /// "Enemies" ticked and the player's trigger On each enemy hit, the next selected piece comes off,
-    /// in the player's order.
-    /// </summary>
-    public bool TryStripNextOnHitOther(nint characterAddress, bool ally)
+    private void TickAwaitingRagdoll(float deltaTime)
     {
-        if (!OthersEnabled(ally) || !IsOnHitDetachActive()) return false;
-        if (!AdmitOther(characterAddress)) return false;
-        return StripNextOnHit(characterAddress, other: true);
+        for (var i = awaitingRagdoll.Count - 1; i >= 0; i--)
+        {
+            var waiting = awaitingRagdoll[i];
+            waiting.Age += MathF.Max(0, deltaTime);
+            var player = Core.Services.ObjectTable.LocalPlayer;
+            // The player's own; or the same ally/enemy still in that slot. The trigger may have been changed.
+            var valid = config.KoStripTrigger == ArmorDetachmentTrigger.OnRagdollActivated && player != null &&
+                        (waiting.Other
+                            ? player.Address != waiting.Address &&
+                              dismemberment.IsSameLiveActor(waiting.Address, waiting.ObjectIndex, waiting.EntityId)
+                            : player.Address == waiting.Address);
+            if (!valid || waiting.Age > MaxRagdollWaitSeconds)
+            {
+                awaitingRagdoll.RemoveAt(i);
+                if (valid)
+                    log.Info($"KoStrip: no ragdoll started for 0x{waiting.Address:X} within {MaxRagdollWaitSeconds:F0} s; armour left on");
+                continue;
+            }
+            if (RagdollPhysicsStarted?.Invoke(waiting.Address) != true) continue;
+            awaitingRagdoll.RemoveAt(i);
+            DoStrip(waiting.Address, waiting.Other);
+        }
     }
 
     /// <summary>
@@ -196,8 +259,8 @@ public unsafe class KoStripController : IDisposable
             foreach (var piece in preparedStrips[i].Pieces) piece.Cancel();
             preparedStrips.RemoveAt(i);
         }
+        awaitingRagdoll.RemoveAll(a => a.Address == characterAddress);
         stripped.Remove(characterAddress);
-        onHitStripped.Remove(characterAddress);
         others.Remove(characterAddress);
     }
 
@@ -224,43 +287,6 @@ public unsafe class KoStripController : IDisposable
             log.Info($"KoStrip: 0x{characterAddress:X} (idx={gameObj->ObjectIndex}) is not a humanoid wearing equipment; left as is");
         return eligible;
     }
-
-    private bool StripNextOnHit(nint characterAddress, bool other)
-    {
-        var gameObj = (GameObject*)characterAddress;
-        if (gameObj->DrawObject == null) return false;
-        var objectIndex = gameObj->ObjectIndex;
-        var character = (Character*)characterAddress;
-
-        if (!onHitStripped.TryGetValue(characterAddress, out var done))
-            onHitStripped[characterAddress] = done = new HashSet<byte>();
-
-        foreach (var apiSlot in OnHitOrder)
-        {
-            if (!TryGetSlot(apiSlot, out var slot) || !slot.Enabled(config) || done.Contains(apiSlot))
-                continue;
-
-            if (!SlotRendersModel(gameObj, slot) || (other && !dismemberment.HasEquipmentInSlot(characterAddress, slot.ModelSlot)))
-            {
-                done.Add(apiSlot);
-                continue;
-            }
-
-            var glamState = !other && ShouldPhysicsDrop(apiSlot)
-                ? glamourer.GetStateBase64((int)objectIndex)
-                : null;
-            var result = StripOneSlot(characterAddress, character, objectIndex, slot, glamState, other);
-            if (!result.Accepted) return false;
-            done.Add(apiSlot);
-            log.Info($"KoStrip: on-hit stripped slot {apiSlot} on 0x{characterAddress:X} (idx={objectIndex}) - " +
-                     $"{result.Glamourer} via Glamourer, {result.Direct} direct, {result.Drop} physics-dropped");
-            return true;
-        }
-
-        return false;
-    }
-
-    private bool IsOnHitDetachActive() => config.KoStripOnHitEnabled;
 
     private void DoStrip(nint characterAddress, bool other)
     {
@@ -303,7 +329,7 @@ public unsafe class KoStripController : IDisposable
             foreach (var piece in preparation.Pieces) piece.Cancel();
         preparedStrips.Clear();
         stripped.Clear();
-        onHitStripped.Clear();
+        awaitingRagdoll.Clear();
         others.Clear();
     }
 
@@ -399,7 +425,6 @@ public unsafe class KoStripController : IDisposable
             {
                 foreach (var piece in preparation.Pieces) piece.Cancel();
                 stripped.Remove(preparation.Address);
-                if (onHitStripped.TryGetValue(preparation.Address, out var done)) done.Remove(preparation.Slot.ApiSlot);
                 log.Warning($"KoStrip: slot {preparation.Slot.ApiSlot} preparation failed/cancelled; original appearance retained; retry available");
                 continue;
             }
@@ -426,19 +451,6 @@ public unsafe class KoStripController : IDisposable
         }
     }
 
-    private static bool TryGetSlot(byte apiSlot, out StripSlot slot)
-    {
-        foreach (var s in Slots)
-        {
-            if (s.ApiSlot != apiSlot) continue;
-            slot = s;
-            return true;
-        }
-
-        slot = default;
-        return false;
-    }
-
     private IEnumerable<GearDropSpec> EnumerateGearDrops(byte apiSlot)
     {
         if (!Droppable.TryGetValue(apiSlot, out var drops))
@@ -446,24 +458,6 @@ public unsafe class KoStripController : IDisposable
 
         foreach (var drop in drops)
             yield return drop;
-    }
-
-    private bool ShouldPhysicsDrop(byte apiSlot)
-    {
-        foreach (var drop in EnumerateGearDrops(apiSlot))
-            if (drop.Clothing ? config.KoStripPhysicsDropClothing : config.KoStripPhysicsDrop)
-                return true;
-        return false;
-    }
-
-    private static bool SlotRendersModel(GameObject* gameObj, StripSlot slot)
-    {
-        if (gameObj->DrawObject == null) return false;
-        var cb = (FFXIVClientStructs.FFXIV.Client.Graphics.Scene.CharacterBase*)gameObj->DrawObject;
-        return cb->Models != null
-               && slot.ModelSlot >= 0
-               && slot.ModelSlot < cb->SlotCount
-               && cb->Models[slot.ModelSlot] != null;
     }
 
     private static void SetEquipmentDirect(Character* character, DrawDataContainer.EquipmentSlot slot, ulong value)

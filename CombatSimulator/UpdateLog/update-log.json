@@ -1,5 +1,15 @@
 [
   {
+    "version": "3.0.0.2",
+    "date": "2026-11-22",
+    "title": "Combat Simulator 3.0.0.2",
+    "changes": [
+      "Grab arm poses restored",
+      "Armor and limb timing options",
+      "Clones match your current look"
+    ]
+  },
+  {
     "version": "3.0.0.1",
     "date": "2026-11-15",
     "title": "Combat Simulator 3.0.0.1",
