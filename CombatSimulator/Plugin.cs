@@ -72,6 +72,8 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     partial void TryPrivateCommand(string[] parts, ref bool handled);
 
     private bool hookSafetyScanned;
+    // The read-only scene diagnostic (/combatsim sceneprobe); made on first use.
+    private SceneProbe? sceneProbe;
     private bool wasLoggedIn;
 
     // ---- The feature modules (docs/PLUGIN_ARCHITECTURE.md §6.1) ----
@@ -450,6 +452,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     public void Dispose()
     {
         DisposePrivateDirectors();
+        sceneProbe?.Dispose();
         Animation.BodyTypeAnimationFallback.Shutdown();
         framework.Update -= OnFrameworkUpdateTimed;
         clientState.TerritoryChanged -= OnTerritoryChanged;
@@ -589,6 +592,23 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
                     break;
                 }
 
+            case "sceneprobe":
+                {
+                    // Read-only: what the game's scene looks like now (conditions, player, object table, cameras,
+                    // input, cutscene, this plugin's state), as "SceneProbe:" lines in dalamud.log.
+                    sceneProbe ??= new SceneProbe(pluginInterface, framework, clientState, Services.ObjectTable,
+                        Services.Condition, Services.GameGui, Services.DataManager, log, SceneProbePluginState);
+                    var sceneCommand = parts.Length > 1 ? parts[1].Trim().ToLowerInvariant() : "";
+                    var sceneText = sceneCommand switch
+                    {
+                        "start" => sceneProbe.Start(),
+                        "stop" => sceneProbe.Stop(),
+                        _ => sceneProbe.Snapshot(),
+                    };
+                    chatGui.Print($"[CombatSim] Scene probe: {sceneText}");
+                    break;
+                }
+
             case "geometry":
                 var geometryCommand = parts.Length > 1 ? parts[1].Trim().ToLowerInvariant() : "status";
                 if (geometryCommand == "marker" && clientState.IsLoggedIn && Services.ObjectTable.LocalPlayer is { } geometryPlayer)
@@ -653,6 +673,23 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
                 config.Save();
                 break;
         }
+    }
+
+    /// <summary>This plugin's own state for the scene probe's snapshot: one line, read-only.</summary>
+    private string SceneProbePluginState()
+    {
+        var spawned = 0;
+        foreach (var npc in npcSpawner.SpawnedNpcs)
+            if (npc.IsSpawned) spawned++;
+        return $"simulation={(combatEngine.IsActive ? "running" : "stopped")}" +
+               $" enemies={spawned}/{npcSpawner.SpawnedNpcs.Count} (pending {npcSpawner.PendingCount}, spawnMode={npcSpawner.SpawnModeActive})" +
+               $" selected={npcSelector.SelectedNpcs.Count}" +
+               $" allies={companionManager.Companions.Count} (pending {companionManager.PendingCount})" +
+               $" spectators={spectatorController.LiveCount} (pending {spectatorController.PendingCount})" +
+               $" barriers={(safetyBarriers.FirstDown is { } down ? "DOWN: " + down : "all up")}" +
+               $" cameraOwner={cameraModeCoordinator.CurrentOwner}" +
+               $" cutprobe={(cutsceneShots.Probe.Active ? "recording" : "off")}" +
+               $" privateDirector={PrivateDirectorActive}";
     }
 
     private void ExportActionDatabase()
