@@ -145,7 +145,7 @@
 ### 7.5 界面与设置
 
 - Camera 页签 → **Camera mode** 下拉：Game / Follow bone / Directed / **Duel**。
-- 选 Duel 后出现折叠栏 **Duel Camera**：一行状态、一个下拉 **Framing**（Tight / Standard / Wide，默认 Standard）；下面一行说明“Duel 模式下倒地时总是播自动死亡镜头”，再是 **Death shot** 下拉和 **Allow below ground** 勾选（与 Directed Camera 折叠栏里的是同两个设置）。
+- 选 Duel 后出现折叠栏 **Duel Camera**：一行状态、一个下拉 **Framing**（Tight / Standard / Wide，默认 Standard）；下面一行说明“Duel 模式下倒地时自动死亡镜头接手”，再是自动死亡镜头的三个控件：**Duel death shot** 下拉（Auto + 六个低机位档案）、**When grabbed** 下拉（Level / Slightly above）、**Allow below ground** 勾选。这三个只在这里出现（设置 `DuelDeathShot` / `DuelDeathShotGrabbed` / `DuelDeathShotBelowGround`）；Directed Camera 折叠栏里的 “Death shot” 是 Directed 自己的死亡构图的角度，两者无关（→ [DEATH_SHOTS.md](DEATH_SHOTS.md) §9.4、§9.5）。
 - 设置：`EnableDuelCamera`（默认 false）、`DuelCameraFraming`（默认 Standard）。没有改任何已有设置的默认值。
 
 ## 8. 离线检查
@@ -277,7 +277,7 @@ dotnet run -c Release -- probe <决斗名的一部分> [tight|standard|wide]   �
 - **眼位随玩家刚性平移**（0.03 s）：电影感的滞后会让冲刺、击退时玩家出画（试过 0.06 s：击退那一场里玩家有 1.5% 的帧出画，现在是 0）。
 - **俯仰限位、不回正；左右回正**：左右是构图的一部分，必须回到位；俯仰和滚轮是偏好。
 - **玩家倒下后不做 0.3 s 过渡**：直接由死亡镜头从当时的画面接手。复活时经过 0.3 s 的游戏相机再缓入（没有给死亡镜头加新的交接入口）。
-- **Duel 模式下死亡镜头总是开着**；Death shot 档案和 Allow below ground 在 Duel Camera 折叠栏里也能改（同两个设置）。
+- **自动死亡镜头只在 Duel 模式下运行，并且在 Duel 模式下总是开着**（2026-11-22 用户更正：Directed 模式用它自己的死亡构图）；它的三个控件只在 Duel Camera 折叠栏里。
 - **没有对手满 2 s 就把相机还给游戏**（用户反馈：单人构图锁着俯仰和缩放，像相机被锁）。Duel 模式下相机碰撞补丁与 Directed 一样一直开着（`ActiveCameraController.UpdateCollisionPolicy`），所以还给游戏的那段时间游戏相机也没有碰撞。
 
 ## 10. 游戏里看什么
@@ -298,7 +298,7 @@ dotnet run -c Release -- probe <决斗名的一部分> [tight|standard|wide]   �
 12. 胜利过场镜头（Camera 页签 → Cutscene Shots 里选了 Victory）：过场播完后 `DuelCam: resumes`，没有跳。
 13. Enemy Control 附身时：`DuelCam: waits … EnemyControlFollow has the camera`，放开后 `resumes`。
 14. Framing 三档的差别；拉拉菲尔 / 鲁加、大型怪的景别。
-15. Follow bone 和 Directed 两个模式与以前完全一样；“Switch to Directed when a battle starts” 勾着时 Duel 模式不被改掉。 Duel Camera 折叠栏里的 Death shot、Allow below ground 与 Directed Camera 里的联动。
+15. Follow bone 和 Directed 两个模式与以前完全一样（Directed 倒地时是它自己的死亡构图，不是自动死亡镜头）；“Switch to Directed when a battle starts” 勾着时 Duel 模式不被改掉。
 16. 开销：5 s 汇总里的 `rays/frame`（平常 4–5 条），以及 `FrameCost:`。
 
 ## 11. 已知的不足

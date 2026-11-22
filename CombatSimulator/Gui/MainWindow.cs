@@ -2860,7 +2860,7 @@ public partial class MainWindow : IDisposable
         }
         HelpMarker("Game: the game's own camera.\n" +
                    "Follow bone: the camera tracks a bone of your character; you rotate and zoom freely.\n" +
-                   "Directed: the camera frames you over the shoulder in combat and plays an automatic death shot when you go down.\n" +
+                   "Directed: the camera frames you over the shoulder in combat and composes a shot when you go down.\n" +
                    "Duel: the camera frames you and one opponent together; made for one-on-one fights.");
 
         var directedOnBattle = config.DirectedCameraOnBattle;

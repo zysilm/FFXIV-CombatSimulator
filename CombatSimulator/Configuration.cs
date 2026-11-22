@@ -537,6 +537,7 @@ public partial class Configuration : IPluginConfiguration
         MigrateKoStripHangChoices(); // reads retired keys, so before they are purged
         MigrateKoStripTrigger(); // reads retired keys, so before they are purged
         MigrateRagdollDeathGuidance(); // reads a retired key, so before they are purged
+        MigrateDuelDeathShot(); // reads retired keys, so before they are purged
         RemoveRetiredOptions();
         MigrateSplitVfxToggles();
         MigrateKoStripClothHoldPreset();
@@ -642,11 +643,11 @@ public partial class Configuration : IPluginConfiguration
         // Armor Detachment's "Still-attached pieces follow the body", removed (2026-11-21, user's decision):
         // pieces never ride along when the body is relocated onto a grab or hold.
         "KoStripGarmentFollowsBody",
-        // The Directed camera's old death framing (corpse + killer fit), replaced by the automatic death shots
-        // (2026-11-22, user's decision; docs/DEATH_SHOTS.md): its coverage, band, angle and ignore-killer settings,
-        // the floating toolbar that only held two of them, and its tuning overlay. Everyone starts on the Auto profile.
-        "DynCamDeathIgnoreKiller", "DynCamDeathBodyVisibility", "DynCamDeathBodyBand", "DynCamDeathAngle",
-        "ShowDynamicCamToolbar", "DynCamDebugOverlay",
+        // The automatic death shot's two settings from the days it ran in Directed mode (2026-11-22, for a few
+        // hours): it runs in Duel mode only now and its settings are DuelDeathShot / DuelDeathShotBelowGround
+        // (MigrateDuelDeathShot carries them over). The Directed camera's own death framing and its settings
+        // (DynCamDeath*, ShowDynamicCamToolbar, DynCamDebugOverlay) are back and are NOT retired.
+        "DeathShotProfile", "DeathShotBelowGround",
         // Fighting Mode (the experimental 1v1 side-view lane, its weapon hitboxes, AI and cameras), removed
         // (2026-11-15, user's decision: no longer used).
         "FightingMode", "FightingModeLaneHalfWidth", "FightingModeMinSeparation", "FightingModeMaxSeparation",
@@ -718,6 +719,26 @@ public partial class Configuration : IPluginConfiguration
         if (!PrivateConfigFields.ContainsKey("KoStripEnabled") && !PrivateConfigFields.ContainsKey("KoStripOnHitEnabled"))
             return;
         KoStripTrigger = Dev.ArmorDetachmentTriggers.FromRetiredSwitches(Flag(PrivateConfigFields, "KoStripEnabled"), Flag(PrivateConfigFields, "KoStripOnHitEnabled"));
+    }
+
+    // The automatic death shot moved to Duel mode and its settings were renamed (DeathShotProfile → DuelDeathShot,
+    // DeathShotBelowGround → DuelDeathShotBelowGround). A saved Low three-quarter stays; a saved profile that no
+    // longer exists (Face, Along the body, Overhead, Ground profile) becomes Auto. Whatever is saved under the new
+    // name is checked the same way.
+    private void MigrateDuelDeathShot()
+    {
+        if (PrivateConfigFields != null)
+        {
+            if (PrivateConfigFields.TryGetValue("DeathShotProfile", out var profile) && profile.Type == JTokenType.Integer &&
+                profile.Value<int>() == (int)Camera.DeathShots.DeathShotProfile.LowThreeQuarter)
+                DuelDeathShot = Camera.DeathShots.DeathShotProfile.LowThreeQuarter;
+            if (PrivateConfigFields.TryGetValue("DeathShotBelowGround", out var below) && below.Type == JTokenType.Boolean)
+                DuelDeathShotBelowGround = below.Value<bool>();
+        }
+        if (!Camera.DeathShots.DeathShotProfiles.IsChoice(DuelDeathShot))
+            DuelDeathShot = Camera.DeathShots.DeathShotProfile.Auto;
+        if (!System.Enum.IsDefined(DuelDeathShotGrabbed))
+            DuelDeathShotGrabbed = Camera.DeathShots.DeathShotGrabbedFraming.Level;
     }
 
     // "Guided Collapse" was an object with one switch, "Knee buckle on death". It is one choice of "Death guidance"

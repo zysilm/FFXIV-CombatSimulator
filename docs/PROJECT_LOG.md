@@ -118,16 +118,19 @@
 - `CameraModeCoordinator` 是唯一的镜头写入方，按优先级仲裁（2026-07-03）。
 - Camera 页新增 “Switch to Directed when a battle starts”，默认关；Camera 页控件占页面宽度 60%（2026-11-13，用户裁决，`3a90949`）。
 
-### 自动死亡镜头（2026-11-22，用户裁决）
+### 自动死亡镜头（2026-11-22，用户裁决；当天晚些时候更正）
+
+- **更正（用户，2026-11-22）：自动死亡镜头只在 Duel 相机模式下起作用；Directed 相机的死亡构图原样恢复**（以 `4ac3039` 为准：`TickDeath` / `SolveDeathFraming` / 凶手双人构图 / 锁俯仰钉缩放 / `OverrideDeathLookAt` / `HoldForCutscene` / 调试叠层 / “Dynamic Cam” 工具条 / “Death shot” 三选一 + Body coverage；六个 `DynCamDeath*` / `ShowDynamicCamToolbar` / `DynCamDebugOverlay` 设置不再退役；私有模块的入口回到原来的含义）→ [DEATH_SHOTS.md](DEATH_SHOTS.md) §9.5。下面几条里凡是说“取代 Directed 死亡构图 / 在 Directed Camera 折叠栏里”的，以这一条为准。
+- 档案改为一族低机位镜头（用户游戏内反馈：只有 Low three-quarter 可用）：Low three-quarter（不变）、Low on the face、Hips up to the face、Low from the feet、Low from behind、Low full body + Auto；Face / Along the body / Overhead / Ground profile 删除。**换边永远缓动、没有硬切**；当前的边不坏就不动，要换取离相机最近的一侧。身体被抓起（Enemy Control 的抓取）时用 “When grabbed” 的两个机位（Level / Slightly above）。控件只在 Camera 页签 → Duel Camera 折叠栏：Duel death shot、When grabbed、Allow below ground（设置 `DuelDeathShot` / `DuelDeathShotGrabbed` / `DuelDeathShotBelowGround`；旧键 `DeathShotProfile` / `DeathShotBelowGround` 迁移后退役，已删除的档案 → Auto）→ [DEATH_SHOTS.md](DEATH_SHOTS.md) §4、§5、§6.1、§9.4。
 
 - 自动死亡镜头取代 Directed 相机的死亡构图：5 个档案（Low three-quarter、Face、Along the body、Overhead、Ground profile）+ Auto，只用骨骼位置逐帧求解；第一版只拍尸体（凶手双人构图随旧构图删除，以后可作为档案回来）；“Death shot” 下拉改为档案下拉，Body coverage 滑条去掉，“Looking up” 以 Ground profile 保留；死亡镜头期间玩家只保留左右环绕和滚轮，俯仰锁定；默认一条连续镜头，无滚转 → [DEATH_SHOTS.md](DEATH_SHOTS.md)。P0/P1（轨迹导出 + 纯计算求解器 `Camera/DeathShots/` + `Tests/DeathShots`）离线门槛全过；P2（2026-11-22）已接进游戏：`Camera/DeathShotDirector.cs`，由 `DynamicCameraController` 驱动，旧死亡构图（`TickDeath`/`SolveDeathFraming`/锁俯仰钉缩放/`OverrideDeathLookAt`/`HoldForCutscene`/凶手双人构图/调试叠层/浮动工具条）同批删除，待游戏内验证。
 - 眼位阻尼作用在绕注视点的轨道坐标上（直角坐标的缓动会穿过身体，也封不住视线转速）；换边只在开始、第一次静止、被移动后再静止、被挡 1.5 s、改档案时发生，每次死亡在身体被移动前最多一次 → [DEATH_SHOTS.md](DEATH_SHOTS.md) §5、§7。
 - 运行时的约定（[DEATH_SHOTS.md](DEATH_SHOTS.md) §9）：位姿交接（`ActiveCameraController.PoseOverride`）是两级的，自动死亡镜头先写、过场镜头（owner 60）后写并覆盖；过场镜头占着相机时自动死亡镜头等待，交还后从过场留下的画面重新开始。玩家的左右环绕取游戏相机 `DirH` 的逐帧变化量、滚轮取 ImGui 原始滚轮（景别），俯仰锁定，重新选边时归零；游戏自己的缩放距离在镜头期间保持不变。设置 `DeathShotProfile` 默认 Auto，不从旧选项迁移（用户裁决）；`DynCamDeathFraming`（Directs 里的 Death）保留；退役键 `DynCamDeathIgnoreKiller`、`DynCamDeathBodyVisibility`、`DynCamDeathBodyBand`、`DynCamDeathAngle`、`ShowDynamicCamToolbar`、`DynCamDebugOverlay`。
 - 地面查询不按网格缓存：求解器在阻尼之后才把眼位压到地面以上，网格化的地面高度在坡上会让眼位一格一格跳；只对同一帧内完全相同的查询去重，每帧射线数写在 `DeathShot:` 的 5 s 汇总里。
-- 私有模块的入口（[DEATH_SHOTS.md](DEATH_SHOTS.md) §10）：`ProfileFramingOverride` 强制开启；`TemporaryDeathInputs` 非 null = 场景指挥（`Angle` → 档案，`BodyVisibility` → 景别倍数，含义与旧“身体覆盖”不同；场景写的 `DirH` 跳变按绝对方位）；`TemporaryDeathActor` 不参与构图——主体永远是玩家的尸体（2026-11-22 裁决）；新增可选的 `TemporaryDeathInputLock`，没设时有场景指挥的镜头不响应滚轮。
+- 私有模块：自动死亡镜头没有私有模块入口（私有场景占用相机时它不跑）；`ProfileFramingOverride` / `TemporaryDeathInputs` / `TemporaryDeathActor` 作用在 Directed 自己的死亡构图上，含义与 `4ac3039` 相同（2026-11-22 更正后）。
 - Enemy Control 的 WASD / 左摇杆方向按**实际渲染的视线**的水平分量（`GameCameraView.Forward`），不按游戏相机的 `DirH`：死亡镜头或过场镜头接管画面时 `DirH` 与画面无关，按它算 W 会朝镜头走；水平分量退化（正俯 / 正仰）时才退回 `DirH`（2026-11-22）。
 - 自动死亡镜头期间游戏自己的缩放距离和俯仰都保持在开始时的值；复活的 0.3 s 过渡里 FoV 跟着位姿一起插值；过场死亡镜头交还的同一帧自动镜头就接手 FoV（`CutsceneShotDirector.HandingBack`）（2026-11-22）。
-- “Allow below ground”（2026-11-22，用户裁决：到地面以下做成选项，默认关）：Camera 页签 → Directed Camera → **Allow below ground**，设置 `DeathShotBelowGround`。开启后 Low three-quarter（和位置略低时的 Face）在躺地的尸体上保持配方的仰拍位置，眼位在地下（离线：仰 22°、1.25 m、深度中位 0.42 m，对应旧镜头的 19–26°、1.0–1.35 m、0.27–0.48 m）；地面不算遮挡，墙照算（按挡面的法线和高度区分）；其余档案和选项关着时的输出不变（逐位相同）→ [DEATH_SHOTS.md](DEATH_SHOTS.md) §9.6。
+- “Allow below ground”（2026-11-22，用户裁决：到地面以下做成选项，默认关）：Camera 页签 → Duel Camera → **Allow below ground**，设置 `DuelDeathShotBelowGround`。开启后低机位档案（仰角 < 0 的侧向）在躺地的尸体上保持配方的仰拍位置，眼位在地下（离线：仰 22°、1.25 m、深度中位 0.42 m，对应旧镜头的 19–26°、1.0–1.35 m、0.27–0.48 m）；地面不算遮挡，墙照算（按挡面的法线和高度区分）；其余档案和选项关着时的输出不变（逐位相同）→ [DEATH_SHOTS.md](DEATH_SHOTS.md) §9.6。
 - 旧 Death Cam 仅存的三个镜头有 76–81% 的帧眼位离地不足 5 cm、多数在地面以下（当时关着相机碰撞，尸体躺地后等于从地下仰拍）；新镜头不进地面，同样的侧向在躺地后是贴地平拍（离线复现，`Tests/DeathShots`）。
 
 ### 决斗镜头（2026-11-22，用户裁决）
@@ -188,6 +191,7 @@
 
 ### 流程
 
+- 2026-11-22：**用户没有明确答复的建议不是裁决，更不是删除现有功能的依据。** 自动死亡镜头“取代 Directed 死亡构图”只是协调者提的方案，用户没有说过同意；据此删掉了用户在用的构图、控件和设置（保存的值也在插件保存时被清掉），用户进游戏后要求全部恢复。删除或替换现有功能之前，要有用户对“删掉 X”这件事本身的明确答复；新功能先并存（放在新的模式 / 选项下），等用户看过再谈替换。
 - 2026-11-22：克隆角色的外观必须取正在渲染的 Human（`Customize` + `EquipmentModels`），不能用 `CopyFromCharacter` 复制的游戏数据：Glamourer 只改渲染模型，换种族时克隆会变回换装前的真实角色；同步判断“绘制对象 N 帧没变”不核对结果。分离部件、护甲克隆同一条路径。
 
 - 2026-11-15：RagdollReplay 的 synthetic 第一轮录像从不删除，%TEMP% 堆了 37 GB 把 C 盘写满，回放出现截断录像（"bad magic"/"ends after"）的假差异；已修（`57e5250`）。跑大批回放前先看磁盘。
@@ -329,9 +333,10 @@
 - [ ] 分离 Timing：On death 时部件当下飞出、身上部位同时消失，布娃娃启动时不重现不闪；敌人不再有部件已飞出而身上仍在的约 3 s。
 - [ ] 用 Glamourer 换种族和装备后，分离部件与护甲克隆是当前外观（含 Penumbra 模组）；日志无 `skeleton did not match` / `never resolved`。
 - [ ] 液体效果：Reset 后日志不再连续出现 “World fluid layer”；离倒地点 10–20 m 转镜头不掉帧；再次出现时不卡。
-- [ ] 自动死亡镜头（P2 已接入，未在游戏里看过）→ [DEATH_SHOTS.md](DEATH_SHOTS.md) §11：Camera 页签 → Camera mode = Directed，折叠栏 Directed Camera → Directs 含 Death、Death shot 选档案。看：日志 `DeathShot: camera check over 60 frames`（眼位 / 注视点差毫米级、镜头差 < 1°，否则 FoV 字段比例不对）；进入时绕到正面的 3–4 s；`ragdoll at … s` 那一帧画面不跳；身体静止那一刻的换边（约 60% 的死亡有一次硬切）是否突兀；Low three-quarter 在尸体躺地后的贴地平拍是否可接受（旧镜头是从地下仰拍）；左右拖动绕身体转（比手慢：45°/s 上限 + 0.6 s 缓动）、滚轮改景别、上下无效；死亡中换档案立即切换；真实的墙 / 天花板 / 坡 / 水面下的回退（日志 `fallback`、`view blocked`、`the eye was inside terrain`）；过场死亡镜头结束后 `DeathShot: resumes`、画面不跳；复活 0.3 s 回游戏相机；拉拉菲尔 / 鲁加等体型的景别；5 s 汇总里的 `rays/frame`。
-- [ ] Allow below ground（Camera 页签 → Directed Camera → Death shot 下面的勾选，默认关）：勾上后 Low three-quarter / Face / Auto 在尸体躺地后镜头到地面以下仰拍，地面从下面看不见（日志 5 s 汇总里 `eye … m BELOW ground`）；游戏没有把相机推回地面以上（`camera check` 眼位差仍是毫米级）；水边、室内（地面下有别的楼层 / 双面地形）时的画面；墙边仍然换边而不是穿墙；关掉后与之前一样不进地面。
-- [ ] 旧死亡构图删除后：旧配置载入无异常；Camera 页签 → Directed Camera 里没有 Body coverage 和 Show toolbar，“Dynamic Cam” 浮动工具条不再出现；战斗时的 Directed 构图（越肩、敌人入画、缩放 / 俯仰记忆、复活后回到战斗构图）照常。
+- [ ] Directed 死亡构图恢复：Camera mode = Directed 时倒地是原来的构图（落到尸体旁、带凶手），Directed Camera 折叠栏里有 Directs / Body coverage / Death shot（Looking up / Default / Looking down）/ Show toolbar，“Dynamic Cam” 工具条可开；日志有 `DynamicCam: death framing armed`、没有 `DeathShot:`；过场死亡镜头结束后 `DynamicCam: death framing resumes after the cutscene shot`。用户保存的六个值若在此前被清掉，由协调者从备份恢复（缺失时的默认值：`DynCamDeathIgnoreKiller` false、`DynCamDeathBodyVisibility` 1.0、`DynCamDeathBodyBand` −0.45、`DynCamDeathAngle` 0.45、`ShowDynamicCamToolbar` false、`DynCamDebugOverlay` false）。
+- [ ] 自动死亡镜头，新一族档案（只在 Duel 模式）→ [DEATH_SHOTS.md](DEATH_SHOTS.md) §11：Camera mode = Duel → Duel Camera → Duel death shot 逐个档案看；全程没有硬切（日志 `side at … (eased over N°)`）；Auto 在身体静止时多数不动；被抓起时缓到上半身（When grabbed：Level / Slightly above）、晃动时画面稳、放下静止后缓回；Allow below ground；`camera check`；`rays/frame`。
+- [ ] Allow below ground（Camera 页签 → Duel Camera 折叠栏里的勾选，默认关）：勾上后躺地的低机位到地面以下仰拍，地面从下面看不见（5 s 汇总里 `eye … m BELOW ground`）；游戏没有把相机推回地面以上；水边、室内时的画面；墙边仍然换边；关掉或被抓起时相机穿过地面升上来、不跳。
+- [ ] 旧配置载入无异常（`DeathShotProfile` / `DeathShotBelowGround` 迁移到 `DuelDeathShot*`）；战斗时的 Directed 构图（越肩、敌人入画、缩放 / 俯仰记忆、复活后回到战斗构图）照常。
 - [ ] 决斗镜头（已接入，未在游戏里看过）→ [DUEL_CAMERA.md](DUEL_CAMERA.md) §10：Camera 页签 → Camera mode = Duel，折叠栏 Duel Camera（状态行 + Framing）。看：日志 `DuelCam: camera check over 60 frames`（眼位 / 注视点差毫米级、镜头差 < 1°）；**移动手感**（日志 `start` 行的 movement mode；Legacy：W 朝对手、A / D 绕对手转；Standard：A / D 原地转身、Q / E 绕圈；不按鼠标键时镜头不漂到玩家正面；屏幕正上方与 W 差约 20° 别不别扭）；没有敌人约 2 s 后镜头回到游戏相机；两人分居画面两侧、近紧远宽；穿过对手后镜头不越线、约 1 s 转回；推近（重击 / 格挡 / 大招 / 击倒）的幅度和频率；多敌人时换对手不乱跳；左右拖动回正、俯仰方向对不对、滚轮；墙边 / 背靠墙 / 坡地；倒下时死亡镜头无跳接手、过场镜头后 `DuelCam: resumes`；Follow bone 与 Directed 不变。
 - [ ] 死亡引导（库 0.1.0-beta.5，未在游戏里看过）→ [RAGDOLL_DEATH_GUIDANCE.md](RAGDOLL_DEATH_GUIDANCE.md) §6：Ragdoll 页签 → Ragdoll Trigger → **Death guidance**。旧配置载入后是 Limp、行为与以前一样，Ragdoll 页签不再有 “Guided Collapse” 折叠栏。选 Hold the legs：日志每具身体一行 `Ragdoll: guidance HoldLegs -> HoldLegs (start Lying, …): N joint(s) held, M body(ies) held to the ground`；躺下的尸体腿型保住、不再慢慢滚成俯 / 仰、不比 Limp 抖；跪 / 蹲结束的死亡动画小腿留在原地，但前折和抖是否难看（离线不过门槛）；踩 / 打 / 踢后 0.3 s 松开、抓起立刻松开；很久以后没有“第二次塌下去”。Auto：日志里每具身体选了哪一档。Knee buckle：延迟 0 时与以前的 “Knee buckle on death” 一样，延迟 3.7 s 时日志是 `-> None`。敌人、队友尸体同样生效，`FrameCost:` 无明显变化。
 - [ ] 库 0.1.0-beta.5：Limp 下布娃娃、抓取、头发、武器照常（回放三模式 97/97、扩展 6/6 已过）。

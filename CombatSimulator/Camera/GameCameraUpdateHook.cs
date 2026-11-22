@@ -14,9 +14,8 @@ namespace CombatSimulator.Camera;
 
 /// <summary>
 /// Hosts camera-wide layers that must run inside CameraBase.Update. This is deliberately
-/// independent of every camera mode: the pre-update callback keeps the camera collision policy
-/// (and serves the private module's scenes), the post-update callback serves the death shot and
-/// the cutscene shots, and hit feedback is applied after the game's final camera pose.
+/// independent of every camera mode: Dynamic Camera uses the pre-update callback to pin
+/// its death composition, while hit feedback is applied after the game's final camera pose.
 /// </summary>
 public unsafe sealed class GameCameraUpdateHook : IDisposable
 {

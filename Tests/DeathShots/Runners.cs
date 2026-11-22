@@ -12,7 +12,12 @@ internal struct Cam
     public bool Cut, Holding, PulledIn, HasDiagnostics;
     public PoseClass Pose;
     public DeathShotProfile Shot;
-    public int SideChanges, SideChangesAfterMove, Cuts, Fallbacks, Pops;
+    public int SideChanges, SideChangesAfterMove, Fallbacks, Pops;
+    /// <summary>On a frame where the side changed: how far the new side is from the old one, degrees.</summary>
+    public float SideTurn;
+    public bool SideChanged;
+    /// <summary>Changes of side so far that were made because the view was blocked.</summary>
+    public int BlockedChanges;
     public string? Event;
 }
 
@@ -45,6 +50,7 @@ internal static class Runners
         var cams = new Cam[t.Frames.Length];
         var extra = new Vector3[t.Bones.Length - CoreBones];
         var wasPhysics = false;
+        var blockedChanges = 0;
         for (var i = 0; i < t.Frames.Length; i++)
         {
             var f = t.Frames[i];
@@ -59,12 +65,15 @@ internal static class Runners
                 Dt = f.Dt, Points = t.Points(f.Runtime), Extra = extra, PhysicsStarted = f.PhysicsStarted, ExpectRagdoll = true,
                 Profile = profile, Aspect = Aspect, UserSize = 1f, AllowBelowGround = belowGround,
             });
+            if (o.SideChanged && o.Reason == "blocked") blockedChanges++;
             cams[i] = new Cam
             {
+                BlockedChanges = blockedChanges,
                 Eye = o.Eye, LookAt = o.LookAt, Fov = o.Fov, Cut = o.Cut, BaseEye = o.BaseEye, GoalEye = o.GoalEye, GoalLookAt = o.GoalLookAt,
                 Holding = o.Holding, PulledIn = o.PulledIn, HasDiagnostics = true, Pose = o.Pose, Shot = o.Shot,
-                SideChanges = o.SideChanges, SideChangesAfterMove = o.SideChangesAfterMove, Pops = o.TerrainPops, Cuts = o.Cuts, Fallbacks = o.Fallbacks,
-                Event = o.SideChanged ? $"{f.Time:F1}s {o.Reason} -> {o.Shot}{(o.Cut ? " (cut)" : " (ease)")} [{o.Pose}]" : null,
+                SideChanges = o.SideChanges, SideChangesAfterMove = o.SideChangesAfterMove, Pops = o.TerrainPops, Fallbacks = o.Fallbacks,
+                SideChanged = o.SideChanged, SideTurn = o.SideTurn * 180f / MathF.PI,
+                Event = o.SideChanged ? $"{f.Time:F1}s {o.Reason} -> {o.Shot} (turn {o.SideTurn * 180f / MathF.PI:F0} deg) [{o.Pose}]" : null,
             };
         }
         bodyScale = solver.BodyScale;
@@ -72,10 +81,10 @@ internal static class Runners
     }
 
     /// <summary>
-    /// Baseline 1: the Directed camera's old death framing as designed (DynamicCameraController.SolveDeathFraming until
-    /// the automatic death shots replaced it in the plugin on 2026-11-22; its fit now lives in this project, corpse only), with the user's saved values: body band 0.3, angle χ −0.25 (looking up), coverage 1.05, killer
+    /// Baseline 1: the Directed camera's death framing as designed (DynamicCameraController.SolveDeathFraming,
+    /// corpse only), with the user's saved values: body band 0.3, angle χ −0.25 (looking up), coverage 1.05, killer
     /// ignored. The yaw is the player's and never changes. Same order as the controller: smoothed ground under the
-    /// chest, camera height derived from the band, <see cref="OldDirectedFraming.GroundedFit"/> over the head-to-feet
+    /// chest, camera height derived from the band, <see cref="DynamicCameraSolver.GroundedFit"/> over the head-to-feet
     /// anchors, a 2 s translate from the start camera, then the position spring, then the ground floor (0.06 m).
     /// "As designed" = the view is the commanded angle; the game's own aim error (the controller's tilt bias) is not modelled.
     /// </summary>
@@ -135,7 +144,7 @@ internal static class Runners
                 if (p.Y < floor) p.Y = floor;
                 required[k] = new Vector3(chest.X + (p.X - chest.X) * coverage, p.Y, chest.Z + (p.Z - chest.Z) * coverage);
             }
-            var fit = OldDirectedFraming.GroundedFit(required, chest, yaw, chi, in lens, safe, safe, height, minStandoff, maxDistance);
+            var fit = DynamicCameraSolver.GroundedFit(required, chest, yaw, chi, in lens, safe, safe, height, minStandoff, maxDistance);
             if (fit.Ok)
             {
                 standoff = fit.Standoff;

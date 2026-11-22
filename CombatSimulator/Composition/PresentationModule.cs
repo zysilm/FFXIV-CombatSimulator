@@ -74,6 +74,7 @@ internal sealed class PresentationModule
     private Dev.KoStripController armorDetachmentController => m.Corpse.ArmorDetachment;
     private ActiveCameraController activeCameraController => m.Camera.Active;
     private DynamicCameraController dynamicCameraController => m.Camera.Dynamic;
+    private DynamicCameraDebugOverlay dynamicCameraDebugOverlay = null!;
     private EnemyControlController enemyControlController => m.Actors.EnemyControl;
     private HookSafetyChecker hookSafetyChecker => m.SafetyDev.HookSafety;
     private Dev.IDevExperimental devExperimental => m.SafetyDev.DevExperimental;
@@ -144,6 +145,7 @@ internal sealed class PresentationModule
         enemyAreaOverlay.HasNativeOmen = enemyOmenVfx.HasOmen;
         osuParryOverlay = new OsuParryOverlay(telegraphSystem, gameGui, config, playerGuardController);
         reticleOverlay = new ReticleOverlay(playerHitboxResolver, combatEngine, gameGui);
+        dynamicCameraDebugOverlay = new DynamicCameraDebugOverlay(dynamicCameraController, gameGui, config);
         updateLogPopupController = new UpdateLogPopupController(m.Config, log, hadExistingConfig);
     }
 
@@ -154,14 +156,17 @@ internal sealed class PresentationModule
         if (!clientState.IsLoggedIn)
             return;
 
-        // Raw mouse wheel for the automatic death shot: the wheel is the shot's size while it runs (the
-        // game's own zoom is held), and the camera struct has no pending-zoom field to read it from.
-        // Skipped while ImGui wants the mouse (scrolling one of our own windows must not resize the shot).
+        // Raw mouse wheel for the dynamic camera's death shot: its zoom is pinned shut at
+        // the game camera, so the wheel's INTENT has to be read here — the camera struct
+        // has no pending-zoom field to intercept. Skipped while ImGui wants the mouse
+        // (scrolling one of our own windows must not retune the shot).
+        // (The duel camera and the automatic death shot of Duel mode take the wheel the same way.)
         var imguiIo = Dalamud.Bindings.ImGui.ImGui.GetIO();
         if (!imguiIo.WantCaptureMouse && imguiIo.MouseWheel != 0f)
         {
             dynamicCameraController.NotifyMouseWheel(imguiIo.MouseWheel);
             m.Camera.Duel.NotifyMouseWheel(imguiIo.MouseWheel);
+            m.Camera.DeathShots.NotifyMouseWheel(imguiIo.MouseWheel);
         }
 
         if (config.ShowShortcuts)
@@ -169,6 +174,9 @@ internal sealed class PresentationModule
 
         if (config.ShowFastCombatToolbar)
             mainWindow.DrawFastCombatToolbar();
+
+        if (config.ShowDynamicCamToolbar)
+            mainWindow.DrawDynamicCamToolbar();
 
         if (config.ShowActiveCamToolbar)
             mainWindow.DrawActiveCamToolbar();
@@ -210,6 +218,7 @@ internal sealed class PresentationModule
         }
 
         ragdollDebugOverlay.Draw();
+        dynamicCameraDebugOverlay.Draw();
 
         if (!combatEngine.IsActive)
         {

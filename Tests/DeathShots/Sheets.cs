@@ -37,14 +37,14 @@ internal static class Sheets
         var picks = all.Where(t => t.Humanoid && t.Seconds > 8f && t.Frames.Any(f => f.PhysicsStarted))
             .OrderByDescending(t => t.IsPlayer).ThenByDescending(t => t.Seconds).Take(count).ToList();
         var legend = new StringBuilder();
-        legend.AppendLine("rows: Low three-quarter, Face, Along the body, Overhead, Ground profile, Auto, Directed (baseline), old Death Cam 'da' (baseline), top view of Auto");
+        legend.AppendLine("rows: Low three-quarter, Low on the face, Hips up to the face, Low from the feet, Low from behind, Low full body, Auto, Directed (baseline), old Death Cam 'da' (baseline), top view of Auto");
         legend.AppendLine("columns: the six moments listed per file (seconds after death); start camera: behind-right of the body at 5 m (azimuth 135 deg)");
         foreach (var t in picks)
         {
             var world = new RecordedWorld(t);
             var start = StartCamera.For(t, 3);
             var rows = new List<Cam[]>();
-            foreach (var profile in new[] { DeathShotProfile.LowThreeQuarter, DeathShotProfile.Face, DeathShotProfile.AlongBody, DeathShotProfile.Overhead, DeathShotProfile.GroundProfile, DeathShotProfile.Auto })
+            foreach (var profile in DeathShotProfiles.Choices.Skip(1).Append(DeathShotProfile.Auto))
                 rows.Add(Runners.New(t, world, start, profile, out _));
             rows.Add(Runners.Directed(t, world, start));
             rows.Add(Runners.OldDeathCam(t, start, Runners.OldShots[0]));

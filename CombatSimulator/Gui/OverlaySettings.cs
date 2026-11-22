@@ -50,6 +50,21 @@ public interface IActionOverlaySettings
     float OsuOuterStartScale { get; }
 }
 
+/// <summary>The dynamic camera's framing (<c>DynamicCameraDebugOverlay</c>).</summary>
+public interface IDynamicCameraDebugSettings
+{
+    bool EnableDynamicCamera { get; }
+    bool DynCamDebugOverlay { get; }
+    float DynCamDeathAngle { get; }
+    float DynCamDeathBodyBand { get; }
+    float DynCamDeathBodyVisibility { get; }
+    float DynCamDeathCloseUpDistance { get; }
+    bool DynCamDeathMaximizeBody { get; }
+    float DynCamDeathTranslateDuration { get; }
+    float DynCamShoulderScreenFrac { get; }
+    float DynCamSubjectScreenShare { get; }
+}
+
 /// <summary>The ragdoll's bodies (<c>Gui.RagdollDebugOverlay</c>).</summary>
 public interface IRagdollDebugSettings
 {

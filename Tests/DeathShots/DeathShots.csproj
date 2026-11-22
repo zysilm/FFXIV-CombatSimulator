@@ -10,9 +10,8 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- The plugin's death-shot code. Every file in that folder is game-free by rule, so this tool and the plugin
-         run one solver. DynamicCameraSolver (pure as well) supplies the lens and projection. The fit of the
-         Directed camera's old death framing, one of the two baselines, is OldDirectedFraming.cs here: the plugin
-         dropped it when the automatic death shots replaced that framing. -->
+         run one solver. DynamicCameraSolver (pure as well) supplies the lens and projection, and the fit of the
+         Directed camera's current death framing, which is one of the two baselines. -->
     <Compile Include="../../CombatSimulator/Camera/DeathShots/*.cs" Link="Plugin/%(Filename)%(Extension)" />
     <Compile Include="../../CombatSimulator/Camera/DynamicCameraSolver.cs" Link="Plugin/DynamicCameraSolver.cs" />
   </ItemGroup>

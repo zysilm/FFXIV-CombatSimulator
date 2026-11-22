@@ -12,7 +12,7 @@ internal static class Probe
         var t = all.FirstOrDefault(x => x.Name.Contains(name, StringComparison.OrdinalIgnoreCase));
         if (t == null || !Enum.TryParse<DeathShotProfile>(profileName, true, out var profile))
         {
-            Console.Error.WriteLine("usage: probe <part of a recording name> <Auto|LowThreeQuarter|Face|AlongBody|Overhead|GroundProfile> [start azimuth 0..7]");
+            Console.Error.WriteLine("usage: probe <part of a recording name> <Auto|LowThreeQuarter|LowFace|HipsToFace|LowFeetSide|LowBehind|LowFullBody> [start azimuth 0..7]");
             return;
         }
         var world = new RecordedWorld(t);

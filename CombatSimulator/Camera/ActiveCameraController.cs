@@ -42,15 +42,16 @@ public unsafe class ActiveCameraController : IDisposable
     private Hook<GetCameraPositionDelegate>? getCameraPosHook;
     private delegate void SetCameraLookAtDelegate(nint camera, Vector3* lookAt, Vector3* cameraPosition, Vector3* scratch);
     private Hook<SetCameraLookAtDelegate>? setCameraLookAtHook;
-    /// <summary>Replaces the main camera's look-at point only, while this controller is active (the private module's
-    /// scenes; the plugin itself sets none).</summary>
+    /// <summary>Replaces the main camera's look-at point only, while this controller is active (the Directed camera's
+    /// death framing; the private module's scenes wrap it).</summary>
     public Func<Vector3, Vector3, Vector3?>? ModeLookAtOverride { get; set; }
 
     public delegate bool CameraPoseOverride(ref Vector3 lookAt, ref Vector3 eye);
 
     /// <summary>Replaces the main camera's eye and look-at point inside the game's camera update, whether or not this
-    /// controller is active. Two levels behind the one delegate (Composition/CameraModule): the automatic death shot
-    /// writes first, a cutscene shot writes over it. Returns true when it changed them; must not throw.</summary>
+    /// controller is active. Three levels behind the one delegate (Composition/CameraModule): the duel camera writes
+    /// first, the automatic death shot (Duel mode) over it, a cutscene shot over both. Returns true when it changed
+    /// them; must not throw.</summary>
     public CameraPoseOverride? PoseOverride { get; set; }
 
     /// <summary>True while <see cref="PoseOverride"/> may move the eye close to a character: models are kept drawn.</summary>
@@ -89,7 +90,7 @@ public unsafe class ActiveCameraController : IDisposable
     private ActiveCameraInputs? Inputs => TemporaryInputs?.Invoke();
     private static float Input(float? value, float fallback) => value.HasValue && float.IsFinite(value.Value) ? value.Value : fallback;
     private bool DynamicCameraEnabled => DynamicCameraEnabledOverride?.Invoke() ?? config.EnableDynamicCamera;
-    /// <summary>Camera mode Duel (the duel camera, and the death shot inside it).</summary>
+    /// <summary>Camera mode Duel (the duel camera, and the automatic death shot, which runs in this mode only).</summary>
     private bool DuelCameraEnabled => config.EnableDuelCamera && !config.EnableActiveCamera;
     /// <summary>A mode that places its own eye and keeps it clear of terrain itself: the game's camera collision is off.</summary>
     private bool DirectedOrDuel => DynamicCameraEnabled || DuelCameraEnabled;
@@ -526,7 +527,7 @@ public unsafe class ActiveCameraController : IDisposable
 
     // The Directed camera and the duel camera always supply their own terrain clearance. This controller is
     // the sole owner of the shared native patch, including when a mode resets.
-    // (So the game's camera collision is off for the whole of a death shot, in Directed mode and in Duel mode alike. A
+    // (So the game's camera collision is off for the whole of an automatic death shot, which runs in Duel mode. A
     // below-ground death shot does not depend on it: its eye is written after the game's collision has run, into the
     // buffers the game stores without another check. The patch only keeps the game's own orbit camera, which is
     // what the shot blends back to, from being pulled about meanwhile. The duel camera hands its eye over the same

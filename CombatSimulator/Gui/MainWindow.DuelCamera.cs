@@ -5,13 +5,14 @@
 using System;
 using System.Numerics;
 using CombatSimulator.Camera;
+using CombatSimulator.Camera.DeathShots;
 using Dalamud.Bindings.ImGui;
 
 namespace CombatSimulator.Gui;
 
 /// <summary>
 /// Duel camera controls, shown in the Camera page when the camera mode is Duel (docs/DUEL_CAMERA.md): one option of
-/// its own, and the death shot's two (death shots always run in this mode).
+/// its own, and the automatic death shot's three (death shots run in this mode, and only in it).
 /// </summary>
 public partial class MainWindow
 {
@@ -42,8 +43,49 @@ public partial class MainWindow
         }
         HelpMarker("Tight: close, from the waist up. Standard: most of the body. Wide: further back, whole bodies.");
 
-        ImGui.TextWrapped("In Duel mode the automatic death shot always runs when you go down:");
-        DrawDeathShotControls("duelcam");
+        ImGui.TextWrapped("When you go down in Duel mode the automatic death shot takes over:");
+        DrawDuelDeathShotControls();
         ImGui.Unindent();
+    }
+
+    /// <summary>The automatic death shot's options. It runs in Duel mode only, so they are here only (the Directed
+    /// camera has its own death framing and its own "Death shot" option).</summary>
+    private void DrawDuelDeathShotControls()
+    {
+        var shot = Array.IndexOf(DeathShotProfiles.Choices, config.DuelDeathShot);
+        ImGui.SetNextItemWidth(CameraItemWidth());
+        if (PresetCombo("Duel death shot##duelcam", DeathShotProfiles.ChoiceLabels, shot, out var pickedShot))
+        {
+            config.DuelDeathShot = DeathShotProfiles.Choices[pickedShot];
+            config.Save();
+        }
+        HelpMarker("All of them are close, low and slow, on a narrow lens.\n" +
+                   "Auto: picks one by how the body lies and where the camera already is.\n" +
+                   "Low three-quarter: hips to chest, from the front side and from below.\n" +
+                   "Low on the face: the face, from in front of it.\n" +
+                   "Hips up to the face: from by the hips, up along the torso to the face.\n" +
+                   "Low from the feet: hips to chest, from the feet end.\n" +
+                   "Low from behind: hips to chest, from the back side.\n" +
+                   "Low full body: the whole body, lying diagonally across the picture.\n" +
+                   "Changing it while you are down moves the camera over to the new shot.");
+
+        var grabbed = (int)config.DuelDeathShotGrabbed;
+        ImGui.SetNextItemWidth(CameraItemWidth());
+        if (PresetCombo("When grabbed##duelcam", DeathShotProfiles.GrabbedLabels, grabbed, out var pickedGrabbed))
+        {
+            config.DuelDeathShotGrabbed = (DeathShotGrabbedFraming)pickedGrabbed;
+            config.Save();
+        }
+        HelpMarker("While an enemy holds your body up: the camera goes to your upper body, level with it or from slightly above, " +
+                   "and comes back to the shot above once you are let go and lie still.");
+
+        var below = config.DuelDeathShotBelowGround;
+        if (ImGui.Checkbox("Allow below ground##duelcam", ref below))
+        {
+            config.DuelDeathShotBelowGround = below;
+            config.Save();
+        }
+        HelpMarker("The camera may go under the ground to look up at a body lying on it (the ground is not drawn from below). " +
+                   "Off: the camera stays above the ground.");
     }
 }

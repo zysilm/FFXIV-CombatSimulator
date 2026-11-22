@@ -56,38 +56,36 @@ internal sealed unsafe class CameraModule
     }
 
     /// <summary>
-    /// Dynamic Camera: over-the-shoulder combat framing, and the automatic death shot when the player goes down
-    /// (docs/DEATH_SHOTS.md). The combat framing submits through the coordinator like every other mode and never
-    /// clears player input — see DynamicCameraController. The death shot's FoV goes through the coordinator too; its
-    /// eye and look-at point are handed to the game inside its camera update (the active camera's SetCameraLookAt
-    /// detour), and the post-update hook stops a stalled shot and checks the result.
+    /// Dynamic Camera: over-the-shoulder combat framing, and a two-subject composition
+    /// (corpse + killer) on death. Submits through the coordinator like every other mode
+    /// and never clears player input — see DynamicCameraController.
     /// </summary>
-    public void CreateDynamic(ISigScanner sigScanner, ICondition condition, IClientState clientState)
+    public void CreateDynamic(ISigScanner sigScanner)
     {
-        deathShotDirector = new DeathShotDirector(
-            m.Config, cameraModeCoordinator, boneTransformService, RagdollFor, condition, clientState, log);
         dynamicCameraController = new DynamicCameraController(
             m.Config, cameraModeCoordinator, combatEngine, npcSelector,
-            boneTransformService, deathShotDirector, sigScanner, log);
+            boneTransformService, ragdollController, sigScanner, log);
         dynamicCameraController.GetCurrentOwner = () => cameraModeCoordinator.CurrentOwner;
-        gameCameraUpdateHook.PreCameraUpdate = camera => activeCameraController.UpdateCollisionPolicy();
-        gameCameraUpdateHook.PostCameraUpdate = deathShotDirector.OnPostCameraUpdate;
-        activeCameraController.PoseOverride = deathShotDirector.OverridePose;
-        activeCameraController.PoseOverrideActive = () => deathShotDirector.IsRunning;
+        // The death shot forces its locked pitch/zoom inside the game's camera update.
+        // Framework-time writes are otherwise overwritten by controller, keyboard and wheel input.
+        gameCameraUpdateHook.PreCameraUpdate = camera =>
+        {
+            activeCameraController.UpdateCollisionPolicy();
+            dynamicCameraController.OnPreCameraUpdate(camera);
+        };
+        activeCameraController.ModeLookAtOverride = dynamicCameraController.OverrideDeathLookAt;
     }
 
     /// <summary>
     /// Cutscene follow shots (docs/CUTSCENE_SHOTS.md): the game's own cutscene camera work on our characters at victory
     /// and death. Hands the game the shot's eye and look-at point inside its camera update (the active camera's
     /// SetCameraLookAt detour) and its FoV through the coordinator; the post-update hook stops a stalled shot and checks the result.
-    /// The pose hand-over has two levels: the automatic death shot writes first, a cutscene shot (owner 60) writes over
-    /// it and wins; a cutscene shot that ends blends out to the death shot's pose.
     /// </summary>
     public void CreateCutsceneShots(ITargetManager targetManager, IDataManager dataManager, ICondition condition, IClientState clientState,
         string configDirectory, System.Func<bool> sceneActive)
     {
         cutsceneShotDirector = new CutsceneShotDirector(
-            m.Config, cameraModeCoordinator, combatEngine, npcSelector, m.Actors.Companions,
+            m.Config, cameraModeCoordinator, dynamicCameraController, combatEngine, npcSelector, m.Actors.Companions,
             boneTransformService,
             address => RagdollFor(address)?.IsActive == true,
             (address, bone) => RagdollFor(address) is { IsActive: true } ragdoll ? ragdoll.GetBodyWorldPosition(bone) : null,
@@ -98,34 +96,32 @@ internal sealed unsafe class CameraModule
             condition,
             clientState,
             log);
-        deathShotDirector.CutsceneOwnsCamera = () => cutsceneShotDirector.OwnsCamera;
-        cutsceneShotDirector.HandingBack = deathShotDirector.ResumeNow;
-        gameCameraUpdateHook.PostCameraUpdate = camera =>
-        {
-            cutsceneShotDirector.OnPostCameraUpdate(camera);
-            deathShotDirector.OnPostCameraUpdate(camera);
-        };
-        activeCameraController.PoseOverride = (ref System.Numerics.Vector3 lookAt, ref System.Numerics.Vector3 eye) =>
-        {
-            var death = deathShotDirector.OverridePose(ref lookAt, ref eye);
-            var cutscene = cutsceneShotDirector.OverridePose(ref lookAt, ref eye);
-            if (cutscene) deathShotDirector.NotePoseSuperseded();
-            return death || cutscene;
-        };
-        activeCameraController.PoseOverrideActive = () => cutsceneShotDirector.IsPlaying || deathShotDirector.IsRunning;
+        gameCameraUpdateHook.PostCameraUpdate = cutsceneShotDirector.OnPostCameraUpdate;
+        activeCameraController.PoseOverride = cutsceneShotDirector.OverridePose;
+        activeCameraController.PoseOverrideActive = () => cutsceneShotDirector.IsPlaying;
     }
 
     /// <summary>
     /// The duel camera (docs/DUEL_CAMERA.md), camera mode "Duel": a two-shot of the player and one opponent while a
     /// simulation runs. Its lens, the game camera's yaw and the held zoom and pitch go through the coordinator (owner
     /// Duel, just above the Directed camera's combat framing and below everything else); its eye and look-at point
-    /// through the same hand-over as the shots. The pose hand-over has three levels from here on: the duel camera
-    /// writes first, the automatic death shot over it, a cutscene shot over both. A cutscene shot that ends blends out
-    /// to whichever of the two is running below it.
+    /// through the same hand-over as the shots.
+    ///
+    /// With it, the automatic death shot (docs/DEATH_SHOTS.md): in Duel mode, and only there, it takes the camera when
+    /// the player goes down (the Directed camera keeps its own death framing). It reads the player's body, asks Enemy
+    /// Control whether a grab holds it, and hands its pose over the same way.
+    ///
+    /// The pose hand-over has three levels from here on: the duel camera writes first, the automatic death shot over
+    /// it, a cutscene shot over both. A cutscene shot that ends blends out to whichever of the two is running below it.
     /// </summary>
     public void CreateDuel(ITargetManager targetManager, ICondition condition, IClientState clientState, IGamepadState gamepadState,
         IGameConfig gameConfig, System.Func<bool> sceneActive)
     {
+        deathShotDirector = new DeathShotDirector(
+            m.Config, cameraModeCoordinator, combatEngine, boneTransformService, RagdollFor,
+            () => m.Actors.EnemyControl.IsHoldingGrab,
+            sceneActive, condition, clientState, log);
+        deathShotDirector.CutsceneOwnsCamera = () => cutsceneShotDirector.OwnsCamera;
         duelCameraDirector = new DuelCameraDirector(
             m.Config, cameraModeCoordinator, combatEngine, npcSelector, boneTransformService, m.Combat.Telegraphs,
             RagdollFor,

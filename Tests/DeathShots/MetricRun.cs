@@ -36,13 +36,13 @@ internal static class MetricRun
         public long ChainIn, RestFrames, OwnInRest, FaceHeld, FaceHeldVisible, Frames, OwnIn, OwnSafe, HipsChestIn, HeadIn, WholeIn, FaceClaimed, FaceVisible, Below5, TriFrames, TriBlocked, PulledIn, CutFrames;
         public float MinClearance = float.MaxValue;
         public readonly List<float> Size = new(), EyeSpeed = new(), ViewSpeed = new(), Jerk = new(), ViewAccel = new(), FovRate = new();
-        public readonly List<float> SideChangesUnmoved = new(), SideChanges = new(), Cuts = new(), Travel = new(), EyeJump = new(), LookJump = new(), SettleLag = new(), Drift = new(), DistanceRange = new();
+        public readonly List<float> SideChangesUnmoved = new(), SideChangesFree = new(), BlockedChanges = new(), SideChanges = new(), Turns = new(), Travel = new(), EyeJump = new(), LookJump = new(), SettleLag = new(), Drift = new(), DistanceRange = new();
         public int Pops, OldStarts, OldLimited, Runs, RunsWithFallback, SettleWindows, CameraNeverSettled;
         public readonly List<float> JumpSlow = new(), JumpFast = new(), OldRaw = new(), OldRawPlayer = new(), OldOff = new(), OldUp = new(), OldDistance = new();
         public readonly SortedDictionary<string, long> ShotFrames = new();
         /// <summary>Below-ground columns: frames with the eye under the ground, how deep, and where Low three-quarter
         /// sits on a lying body at rest (looking-up angle, distance for the reference body).</summary>
-        public long BelowGround, BelowGroundAtRest, LyingFrames;
+        public long BelowGround, BelowGroundAtRest, LyingFrames, UpperIn;
         public readonly List<float> Depth = new(), LyingUp = new(), LyingDistance = new();
 
         public void Merge(Acc o)
@@ -54,7 +54,7 @@ internal static class MetricRun
             PulledIn += o.PulledIn; CutFrames += o.CutFrames;
             MinClearance = MathF.Min(MinClearance, o.MinClearance);
             Size.AddRange(o.Size); EyeSpeed.AddRange(o.EyeSpeed); ViewSpeed.AddRange(o.ViewSpeed); Jerk.AddRange(o.Jerk); ViewAccel.AddRange(o.ViewAccel); FovRate.AddRange(o.FovRate);
-            SideChanges.AddRange(o.SideChanges); SideChangesUnmoved.AddRange(o.SideChangesUnmoved); Cuts.AddRange(o.Cuts); Travel.AddRange(o.Travel); EyeJump.AddRange(o.EyeJump); LookJump.AddRange(o.LookJump);
+            SideChanges.AddRange(o.SideChanges); SideChangesUnmoved.AddRange(o.SideChangesUnmoved); SideChangesFree.AddRange(o.SideChangesFree); BlockedChanges.AddRange(o.BlockedChanges); Turns.AddRange(o.Turns); UpperIn += o.UpperIn; Travel.AddRange(o.Travel); EyeJump.AddRange(o.EyeJump); LookJump.AddRange(o.LookJump);
             SettleLag.AddRange(o.SettleLag); Drift.AddRange(o.Drift); DistanceRange.AddRange(o.DistanceRange);
             Pops += o.Pops; OldStarts += o.OldStarts; OldLimited += o.OldLimited; Runs += o.Runs; RunsWithFallback += o.RunsWithFallback; SettleWindows += o.SettleWindows; CameraNeverSettled += o.CameraNeverSettled;
             JumpSlow.AddRange(o.JumpSlow); JumpFast.AddRange(o.JumpFast); OldRaw.AddRange(o.OldRaw); OldRawPlayer.AddRange(o.OldRawPlayer); OldOff.AddRange(o.OldOff); OldUp.AddRange(o.OldUp); OldDistance.AddRange(o.OldDistance);
@@ -67,23 +67,29 @@ internal static class MetricRun
         Verbose = verbose;
         var usable = all.Where(t => t.Humanoid && t.Frames.Length >= 2).ToList();
         var columns = new List<Column>();
-        foreach (var profile in new[] { DeathShotProfile.LowThreeQuarter, DeathShotProfile.Face, DeathShotProfile.AlongBody, DeathShotProfile.Overhead, DeathShotProfile.GroundProfile, DeathShotProfile.Auto })
+        static string Short(DeathShotProfile p) => p switch
+        {
+            DeathShotProfile.LowThreeQuarter => "Low3/4", DeathShotProfile.LowFace => "Face", DeathShotProfile.HipsToFace => "Hips>Face",
+            DeathShotProfile.LowFeetSide => "Feet", DeathShotProfile.LowBehind => "Behind", DeathShotProfile.LowFullBody => "Full", _ => p.ToString(),
+        };
+        var profiles = DeathShotProfiles.Choices.Skip(1).Append(DeathShotProfile.Auto).ToArray();
+        foreach (var profile in profiles)
         {
             var p = profile;
             columns.Add(new Column
             {
-                Name = p switch { DeathShotProfile.LowThreeQuarter => "Low3/4", DeathShotProfile.AlongBody => "Along", DeathShotProfile.GroundProfile => "Ground", _ => p.ToString() },
+                Name = Short(p),
                 IsNew = true, Subject = p == DeathShotProfile.Auto ? null : ShotRecipe.Of(p).Subject,
                 Run = (t, w, s) => { var c = Runners.New(t, w, s, p, out var scale); return (c, scale); },
             });
         }
-        // The option "Allow below ground", on the shots it changes and on Auto.
-        foreach (var profile in new[] { DeathShotProfile.LowThreeQuarter, DeathShotProfile.Face, DeathShotProfile.Auto })
+        // The option "Allow below ground": every shot of the family is a low one.
+        foreach (var profile in profiles)
         {
             var p = profile;
             columns.Add(new Column
             {
-                Name = (p == DeathShotProfile.LowThreeQuarter ? "Low3/4" : p.ToString()) + " below",
+                Name = Short(p) + " bg",
                 IsNew = true, Below = true, Subject = p == DeathShotProfile.Auto ? null : ShotRecipe.Of(p).Subject,
                 Run = (t, w, s) => { var c = Runners.New(t, w, s, p, out var scale, belowGround: true); return (c, scale); },
             });
@@ -127,34 +133,68 @@ internal static class MetricRun
         return Gates(columns);
     }
 
-    /// <summary>One hash per profile over every output pose (eye, look-at, FoV, bit for bit) of every trajectory from
-    /// the eight start azimuths, with the default options: to show a change leaves the default output untouched.</summary>
-    public static void Hash(List<Trajectory> all)
+    /// <summary>
+    /// One hash per Low three-quarter run (trajectory × start azimuth, default options) over every output pose (eye,
+    /// look-at, FoV, bit for bit), with how many times the run changed side. <paramref name="save"/> writes the list;
+    /// <paramref name="against"/> compares with a saved one: a change to the solver that is meant to leave Low
+    /// three-quarter alone must reproduce every run of the saved list that never changed side (the ones that did are
+    /// where a change of side used to be a cut and is an ease now).
+    /// </summary>
+    public static int Hash(List<Trajectory> all, string? save, string? against)
     {
         var usable = all.Where(t => t.Humanoid && t.Frames.Length >= 2).ToList();
-        foreach (var profile in new[] { DeathShotProfile.LowThreeQuarter, DeathShotProfile.Face, DeathShotProfile.AlongBody, DeathShotProfile.Overhead, DeathShotProfile.GroundProfile, DeathShotProfile.Auto })
+        var lines = new string[usable.Count * 8];
+        Parallel.For(0, usable.Count, i =>
         {
-            var hashes = new ulong[usable.Count];
-            long frames = 0;
-            Parallel.For(0, usable.Count, i =>
+            var t = usable[i];
+            var world = new RecordedWorld(t);
+            for (var k = 0; k < 8; k++)
             {
-                var t = usable[i];
-                var world = new RecordedWorld(t);
                 var h = 14695981039346656037UL;
                 void Mix(float v) { h = (h ^ BitConverter.SingleToUInt32Bits(v)) * 1099511628211UL; }
-                for (var k = 0; k < 8; k++)
-                    foreach (var c in Runners.New(t, world, StartCamera.For(t, k), profile, out _))
-                    {
-                        Mix(c.Eye.X); Mix(c.Eye.Y); Mix(c.Eye.Z); Mix(c.LookAt.X); Mix(c.LookAt.Y); Mix(c.LookAt.Z); Mix(c.Fov);
-                        Mix(c.Cut ? 1f : 0f); Mix(c.SideChanges); Mix(c.Fallbacks); Mix(c.Pops);
-                    }
-                hashes[i] = h;
-                Interlocked.Add(ref frames, t.Frames.Length * 8L);
-            });
-            var total = 14695981039346656037UL;
-            foreach (var h in hashes) total = (total ^ h) * 1099511628211UL;
-            Console.WriteLine($"{profile,-16} {frames,8} poses  {total:X16}");
+                var cams = Runners.New(t, world, StartCamera.For(t, k), DeathShotProfile.LowThreeQuarter, out _);
+                foreach (var c in cams)
+                {
+                    Mix(c.Eye.X); Mix(c.Eye.Y); Mix(c.Eye.Z); Mix(c.LookAt.X); Mix(c.LookAt.Y); Mix(c.LookAt.Z); Mix(c.Fov);
+                }
+                lines[i * 8 + k] = $"{t.Name}|{k}|{h:X16}|{cams[^1].SideChanges}|{cams.Length}";
+            }
+        });
+        if (save != null)
+        {
+            File.WriteAllLines(save, lines);
+            Console.WriteLine($"{lines.Length} Low three-quarter runs saved to {save}");
+            return 0;
         }
+        if (against == null)
+        {
+            foreach (var l in lines) Console.WriteLine(l);
+            return 0;
+        }
+        var old = File.ReadAllLines(against).Select(l => l.Split('|')).ToDictionary(p => p[0] + "|" + p[1]);
+        int still = 0, same = 0, differ = 0, moved = 0, movedSame = 0;
+        long stillFrames = 0;
+        foreach (var l in lines)
+        {
+            var p = l.Split('|');
+            if (!old.TryGetValue(p[0] + "|" + p[1], out var o)) continue;
+            if (o[3] == "0")
+            {
+                still++;
+                stillFrames += long.Parse(o[4]);
+                if (o[2] == p[2]) same++;
+                else { differ++; Console.WriteLine($"  DIFFERENT {p[0]} start {p[1]}: no change of side before, {p[3]} now"); }
+            }
+            else
+            {
+                moved++;
+                if (o[2] == p[2]) movedSame++;
+            }
+        }
+        Console.WriteLine($"Low three-quarter, default options: {still} runs ({stillFrames} poses) never changed side before; {same} of them bit-identical now, {differ} different.");
+        Console.WriteLine($"  {moved} runs changed side before (a cut then; an ease, or no change at all, now): {movedSame} of them bit-identical, {moved - movedSame} differ as intended.");
+        Console.WriteLine(differ == 0 ? "== HASH PASS" : "== HASH FAIL");
+        return differ == 0 ? 0 : 1;
     }
 
     // ------------------------------------------------------------------ one run
@@ -177,6 +217,7 @@ internal static class MetricRun
         Vector3 prevEye = default, prevDir = default, prevVel = default, prevAcc = default;
         float prevViewSpeed = 0f, prevFov = 0f;
         var history = 0; // consecutive frames without a cut, for the differences
+        var lostAtRest = 0;
         void CloseWindow(float time)
         {
             if (windowStart < 0) return;
@@ -227,9 +268,11 @@ internal static class MetricRun
             }, cam.Eye, dir, right, up, lens);
             if (chain.Reach <= 1f) a.ChainIn++;
             var subject = column.Subject ?? ShotRecipe.Of(cam.Shot).Subject;
-            var own = column.OwnIsChain ? chain : subject switch { ShotSubject.HipsToChest => hipsChest, ShotSubject.Head => head, _ => body };
+            var upper = Span(stackalloc[] { p.Chest, headCentre }, cam.Eye, dir, right, up, lens);
+            if (upper.Reach <= 1f) a.UpperIn++;
+            var own = column.OwnIsChain ? chain : subject switch { ShotSubject.HipsToChest => hipsChest, ShotSubject.Head => head, ShotSubject.ChestToHead => upper, _ => body };
             if (own.Reach <= 1f) a.OwnIn++;
-            if (bodySettled) { a.RestFrames++; if (own.Reach <= 1f) a.OwnInRest++; }
+            if (bodySettled) { a.RestFrames++; if (own.Reach <= 1f) a.OwnInRest++; else lostAtRest++; }
             if (own.Reach <= 0.92f) a.OwnSafe++;
             // Subject size: how much of the frame its extent takes, the larger of the two axes; a single point
             // (the head) by the head's size at its depth.
@@ -237,7 +280,7 @@ internal static class MetricRun
             var frame = BodyFrame.From(p, ground);
             var shotName = cam.HasDiagnostics ? cam.Shot.ToString() : column.Name;
             a.ShotFrames[shotName] = a.ShotFrames.GetValueOrDefault(shotName) + 1;
-            if (cam.HasDiagnostics ? cam.Shot == DeathShotProfile.Face : false)
+            if (cam.HasDiagnostics ? cam.Shot == DeathShotProfile.LowFace : false)
             {
                 a.FaceClaimed++;
                 if (cam.Holding) a.FaceHeld++;
@@ -277,13 +320,14 @@ internal static class MetricRun
             if (world.HasTriangles)
             {
                 a.TriFrames++;
-                var centre = subject switch { ShotSubject.HipsToChest => (p.Hips + p.Chest) * 0.5f, ShotSubject.Head => headCentre, _ => p.Hips };
+                var centre = subject switch { ShotSubject.HipsToChest => (p.Hips + p.Chest) * 0.5f, ShotSubject.Head => headCentre, ShotSubject.ChestToHead => (p.Chest + headCentre) * 0.5f, _ => p.Hips };
                 if (world.BlockedByTriangles(cam.Eye, centre)) a.TriBlocked++;
             }
             if (cam.PulledIn) a.PulledIn++;
 
             // motion
             if (cam.Cut && i > 0) { a.CutFrames++; history = 0; }
+            if (cam.SideChanged) a.Turns.Add(cam.SideTurn);
             if (i > 0 && history >= 1)
             {
                 var vel = (cam.Eye - prevEye) / dt;
@@ -381,9 +425,12 @@ internal static class MetricRun
         {
             a.SideChanges.Add(cams[^1].SideChanges);
             a.SideChangesUnmoved.Add(cams[^1].SideChanges - cams[^1].SideChangesAfterMove);
-            a.Cuts.Add(cams[^1].Cuts);
+            a.SideChangesFree.Add(MathF.Max(0f, cams[^1].SideChanges - cams[^1].SideChangesAfterMove - cams[^1].BlockedChanges));
+            a.BlockedChanges.Add(cams[^1].BlockedChanges);
             a.Pops += cams[^1].Pops;
             if (cams[^1].Fallbacks > 0) a.RunsWithFallback++;
+            if (lostAtRest > 30 && Verbose)
+                lock (Console.Out) Console.WriteLine($"    {column.Name} {t.Name} start {start.Azimuth / Deg:F0}: subject out of frame on {lostAtRest} frames with the body at rest; " + string.Join("; ", cams.Where(c => c.Event != null).Select(c => c.Event)));
             if (cams[^1].SideChanges > 1 && Verbose)
                 lock (Console.Out) Console.WriteLine($"    {column.Name} {t.Name}: " + string.Join("; ", cams.Where(c => c.Event != null).Select(c => c.Event)));
         }
@@ -439,7 +486,8 @@ internal static class MetricRun
             ("FoV rate max rad/s", a => $"{a.FovRate.Max():F2}"),
             ("side changes per death mean / max", a => a.SideChanges.Count == 0 ? "-" : $"{a.SideChanges.Average():F2}/{a.SideChanges.Max():F0}"),
             ("  of those, not after the body was moved: max", a => a.SideChanges.Count == 0 ? "-" : $"{a.SideChangesUnmoved.Max():F0}"),
-            ("cuts per death mean / max", a => a.Cuts.Count == 0 ? "-" : $"{a.Cuts.Average():F2}/{a.Cuts.Max():F0}"),
+            ("change of side: turn deg median / p95 / max", a => a.Turns.Count == 0 ? "-" : $"{Stats.P(a.Turns, .5f):F0}/{Stats.P(a.Turns, .95f):F0}/{a.Turns.Max():F0}"),
+            ("cut frames (not eye-in-terrain)", a => a.SideChanges.Count == 0 ? "-" : (a.CutFrames - a.Pops).ToString(inv)),
             ("eye found inside terrain, put on top (frames)", a => a.SideChanges.Count == 0 ? "-" : a.Pops.ToString(inv)),
             ("azimuth travel deg mean / max", a => $"{a.Travel.Average():F0}/{a.Travel.Max():F0}"),
             ("ragdoll-start eye jump max cm", a => a.EyeJump.Count == 0 ? "-" : $"{a.EyeJump.Max() * 100f:F2}"),
@@ -454,15 +502,15 @@ internal static class MetricRun
         var width = rows.Max(r => r.Label.Length);
         var text = new StringBuilder();
         text.Append("| ").Append("metric".PadRight(width)).Append(" |");
-        foreach (var c in columns) text.Append(' ').Append(c.Name.PadLeft(11)).Append(" |");
+        foreach (var c in columns) text.Append(' ').Append(c.Name.PadLeft(12)).Append(" |");
         text.AppendLine();
         text.Append("|").Append(new string('-', width + 2)).Append("|");
-        foreach (var _ in columns) text.Append(new string('-', 12)).Append(":|");
+        foreach (var _ in columns) text.Append(new string('-', 13)).Append(":|");
         text.AppendLine();
         foreach (var (label, value) in rows)
         {
             text.Append("| ").Append(label.PadRight(width)).Append(" |");
-            foreach (var c in columns) text.Append(' ').Append(value(c.A).PadLeft(11)).Append(" |");
+            foreach (var c in columns) text.Append(' ').Append(value(c.A).PadLeft(12)).Append(" |");
             text.AppendLine();
         }
         Console.Write(text.ToString());
@@ -488,7 +536,7 @@ internal static class MetricRun
         var old = new Acc();
         foreach (var c in columns.Where(c => c.Name.StartsWith("DC-", StringComparison.Ordinal))) old.Merge(c.A);
         double Own(Acc a) => 100.0 * a.OwnIn / a.Frames;
-        double In(Acc a, ShotSubject s) => 100.0 * (s switch { ShotSubject.HipsToChest => a.HipsChestIn, ShotSubject.Head => a.HeadIn, _ => a.WholeIn }) / a.Frames;
+        double In(Acc a, ShotSubject s) => 100.0 * (s switch { ShotSubject.HipsToChest => a.HipsChestIn, ShotSubject.Head => a.HeadIn, ShotSubject.ChestToHead => a.UpperIn, _ => a.WholeIn }) / a.Frames;
         Console.WriteLine("gates (baselines: Directed = the current death framing; Old = the three old Death Cam shots pooled):");
         foreach (var c in columns.Where(c => c.IsNew))
         {
@@ -506,9 +554,11 @@ internal static class MetricRun
             }
             else
             Gate("frames below 5 cm clearance = 0", a.Below5 == 0, $"{a.Below5} (min clearance {a.MinClearance:F3} m)");
+            Gate("no cuts: a change of side or of shot is always eased (the only jumps left: the eye found inside terrain)", a.CutFrames - a.Pops == 0,
+                $"{a.CutFrames - a.Pops} cut frames; {a.Turns.Count} changes of side, turn median {(a.Turns.Count > 0 ? Stats.P(a.Turns, .5f) : 0f):F0} deg, p95 {(a.Turns.Count > 0 ? Stats.P(a.Turns, .95f) : 0f):F0} deg, max {(a.Turns.Count > 0 ? a.Turns.Max() : 0f):F0} deg; eye in terrain {a.Pops}");
             Gate("view angular speed <= 60 deg/s outside cuts", a.ViewSpeed.Max() <= 60.5f, $"max {a.ViewSpeed.Max():F1}");
-            Gate("side changes <= 1 per death (a settled body that is moved and comes to rest turned may get one more each time)", a.SideChangesUnmoved.Max() <= 1f,
-                $"max {a.SideChangesUnmoved.Max():F0}; counting the changes after a move: max {a.SideChanges.Max():F0}, deaths with more than one {a.SideChanges.Count(x => x > 1f)}/{a.SideChanges.Count}");
+            Gate("side changes <= 1 per death, not counting the ones a blocked view forces (at most one every 6 s) and the ones after a settled body was moved", a.SideChangesFree.Max() <= 1f,
+                $"max {a.SideChangesFree.Max():F0}; forced by a blocked view: {a.BlockedChanges.Count(x => x > 0f)} deaths, at most {a.BlockedChanges.Max():F0} in one; counting everything: max {a.SideChanges.Max():F0}, deaths with more than one {a.SideChanges.Count(x => x > 1f)}/{a.SideChanges.Count}");
             Gate("ragdoll-start jump < 2 cm", a.EyeJump.Max() < 0.02f && a.LookJump.Max() < 0.02f, $"eye {a.EyeJump.Max() * 100f:F2} cm, view {a.LookJump.Max() * 100f:F2} cm at 1 m");
             Gate("drift after camera settled = 0 (< 1 mm)", a.Drift.Count > 0 && a.Drift.Max() < 0.001f, a.Drift.Count == 0 ? "no settled window" : $"max {a.Drift.Max() * 1000f:F2} mm");
             // framing: the profile's own subject, like for like where the subject is fixed
@@ -540,7 +590,9 @@ internal static class MetricRun
                     a.OldRawPlayer.Count > 0 && a.OldRawPlayer.Min() >= 1.0f && a.OldRawPlayer.Max() <= 1.35f,
                     a.OldOff.Count == 0 ? "no standing start" : $"off {a.OldOff.Min():F1}..{a.OldOff.Max():F1}, up {a.OldUp.Min():F1}..{a.OldUp.Max():F1}, distance {a.OldDistance.Min():F2}..{a.OldDistance.Max():F2} m for the reference body, " +
                                                                   $"{a.OldRawPlayer.Min():F2}..{a.OldRawPlayer.Max():F2} m on the player's own body; {a.OldLimited} of {a.OldStarts} standing starts give way to the ground and are not counted");
-            if (c.Name is "Face" or "Face below")
+            // (Not with below ground allowed: there the face of a body on its side is looked at from under the ground,
+            // which this measure counts as blocked.)
+            if (c.Name is "Face")
                 Gate("face visible on Face frames once the body rests >= 90 %", a.FaceHeld > 0 && 100.0 * a.FaceHeldVisible / a.FaceHeld >= 90.0,
                     Pct(a.FaceHeldVisible, a.FaceHeld) + "% at rest (" + Pct(a.FaceVisible, a.FaceClaimed) + "% over all Face frames: the side is not re-chosen while the body falls)");
         }

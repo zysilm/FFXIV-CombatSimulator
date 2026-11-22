@@ -261,17 +261,18 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         // NpcAiController's constructor subscribes its own SimulationStarted #1 and SimulationReset #4.
         combatModule.CreateEnemyAi();
         combatModule.CreateHardTargetGuard(gameInterop);
-        cameraModule.CreateDynamic(sigScanner, condition, clientState);
+        cameraModule.CreateDynamic(sigScanner);
         actorsModule.CreateMapEnemies(objectTable);
         combatEvents.BeforePlayerDeath = () =>
         {
-            // The death animation starts now and the ragdoll is armed with it: the automatic death shot (running
-            // since the killing blow; deaths resolve on a delay) is told.
-            dynamicCameraController.HandlePlayerDeath();
+            // The killing blow was recorded when it landed; deaths resolve on a delay, so by
+            // now the engine knows exactly who to frame alongside the body.
+            dynamicCameraController.HandlePlayerDeath(
+                combatEngine.LastPlayerKillerAddress, combatEngine.LastPlayerKillerEntityId);
             devExperimental.BeforePlayerDeath();
         };
-        // Cutscene follow shots for death and victory (docs/CUTSCENE_SHOTS.md). A cutscene shot outranks the automatic
-        // death shot: that one waits while this plays and takes the camera back from where this leaves it. (These
+        // Cutscene follow shots for death and victory (docs/CUTSCENE_SHOTS.md). After the Directed camera has armed its
+        // death framing above: the shot holds that framing while it plays and hands the camera back to it. (These
         // listeners run before the SimulationStarted / SimulationReset handlers numbered #2 / #5 and on below.)
         cameraModule.CreateCutsceneShots(targetManager, dataManager, condition, clientState, pluginInterface.GetPluginConfigDirectory(), () => PrivateDirectorActive);
         combatEvents.BeforePlayerDeath += cutsceneShots.OnPlayerDeath;
@@ -282,6 +283,10 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         // pose hand-over. Heavy hits and the finishing blow are its key moments.
         cameraModule.CreateDuel(targetManager, condition, clientState, gamepadState, gameConfig, () => PrivateDirectorActive);
         combatEvents.DamageLanded += duelCamera.NoteDamage;
+        // The automatic death shot (Duel mode only): told when the death animation starts (the ragdoll is armed with
+        // it), and ended at once by a reset.
+        combatEvents.BeforePlayerDeath += cameraModule.DeathShots.OnDeathAnimation;
+        combatEvents.SimulationReset += cameraModule.DeathShots.OnSimulationReset;
         actorsModule.WireActorCallbacks(chatGui);
 
         // Re-register alive spawned NPCs on sim start (they're removed from
@@ -503,6 +508,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         boneTransformService.Dispose();
         cutsceneShots.Dispose();
         duelCamera.Dispose();
+        cameraModule.DeathShots.Dispose();
         dynamicCameraController.Dispose();
         gameCameraUpdateHook.Dispose();
         cameraModeCoordinator.Reset();
@@ -737,6 +743,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             // the orbit hook host reflects whether any mode supplies an orbit center.
             dynamicCameraController.Tick(deltaTime);
             duelCamera.Tick(deltaTime);
+            cameraModule.DeathShots.Tick(deltaTime);
             TickPrivateDirectors(deltaTime);
             cutsceneShots.Tick(deltaTime);
             gameCameraUpdateHook.Tick();
@@ -842,6 +849,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         enemyControlController.Despawn();
         cutsceneShots.Stop("zone change");
         duelCamera.Stop("zone change");
+        cameraModule.DeathShots.Stop("zone change");
         dynamicCameraController.Reset();
 
         if (combatEngine.IsActive)
@@ -876,6 +884,7 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             enemyControlController.Despawn();
             cutsceneShots.Stop("logged out");
             duelCamera.Stop("logged out");
+            cameraModule.DeathShots.Stop("logged out");
             dynamicCameraController.Reset();
             npcSpawner.DespawnAll();
             companionManager.DespawnAll();

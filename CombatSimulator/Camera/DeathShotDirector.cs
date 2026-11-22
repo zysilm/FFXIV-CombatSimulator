@@ -16,24 +16,14 @@ using GameCameraManager = FFXIVClientStructs.FFXIV.Client.Game.Control.CameraMan
 
 namespace CombatSimulator.Camera;
 
-/// <summary>What the Directed camera asks of the death shot on a frame it wants one.</summary>
+/// <summary>What a death shot is asked for on a frame one is wanted.</summary>
 public readonly record struct DeathShotRequest(
     /// <summary>The body to frame: the player's (the first version frames the body only).</summary>
     nint Subject,
     DeathShotProfile Profile,
-    /// <summary>Shot size on top of the profile's own and of the player's wheel (1 = the profile's).</summary>
-    float Size,
     /// <summary>A ragdoll is still to be armed for this body (the player between the killing blow and the death
     /// animation).</summary>
-    bool RagdollToCome,
-    /// <summary>A scene (the private module) directs this shot: a jump of the game camera's yaw is the scene placing
-    /// the camera, an absolute azimuth for the shot, not the player's hand.</summary>
-    bool SceneDirected = false,
-    /// <summary>The scene is known to have locked the player's camera input: every change of the game camera's yaw is
-    /// the scene's.</summary>
-    bool InputLocked = false,
-    /// <summary>The wheel does nothing (the scene locks the input, or does not say whether it does).</summary>
-    bool WheelLocked = false);
+    bool RagdollToCome);
 
 /// <summary>
 /// The automatic death shot in the game (docs/DEATH_SHOTS.md): runs <see cref="DeathShotSolver"/> on the fallen body
@@ -47,14 +37,16 @@ public readonly record struct DeathShotRequest(
 /// Camera: owner <see cref="CameraOwner.DynamicDeath"/> in the coordinator (the FoV, through the measured ratio of the
 /// game's FoV field to the lens it renders; the game's zoom held where it was), and the pose through the same
 /// SetCameraLookAt hand-over the cutscene shots use (<see cref="OverridePose"/>). A cutscene shot (owner 60) wins: while
-/// one plays this shot waits, and starts again from the camera the cutscene left. A cut of the solver is written as it
-/// is; nothing here blends except the 0.3 s back to the game's camera when the player is revived.
+/// one plays this shot waits, and starts again from the camera the cutscene left. The solver's pose is written as
+/// it is (it eases every change itself); nothing here blends except the 0.3 s back to the game's camera when the
+/// player is revived.
 ///
 /// The player keeps the left/right orbit (the change of the game camera's own yaw is added to the shot's side) and the
 /// wheel (shot size); the pitch is the shot's. Both go back to nothing when the solver picks a side again.
 ///
-/// Driven by <see cref="DynamicCameraController"/>: <see cref="Advance"/> every frame, <see cref="Run"/> on the frames
-/// a death shot is wanted. A frame without <see cref="Run"/> ends the shot.
+/// It runs in camera mode Duel only (<see cref="Tick"/>): there it takes over when the player goes down. In
+/// Directed mode the Directed camera has its own death framing and this does nothing. While Enemy Control's grab holds
+/// the body (a carried corpse included) the solver is told, and frames it as a held body ("When grabbed").
 /// </summary>
 public sealed unsafe class DeathShotDirector : IDisposable
 {
@@ -66,9 +58,6 @@ public sealed unsafe class DeathShotDirector : IDisposable
     private const long SummaryMs = 5000;
     /// <summary>A change of the game camera's yaw larger than this in one frame is not the player's hand.</summary>
     private const float MaxYawStep = 1.0f;
-    /// <summary>In a shot a scene directs, a change of the game camera's yaw larger than this in one frame is the scene
-    /// placing the camera (20°: 1200°/s at 60 fps).</summary>
-    private const float SceneYawJump = 0.35f;
     /// <summary>One wheel notch changes the shot size by about 10 %.</summary>
     private const float WheelStep = 0.10f;
     /// <summary>Frames without a readable body before the shot gives up.</summary>
@@ -85,18 +74,7 @@ public sealed unsafe class DeathShotDirector : IDisposable
     };
     private const int CoreBones = 7;
 
-    public static readonly string[] ProfileLabels = { "Auto", "Low three-quarter", "Face", "Along the body", "Overhead", "Ground profile" };
-    public static readonly DeathShotProfile[] Profiles =
-    {
-        DeathShotProfile.Auto, DeathShotProfile.LowThreeQuarter, DeathShotProfile.Face, DeathShotProfile.AlongBody,
-        DeathShotProfile.Overhead, DeathShotProfile.GroundProfile,
-    };
-
-    public static string Label(DeathShotProfile profile)
-    {
-        var i = Array.IndexOf(Profiles, profile);
-        return i >= 0 ? ProfileLabels[i] : profile.ToString();
-    }
+    private static string Label(DeathShotProfile profile) => DeathShotProfiles.Label(profile);
 
     private enum State { Idle, Waiting, Running, BlendOut }
 
@@ -104,6 +82,11 @@ public sealed unsafe class DeathShotDirector : IDisposable
     private readonly CameraModeCoordinator coordinator;
     private readonly BoneTransformService bones;
     private readonly Func<nint, RagdollController?> ragdollFor;
+    private readonly Simulation.CombatEngine combatEngine;
+    /// <summary>Enemy Control's grab holds the player's body now (the plugin's one way of catching it: a corpse being
+    /// carried off goes through it too).</summary>
+    private readonly Func<bool> bodyGrabbed;
+    private readonly Func<bool> sceneActive;
     private readonly ICondition condition;
     private readonly IClientState clientState;
     private readonly IPluginLog log;
@@ -152,9 +135,6 @@ public sealed unsafe class DeathShotDirector : IDisposable
     // the player's hand
     private float userYaw, userSize = 1f, lastDirH, pendingWheel;
     private bool haveDirH;
-    /// <summary>A scene placed the game camera's yaw during this shot: that yaw (and what the player turned since) is
-    /// the azimuth asked for, also after the solver picks a side again.</summary>
-    private bool sceneYawSet;
 
     // blend back to the game's camera
     private float blendOutTime;
@@ -168,7 +148,9 @@ public sealed unsafe class DeathShotDirector : IDisposable
 
     // log state
     private bool lastSettled, lastPulled, lastExpect;
-    private int lastCuts, lastFallbacks, lastPops;
+    private int lastFallbacks, lastPops;
+    private bool lastGrabbed;
+    private bool deathAnimationStarted;
     private DeathShotOutput last;
     private Vector3 lastOutEye, lastOutDir;
     private bool haveLastOut;
@@ -179,16 +161,22 @@ public sealed unsafe class DeathShotDirector : IDisposable
     public DeathShotDirector(
         Configuration config,
         CameraModeCoordinator coordinator,
+        Simulation.CombatEngine combatEngine,
         BoneTransformService bones,
         Func<nint, RagdollController?> ragdollFor,
+        Func<bool> bodyGrabbed,
+        Func<bool> sceneActive,
         ICondition condition,
         IClientState clientState,
         IPluginLog log)
     {
         this.config = config;
         this.coordinator = coordinator;
+        this.combatEngine = combatEngine;
         this.bones = bones;
         this.ragdollFor = ragdollFor;
+        this.bodyGrabbed = bodyGrabbed;
+        this.sceneActive = sceneActive;
         this.condition = condition;
         this.clientState = clientState;
         this.log = log;
@@ -212,9 +200,51 @@ public sealed unsafe class DeathShotDirector : IDisposable
     // Per frame
     // ------------------------------------------------------------------
 
-    /// <summary>Every framework tick, before <see cref="Run"/>: the blend back to the game's camera, and the end of
-    /// a shot nobody asked for on the frame before.</summary>
-    public void Advance(float dt)
+    /// <summary>Camera mode Duel: the only mode the automatic death shot runs in.</summary>
+    private bool DuelMode => config.EnableDuelCamera && !config.EnableActiveCamera && !config.EnableDynamicCamera;
+
+    /// <summary>CombatEvents.BeforePlayerDeath: the player's death animation starts now, and with it the ragdoll is
+    /// armed (when ragdolls are on). Until then a shot that already runs (the player has been down since the killing
+    /// blow; deaths resolve on a delay) knows a ragdoll is still to come.</summary>
+    public void OnDeathAnimation() => deathAnimationStarted = true;
+
+    /// <summary>CombatEvents.SimulationReset: everyone is put back; the shot ends at once.</summary>
+    public void OnSimulationReset() => Stop("simulation reset");
+
+    /// <summary>
+    /// Every framework tick (before the coordinator applies): in Duel mode, with a simulation running and the player
+    /// down, the death shot runs; a player back on their feet gets the camera back over 0.3 s; anything else ends it
+    /// at once.
+    /// </summary>
+    public void Tick(float dt)
+    {
+        var alive = !combatEngine.IsActive || combatEngine.State.PlayerState.IsAlive;
+        if (alive) deathAnimationStarted = false;
+        Advance(dt);
+        if (!DuelMode || !combatEngine.IsActive || sceneActive())
+        {
+            if (state is State.Running or State.Waiting) Stop(!DuelMode ? "not in Duel mode" : !combatEngine.IsActive ? "no simulation" : "a scene has the camera");
+            failed = false;
+            return;
+        }
+        if (alive)
+        {
+            if (state is State.Running or State.Waiting) Stop("revived", blend: true);
+            failed = false;
+            return;
+        }
+        var player = Core.Services.ObjectTable.LocalPlayer;
+        if (player == null || player.Address == nint.Zero)
+        {
+            if (state is State.Running or State.Waiting) Stop("no player");
+            return;
+        }
+        Run(dt, new DeathShotRequest(player.Address, config.DuelDeathShot, RagdollToCome: !deathAnimationStarted));
+    }
+
+    /// <summary>Before <see cref="Run"/>: the blend back to the game's camera, and the end of a shot nobody asked
+    /// for on the frame before.</summary>
+    private void Advance(float dt)
     {
         lastAdvanceAt = Environment.TickCount64;
         updatesSinceAdvance = 0;
@@ -260,7 +290,7 @@ public sealed unsafe class DeathShotDirector : IDisposable
     }
 
     /// <summary>A death shot is wanted this frame: start one (from the camera as it is), or carry on.</summary>
-    public void Run(float dt, in DeathShotRequest request)
+    private void Run(float dt, in DeathShotRequest request)
     {
         ranThisFrame = true;
         lastRequest = request;
@@ -423,7 +453,6 @@ public sealed unsafe class DeathShotDirector : IDisposable
         userSize = 1f;
         pendingWheel = 0f;
         haveDirH = false;
-        sceneYawSet = false;
         // The game's own zoom and pitch as they were when this death's shot first started: held while it runs (neither
         // shows in the picture), so the camera the player gets back is the one they left.
         if (!haveHeldDistance)
@@ -441,7 +470,8 @@ public sealed unsafe class DeathShotDirector : IDisposable
         checkEye = checkLook = checkFov = 0f;
         loggedOverrideError = false;
         lastSettled = lastPulled = false;
-        lastCuts = lastFallbacks = lastPops = 0;
+        lastFallbacks = lastPops = 0;
+        lastGrabbed = false;
         haveLastOut = false;
         last = default;
         lastExpect = false;
@@ -450,8 +480,8 @@ public sealed unsafe class DeathShotDirector : IDisposable
         nextSummaryAt = Environment.TickCount64 + SummaryMs;
 
         var away = eye - look;
-        log.Info($"DeathShot: {(afterWaiting && resumed ? "resumes" : "start")} — profile {Label(profile)}{(request.SceneDirected ? " (a scene directs)" : "")}" +
-                 $"{(config.DeathShotBelowGround ? ", below ground allowed" : "")}, " +
+        log.Info($"DeathShot: {(afterWaiting && resumed ? "resumes" : "start")} — profile {Label(profile)}" +
+                 $"{(config.DuelDeathShotBelowGround ? ", below ground allowed" : "")}, when grabbed: {DeathShotProfiles.GrabbedLabels[(int)config.DuelDeathShotGrabbed]}, " +
                  $"body scale {(bodyScale > 0f ? bodyScale.ToString("0.00") : "from the first frame")}; " +
                  $"from the camera at azimuth {Degrees(DeathShotMath.Azimuth(away)):0}°, {away.Length():0.00} m, lens {Degrees(rendered):0.0}° " +
                  $"(game yaw {Degrees(game->DirH):0}°, FoV field {game->FoV:0.000}, field→lens ratio {fovRatio:0.000}, aspect {aspect:0.00}).");
@@ -500,20 +530,8 @@ public sealed unsafe class DeathShotDirector : IDisposable
         if (haveDirH && float.IsFinite(dirH))
         {
             var turned = DeathShotMath.AngleDelta(lastDirH, dirH);
-            if (request.SceneDirected && hadFrame && (request.InputLocked ? MathF.Abs(turned) > 0.01f : MathF.Abs(turned) > SceneYawJump))
-            {
-                // The scene placed the game camera (its entry yaw, written once before the camera update, or every
-                // frame while it locks the input): an absolute azimuth. The game's yaw is the azimuth of the eye about
-                // what it looks at, the same angle the solver's side is, so the shot's side is turned onto it.
-                userYaw = DeathShotMath.AngleDelta(solver.SideAzimuth, dirH);
-                sceneYawSet = true;
-                log.Info($"DeathShot: the scene set the camera's yaw to {Degrees(dirH):0}° at {shotTime:0.0} s — the shot's azimuth follows " +
-                         $"({Degrees(userYaw):+0;-0}° from the side it chose).");
-            }
-            else if (MathF.Abs(turned) <= MaxYawStep)
-            {
+            if (MathF.Abs(turned) <= MaxYawStep)
                 userYaw = DeathShotMath.WrapAngle(userYaw + turned);
-            }
         }
         if (float.IsFinite(dirH))
         {
@@ -522,9 +540,8 @@ public sealed unsafe class DeathShotDirector : IDisposable
         }
         if (pendingWheel != 0f)
         {
-            // Wheel up = closer (the game's own convention). Nothing while a scene locks the input.
-            if (!request.WheelLocked)
-                userSize = Math.Clamp(userSize * MathF.Exp(-WheelStep * pendingWheel), 0.5f, 3f);
+            // Wheel up = closer (the game's own convention).
+            userSize = Math.Clamp(userSize * MathF.Exp(-WheelStep * pendingWheel), 0.5f, 3f);
             pendingWheel = 0f;
         }
 
@@ -541,7 +558,6 @@ public sealed unsafe class DeathShotDirector : IDisposable
 
         profile = request.Profile;
         world.NewFrame(points.Hips.Y);
-        var size = float.IsFinite(request.Size) && request.Size > 0.01f ? request.Size : 1f;
         var o = solver.Step(new DeathShotInput
         {
             Dt = dt,
@@ -555,8 +571,10 @@ public sealed unsafe class DeathShotDirector : IDisposable
             Aspect = aspect,
             BodyScale = bodyScale,
             UserYaw = userYaw,
-            UserSize = Math.Clamp(userSize * size, 0.5f, 3f),
-            AllowBelowGround = config.DeathShotBelowGround,
+            UserSize = userSize,
+            AllowBelowGround = config.DuelDeathShotBelowGround,
+            Grabbed = bodyGrabbed(),
+            GrabbedFraming = config.DuelDeathShotGrabbed,
         });
 
         var first = !hadFrame;
@@ -576,17 +594,10 @@ public sealed unsafe class DeathShotDirector : IDisposable
         Report(in o, in points, previousSource, first, physics, expect, dt);
         last = o;
 
-        // The solver picked a side again: the player's offsets were about the old one. An azimuth a scene asked for
-        // is absolute, so it is put back onto the new side, unless the side was changed because the view from there
-        // was blocked (holding it would have the solver change side again every 1.5 s).
+        // The solver picked a side again: the player's offsets were about the old one.
         if (o.SideChanged)
         {
-            if (sceneYawSet && o.Reason == "blocked")
-            {
-                sceneYawSet = false;
-                log.Info($"DeathShot: the azimuth the scene asked for is blocked at {shotTime:0.0} s; the shot keeps the side it found.");
-            }
-            userYaw = sceneYawSet && request.SceneDirected && haveDirH ? DeathShotMath.AngleDelta(solver.SideAzimuth, lastDirH) : 0f;
+            userYaw = 0f;
             userSize = 1f;
         }
 
@@ -779,7 +790,7 @@ public sealed unsafe class DeathShotDirector : IDisposable
         if (state == State.Running)
             log.Info($"DeathShot: end after {shotTime:0.0} s ({reason}) — {Label(last.Shot)}, {PoseWord(last.Pose)}; " +
                      $"pose handed to the game in {overrideCount} camera update(s); {last.SideChanges} change(s) of side, " +
-                     $"{last.Cuts} cut(s), {last.Fallbacks} fallback(s), eye found inside terrain {last.TerrainPops} time(s), " +
+                     $"all eased; {last.Fallbacks} fallback(s), eye found inside terrain {last.TerrainPops} time(s), " +
                      $"{skippedFrames} frame(s) without a readable body.");
         else
             log.Info($"DeathShot: end while waiting ({reason}).");
@@ -813,7 +824,7 @@ public sealed unsafe class DeathShotDirector : IDisposable
         }
         else if (o.SideChanged)
         {
-            log.Info($"DeathShot: side at {t:0.0} s — {o.Reason} → {Label(o.Shot)} ({(o.Cut ? "cut" : "ease")}), pose {PoseWord(o.Pose)}, " +
+            log.Info($"DeathShot: side at {t:0.0} s — {o.Reason} → {Label(o.Shot)} (eased over {Degrees(o.SideTurn):0}°), pose {PoseWord(o.Pose)}, " +
                      $"{Side(in o, in points)}; change {o.SideChanges} of this death.");
         }
 
@@ -835,8 +846,13 @@ public sealed unsafe class DeathShotDirector : IDisposable
                 log.Info($"DeathShot: the body moves again at {t:0.0} s — following.");
         }
 
-        if (o.Cuts > lastCuts && !o.SideChanged)
-            log.Info($"DeathShot: cut at {t:0.0} s ({o.Reason}), cut {o.Cuts} of this death.");
+        if (o.Grabbed != lastGrabbed)
+        {
+            lastGrabbed = o.Grabbed;
+            log.Info(o.Grabbed
+                ? $"DeathShot: the body is held at {t:0.0} s — framed as a held body ({Label(o.Shot)}) until it is let go and lies still."
+                : $"DeathShot: the body lies still again at {t:0.0} s — back to {Label(o.Shot)}.");
+        }
         if (o.Fallbacks > lastFallbacks)
             log.Info($"DeathShot: fallback at {t:0.0} s — the side the rule asks for is blocked or loses the body; using {Label(o.Shot)}, " +
                      $"{Side(in o, in points)} (fallback {o.Fallbacks}).");
@@ -850,7 +866,6 @@ public sealed unsafe class DeathShotDirector : IDisposable
         if (expect != lastExpect && !first && !expect && !physics)
             log.Info($"DeathShot: no ragdoll is coming at {t:0.0} s — the death animation coming to rest counts as settled.");
         lastExpect = expect;
-        lastCuts = o.Cuts;
         lastFallbacks = o.Fallbacks;
         lastPops = o.TerrainPops;
 
@@ -881,7 +896,7 @@ public sealed unsafe class DeathShotDirector : IDisposable
                  $"lens {Degrees(o.Fov):0.0}°; player yaw {Degrees(userYaw):0}°, size ×{userSize:0.00}; " +
                  $"last 5 s: eye up to {windowEyeSpeed:0.00} m/s, view up to {windowViewRate:0}°/s, " +
                  $"{(windowFrames > 0 ? (float)windowRays / windowFrames : 0f):0.0} rays/frame (max {windowRaysMax}); " +
-                 $"sides {o.SideChanges}, cuts {o.Cuts}, fallbacks {o.Fallbacks}; handed {overrideCount}.");
+                 $"{(o.Grabbed ? "held; " : "")}sides {o.SideChanges}, fallbacks {o.Fallbacks}; handed {overrideCount}.");
         ResetWindow();
     }
 
