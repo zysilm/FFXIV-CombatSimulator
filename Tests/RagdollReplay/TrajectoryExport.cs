@@ -48,8 +48,8 @@ internal static class TrajectoryExport
         /// <summary>World rotation of the head bone (j_kao) relative to its bind pose, in the pose the frame's bone
         /// positions come from (the animated pose before physics, the pose the ragdoll wrote back after): skeleton
         /// rotation × the bone's model rotation × the inverse of its model rotation in the reference pose, where
-        /// the character faces +Z. Applied to +Z it is where the face points (DeathShotFace); the plugin computes
-        /// the same from the live skeleton. NaN = no pose in the frame.</summary>
+        /// the character faces +Z. Applied to +Z it is where the face points. (The death shots chose a side by it
+        /// for a day; they no longer choose one. It stays in the file.) NaN = no pose in the frame.</summary>
         public Quaternion HeadRotation = new(float.NaN, float.NaN, float.NaN, float.NaN);
     }
 

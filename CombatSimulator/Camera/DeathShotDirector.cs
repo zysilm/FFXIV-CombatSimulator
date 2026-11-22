@@ -41,8 +41,10 @@ public readonly record struct DeathShotRequest(
 /// it is (it eases every change itself); nothing here blends except the 0.3 s back to the game's camera when the
 /// player is revived.
 ///
-/// The player keeps the left/right orbit (the change of the game camera's own yaw is added to the shot's side) and the
-/// wheel (shot size); the pitch is the shot's. Both go back to nothing when the solver picks a side again.
+/// The horizontal direction is the player's: the shot starts on the azimuth the camera has and stays there; what
+/// the player turns the game camera left or right (mouse, stick: the change of the game camera's own yaw, which only
+/// the player's hand moves while this owns the camera) is the shot's orbit, one to one. Nothing here or in the solver
+/// picks a side. The wheel is the shot's size; the pitch is the shot's.
 ///
 /// It runs in camera mode Duel only (<see cref="Tick"/>): there it takes over when the player goes down. In
 /// Directed mode the Directed camera has its own death framing and this does nothing. While Enemy Control's grab holds
@@ -116,9 +118,6 @@ public sealed unsafe class DeathShotDirector : IDisposable
     private readonly bool[] boneKnown = new bool[Bones.Length];
     private readonly int[] boneIndex = new int[Bones.Length];
     private nint indexedSkeleton;
-    private nint headBindSkeleton;
-    private int headIndex = -1;
-    private Quaternion headBind = Quaternion.Identity;
     private int indexedBoneCount;
     private readonly Vector3[] extra = new Vector3[Bones.Length - CoreBones];
     private readonly Vector3[] extraBones = new Vector3[Bones.Length - CoreBones];
@@ -151,14 +150,14 @@ public sealed unsafe class DeathShotDirector : IDisposable
 
     // log state
     private bool lastSettled, lastPulled, lastExpect;
-    private int lastFallbacks, lastPops;
+    private int lastPops;
     private bool lastGrabbed;
     private bool deathAnimationStarted;
     private DeathShotOutput last;
     private Vector3 lastOutEye, lastOutDir;
     private bool haveLastOut;
     private long nextSummaryAt;
-    private float windowEyeSpeed, windowViewRate;
+    private float windowEyeSpeed, windowViewRate, windowYaw;
     private int windowFrames, windowRays, windowRaysMax, skippedFrames;
 
     public DeathShotDirector(
@@ -473,7 +472,7 @@ public sealed unsafe class DeathShotDirector : IDisposable
         checkEye = checkLook = checkFov = 0f;
         loggedOverrideError = false;
         lastSettled = lastPulled = false;
-        lastFallbacks = lastPops = 0;
+        lastPops = 0;
         lastGrabbed = false;
         haveLastOut = false;
         last = default;
@@ -484,9 +483,9 @@ public sealed unsafe class DeathShotDirector : IDisposable
 
         var away = eye - look;
         log.Info($"DeathShot: {(afterWaiting && resumed ? "resumes" : "start")} — profile {Label(profile)}" +
-                 $"{(config.DuelDeathShotBelowGround ? ", below ground allowed" : "")}, when grabbed: {DeathShotProfiles.GrabbedLabels[(int)config.DuelDeathShotGrabbed]}, side preference: {DeathShotProfiles.SideLabels[(int)config.DuelDeathShotSide]}, " +
+                 $"{(config.DuelDeathShotBelowGround ? ", below ground allowed" : "")}, when grabbed: {DeathShotProfiles.GrabbedLabels[(int)config.DuelDeathShotGrabbed]}, " +
                  $"body scale {(bodyScale > 0f ? bodyScale.ToString("0.00") : "from the first frame")}; " +
-                 $"from the camera at azimuth {Degrees(DeathShotMath.Azimuth(away)):0}°, {away.Length():0.00} m, lens {Degrees(rendered):0.0}° " +
+                 $"from the camera at azimuth {Degrees(DeathShotMath.Azimuth(away)):0}° (kept: left and right are the player's), {away.Length():0.00} m, lens {Degrees(rendered):0.0}° " +
                  $"(game yaw {Degrees(game->DirH):0}°, FoV field {game->FoV:0.000}, field→lens ratio {fovRatio:0.000}, aspect {aspect:0.00}).");
         resumed = false;
         return true;
@@ -529,12 +528,17 @@ public sealed unsafe class DeathShotDirector : IDisposable
             (request.RagdollToCome || ragdoll is { IsActive: true } && (physics || !ragdoll.PhysicsStarted));
 
         // ---- the player's hand: left/right orbit from the game camera's own yaw, size from the wheel ----
+        // (The yaw is not written by anyone while this owns the camera, so what changes it is the player's mouse or
+        // stick, with the game's own sensitivity and inversion: the orbit feels like the game camera's.)
         var dirH = game->DirH;
         if (haveDirH && float.IsFinite(dirH))
         {
             var turned = DeathShotMath.AngleDelta(lastDirH, dirH);
             if (MathF.Abs(turned) <= MaxYawStep)
+            {
                 userYaw = DeathShotMath.WrapAngle(userYaw + turned);
+                windowYaw += MathF.Abs(turned);
+            }
         }
         if (float.IsFinite(dirH))
         {
@@ -578,9 +582,6 @@ public sealed unsafe class DeathShotDirector : IDisposable
             AllowBelowGround = config.DuelDeathShotBelowGround,
             Grabbed = bodyGrabbed(),
             GrabbedFraming = config.DuelDeathShotGrabbed,
-            SidePreference = config.DuelDeathShotSide,
-            // (Only a preference that goes by the face needs it; the solver reads it when it chooses a side.)
-            Face = config.DuelDeathShotSide is DeathShotSide.FaceSide or DeathShotSide.BehindHead ? ReadFace(subject) : default,
         });
 
         var first = !hadFrame;
@@ -600,17 +601,10 @@ public sealed unsafe class DeathShotDirector : IDisposable
         Report(in o, in points, previousSource, first, physics, expect, dt);
         last = o;
 
-        // The solver picked a side again: the player's offsets were about the old one.
-        if (o.SideChanged)
-        {
-            userYaw = 0f;
-            userSize = 1f;
-        }
-
         // The Camera tab's line, rebuilt only when what it says changes.
-        var key = (int)o.Shot | (int)o.Pose << 4 | (o.Holding ? 1 : expect && !physics ? 2 : 0) << 8 | (profile == DeathShotProfile.Auto ? 1 : 0) << 10;
+        var key = (int)o.Shot | (int)o.Pose << 5 | (o.Holding ? 1 : expect && !physics ? 2 : 0) << 9;
         if (key != statusKey)
-            SetStatus(key, $"death shot — {Label(o.Shot)}{(profile == DeathShotProfile.Auto ? " (Auto)" : "")}, {PoseWord(o.Pose)}, " +
+            SetStatus(key, $"death shot — {Label(o.Shot)}, {PoseWord(o.Pose)}, " +
                            (o.Holding ? "holding" : expect && !physics ? "following the fall" : "following"));
     }
 
@@ -628,40 +622,6 @@ public sealed unsafe class DeathShotDirector : IDisposable
     // ------------------------------------------------------------------
     // Positions
     // ------------------------------------------------------------------
-
-    /// <summary>
-    /// Where the face points (DeathShotFace): the head bone's world rotation relative to its bind pose, applied to
-    /// +Z. Read from the skeleton's pose in both phases: before the ragdoll that is the animated pose, after it the
-    /// pose the ragdoll wrote back on the last rendered frame (the ragdoll gives positions only, but its write-back
-    /// carries the head's rotation; the recordings have it on every physics frame). Zero when it cannot be read.
-    /// </summary>
-    private Vector3 ReadFace(nint address)
-    {
-        if (address == nint.Zero || bones.TryGetSkeleton(address) is not { } skeleton) return default;
-        var havok = skeleton.HavokSkeleton;
-        var root = skeleton.CharBase->Skeleton;
-        if (havok == null || root == null) return default;
-        if ((nint)havok != headBindSkeleton)
-        {
-            // The head's model rotation in the reference pose (the character faces +Z there): the local rotations
-            // up the parent chain. Once per skeleton.
-            headIndex = bones.ResolveBoneIndex(skeleton, Bones[2]);
-            headBind = Quaternion.Identity;
-            for (int b = headIndex, guard = 0; b >= 0 && b < havok->ReferencePose.Length && guard < 512; guard++)
-            {
-                var local = havok->ReferencePose.Data[b].Rotation;
-                headBind = Quaternion.Normalize(new Quaternion(local.X, local.Y, local.Z, local.W) * headBind);
-                b = b < havok->ParentIndices.Length ? havok->ParentIndices[b] : -1;
-            }
-            headBindSkeleton = (nint)havok;
-        }
-        if (headIndex < 0 || headIndex >= skeleton.BoneCount) return default;
-        ref var pose = ref skeleton.Pose->ModelPose.Data[headIndex];
-        var model = new Quaternion(pose.Rotation.X, pose.Rotation.Y, pose.Rotation.Z, pose.Rotation.W);
-        var t = root->Transform;
-        var world = new Quaternion(t.Rotation.X, t.Rotation.Y, t.Rotation.Z, t.Rotation.W);
-        return DeathShotFace.Direction(world * model * Quaternion.Inverse(headBind));
-    }
 
     /// <summary>The 22 animated bones into <see cref="boneNow"/>. False when one of the seven of the body frame is
     /// missing; a missing bone of the rest keeps its last value (the chest before it was ever read). The bones'
@@ -829,8 +789,8 @@ public sealed unsafe class DeathShotDirector : IDisposable
         }
         if (state == State.Running)
             log.Info($"DeathShot: end after {shotTime:0.0} s ({reason}) — {Label(last.Shot)}, {PoseWord(last.Pose)}; " +
-                     $"pose handed to the game in {overrideCount} camera update(s); {last.SideChanges} change(s) of side, " +
-                     $"all eased; {last.Fallbacks} fallback(s), eye found inside terrain {last.TerrainPops} time(s), " +
+                     $"pose handed to the game in {overrideCount} camera update(s); {last.ShotChanges} change(s) of shot, " +
+                     $"all eased; the player turned it {Degrees(userYaw):+0;-0}° in all; eye found inside terrain {last.TerrainPops} time(s), " +
                      $"{skippedFrames} frame(s) without a readable body.");
         else
             log.Info($"DeathShot: end while waiting ({reason}).");
@@ -858,14 +818,13 @@ public sealed unsafe class DeathShotDirector : IDisposable
         var t = shotTime;
         if (first)
         {
-            log.Info($"DeathShot: first frame — {Label(profile)} → {Label(o.Shot)}, pose {PoseWord(o.Pose)}, {Side(in o, in points)}, {Preference(in o)}; " +
+            log.Info($"DeathShot: first frame — {Label(o.Shot)}, pose {PoseWord(o.Pose)}, {Side(in o, in points)}; " +
                      $"positions from the {(physics ? "ragdoll bodies" : "bones")}, " +
                      $"{(expect ? physics ? "ragdoll running" : "waiting for the ragdoll" : "no ragdoll expected")}, body scale {solver.BodyScale:0.00}.");
         }
-        else if (o.SideChanged)
+        else if (o.ShotChanged && o.Reason == "profile")
         {
-            log.Info($"DeathShot: side at {t:0.0} s — {o.Reason} → {Label(o.Shot)} (eased over {Degrees(o.SideTurn):0}°), pose {PoseWord(o.Pose)}, " +
-                     $"{Side(in o, in points)}, {Preference(in o)}; change {o.SideChanges} of this death.");
+            log.Info($"DeathShot: shot at {t:0.0} s — the dropdown now says {Label(o.Shot)}: eased over to it, {Side(in o, in points)}.");
         }
 
         if (o.SourceSwitched)
@@ -893,20 +852,18 @@ public sealed unsafe class DeathShotDirector : IDisposable
                 ? $"DeathShot: the body is held at {t:0.0} s — framed as a held body ({Label(o.Shot)}) until it is let go and lies still."
                 : $"DeathShot: the body lies still again at {t:0.0} s — back to {Label(o.Shot)}.");
         }
-        if (o.Fallbacks > lastFallbacks)
-            log.Info($"DeathShot: fallback at {t:0.0} s — the side the rule asks for is blocked or loses the body; using {Label(o.Shot)}, " +
-                     $"{Side(in o, in points)} (fallback {o.Fallbacks}).");
         if (o.TerrainPops > lastPops)
             log.Info($"DeathShot: the eye was inside terrain at {t:0.0} s and was put on its surface ({o.TerrainPops} so far).");
         if (o.PulledIn != lastPulled)
         {
             lastPulled = o.PulledIn;
-            if (o.PulledIn) log.Info($"DeathShot: view blocked at {t:0.0} s — eye pulled in front of it, lens widened to {Degrees(o.GoalFov):0.0}°.");
+            log.Info(o.PulledIn
+                ? $"DeathShot: view blocked at {t:0.0} s — eye pulled in front of it on the same line ({Vector3.Distance(o.GoalEye, o.GoalLookAt):0.00} m), lens widened to {Degrees(o.GoalFov):0.0}°."
+                : $"DeathShot: view clear again at {t:0.0} s — easing back out.");
         }
         if (expect != lastExpect && !first && !expect && !physics)
             log.Info($"DeathShot: no ragdoll is coming at {t:0.0} s — the death animation coming to rest counts as settled.");
         lastExpect = expect;
-        lastFallbacks = o.Fallbacks;
         lastPops = o.TerrainPops;
 
         // Window numbers for the summary: how fast the eye and the view moved outside cuts, and what the world cost.
@@ -930,19 +887,19 @@ public sealed unsafe class DeathShotDirector : IDisposable
         if (now < nextSummaryAt) return;
         nextSummaryAt = now + SummaryMs;
         var ground = world.GroundBelow(o.Eye + new Vector3(0f, DeathShotSolver.GroundRayLift, 0f));
-        log.Info($"DeathShot: {t:0.0} s — {Label(o.Shot)}{(profile == DeathShotProfile.Auto ? " (Auto)" : "")} [{PoseWord(o.Pose)}], " +
+        log.Info($"DeathShot: {t:0.0} s — {Label(o.Shot)} [{PoseWord(o.Pose)}], " +
                  $"{(o.Holding ? "holding" : expect && !physics ? "waiting for the ragdoll" : "following")}, {(physics ? "ragdoll bodies" : "bones")}; " +
                  $"{Side(in o, in points)}, eye {(ground is { } g ? o.Eye.Y >= g ? $"{o.Eye.Y - g:0.00} m above ground" : $"{g - o.Eye.Y:0.00} m BELOW ground" : "over no ground")}, " +
-                 $"lens {Degrees(o.Fov):0.0}°; player yaw {Degrees(userYaw):0}°, size ×{userSize:0.00}; " +
+                 $"lens {Degrees(o.Fov):0.0}°; player's orbit {Degrees(userYaw):+0;-0}° since the start ({Degrees(windowYaw):0}° turned in the last 5 s), azimuth {Degrees(o.Azimuth):0}°, size ×{userSize:0.00}; " +
                  $"last 5 s: eye up to {windowEyeSpeed:0.00} m/s, view up to {windowViewRate:0}°/s, " +
                  $"{(windowFrames > 0 ? (float)windowRays / windowFrames : 0f):0.0} rays/frame (max {windowRaysMax}); " +
-                 $"{(o.Grabbed ? "held; " : "")}sides {o.SideChanges}, fallbacks {o.Fallbacks}; handed {overrideCount}.");
+                 $"{(o.Grabbed ? "held; " : "")}{(o.PulledIn ? "view blocked, pulled in; " : "")}handed {overrideCount}.");
         ResetWindow();
     }
 
     private void ResetWindow()
     {
-        windowEyeSpeed = windowViewRate = 0f;
+        windowEyeSpeed = windowViewRate = windowYaw = 0f;
         windowFrames = windowRays = windowRaysMax = 0;
     }
 
@@ -956,12 +913,8 @@ public sealed unsafe class DeathShotDirector : IDisposable
         if (distance < 1e-3f) return "side unknown";
         var off = Degrees(DeathShotMath.AngleDelta(DeathShotMath.Azimuth(frame.FrontHorizontal), DeathShotMath.Azimuth(away)));
         var elevation = Degrees(MathF.Asin(Math.Clamp(away.Y / distance, -1f, 1f)));
-        return $"side {off:+0;-0}° off the body's front, eye {elevation:+0;-0}° about the subject, {distance:0.00} m";
+        return $"camera {off:+0;-0}° off the body's front, eye {elevation:+0;-0}° about the subject, {distance:0.00} m";
     }
-
-    /// <summary>What the side preference did at this choice, and where the face pointed.</summary>
-    private static string Preference(in DeathShotOutput o) =>
-        $"preference {o.SideNote}" + (float.IsFinite(o.FaceAzimuth) ? $" (face azimuth {Degrees(o.FaceAzimuth):0}°)" : "");
 
     private static string PoseWord(PoseClass pose) => pose switch
     {

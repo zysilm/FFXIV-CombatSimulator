@@ -137,32 +137,3 @@ internal static class Stats
         return a[Math.Clamp((int)MathF.Round(q * (a.Length - 1)), 0, a.Length - 1)];
     }
 }
-
-/// <summary>The face direction of the exported trajectories against the torso: on the standing first frames the face
-/// looks roughly where the chest does, level.</summary>
-internal static class FaceAxis
-{
-    public static void Run(List<Trajectory> all)
-    {
-        var front = new List<float>();
-        var level = new List<float>();
-        var turned = new List<float>();
-        var without = 0;
-        foreach (var t in all.Where(t => t.Humanoid && t.Frames.Length >= 2))
-        {
-            if (!t.HasFace) { without++; continue; }
-            var f = t.Frames[0];
-            var frame = BodyFrame.From(t.Points(f.Runtime), f.GroundY);
-            if (PoseClassifier.Raw(frame) != PoseClass.Standing || frame.Axis.Y < 0.9f) continue;
-            var face = f.Face;
-            front.Add(Vector3.Dot(face, frame.Front));
-            level.Add(MathF.Asin(Math.Clamp(face.Y, -1f, 1f)) * 180f / MathF.PI);
-            turned.Add(MathF.Abs(DeathShotMath.AngleDelta(DeathShotMath.Azimuth(frame.FrontHorizontal), DeathShotMath.Azimuth(face))) * 180f / MathF.PI);
-        }
-        Console.WriteLine($"face direction on {front.Count} upright standing first frames ({without} trajectories without the head's rotation: export them again)");
-        if (front.Count == 0) return;
-        Console.WriteLine($"  along the torso's front: median {Stats.P(front, .5f):F3}, p10 {Stats.P(front, .1f):F3}, min {front.Min():F3}");
-        Console.WriteLine($"  above the horizon: median {Stats.P(level, .5f):F1} deg, p10 {Stats.P(level, .1f):F1}, p90 {Stats.P(level, .9f):F1}");
-        Console.WriteLine($"  turned off the torso's front (horizontal): median {Stats.P(turned, .5f):F1} deg, p90 {Stats.P(turned, .9f):F1}, max {turned.Max():F1}");
-    }
-}

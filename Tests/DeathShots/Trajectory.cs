@@ -31,14 +31,10 @@ internal sealed class Trajectory
         /// body, else the bone.</summary>
         public Vector3[] Runtime = Array.Empty<Vector3>();
         /// <summary>World rotation of the head bone relative to its bind pose in the frame's pose (the last one known
-        /// where a frame has none; NaN in a trajectory exported before the face direction was).</summary>
+        /// where a frame has none; NaN in a trajectory exported before it was). Not used by the death shots any more:
+        /// they do not choose a side.</summary>
         public Quaternion HeadRotation = new(float.NaN, float.NaN, float.NaN, float.NaN);
-        /// <summary>Where the face points (<see cref="DeathShotFace"/>), zero when not known.</summary>
-        public Vector3 Face => float.IsNaN(HeadRotation.X) ? Vector3.Zero : DeathShotFace.Direction(HeadRotation);
     }
-
-    /// <summary>The trajectory has the head's rotation (exported since 2026-11-22).</summary>
-    public bool HasFace => Frames.Length > 0 && !float.IsNaN(Frames[^1].HeadRotation.X);
 
     public int BoneIndex(string name) => Array.IndexOf(Bones, name);
 
@@ -240,22 +236,32 @@ internal sealed class RecordedWorld : IDeathShotWorld
 
     public float? WaterBelow(Vector3 from) => float.IsNaN(water) ? null : water;
 
-    public bool Blocked(Vector3 from, Vector3 to, out float distance)
+    public bool Blocked(Vector3 from, Vector3 to, out float distance) => Blocked(from, to, out distance, out _);
+
+    /// <summary>With the normal of what stopped the ray: the triangle's (turned to face up), or straight up for the
+    /// sampled height field. Everything recorded is ground; there are no walls in the recordings.</summary>
+    public bool Blocked(Vector3 from, Vector3 to, out float distance, out Vector3 normal)
     {
         distance = 0f;
+        normal = Vector3.UnitY;
         var d = to - from;
         var length = d.Length();
         if (length < 1e-4f) return false;
         d /= length;
         var best = float.MaxValue;
         for (var i = 0; i + 2 < tris.Length; i += 3)
-            if (RayTriangle(from, d, tris[i], tris[i + 1], tris[i + 2], out var t) && t < length && t < best) best = t;
+            if (RayTriangle(from, d, tris[i], tris[i + 1], tris[i + 2], out var t) && t < length && t < best)
+            {
+                best = t;
+                var n = Vector3.Cross(tris[i + 1] - tris[i], tris[i + 2] - tris[i]);
+                normal = n.LengthSquared() > 1e-12f ? Vector3.Normalize(n.Y < 0f ? -n : n) : Vector3.UnitY;
+            }
         // The height field, marched: a ray dips under the sampled ground.
         const float march = 0.05f;
         for (var s = march; s < length && s < best; s += march)
         {
             var p = from + d * s;
-            if (p.Y < FieldHeight(p.X, p.Z) - 0.01f) { best = s; break; }
+            if (p.Y < FieldHeight(p.X, p.Z) - 0.01f) { best = s; normal = Vector3.UnitY; break; }
         }
         if (best == float.MaxValue) return false;
         distance = best;

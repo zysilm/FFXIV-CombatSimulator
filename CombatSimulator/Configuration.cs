@@ -648,6 +648,9 @@ public partial class Configuration : IPluginConfiguration
         // (MigrateDuelDeathShot carries them over). The Directed camera's own death framing and its settings
         // (DynCamDeath*, ShowDynamicCamToolbar, DynCamDebugOverlay) are back and are NOT retired.
         "DeathShotProfile", "DeathShotBelowGround",
+        // The Duel death shot's "Side preference", removed (2026-11-22, user's decision): the death shot no longer
+        // chooses a side at all, the horizontal direction is the player's.
+        "DuelDeathShotSide",
         // Fighting Mode (the experimental 1v1 side-view lane, its weapon hitboxes, AI and cameras), removed
         // (2026-11-15, user's decision: no longer used).
         "FightingMode", "FightingModeLaneHalfWidth", "FightingModeMinSeparation", "FightingModeMaxSeparation",
@@ -722,25 +725,24 @@ public partial class Configuration : IPluginConfiguration
     }
 
     // The automatic death shot moved to Duel mode and its settings were renamed (DeathShotProfile → DuelDeathShot,
-    // DeathShotBelowGround → DuelDeathShotBelowGround). A saved Low three-quarter stays; a saved profile that no
-    // longer exists (Face, Along the body, Overhead, Ground profile) becomes Auto. Whatever is saved under the new
-    // name is checked the same way.
+    // DeathShotBelowGround → DuelDeathShotBelowGround). The dropdown is three shots now, told apart by subject,
+    // distance and height (the horizontal direction is the player's): a saved Low three-quarter is Low close (the
+    // same number); a saved shot that no longer exists becomes the one with its subject (Hips up to the face → Low
+    // on the face; Low from the feet, Low from behind, Auto and the older ones → Low close:
+    // DeathShotProfiles.Migrate). Whatever is saved under the new name is checked the same way.
     private void MigrateDuelDeathShot()
     {
         if (PrivateConfigFields != null)
         {
             if (PrivateConfigFields.TryGetValue("DeathShotProfile", out var profile) && profile.Type == JTokenType.Integer &&
-                profile.Value<int>() == (int)Camera.DeathShots.DeathShotProfile.LowThreeQuarter)
-                DuelDeathShot = Camera.DeathShots.DeathShotProfile.LowThreeQuarter;
+                profile.Value<int>() == (int)Camera.DeathShots.DeathShotProfile.LowClose)
+                DuelDeathShot = Camera.DeathShots.DeathShotProfile.LowClose;
             if (PrivateConfigFields.TryGetValue("DeathShotBelowGround", out var below) && below.Type == JTokenType.Boolean)
                 DuelDeathShotBelowGround = below.Value<bool>();
         }
-        if (!Camera.DeathShots.DeathShotProfiles.IsChoice(DuelDeathShot))
-            DuelDeathShot = Camera.DeathShots.DeathShotProfile.Auto;
+        DuelDeathShot = Camera.DeathShots.DeathShotProfiles.Migrate(DuelDeathShot);
         if (!System.Enum.IsDefined(DuelDeathShotGrabbed))
             DuelDeathShotGrabbed = Camera.DeathShots.DeathShotGrabbedFraming.Level;
-        if (!System.Enum.IsDefined(DuelDeathShotSide))
-            DuelDeathShotSide = Camera.DeathShots.DeathShotSide.Nearest;
     }
 
     // "Guided Collapse" was an object with one switch, "Knee buckle on death". It is one choice of "Death guidance"

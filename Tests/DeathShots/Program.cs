@@ -7,10 +7,9 @@ using DeathShots;
 //   dotnet run -c Release -- unit              unit checks only
 //   dotnet run -c Release -- sheets [n]        contact sheets (PNG) of n recordings into %TEMP%\DeathShots\sheets
 //   dotnet run -c Release -- probe <name> <profile> [0..7]   one run on one recording, printed twice a second
-//   dotnet run -c Release -- face              which axis of the head bone points out of the face (calibration)
-//   dotnet run -c Release -- where             where each shot sits on a lying / standing body (for the documentation)
+//   dotnet run -c Release -- where             how far, how high each shot sits on a lying / standing body (for the documentation)
 //   dotnet run -c Release -- hash [--save <file> | --against <file>]
-//                                              one hash per Low three-quarter run (default options) over every pose;
+//                                              one hash per run (every shot, no input) over every pose;
 //                                              --against compares with a saved list: equal = bit-identical output
 //   ... --traj <folder>                        trajectories from somewhere else (default %TEMP%\DeathShots\traj)
 // The trajectories come from the user's ragdoll recordings:
@@ -57,10 +56,7 @@ switch (command)
         Stats.Run(all);
         return 0;
     case "probe":
-        Probe.Run(all, args.Length > 1 ? args[1] : "", args.Length > 2 ? args[2] : "Auto", args.Length > 3 && int.TryParse(args[3], out var k) ? k : 0);
-        return 0;
-    case "face":
-        FaceAxis.Run(all);
+        Probe.Run(all, args.Length > 1 ? args[1] : "", args.Length > 2 ? args[2] : "LowClose", args.Length > 3 && int.TryParse(args[3], out var k) ? k : 0);
         return 0;
     case "where":
         UnitChecks.Where();

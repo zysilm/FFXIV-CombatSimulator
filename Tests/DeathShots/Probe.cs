@@ -12,7 +12,7 @@ internal static class Probe
         var t = all.FirstOrDefault(x => x.Name.Contains(name, StringComparison.OrdinalIgnoreCase));
         if (t == null || !Enum.TryParse<DeathShotProfile>(profileName, true, out var profile))
         {
-            Console.Error.WriteLine("usage: probe <part of a recording name> <Auto|LowThreeQuarter|LowFace|HipsToFace|LowFeetSide|LowBehind|LowFullBody> [start azimuth 0..7]");
+            Console.Error.WriteLine("usage: probe <part of a recording name> <LowClose|LowFace|LowFullBody> [start azimuth 0..7]");
             return;
         }
         var world = new RecordedWorld(t);
@@ -23,7 +23,6 @@ internal static class Probe
         {
             var f = t.Frames[i];
             var c = cams[i];
-            if (i == 0) Console.WriteLine($"  fallbacks at the first choice: {c.Fallbacks}");
             if (c.Event == null && !c.Cut && f.Time < next) continue;
             next = f.Time + 0.5f;
             var dir = Vector3.Normalize(c.LookAt - c.Eye);
@@ -48,7 +47,7 @@ internal static class Probe
             var goalReach = Reach(c.GoalEye, Vector3.Normalize(c.GoalLookAt - c.GoalEye), new DynamicCameraSolver.Lens(goalTan * Runners.Aspect, goalTan));
             var away = c.Eye - c.LookAt;
             Console.WriteLine($"  t={f.Time,5:F1} {(f.PhysicsStarted ? "ragdoll" : "anim   ")} {c.Pose,-8} {c.Shot,-15} hold={(c.Holding ? 1 : 0)} " +
-                              $"dist {away.Length(),5:F2} elev {MathF.Asin(away.Y / away.Length()) * 57.3f,6:F1} clear {c.Eye.Y - (world.GroundBelow(c.Eye + new Vector3(0f, 1.5f, 0f)) ?? ground),5:F2} " +
+                              $"az {DeathShotMath.Azimuth(away) * 57.3f,6:F1} dist {away.Length(),5:F2} elev {MathF.Asin(away.Y / away.Length()) * 57.3f,6:F1} clear {c.Eye.Y - (world.GroundBelow(c.Eye + new Vector3(0f, 1.5f, 0f)) ?? ground),5:F2} " +
                               $"whole-body reach {(reach > 99f ? "behind" : reach.ToString("F2"))} (goal {(goalReach > 99f ? "behind" : goalReach.ToString("F2"))}, {Vector3.Distance(c.GoalEye, c.GoalLookAt):F2} m) hips above ground {p.Hips.Y - ground:F2} goal off {Vector3.Distance(c.Eye, c.GoalEye):F2}" +
                               $"{(c.PulledIn ? " pulled-in" : "")}{(c.Cut ? " CUT" : "")}{(c.Event != null ? " <" + c.Event + ">" : "")}");
         }

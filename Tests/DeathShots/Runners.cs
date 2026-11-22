@@ -12,14 +12,10 @@ internal struct Cam
     public bool Cut, Holding, PulledIn, HasDiagnostics;
     public PoseClass Pose;
     public DeathShotProfile Shot;
-    public int SideChanges, SideChangesAfterMove, Fallbacks, Pops;
-    /// <summary>On a frame where the side changed: how far the new side is from the old one, degrees.</summary>
-    public float SideTurn;
-    public bool SideChanged;
-    /// <summary>Changes of side so far that were made because the view was blocked.</summary>
-    public int BlockedChanges;
-    /// <summary>What the side preference did at the last choice of side.</summary>
-    public string? SideNote;
+    public int ShotChanges, Pops;
+    /// <summary>The shot's azimuth (the start camera's plus the player's orbit), and the orbit fed this frame.</summary>
+    public float Azimuth, UserYaw;
+    public bool Grabbed;
     public string? Event;
 }
 
@@ -44,16 +40,21 @@ internal static class Runners
     public const float Aspect = 16f / 9f;
     public const int CoreBones = 7;
 
-    /// <summary>The new solver over a trajectory, fed what the plugin would read (bones, then ragdoll bodies).</summary>
+    /// <summary>The player's hand for the "orbit" columns: nothing for a second and a half, then left and right
+    /// about the body (±70° at 0.25 Hz: up to 110°/s, nearly twice what the program's own moves are held to).</summary>
+    public static float Orbit(float time) => time < 1.5f ? 0f : 70f * MathF.PI / 180f * MathF.Sin(MathF.Tau * 0.25f * (time - 1.5f));
+
+    /// <summary>The new solver over a trajectory, fed what the plugin would read (bones, then ragdoll bodies).
+    /// <paramref name="yaw"/>: the player's orbit over time (none = no input); <paramref name="grabbed"/>: the body
+    /// is told to be held all the way (the recordings have no grabs: this is the held framing on a falling body).</summary>
     public static Cam[] New(Trajectory t, RecordedWorld world, StartCamera start, DeathShotProfile profile, out float bodyScale, bool oldSourceAtSwitch = true, bool belowGround = false,
-        DeathShotSide side = DeathShotSide.Nearest)
+        Func<float, float>? yaw = null, DeathShotGrabbedFraming? grabbed = null)
     {
         var solver = new DeathShotSolver(world);
         solver.Begin(start.Eye, start.LookAt, start.Fov);
         var cams = new Cam[t.Frames.Length];
         var extra = new Vector3[t.Bones.Length - CoreBones];
         var wasPhysics = false;
-        var blockedChanges = 0;
         for (var i = 0; i < t.Frames.Length; i++)
         {
             var f = t.Frames[i];
@@ -67,19 +68,15 @@ internal static class Runners
                 PreviousSourceExtra = switching ? f.Bone.Skip(CoreBones).ToArray() : null,
                 Dt = f.Dt, Points = t.Points(f.Runtime), Extra = extra, PhysicsStarted = f.PhysicsStarted, ExpectRagdoll = true,
                 Profile = profile, Aspect = Aspect, UserSize = 1f, AllowBelowGround = belowGround,
-                // The face as the plugin reads it: from the head bone of the pose in the skeleton this frame.
-                SidePreference = side, Face = f.Face,
+                UserYaw = yaw?.Invoke(f.Time) ?? 0f, Grabbed = grabbed.HasValue, GrabbedFraming = grabbed ?? DeathShotGrabbedFraming.Level,
             });
-            if (o.SideChanged && o.Reason == "blocked") blockedChanges++;
             cams[i] = new Cam
             {
-                BlockedChanges = blockedChanges,
+                Azimuth = o.Azimuth, UserYaw = yaw?.Invoke(f.Time) ?? 0f, Grabbed = o.Grabbed,
                 Eye = o.Eye, LookAt = o.LookAt, Fov = o.Fov, Cut = o.Cut, BaseEye = o.BaseEye, GoalEye = o.GoalEye, GoalLookAt = o.GoalLookAt,
                 Holding = o.Holding, PulledIn = o.PulledIn, HasDiagnostics = true, Pose = o.Pose, Shot = o.Shot,
-                SideChanges = o.SideChanges, SideChangesAfterMove = o.SideChangesAfterMove, Pops = o.TerrainPops, Fallbacks = o.Fallbacks,
-                SideChanged = o.SideChanged, SideTurn = o.SideTurn * 180f / MathF.PI,
-                Event = o.SideChanged ? $"{f.Time:F1}s {o.Reason} -> {o.Shot} (turn {o.SideTurn * 180f / MathF.PI:F0} deg) [{o.Pose}; {o.SideNote}]" : null,
-                SideNote = o.SideNote,
+                ShotChanges = o.ShotChanges, Pops = o.TerrainPops,
+                Event = o.ShotChanged ? $"{f.Time:F1}s {o.Reason} -> {o.Shot} [{o.Pose}]" : null,
             };
         }
         bodyScale = solver.BodyScale;

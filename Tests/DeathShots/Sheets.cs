@@ -8,11 +8,11 @@ using CombatSimulator.Camera.DeathShots;
 namespace DeathShots;
 
 /// <summary>
-/// Contact sheets for eyeballing the shots: one PNG per recording in %TEMP%\DeathShots\sheets. Rows: the five
-/// profiles, Auto, the Directed baseline, the old Death Cam "da", then a top view of Auto. Columns: six moments of
+/// Contact sheets for eyeballing the shots: one PNG per recording in %TEMP%\DeathShots\sheets. Rows: the three
+/// shots, the Directed baseline, the old Death Cam "da", then a top view of Low close. Columns: six moments of
 /// the death. A cell is what the camera sees: the body as a stick figure (spine white, left limbs blue, right limbs
 /// red, head a ring), the recorded ground samples as dots, the frame edge. The top view shows the body, the eye
-/// (yellow) and its view direction. Bones only, no meshes: this shows framing and side, not the look.
+/// (yellow) and its view direction. Bones only, no meshes: this shows framing, not the look.
 /// </summary>
 internal static class Sheets
 {
@@ -37,20 +37,20 @@ internal static class Sheets
         var picks = all.Where(t => t.Humanoid && t.Seconds > 8f && t.Frames.Any(f => f.PhysicsStarted))
             .OrderByDescending(t => t.IsPlayer).ThenByDescending(t => t.Seconds).Take(count).ToList();
         var legend = new StringBuilder();
-        legend.AppendLine("rows: Low three-quarter, Low on the face, Hips up to the face, Low from the feet, Low from behind, Low full body, Auto, Directed (baseline), old Death Cam 'da' (baseline), top view of Auto");
-        legend.AppendLine("columns: the six moments listed per file (seconds after death); start camera: behind-right of the body at 5 m (azimuth 135 deg)");
+        legend.AppendLine("rows: Low close, Low on the face, Low full body, Directed (baseline), old Death Cam 'da' (baseline), top view of Low close");
+        legend.AppendLine("columns: the six moments listed per file (seconds after death); start camera: behind-right of the body at 5 m (azimuth 135 deg), which the shots keep (no input)");
         foreach (var t in picks)
         {
             var world = new RecordedWorld(t);
             var start = StartCamera.For(t, 3);
             var rows = new List<Cam[]>();
-            foreach (var profile in DeathShotProfiles.Choices.Skip(1).Append(DeathShotProfile.Auto))
+            foreach (var profile in DeathShotProfiles.Choices)
                 rows.Add(Runners.New(t, world, start, profile, out _));
             rows.Add(Runners.Directed(t, world, start));
             rows.Add(Runners.OldDeathCam(t, start, Runners.OldShots[0]));
 
             var physics = t.Frames.First(f => f.PhysicsStarted).Time;
-            var settledAt = rows[5].Select((c, i) => (c, i)).Where(x => x.c.Holding).Select(x => t.Frames[x.i].Time).DefaultIfEmpty(t.Seconds).First();
+            var settledAt = rows[0].Select((c, i) => (c, i)).Where(x => x.c.Holding).Select(x => t.Frames[x.i].Time).DefaultIfEmpty(t.Seconds).First();
             var moments = new[] { 0.8f, 2.2f, MathF.Max(2.4f, physics - 0.3f), physics + 1.0f, MathF.Min(t.Seconds, settledAt + 3f), t.Seconds };
             var frames = moments.Select(m => Math.Clamp(Array.FindIndex(t.Frames, f => f.Time >= m), 0, t.Frames.Length - 1)).ToArray();
             for (var i = 0; i < frames.Length; i++) if (frames[i] < 0) frames[i] = t.Frames.Length - 1;
@@ -60,10 +60,10 @@ internal static class Sheets
             for (var c = 0; c < frames.Length; c++)
                 DrawView(image, Pad + c * (CellW + Pad), Pad + r * (CellH + Pad), t, world, t.Frames[frames[c]], rows[r][frames[c]]);
             for (var c = 0; c < frames.Length; c++)
-                DrawTop(image, Pad + c * (CellW + Pad), Pad + rows.Count * (CellH + Pad), t, t.Frames[frames[c]], rows[5][frames[c]]);
+                DrawTop(image, Pad + c * (CellW + Pad), Pad + rows.Count * (CellH + Pad), t, t.Frames[frames[c]], rows[0][frames[c]]);
             var file = Path.Combine(folder, t.Name + ".png");
             image.Save(file);
-            legend.AppendLine($"{t.Name}.png: {string.Join(", ", frames.Select(f => t.Frames[f].Time.ToString("F1")))} s; ragdoll at {physics:F1} s; Auto: {string.Join(" / ", frames.Select(f => rows[5][f].Shot))}");
+            legend.AppendLine($"{t.Name}.png: {string.Join(", ", frames.Select(f => t.Frames[f].Time.ToString("F1")))} s; ragdoll at {physics:F1} s");
             Console.WriteLine(file);
         }
         File.WriteAllText(Path.Combine(folder, "legend.txt"), legend.ToString());

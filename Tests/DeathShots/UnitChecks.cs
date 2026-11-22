@@ -80,79 +80,8 @@ internal static class UnitChecks
         BelowGround();
         SoftChanges();
         Grabbed();
-        SidePreferences();
         Console.WriteLine(failures == 0 ? "unit checks: all ok" : $"unit checks: {failures} FAILED");
         return failures;
-    }
-
-    /// <summary>What the plugin feeds from the player during a shot (DeathShotDirector): the left/right orbit as
-    /// <see cref="DeathShotInput.UserYaw"/>, the wheel as <see cref="DeathShotInput.UserSize"/>.</summary>
-    private static void PlayerHand()
-    {
-        var world = new FlatWorld();
-        var body = Lying(90f * Deg);
-        var extra = All(body);
-
-        // Orbit: the shot turns by what the player turned, at the solver's own pace, without re-picking a side,
-        // leaving the ground or losing the body.
-        {
-            var solver = new DeathShotSolver(world);
-            solver.Begin(body.Chest + DeathShotMath.OrbitDirection(0f, 15f * Deg) * 5f, body.Chest, 0.78f);
-            DeathShotOutput o = default;
-            Vector3 lastDir = default;
-            float before = 0f, maxRate = 0f, minClear = float.MaxValue;
-            var sides = 0;
-            for (var i = 0; i < 60 * 20; i++)
-            {
-                var yaw = i < 60 * 10 ? 0f : 60f * Deg;
-                o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = body, Extra = extra, Profile = DeathShotProfile.LowFullBody, Aspect = 16f / 9f, UserYaw = yaw, UserSize = 1f });
-                if (i == 60 * 10 - 1)
-                {
-                    before = DeathShotMath.Azimuth(o.BaseEye - o.BaseLookAt);
-                    sides = o.SideChanges;
-                }
-                var dir = Vector3.Normalize(o.LookAt - o.Eye);
-                if (i > 0 && !o.Cut) maxRate = MathF.Max(maxRate, MathF.Acos(Math.Clamp(Vector3.Dot(dir, lastDir), -1f, 1f)) * 60f / Deg);
-                lastDir = dir;
-                minClear = MathF.Min(minClear, o.Eye.Y);
-            }
-            var turned = DeathShotMath.AngleDelta(before, DeathShotMath.Azimuth(o.BaseEye - o.BaseLookAt)) / Deg;
-            Check("player orbit of 60 deg: the shot turns 60 deg about the body, same side choice, view <= 60 deg/s, eye >= 10 cm up, body in frame",
-                MathF.Abs(turned - 60f) < 2f && o.SideChanges == sides && maxRate <= 60.5f && minClear >= 0.0999f && Reach(o, extra) <= 1f,
-                $"turned {turned:F1} deg, max view rate {maxRate:F1} deg/s, min eye height {minClear:F3} m, reach {Reach(o, extra):F2}, side changes {o.SideChanges - sides}");
-        }
-
-        // A scene's absolute azimuth (the plugin turns the side in use onto the yaw the scene set: UserYaw = that yaw
-        // minus DeathShotSolver.SideAzimuth): the eye ends at that azimuth about the body.
-        {
-            var solver = new DeathShotSolver(world);
-            solver.Begin(body.Chest + DeathShotMath.OrbitDirection(0f, 15f * Deg) * 5f, body.Chest, 0.78f);
-            const float asked = 200f * Deg;
-            DeathShotOutput o = default;
-            for (var i = 0; i < 60 * 20; i++)
-            {
-                var yaw = i < 60 * 10 ? 0f : DeathShotMath.AngleDelta(solver.SideAzimuth, asked);
-                o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = body, Extra = extra, Profile = DeathShotProfile.LowFullBody, Aspect = 16f / 9f, UserYaw = yaw, UserSize = 1f });
-            }
-            var off = DeathShotMath.AngleDelta(asked, DeathShotMath.Azimuth(o.BaseEye - o.BaseLookAt)) / Deg;
-            Check("an absolute azimuth asked through the side in use: the eye ends there", MathF.Abs(off) < 2f, $"off by {off:F1} deg");
-        }
-
-        // Wheel: the frame at the subject grows and shrinks with the size.
-        {
-            float At(float size)
-            {
-                var solver = new DeathShotSolver(world);
-                solver.Begin(Standing.Chest + DeathShotMath.OrbitDirection(0f, 15f * Deg) * 5f, Standing.Chest, 0.78f);
-                DeathShotOutput o = default;
-                for (var i = 0; i < 60 * 12; i++)
-                    o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = Standing, Profile = DeathShotProfile.LowThreeQuarter, Aspect = 16f / 9f, UserSize = size });
-                return Vector3.Distance(o.BaseEye, o.BaseLookAt);
-            }
-            float one = At(1f), wide = At(2f), tight = At(0.5f);
-            Check("player wheel: size 2 is twice as far, size 0.5 half as far", MathF.Abs(wide / one - 2f) < 0.1f && MathF.Abs(tight / one - 0.5f) < 0.05f,
-                $"{one:F2} m, x2 {wide:F2} m, x0.5 {tight:F2} m");
-        }
     }
 
     private static void BodyFrames()
@@ -301,183 +230,292 @@ internal static class UnitChecks
 
     private static Vector3[] All(BodyPoints p) => new[] { p.Hips, p.Chest, p.Head, p.ShoulderL, p.ShoulderR, p.FootL, p.FootR };
 
+    /// <summary>Azimuth of the eye about the look-at point as rendered, degrees off <paramref name="azimuth"/>.</summary>
+    private static float RenderedOff(in DeathShotOutput o, float azimuth) =>
+        MathF.Abs(DeathShotMath.AngleDelta(azimuth, DeathShotMath.Azimuth(o.Eye - o.LookAt))) / Deg;
+
+    private static Vector3 HeadCentre(BodyPoints p) => p.Head + Vector3.Normalize(p.Head - p.Chest) * 0.09f;
+    private static Vector3 HeadTop(BodyPoints p) => p.Head + Vector3.Normalize(p.Head - p.Chest) * 0.18f;
+
+    /// <summary>The middle of the thighs as the solver takes it (reference body).</summary>
+    private static Vector3 MidThighs(BodyPoints p)
+    {
+        Vector3 One(Vector3 foot)
+        {
+            var leg = foot - p.Hips;
+            var length = leg.Length();
+            return p.Hips + leg * (MathF.Min(DeathShotSolver.MidThighLength, length * 0.5f) / length);
+        }
+        return (One(p.FootL) + One(p.FootR)) * 0.5f;
+    }
+
+    /// <summary>Where a point sits up the frame: 0 = the bottom edge, 1 = the top edge.</summary>
+    private static float UpFrame(DeathShotOutput o, Vector3 point)
+    {
+        var dir = Vector3.Normalize(o.LookAt - o.Eye);
+        DynamicCameraSolver.BasisFromForward(dir, out var right, out var up);
+        var tanV = MathF.Tan(o.Fov * 0.5f);
+        var ndc = DynamicCameraSolver.Project(point, o.Eye, dir, right, up, new DynamicCameraSolver.Lens(tanV * 16f / 9f, tanV));
+        return (ndc.Y + 1f) * 0.5f;
+    }
+
     private static void SolverStatic()
     {
         var world = new FlatWorld();
         var standing = Standing;
-        var frame = BodyFrame.From(standing, 0f);
+        var supine = Lying(0f);
+        var points = All(supine);
 
-        // Low three-quarter on a standing body, from every start azimuth: the old presets.
-        bool inRange = true, framed = true, rate = true, clear = true;
+        // Low close on a standing body, from every start azimuth: the old presets' height and distance, on the
+        // azimuth the camera had.
+        bool inRange = true, framed = true, rate = true, clear = true, kept = true;
         var detail = "";
         for (var k = 0; k < 8; k++)
         {
-            var r = RunStatic(world, standing, DeathShotProfile.LowThreeQuarter, 12f, k * 45f * Deg);
+            var r = RunStatic(world, standing, DeathShotProfile.LowClose, 12f, k * 45f * Deg);
             // Before the push-in: the damped pose without the built-in motion.
             var away = r.Out.BaseEye - r.Out.BaseLookAt;
             var d = away.Length();
-            var off = MathF.Abs(DeathShotMath.AngleDelta(DeathShotMath.Azimuth(frame.FrontHorizontal), DeathShotMath.Azimuth(away))) / Deg;
             var up = -MathF.Asin(away.Y / d) / Deg;
-            inRange &= off is >= 39f and <= 46f && up is >= 19f and <= 26f && d is >= 1.0f and <= 1.35f;
+            inRange &= up is >= 19f and <= 26f && d is >= 1.0f and <= 1.35f;
+            kept &= MathF.Abs(DeathShotMath.AngleDelta(k * 45f * Deg, r.Out.Azimuth)) < 1e-5f && RenderedOff(r.Out, k * 45f * Deg) < 0.05f;
             framed &= Reach(r.Out, standing.Hips, standing.Chest) <= 1f;
             rate &= r.MaxViewRate <= 60.5f;
             clear &= r.MinClearance >= 0.0999f;
-            if (k == 0) detail = $"off {off:F1} deg, up {up:F1} deg, {d:F2} m; max view rate {r.MaxViewRate:F1} deg/s";
+            if (k == 1) detail = $"start azimuth 45 deg: ends at {DeathShotMath.Azimuth(away) / Deg:F2} deg, up {up:F1} deg, {d:F2} m; max view rate {r.MaxViewRate:F1} deg/s";
         }
-        Check("Low three-quarter, standing, 8 start azimuths: 39-46 deg off the front, 19-26 deg up, 1.0-1.35 m", inRange, detail);
+        Check("Low close, standing, 8 start azimuths: the eye stays on the azimuth the camera had; looking up 19-26 deg from 1.0-1.35 m", inRange && kept, detail);
         Check("  hips and chest in frame, view <= 60 deg/s all the way in, eye >= 10 cm above ground", framed && rate && clear);
 
         // A body at rest gets the push-in: 12 % closer after 1 + 8 s, and then nothing moves.
         {
             var solver = new DeathShotSolver(world);
             solver.Begin(standing.Chest + DeathShotMath.OrbitDirection(0f, 15f * Deg) * 5f, standing.Chest, 0.78f);
-            DeathShotOutput o = default, before = default;
+            DeathShotOutput o = default;
             var moved = 0f;
             for (var i = 0; i < 60 * 16; i++)
             {
                 var prev = o;
-                o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = Lying(90f * Deg), Profile = DeathShotProfile.LowThreeQuarter, Aspect = 16f / 9f, UserSize = 1f });
-                if (i == 60 * 5) before = o;
+                o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = Lying(90f * Deg), Profile = DeathShotProfile.LowClose, Aspect = 16f / 9f, UserSize = 1f });
                 if (i > 60 * 14) moved = MathF.Max(moved, Vector3.Distance(o.Eye, prev.Eye));
             }
             var ratio = Vector3.Distance(o.Eye, o.LookAt) / Vector3.Distance(o.BaseEye, o.BaseLookAt);
             Check("settled body: push-in of 12 % over 8 s, then the camera is still", o.Holding && MathF.Abs(ratio - 0.88f) < 0.01f && moved < 1e-5f, $"ratio {ratio:F3}, movement after {moved * 1000f:F3} mm");
         }
 
-        // Each shot of the family on a body lying on its back.
-        var supine = Lying(0f);
-        var sf = BodyFrame.From(supine, 0f);
-        var points = All(supine);
-        var headCentre = supine.Head + Vector3.Normalize(supine.Head - supine.Chest) * 0.09f;
-        var pronePoints = Lying(MathF.PI);
-        var pf = BodyFrame.From(pronePoints, 0f);
-        static float OffAxis(Vector3 viewDirection, Vector3 axis) =>
-            MathF.Acos(Math.Clamp(MathF.Abs(Vector3.Dot(Vector3.Normalize(new Vector3(viewDirection.X, 0f, viewDirection.Z)), axis)), 0f, 1f)) / Deg;
-
+        // The other two shots: subject, height, distance.
+        var faceStanding = RunStatic(world, standing, DeathShotProfile.LowFace, 12f, 45f * Deg);
+        var fsAway = faceStanding.Out.BaseEye - HeadCentre(standing);
+        Check("Low on the face, standing: the head, from 15 deg below it, 1.0 m, on the camera's azimuth",
+            MathF.Abs(MathF.Asin(fsAway.Y / fsAway.Length()) / Deg + 15f) < 1.5f && MathF.Abs(fsAway.Length() - 1.0f) < 0.05f && Reach(faceStanding.Out, HeadCentre(standing)) <= 1f &&
+            RenderedOff(faceStanding.Out, 45f * Deg) < 0.05f,
+            $"{MathF.Asin(fsAway.Y / fsAway.Length()) / Deg:F1} deg, {fsAway.Length():F2} m");
         var face = RunStatic(world, supine, DeathShotProfile.LowFace, 14f, 45f * Deg);
-        var faceAway = Vector3.Normalize(face.Out.BaseEye - headCentre);
-        var faceUp = MathF.Asin(faceAway.Y) / Deg;
-        Check("Low on the face, supine: head in frame, the eye beside the head on the face's side of it, no more than 35 deg above it, above the ground",
-            Reach(face.Out, headCentre) <= 1f && Vector3.Dot(sf.Front, faceAway) > 0.3f && faceUp <= 35.5f && MathF.Abs(Vector3.Dot(sf.Lateral, faceAway)) > 0.5f && face.MinClearance >= 0.0999f,
-            $"{faceUp:F1} deg above the head, front . to-eye {Vector3.Dot(sf.Front, faceAway):F2}, {Vector3.Distance(face.Out.BaseEye, headCentre):F2} m");
-        var faceStanding = RunStatic(world, standing, DeathShotProfile.LowFace, 12f, 0f);
-        var standingHead = standing.Head + Vector3.UnitY * 0.09f;
-        var fsAway = Vector3.Normalize(faceStanding.Out.BaseEye - standingHead);
-        var fsOff = MathF.Abs(DeathShotMath.AngleDelta(DeathShotMath.Azimuth(frame.FrontHorizontal), DeathShotMath.Azimuth(fsAway))) / Deg;
-        Check("Low on the face, standing: 35 deg off the face, from 15 deg below it, 1.0 m",
-            MathF.Abs(fsOff - 35f) < 2f && MathF.Abs(MathF.Asin(fsAway.Y) / Deg + 15f) < 1.5f && MathF.Abs(Vector3.Distance(faceStanding.Out.BaseEye, standingHead) - 1.0f) < 0.05f,
-            $"off {fsOff:F1} deg, {MathF.Asin(fsAway.Y) / Deg:F1} deg, {Vector3.Distance(faceStanding.Out.BaseEye, standingHead):F2} m");
-        var faceDown = RunStatic(world, pronePoints, DeathShotProfile.LowFace, 14f, 45f * Deg);
-        var proneHead = pronePoints.Head + Vector3.Normalize(pronePoints.Head - pronePoints.Chest) * 0.09f;
-        var sideways = MathF.Abs(Vector3.Dot(pf.Lateral, Vector3.Normalize(faceDown.Out.Eye - proneHead)));
-        Check("Low on the face, face down: the eye goes beside the head (the profile), above the ground", sideways > 0.8f && faceDown.MinClearance >= 0.0999f && Reach(faceDown.Out, proneHead) <= 1f, $"|lateral . to-eye| {sideways:F2}");
+        Check("Low on the face, lying: head in frame, close, at ground level (the eye cannot go below the head), eye >= 10 cm up",
+            Reach(face.Out, HeadCentre(supine)) <= 1f && Vector3.Distance(face.Out.BaseEye, HeadCentre(supine)) < 1.2f && face.Out.BaseEye.Y < 0.4f && face.MinClearance >= 0.0999f,
+            $"{Vector3.Distance(face.Out.BaseEye, HeadCentre(supine)):F2} m, eye height {face.Out.BaseEye.Y:F2}");
+        bool fullIn = true, fullLow = true, fullKept = true;
+        float fullNear = float.MaxValue, fullFar = 0f;
+        for (var k = 0; k < 8; k++)
+        {
+            var full = RunStatic(world, supine, DeathShotProfile.LowFullBody, 14f, k * 45f * Deg, extra: points);
+            fullIn &= Reach(full.Out, points) <= 1f;
+            fullLow &= full.Out.BaseEye.Y < 0.5f && full.MinClearance >= 0.0999f;
+            fullKept &= RenderedOff(full.Out, k * 45f * Deg) < 0.05f;
+            var d = Vector3.Distance(full.Out.BaseEye, full.Out.BaseLookAt);
+            fullNear = MathF.Min(fullNear, d);
+            fullFar = MathF.Max(fullFar, d);
+        }
+        Check("Low full body, lying, 8 start azimuths: the whole body in frame from each of them, low, farther than Low close, the azimuth kept",
+            fullIn && fullLow && fullKept && fullNear >= 1.19f && fullFar > 1.6f, $"{fullNear:F2}..{fullFar:F2} m (along the body it is seen foreshortened and closer, across it farther)");
 
-        var hips = RunStatic(world, supine, DeathShotProfile.HipsToFace, 14f, 45f * Deg);
-        var hipsView = Vector3.Normalize(hips.Out.BaseLookAt - hips.Out.BaseEye);
-        var pastChest = Vector3.Dot(hips.Out.BaseEye - supine.Chest, -sf.LongAxis);
-        Check("Hips up to the face, supine: chest and head in frame, the eye by the hips (toward the feet from the chest), looking up the torso toward the head",
-            Reach(hips.Out, supine.Chest, headCentre) <= 1f && pastChest > 0.5f && Vector3.Dot(hipsView, sf.LongAxis) > 0.75f && hips.MinClearance >= 0.0999f,
-            $"{pastChest:F2} m toward the feet from the chest, {Vector3.Dot(hips.Out.BaseEye - supine.Hips, -sf.LongAxis):F2} m past the hips, eye height {hips.Out.BaseEye.Y:F2}, view {OffAxis(hipsView, sf.LongAxis):F0} deg off the long axis");
-        var hipsStanding = RunStatic(world, standing, DeathShotProfile.HipsToFace, 12f, 0f);
-        var hsView = Vector3.Normalize(hipsStanding.Out.BaseLookAt - hipsStanding.Out.BaseEye);
-        Check("Hips up to the face, standing: from in front of the hips or lower, looking up at the chest and head",
-            Reach(hipsStanding.Out, standing.Chest, standingHead) <= 1f && hipsStanding.Out.BaseEye.Y < standing.Hips.Y + 0.1f && hsView.Y > 0.45f &&
-            Vector3.Dot(hipsStanding.Out.BaseEye - standing.Hips, frame.FrontHorizontal) > 0.1f,
-            $"eye height {hipsStanding.Out.BaseEye.Y:F2}, {Vector3.Dot(hipsStanding.Out.BaseEye - standing.Hips, frame.FrontHorizontal):F2} m in front, looking up {MathF.Asin(hsView.Y) / Deg:F0} deg");
-
-        var feet = RunStatic(world, supine, DeathShotProfile.LowFeetSide, 14f, 45f * Deg);
-        var feetAway = Vector3.Normalize(feet.Out.BaseEye - feet.Out.BaseLookAt);
-        var feetView = -feetAway;
-        Check("Low from the feet, supine: hips and chest in frame, the eye toward the feet end and to a side (42.5 deg off the axis), low",
-            Reach(feet.Out, supine.Hips, supine.Chest) <= 1f && Vector3.Dot(feetAway, sf.LongAxis) < -0.5f && MathF.Abs(OffAxis(feetView, sf.LongAxis) - 42.5f) < 3f && feet.Out.BaseEye.Y < 0.4f && feet.MinClearance >= 0.0999f,
-            $"{OffAxis(feetView, sf.LongAxis):F1} deg off the axis, eye height {feet.Out.BaseEye.Y:F2}");
-
-        var behind = RunStatic(world, standing, DeathShotProfile.LowBehind, 12f, 180f * Deg);
-        var behindAway = behind.Out.BaseEye - behind.Out.BaseLookAt;
-        var behindOff = MathF.Abs(DeathShotMath.AngleDelta(DeathShotMath.Azimuth(frame.FrontHorizontal), DeathShotMath.Azimuth(behindAway))) / Deg;
-        var behindUp = -MathF.Asin(behindAway.Y / behindAway.Length()) / Deg;
-        Check("Low from behind, standing: the old 'anchor A' shot (129 deg off the facing, looking up 25 deg, 1.35 m)",
-            MathF.Abs(behindOff - 129f) < 2f && MathF.Abs(behindUp - 25f) < 1f && MathF.Abs(behindAway.Length() - 1.35f) < 0.04f && Reach(behind.Out, standing.Hips, standing.Chest) <= 1f,
-            $"off {behindOff:F1} deg, up {behindUp:F1} deg, {behindAway.Length():F2} m");
-
-        var full = RunStatic(world, supine, DeathShotProfile.LowFullBody, 14f, 45f * Deg, extra: points);
-        var fullView = Vector3.Normalize(full.Out.BaseLookAt - full.Out.BaseEye);
-        Check("Low full body, supine: the whole body in frame, from the head end 50 deg off the long axis (the body lies diagonally), low",
-            Reach(full.Out, points) <= 1f && MathF.Abs(OffAxis(fullView, sf.LongAxis) - 50f) < 4f && Vector3.Dot(full.Out.BaseEye - full.Out.BaseLookAt, sf.LongAxis) > 0f &&
-            full.Out.BaseEye.Y < 0.5f && full.MinClearance >= 0.0999f,
-            $"{OffAxis(fullView, sf.LongAxis):F1} deg off the axis, eye height {full.Out.BaseEye.Y:F2}, {Vector3.Distance(full.Out.BaseEye, full.Out.BaseLookAt):F2} m, reach {Reach(full.Out, points):F2}");
-
-        // Auto.
-        var autoSide = Enumerable.Range(0, 8).Select(k => RunStatic(world, Lying(90f * Deg), DeathShotProfile.Auto, 3f, k * 45f * Deg).Out.Shot).ToList();
-        var autoSupine = Enumerable.Range(0, 8).Select(k => RunStatic(world, supine, DeathShotProfile.Auto, 3f, k * 45f * Deg).Out.Shot).ToList();
-        var autoProne = Enumerable.Range(0, 8).Select(k => RunStatic(world, pronePoints, DeathShotProfile.Auto, 3f, k * 45f * Deg).Out.Shot).ToList();
-        Check("Auto, from 8 start azimuths: standing -> Low three-quarter; lying -> the shot of the pose whose side is nearest (several are used); on the belly never a shot of the face",
-            Enumerable.Range(0, 8).All(k => RunStatic(world, standing, DeathShotProfile.Auto, 3f, k * 45f * Deg).Out.Shot == DeathShotProfile.LowThreeQuarter) &&
-            autoSide.All(s => ShotRecipe.ForAuto(PoseClass.Side).Contains(ShotRecipe.Of(s))) && autoSide.Distinct().Count() >= 2 &&
-            autoSupine.All(s => ShotRecipe.ForAuto(PoseClass.Supine).Contains(ShotRecipe.Of(s))) && autoSupine.Distinct().Count() >= 2 &&
-            autoProne.All(s => s is not (DeathShotProfile.LowFace or DeathShotProfile.HipsToFace) && ShotRecipe.ForAuto(PoseClass.Prone).Contains(ShotRecipe.Of(s))),
-            $"on a side: {string.Join(", ", autoSide.Distinct())}; on the back: {string.Join(", ", autoSupine.Distinct())}; on the belly: {string.Join(", ", autoProne.Distinct())}");
-        var sideBody = Lying(90f * Deg);
-        var sb = BodyFrame.From(sideBody, 0f);
-        var onSide = RunStatic(world, sideBody, DeathShotProfile.LowThreeQuarter, 6f, 0f);
-        var toEye = Vector3.Normalize(onSide.Out.BaseEye - onSide.Out.BaseLookAt);
-        Check("Low three-quarter, on a side: on the body's front side, turned toward the head, at ground level",
-            Vector3.Dot(toEye, sb.FrontHorizontal) > 0.5f && Vector3.Dot(toEye, sb.LongAxis) > 0.3f && onSide.Out.BaseEye.Y < 0.4f && onSide.MinClearance >= 0.0999f,
-            $"front part {Vector3.Dot(toEye, sb.FrontHorizontal):F2}, head part {Vector3.Dot(toEye, sb.LongAxis):F2}, eye height {onSide.Out.BaseEye.Y:F2}");
+        // Every shot on every pose from every start azimuth: the azimuth is never changed, the subject is in frame.
+        {
+            var poses = new (string Name, BodyPoints Body)[] { ("standing", standing), ("kneeling", Kneeling), ("on the back", supine), ("on a side", Lying(90f * Deg)), ("face down", Lying(MathF.PI)) };
+            var worstAzimuth = 0f;
+            var worstRendered = 0f;
+            var lost = "";
+            foreach (var pose in poses)
+            foreach (var profile in DeathShotProfiles.Choices)
+            for (var k = 0; k < 8; k++)
+            {
+                var solver = new DeathShotSolver(world);
+                var start = k * 45f * Deg;
+                solver.Begin(pose.Body.Chest + DeathShotMath.OrbitDirection(start, 15f * Deg) * 5f, pose.Body.Chest, 0.78f);
+                var extra = All(pose.Body);
+                DeathShotOutput o = default;
+                for (var i = 0; i < 60 * 8; i++)
+                {
+                    o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = pose.Body, Extra = extra, Profile = profile, Aspect = 16f / 9f, UserSize = 1f });
+                    worstAzimuth = MathF.Max(worstAzimuth, MathF.Abs(DeathShotMath.AngleDelta(start, o.Azimuth)) / Deg);
+                    worstRendered = MathF.Max(worstRendered, RenderedOff(o, start));
+                }
+                var subject = ShotRecipe.Of(profile).Subject switch
+                {
+                    ShotSubject.HipsToChest => new[] { pose.Body.Hips, pose.Body.Chest },
+                    ShotSubject.Head => new[] { HeadCentre(pose.Body) },
+                    _ => extra,
+                };
+                if (Reach(o, subject) > 1f) lost += $" {profile}/{pose.Name}/{k * 45}";
+            }
+            Check("all three shots x five poses x 8 start azimuths, no input: the shot's azimuth is the start camera's on every frame (0 deg change), the rendered one too, subject in frame",
+                worstAzimuth < 1e-4f && worstRendered < 0.05f && lost.Length == 0,
+                $"shot azimuth changed by at most {worstAzimuth:F5} deg, rendered eye azimuth off by at most {worstRendered:F3} deg{(lost.Length > 0 ? "; out of frame:" + lost : "")}");
+        }
 
         // Constraints.
         var wet = new FlatWorld { Water = 0.4f };
         Check("water: the eye stays 10 cm above the surface", RunStatic(wet, supine, DeathShotProfile.LowFullBody, 6f, 0f, extra: points).Out.Eye.Y >= 0.4999f);
-        // A wall 0.7 m from the body on the side Low full body would pick first (start azimuth +90 deg = +X).
-        var walled = new FlatWorld { WallX = 0.7f };
-        var w = RunStatic(walled, supine, DeathShotProfile.LowFullBody, 8f, 90f * Deg, extra: points);
-        Check("a wall on the chosen side: the eye ends on the open side", w.Out.Eye.X < 0.7f && Reach(w.Out, points) <= 1f, $"eye x {w.Out.Eye.X:F2}");
-        // Walls close on both sides of a body on its back: Low full body has no clear side left.
-        var corridor = new CorridorWorld();
-        var cw = RunStatic(corridor, supine, DeathShotProfile.LowFullBody, 8f, 90f * Deg, extra: points);
-        Check("no clear side at all: a fallback is used and counted", cw.Out.Fallbacks > 0 && MathF.Abs(cw.Out.Eye.X) < 0.7f, $"shot {cw.Out.Shot}, eye x {cw.Out.Eye.X:F2}, fallbacks {cw.Out.Fallbacks}");
+
+        // A wall 0.7 m from the body on the side the camera is on (start azimuth +90 deg = +X): the side is not
+        // changed; the eye comes in front of the wall on the same line and the lens widens. The wall gone: back out.
+        {
+            var walled = new FlatWorld { WallX = 0.7f };
+            var solver = new DeathShotSolver(walled);
+            solver.Begin(supine.Chest + DeathShotMath.OrbitDirection(90f * Deg, 15f * Deg) * 5f, supine.Chest, 0.78f);
+            DeathShotOutput o = default, blocked = default;
+            var cuts = 0;
+            var worst = 0f;
+            float maxRate = 0f, maxSpeed = 0f;
+            Vector3 lastDir = default, lastEye = default;
+            for (var i = 0; i < 60 * 20; i++)
+            {
+                if (i == 60 * 10) { blocked = o; walled.WallX = float.PositiveInfinity; }
+                o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = supine, Extra = points, Profile = DeathShotProfile.LowFullBody, Aspect = 16f / 9f, UserSize = 1f });
+                if (o.Cut && i > 0) cuts++;
+                worst = MathF.Max(worst, MathF.Abs(DeathShotMath.AngleDelta(90f * Deg, o.Azimuth)) / Deg);
+                var dir = Vector3.Normalize(o.LookAt - o.Eye);
+                if (i > 0)
+                {
+                    maxRate = MathF.Max(maxRate, MathF.Acos(Math.Clamp(Vector3.Dot(dir, lastDir), -1f, 1f)) * 60f / Deg);
+                    maxSpeed = MathF.Max(maxSpeed, Vector3.Distance(o.Eye, lastEye) * 60f);
+                }
+                lastDir = dir;
+                lastEye = o.Eye;
+            }
+            var open = RunStatic(world, supine, DeathShotProfile.LowFullBody, 10f, 90f * Deg, extra: points).Out;
+            Check("a wall between the body and the camera: the azimuth is not changed; the eye is pulled in front of the wall and the lens widened (up to x1.35)",
+                blocked.PulledIn && blocked.Eye.X < 0.7f && blocked.Eye.X > 0.3f && worst < 1e-4f && blocked.Fov > open.Fov * 1.05f && blocked.Fov <= ShotRecipe.LowFullBody.Fov * DeathShotSolver.MaxFovWiden + 1e-4f,
+                $"eye x {blocked.Eye.X:F2} with the wall at 0.70 (open: {open.Eye.X:F2}), lens {blocked.Fov / Deg:F1} deg (open {open.Fov / Deg:F1}), azimuth changed {worst:F5} deg");
+            Check("  the wall gone: eased back out to the open shot, no cut frame, view <= 60 deg/s, eye <= 3 m/s",
+                !o.PulledIn && Vector3.Distance(o.BaseEye, open.BaseEye) < 0.02f && MathF.Abs(o.Fov - open.Fov) < 1e-3f && cuts == 0 && maxRate <= 60.5f && maxSpeed <= 3.01f,
+                $"{Vector3.Distance(o.BaseEye, open.BaseEye) * 100f:F1} cm from the open shot, max view rate {maxRate:F1} deg/s, max eye speed {maxSpeed:F2} m/s");
+        }
 
         // The same scene turned and moved gives the same shot, turned and moved.
         var yaw = 1.1f;
         var move = new Vector3(40f, 0f, -12f);
         var q = Quaternion.CreateFromAxisAngle(Vector3.UnitY, yaw);
-        var a = RunStatic(world, supine, DeathShotProfile.Auto, 6f, 45f * Deg);
-        var b = RunStatic(world, Map(supine, v => Vector3.Transform(v, q) + move), DeathShotProfile.Auto, 6f, 45f * Deg + yaw);
+        var a = RunStatic(world, supine, DeathShotProfile.LowClose, 6f, 45f * Deg);
+        var b = RunStatic(world, Map(supine, v => Vector3.Transform(v, q) + move), DeathShotProfile.LowClose, 6f, 45f * Deg + yaw);
         var error = Vector3.Distance(Vector3.Transform(a.Out.Eye, q) + move, b.Out.Eye) + Vector3.Distance(Vector3.Transform(a.Out.LookAt, q) + move, b.Out.LookAt);
         Check("turning and moving the scene turns and moves the shot", error < 2e-3f, $"difference {error * 1000f:F2} mm");
 
         // A bigger body gets a proportionally bigger shot.
         var big = Map(standing, v => v * 2f);
-        var bigShot = RunStatic(world, big, DeathShotProfile.LowThreeQuarter, 12f, 0f);
+        var bigShot = RunStatic(world, big, DeathShotProfile.LowClose, 12f, 0f);
         var bigDistance = Vector3.Distance(bigShot.Out.BaseEye, bigShot.Out.BaseLookAt);
         Check("a body twice the size: the shot is twice as far", bigDistance is > 2.2f and < 2.7f && MathF.Abs(bigShot.BodyScale - 2f) < 0.05f, $"{bigDistance:F2} m, scale {bigShot.BodyScale:F2}");
 
-        // No start camera: the first frame is the shot itself.
-        var cold = RunStatic(world, standing, DeathShotProfile.LowThreeQuarter, 1f / 60f, 0f, begin: false);
-        Check("without a start camera the first frame is the solved shot", Vector3.Distance(cold.Out.Eye, cold.Out.GoalEye) < 1e-4f);
+        // No start camera: the first frame is the shot itself, from the body's front.
+        var cold = RunStatic(world, standing, DeathShotProfile.LowClose, 1f / 60f, 0f, begin: false);
+        Check("without a start camera the first frame is the solved shot (from the body's front)", Vector3.Distance(cold.Out.Eye, cold.Out.GoalEye) < 1e-4f && MathF.Abs(cold.Out.Azimuth) < 1e-4f);
     }
 
-    /// <summary>What a run of the solver over a moving body did: for the checks that a change is eased, not cut.</summary>
+    /// <summary>What the plugin feeds from the player during a shot (DeathShotDirector): the left/right orbit as
+    /// <see cref="DeathShotInput.UserYaw"/>, the wheel as <see cref="DeathShotInput.UserSize"/>.</summary>
+    private static void PlayerHand()
+    {
+        var world = new FlatWorld();
+        var body = Lying(90f * Deg);
+        var extra = All(body);
+
+        // Orbit: 4 s without input, then the player drags 120 deg in one second (120 deg/s: twice the cap the
+        // program's own moves have), then lets go. The camera is on the asked azimuth on every frame, and stops with
+        // the hand.
+        foreach (var profile in DeathShotProfiles.Choices)
+        {
+            var solver = new DeathShotSolver(world);
+            const float start = 30f * Deg;
+            solver.Begin(body.Chest + DeathShotMath.OrbitDirection(start, 15f * Deg) * 5f, body.Chest, 0.78f);
+            DeathShotOutput o = default;
+            float worstShot = 0f, worstRendered = 0f, minClear = float.MaxValue, fastest = 0f, worstReach = 0f;
+            var cuts = 0;
+            Vector3 lastEye = default;
+            for (var i = 0; i < 60 * 9; i++)
+            {
+                var t = i / 60f;
+                var yaw = 120f * Deg * Math.Clamp(t - 4f, 0f, 1f);
+                o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = body, Extra = extra, Profile = profile, Aspect = 16f / 9f, UserYaw = yaw, UserSize = 1f });
+                if (o.Cut && i > 0) cuts++;
+                worstShot = MathF.Max(worstShot, MathF.Abs(DeathShotMath.AngleDelta(start + yaw, o.Azimuth)) / Deg);
+                if (t >= 3.5f) worstRendered = MathF.Max(worstRendered, RenderedOff(o, start + yaw));
+                if (t is > 4f and <= 5f) fastest = MathF.Max(fastest, MathF.Abs(DeathShotMath.AngleDelta(DeathShotMath.Azimuth(lastEye - o.LookAt), DeathShotMath.Azimuth(o.Eye - o.LookAt))) * 60f / Deg);
+                if (t >= 4f) worstReach = MathF.Max(worstReach, Reach(o, ShotRecipe.Of(profile).Subject == ShotSubject.WholeBody ? extra : ShotRecipe.Of(profile).Subject == ShotSubject.Head ? new[] { HeadCentre(body) } : new[] { body.Hips, body.Chest }));
+                minClear = MathF.Min(minClear, o.Eye.Y);
+                lastEye = o.Eye;
+            }
+            Check($"{DeathShotProfiles.Label(profile)}: the player drags 120 deg in 1 s: the shot's azimuth is the hand's on every frame (one to one, {fastest:F0} deg/s rendered), no cut, eye >= 10 cm up, subject in frame",
+                worstShot < 1e-3f && worstRendered < 1.0f && fastest > 110f && cuts == 0 && minClear >= 0.0999f && worstReach <= 1f,
+                $"shot azimuth off the hand by at most {worstShot:F5} deg, the rendered eye by at most {worstRendered:F2} deg; reach {worstReach:F2}; min eye height {minClear:F3} m");
+        }
+
+        // No input, nothing turns: a still body for 20 s.
+        {
+            var solver = new DeathShotSolver(world);
+            solver.Begin(body.Chest + DeathShotMath.OrbitDirection(200f * Deg, 15f * Deg) * 5f, body.Chest, 0.78f);
+            var worst = 0f;
+            for (var i = 0; i < 60 * 20; i++)
+            {
+                var o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = body, Extra = extra, Profile = DeathShotProfile.LowClose, Aspect = 16f / 9f, UserSize = 1f });
+                worst = MathF.Max(worst, RenderedOff(o, 200f * Deg));
+            }
+            Check("no input for 20 s (entry, settle, push-in): the eye never leaves the start camera's azimuth", worst < 0.05f, $"at most {worst:F4} deg off");
+        }
+
+        // Wheel: the frame at the subject grows and shrinks with the size.
+        {
+            float At(float size)
+            {
+                var solver = new DeathShotSolver(world);
+                solver.Begin(Standing.Chest + DeathShotMath.OrbitDirection(0f, 15f * Deg) * 5f, Standing.Chest, 0.78f);
+                DeathShotOutput o = default;
+                for (var i = 0; i < 60 * 12; i++)
+                    o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = Standing, Profile = DeathShotProfile.LowClose, Aspect = 16f / 9f, UserSize = size });
+                return Vector3.Distance(o.BaseEye, o.BaseLookAt);
+            }
+            float one = At(1f), wide = At(2f), tight = At(0.5f);
+            Check("player wheel: size 2 is twice as far, size 0.5 half as far", MathF.Abs(wide / one - 2f) < 0.1f && MathF.Abs(tight / one - 0.5f) < 0.05f,
+                $"{one:F2} m, x2 {wide:F2} m, x0.5 {tight:F2} m");
+        }
+    }
+
+    /// <summary>What a run of the solver over a moving body did: for the checks that a change is eased, not cut, and
+    /// that nothing but the player's hand turns the camera about the body.</summary>
     private sealed class Trace
     {
         public DeathShotOutput Last;
         public int CutFrames;
-        public float MaxViewRate, MaxEyeSpeed, MaxTurn;
+        public float MaxViewRate, MaxEyeSpeed;
+        /// <summary>The shot's azimuth against the start camera's plus the input, degrees; and the rendered eye's.</summary>
+        public float MaxAzimuthOff, MaxRenderedOff;
         public readonly List<string> Events = new();
     }
+
+    private const float FollowStart = 30f * Deg;
 
     private static Trace Follow(IDeathShotWorld world, Func<float, BodyPoints> body, Func<float, DeathShotInput, DeathShotInput> configure, float seconds, Action<float, DeathShotOutput, BodyPoints>? each = null)
     {
         var solver = new DeathShotSolver(world);
         var first = body(0f);
-        solver.Begin(first.Chest + DeathShotMath.OrbitDirection(0f, 15f * Deg) * 5f, first.Chest, 0.78f);
+        solver.Begin(first.Chest + DeathShotMath.OrbitDirection(FollowStart, 15f * Deg) * 5f, first.Chest, 0.78f);
         var trace = new Trace();
         Vector3 lastDir = default, lastEye = default;
         for (var i = 0; i < (int)(seconds * 60f); i++)
         {
             var time = i / 60f;
             var p = body(time);
-            var input = configure(time, new DeathShotInput { Dt = 1f / 60f, Points = p, Extra = All(p), Profile = DeathShotProfile.LowThreeQuarter, Aspect = 16f / 9f, UserSize = 1f });
+            var input = configure(time, new DeathShotInput { Dt = 1f / 60f, Points = p, Extra = All(p), Profile = DeathShotProfile.LowClose, Aspect = 16f / 9f, UserSize = 1f });
             var o = solver.Step(input);
             var dir = Vector3.Normalize(o.LookAt - o.Eye);
             if (i > 0)
@@ -486,11 +524,9 @@ internal static class UnitChecks
                 trace.MaxViewRate = MathF.Max(trace.MaxViewRate, MathF.Acos(Math.Clamp(Vector3.Dot(dir, lastDir), -1f, 1f)) * 60f / Deg);
                 trace.MaxEyeSpeed = MathF.Max(trace.MaxEyeSpeed, Vector3.Distance(o.Eye, lastEye) * 60f);
             }
-            if (o.SideChanged)
-            {
-                trace.MaxTurn = MathF.Max(trace.MaxTurn, o.SideTurn / Deg);
-                trace.Events.Add($"{time:F1}s {o.Reason} -> {o.Shot} ({o.SideTurn / Deg:F0} deg)");
-            }
+            trace.MaxAzimuthOff = MathF.Max(trace.MaxAzimuthOff, MathF.Abs(DeathShotMath.AngleDelta(FollowStart + input.UserYaw, o.Azimuth)) / Deg);
+            trace.MaxRenderedOff = MathF.Max(trace.MaxRenderedOff, RenderedOff(o, FollowStart + input.UserYaw));
+            if (o.ShotChanged) trace.Events.Add($"{time:F1}s {o.Reason} -> {o.Shot}");
             lastDir = dir;
             lastEye = o.Eye;
             trace.Last = o;
@@ -499,7 +535,8 @@ internal static class UnitChecks
         return trace;
     }
 
-    /// <summary>A change of side or of shot is eased, never cut; the side in use is kept unless it is bad.</summary>
+    /// <summary>A change of shot is eased, never cut; and through a fall, a ragdoll, a move of the body, nothing turns
+    /// the camera about it.</summary>
     private static void SoftChanges()
     {
         var world = new FlatWorld();
@@ -509,30 +546,33 @@ internal static class UnitChecks
             var k = DeathShotMath.SmoothStep((t - 2f) / 1.5f);
             return Map(Turn(Standing, Vector3.UnitX, MathF.PI / 2f * k), v => v + new Vector3(0f, 0.12f * k, 0f));
         }
-        var fall = Follow(world, Falling, (_, input) => input with { Profile = DeathShotProfile.Auto }, 16f);
-        Check("Auto over a fall from standing to face down: no cut frame, view <= 60 deg/s, eye <= 3 m/s, and it ends on a shot for a body on its belly (the side it had is kept if it still serves)",
-            fall.CutFrames == 0 && fall.MaxViewRate <= 60.5f && fall.MaxEyeSpeed <= 3.01f && ShotRecipe.ForAuto(PoseClass.Prone).Contains(ShotRecipe.Of(fall.Last.Shot)),
-            $"ends on {fall.Last.Shot}; changes: {(fall.Events.Count == 0 ? "none" : string.Join("; ", fall.Events))}; max view rate {fall.MaxViewRate:F1} deg/s, max eye speed {fall.MaxEyeSpeed:F2} m/s");
+        foreach (var profile in DeathShotProfiles.Choices)
+        {
+            var fall = Follow(world, Falling, (_, input) => input with { Profile = profile }, 16f);
+            Check($"{DeathShotProfiles.Label(profile)} over a fall from standing to face down, no input: the azimuth never changes, no cut frame, view <= 60 deg/s, eye <= 3 m/s, the shot holds once the body rests",
+                fall.MaxAzimuthOff < 1e-4f && fall.CutFrames == 0 && fall.MaxViewRate <= 60.5f && fall.MaxEyeSpeed <= 3.01f && fall.Events.Count == 0 && fall.Last.Holding,
+                $"shot azimuth changed {fall.MaxAzimuthOff:F5} deg (the rendered eye strays at most {fall.MaxRenderedOff:F2} deg while the caps hold it back); max view rate {fall.MaxViewRate:F1} deg/s, max eye speed {fall.MaxEyeSpeed:F2} m/s");
+        }
 
-        // The dropdown changed while dead, through every shot of the family.
+        // The dropdown changed while dead, through the three shots and back.
         var lying = Lying(90f * Deg);
-        var order = DeathShotProfiles.Choices.Skip(1).ToArray();
+        var order = new[] { DeathShotProfile.LowClose, DeathShotProfile.LowFace, DeathShotProfile.LowFullBody, DeathShotProfile.LowClose };
         var tour = Follow(world, _ => lying, (t, input) => input with { Profile = order[Math.Min(order.Length - 1, (int)(t / 6f))] }, order.Length * 6f);
-        Check("the dropdown changed while dead, through all six shots: every change eased (no cut frame), view <= 60 deg/s, eye <= 3 m/s",
-            tour.Events.Count == order.Length - 1 && tour.CutFrames == 0 && tour.MaxViewRate <= 60.5f && tour.MaxEyeSpeed <= 3.01f && tour.Last.Shot == order[^1],
-            $"{string.Join("; ", tour.Events)}; max view rate {tour.MaxViewRate:F1} deg/s, max eye speed {tour.MaxEyeSpeed:F2} m/s");
+        Check("the dropdown changed while dead, through the three shots and back: every change eased (no cut frame), view <= 60 deg/s, eye <= 3 m/s, the azimuth untouched",
+            tour.Events.Count == order.Length - 1 && tour.CutFrames == 0 && tour.MaxViewRate <= 60.5f && tour.MaxEyeSpeed <= 3.01f && tour.Last.Shot == order[^1] && tour.MaxAzimuthOff < 1e-4f && tour.MaxRenderedOff < 0.5f,
+            $"{string.Join("; ", tour.Events)}; max view rate {tour.MaxViewRate:F1} deg/s, max eye speed {tour.MaxEyeSpeed:F2} m/s, rendered azimuth off by at most {tour.MaxRenderedOff:F2} deg");
 
-        // A body at rest that is moved and comes to rest turned: by 40 deg the side stays, by 150 deg it is changed (eased).
-        BodyPoints Moved(float t, float yaw)
+        // A body at rest that is moved and comes to rest turned by 150 deg: the camera follows the body, on the same
+        // azimuth (it does not go round to the body's front again).
+        BodyPoints Moved(float t)
         {
             var k = DeathShotMath.SmoothStep((t - 6f) / 1f);
-            return Map(Turn(lying, Vector3.UnitY, yaw * k), v => v + new Vector3(0.6f * k, 0f, 0f));
+            return Map(Turn(lying, Vector3.UnitY, 150f * Deg * k), v => v + new Vector3(0.6f * k, 0f, 0f));
         }
-        var little = Follow(world, t => Moved(t, 40f * Deg), (_, input) => input, 14f);
-        var much = Follow(world, t => Moved(t, 150f * Deg), (_, input) => input, 16f);
-        Check("a resting body moved and turned 40 deg: the side is kept; turned 150 deg: another side, eased (no cut frame)",
-            little.Events.Count == 0 && much.Events.Count == 1 && much.CutFrames == 0 && little.CutFrames == 0 && much.MaxViewRate <= 60.5f,
-            $"40 deg: {little.Events.Count} changes; 150 deg: {string.Join("; ", much.Events)}, max view rate {much.MaxViewRate:F1} deg/s");
+        var much = Follow(world, Moved, (_, input) => input, 16f);
+        Check("a resting body moved and turned 150 deg: the camera goes with it on the same azimuth, no change of shot, no cut frame",
+            much.Events.Count == 0 && much.CutFrames == 0 && much.MaxAzimuthOff < 1e-4f && much.MaxViewRate <= 60.5f && Reach(much.Last, Moved(16f).Hips, Moved(16f).Chest) <= 1f,
+            $"shot azimuth changed {much.MaxAzimuthOff:F5} deg, max view rate {much.MaxViewRate:F1} deg/s");
 
         // Below the ground and back above it, with the option switched off under way: the eye comes up through the ground, no jump.
         var solid = new SolidGroundWorld();
@@ -570,173 +610,96 @@ internal static class UnitChecks
         }
         foreach (var framing in new[] { DeathShotGrabbedFraming.Level, DeathShotGrabbedFraming.SlightlyAbove })
         {
-            long held = 0, framed = 0;
-            float minDown = float.MaxValue, maxDown = float.MinValue, maxLevel = 0f, eyeTravel = 0f, bodyTravel = 0f, offFront = 0f;
+            var level = framing == DeathShotGrabbedFraming.Level;
+            var shot = level ? DeathShotProfile.GrabbedLevel : DeathShotProfile.GrabbedAbove;
+
+            // A body hanging still: the frame from the top of the head to mid-thigh.
+            {
+                var still = Map(Standing, v => v + new Vector3(0f, 0.45f, 0f));
+                var solver = new DeathShotSolver(world);
+                solver.Begin(still.Chest + DeathShotMath.OrbitDirection(FollowStart, 15f * Deg) * 5f, still.Chest, 0.78f);
+                DeathShotOutput o = default;
+                for (var i = 0; i < 60 * 8; i++)
+                    o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = still, Extra = All(still), Profile = DeathShotProfile.LowClose, Aspect = 16f / 9f, UserSize = 1f, Grabbed = true, GrabbedFraming = framing });
+                // (Before the push-in of a body at rest.)
+                var basePose = o;
+                basePose.Eye = o.BaseEye;
+                basePose.LookAt = o.BaseLookAt;
+                float top = UpFrame(basePose, HeadTop(still)), thigh = UpFrame(basePose, MidThighs(still)), hips = UpFrame(basePose, still.Hips);
+                var aim = o.BaseLookAt.Y;
+                Check($"grabbed, {(level ? "Level" : "Slightly above")}, a body hanging still: the frame runs from the top of the head to mid-thigh, headroom 5-10 % of the frame's height, the aim point between the chest and the hips",
+                    o.Shot == shot && 1f - top is >= 0.05f and <= 0.10f && thigh is >= 0.04f and <= 0.16f && hips > thigh + 0.1f && aim < still.Chest.Y && aim > still.Hips.Y &&
+                    MathF.Abs(DeathShotMath.AngleDelta(FollowStart, o.Azimuth)) < 1e-5f,
+                    $"head top at {top * 100f:F1} % of the frame's height (headroom {100f - top * 100f:F1} %), mid-thigh at {thigh * 100f:F1} %, hips at {hips * 100f:F1} %; aim {aim - still.Hips.Y:F2} m above the hips " +
+                    $"(chest {still.Chest.Y - still.Hips.Y:F2} m), {Vector3.Distance(o.BaseEye, o.BaseLookAt):F2} m away");
+            }
+
+            long held = 0, framed = 0, headIn = 0;
+            var worstThigh = 0f;
+            float minDown = float.MaxValue, maxDown = float.MinValue, eyeTravel = 0f, bodyTravel = 0f, minHeadroom = float.MaxValue, maxHeadroom = 0f;
             Vector3 lastEye = default, lastChest = default;
-            var sidesAtHold = -1;
-            var sidesWhileHeld = 0;
             var trace = Follow(world, Scene, (t, input) => input with { Grabbed = t is >= 4f and < 16f, GrabbedFraming = framing }, 26f, (t, o, p) =>
             {
                 if (t is >= 9f and < 16f)
                 {
-                    if (sidesAtHold < 0) sidesAtHold = o.SideChanges;
-                    sidesWhileHeld = o.SideChanges - sidesAtHold;
                     held++;
-                    var head = p.Head + Vector3.Normalize(p.Head - p.Chest) * 0.09f;
-                    if (Reach(o, p.Chest, head) <= 1f) framed++;
+                    if (Reach(o, HeadTop(p), MidThighs(p), p.Chest, p.Hips) <= 1f) framed++;
+                    if (Reach(o, HeadTop(p), HeadCentre(p), p.Chest, p.Hips) <= 1f) headIn++;
+                    worstThigh = MathF.Max(worstThigh, Reach(o, MidThighs(p)));
+                    var headroom = 1f - UpFrame(o, HeadTop(p));
+                    minHeadroom = MathF.Min(minHeadroom, headroom);
+                    maxHeadroom = MathF.Max(maxHeadroom, headroom);
                     var view = Vector3.Normalize(o.LookAt - o.Eye);
                     var down = -MathF.Asin(view.Y) / Deg;
                     minDown = MathF.Min(minDown, down);
                     maxDown = MathF.Max(maxDown, down);
-                    maxLevel = MathF.Max(maxLevel, MathF.Abs(o.Eye.Y - (p.Chest.Y + head.Y) * 0.5f));
                     eyeTravel += Vector3.Distance(o.Eye, lastEye);
                     bodyTravel += Vector3.Distance(p.Chest, lastChest);
-                    var front = BodyFrame.From(p, 0f).FrontHorizontal;
-                    var away = o.Eye - o.LookAt;
-                    offFront = MathF.Max(offFront, MathF.Abs(DeathShotMath.AngleDelta(DeathShotMath.Azimuth(front), DeathShotMath.Azimuth(away))) / Deg);
                 }
                 lastEye = o.Eye;
                 lastChest = p.Chest;
             });
-            var level = framing == DeathShotGrabbedFraming.Level;
-            var shot = level ? DeathShotProfile.GrabbedLevel : DeathShotProfile.GrabbedAbove;
             var grabbedEvent = trace.Events.FirstOrDefault(e => e.Contains("grabbed")) ?? "";
             var releasedEvent = trace.Events.FirstOrDefault(e => e.Contains("released")) ?? "";
-            Check($"grabbed, {(level ? "Level" : "Slightly above")}: eased into the held shot, upper body in frame while it swings, on the body's front, " +
-                  (level ? "the view level and the eye at the upper body's height" : "looking down 15-20 deg"),
-                grabbedEvent.Contains(shot.ToString()) && framed == held && offFront < 95f &&
-                (level ? minDown > -6f && maxDown < 6f && maxLevel < 0.2f : minDown > 12f && maxDown < 22f),
-                $"{grabbedEvent}; upper body in frame {100.0 * framed / held:F1}% of the held frames; view {minDown:F1}..{maxDown:F1} deg down; eye within {maxLevel:F2} m of the upper body's height; up to {offFront:F0} deg off the front");
-            Check("  the side is not re-picked on the swings, the camera moves less than the body, no cut frame, view <= 60 deg/s",
-                sidesWhileHeld == 0 && eyeTravel < bodyTravel * 0.7f && trace.CutFrames == 0 && trace.MaxViewRate <= 60.5f,
-                $"{sidesWhileHeld} changes of side while held; the eye travelled {eyeTravel:F2} m, the chest {bodyTravel:F2} m; max view rate {trace.MaxViewRate:F1} deg/s");
+            // (The camera is calmer than the body, so on the far ends of a swing the frame's lower edge crosses the
+            // thighs a little above their middle: the head, the chest and the hips never leave it.)
+            Check($"  caught, lifted, swinging ±20 deg and twisting ±30 deg: eased into the held framing; head top, chest and hips in frame on every held frame, the lower edge at mid-thigh within 15 % of the half frame, " +
+                  (level ? "the view level" : "looking down 12-22 deg"),
+                grabbedEvent.Contains(shot.ToString()) && headIn == held && worstThigh <= 1.15f && (level ? minDown > -6f && maxDown < 6f : minDown > 12f && maxDown < 22f),
+                $"{grabbedEvent}; head to hips in frame {100.0 * headIn / held:F1}% of the held frames, down to mid-thigh {100.0 * framed / held:F1}% (the mid-thigh point at most {worstThigh:F2} of the half frame out); headroom {minHeadroom * 100f:F1}..{maxHeadroom * 100f:F1} % of the frame's height as it swings; view {minDown:F1}..{maxDown:F1} deg down");
+            Check("  the azimuth is not touched by the grab, the swings or the release; the camera moves less than the body; no cut frame, view <= 60 deg/s",
+                trace.MaxAzimuthOff < 1e-4f && eyeTravel < bodyTravel * 0.7f && trace.CutFrames == 0 && trace.MaxViewRate <= 60.5f,
+                $"shot azimuth changed {trace.MaxAzimuthOff:F5} deg; the eye travelled {eyeTravel:F2} m, the chest {bodyTravel:F2} m; max view rate {trace.MaxViewRate:F1} deg/s");
             Check("  let go: back to the shot of the lying body once it lies still, eased",
-                releasedEvent.Contains("LowThreeQuarter") && trace.Last.Shot == DeathShotProfile.LowThreeQuarter && !trace.Last.Grabbed && trace.Last.Holding,
-                $"{releasedEvent}; all changes: {string.Join("; ", trace.Events)}");
+                releasedEvent.Contains("LowClose") && trace.Last.Shot == DeathShotProfile.LowClose && !trace.Last.Grabbed && trace.Last.Holding && trace.Events.Count == 2,
+                $"{string.Join("; ", trace.Events)}");
         }
+
+        // The player's hand while held: one to one, like everywhere else.
+        var orbit = Follow(world, Scene, (t, input) => input with { Grabbed = t is >= 4f and < 16f, UserYaw = 90f * Deg * Math.Clamp((t - 9f) / 1.5f, 0f, 1f) }, 14f);
+        Check("grabbed, the player drags 90 deg in 1.5 s: the azimuth is the hand's on every frame, no cut frame",
+            orbit.MaxAzimuthOff < 1e-3f && orbit.CutFrames == 0, $"shot azimuth off the hand by at most {orbit.MaxAzimuthOff:F5} deg, the rendered eye by at most {orbit.MaxRenderedOff:F2} deg");
     }
 
-    /// <summary>The option "Side preference", on bodies whose face is given (the recordings supply the real one).</summary>
-    private static void SidePreferences()
-    {
-        var world = new FlatWorld();
-        var supine = Lying(0f);
-        var frame = BodyFrame.From(supine, 0f);
-        // Left shoulder -> right shoulder, horizontal on a body on its back: the body's right.
-        var right = Vector3.Normalize(new Vector3(frame.Lateral.X, 0f, frame.Lateral.Z));
-        var up = Vector3.UnitY;
-
-        // Which side of the body the eye ends on (+1 = its right), the note of the last choice, the eye.
-        (int Side, string Note, Vector3 Eye) Ends(IDeathShotWorld w, BodyPoints body, DeathShotSide side, Vector3 face, float startAzimuth, DeathShotProfile profile = DeathShotProfile.LowThreeQuarter)
-        {
-            var solver = new DeathShotSolver(w);
-            solver.Begin(body.Chest + DeathShotMath.OrbitDirection(startAzimuth, 15f * Deg) * 5f, body.Chest, 0.78f);
-            DeathShotOutput o = default;
-            for (var i = 0; i < 60 * 8; i++)
-                o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = body, Extra = All(body), Profile = profile, Aspect = 16f / 9f, UserSize = 1f, SidePreference = side, Face = face });
-            var away = o.BaseEye - o.BaseLookAt;
-            return (Vector3.Dot(away, right) > 0f ? 1 : -1, o.SideNote, o.BaseEye);
-        }
-        bool All8(DeathShotSide side, Vector3 face, int expected, BodyPoints? body = null) =>
-            Enumerable.Range(0, 8).All(k => Ends(world, body ?? supine, side, face, k * 45f * Deg).Side == expected);
-
-        var faceRight = Vector3.Normalize(up * 0.8f + right * 0.6f);
-        var faceLeft = Vector3.Normalize(up * 0.8f - right * 0.6f);
-        var nearestSides = Enumerable.Range(0, 8).Select(k => Ends(world, supine, DeathShotSide.Nearest, faceRight, k * 45f * Deg).Side).ToList();
-        Check("Nearest: the side depends on where the camera starts (both sides are used over 8 start azimuths)", nearestSides.Contains(1) && nearestSides.Contains(-1));
-        Check("Face side, on the back with the head turned: the eye is on the side the face points to, from every start azimuth",
-            All8(DeathShotSide.FaceSide, faceRight, 1) && All8(DeathShotSide.FaceSide, faceLeft, -1), Ends(world, supine, DeathShotSide.FaceSide, faceRight, 0f).Note);
-        Check("Behind the head: the other side", All8(DeathShotSide.BehindHead, faceRight, -1) && All8(DeathShotSide.BehindHead, faceLeft, 1), Ends(world, supine, DeathShotSide.BehindHead, faceRight, 0f).Note);
-        Check("Body's left / Body's right: fixed to the body, whatever the face and the start",
-            All8(DeathShotSide.BodyRight, faceLeft, 1) && All8(DeathShotSide.BodyLeft, faceRight, -1), Ends(world, supine, DeathShotSide.BodyLeft, faceRight, 0f).Note);
-
-        // The face to the sky: nothing sideways to go by, so the nearest side, exactly as with Nearest.
-        var same = true;
-        for (var k = 0; k < 8; k++)
-            same &= Vector3.Distance(Ends(world, supine, DeathShotSide.FaceSide, up, k * 45f * Deg).Eye, Ends(world, supine, DeathShotSide.Nearest, up, k * 45f * Deg).Eye) < 1e-5f;
-        var skyNote = Ends(world, supine, DeathShotSide.FaceSide, up, 0f).Note;
-        Check("Face side, the face straight up: the same shot as Nearest", same && skyNote.Contains("points up, nearest"), skyNote);
-
-        // Face down with the head turned a little: the way it is turned names the side.
-        var prone = Lying(MathF.PI);
-        var proneRight = Vector3.Normalize(new Vector3(BodyFrame.From(prone, 0f).Lateral.X, 0f, BodyFrame.From(prone, 0f).Lateral.Z));
-        var turned = Vector3.Normalize(-up + proneRight * 0.25f);
-        var proneEnds = Enumerable.Range(0, 8).Select(k => Ends(world, prone, DeathShotSide.FaceSide, turned, k * 45f * Deg)).ToList();
-        Check("Face side, face down with the head turned 14 deg: the eye is on the side the head is turned to (the visible profile)",
-            proneEnds.All(e => Vector3.Dot(e.Eye - prone.Chest, proneRight) > 0f), proneEnds[0].Note);
-        var buried = Ends(world, prone, DeathShotSide.FaceSide, -up, 0f).Note;
-        Check("Face side, the face straight into the ground: nearest", buried.Contains("points down, nearest"), buried);
-
-        // The preferred side walled off: the other side, and the note says so.
-        var bodyLeftX = -right.X; // the body's left lies toward this x
-        var walled = new FlatWorld { WallX = 0.5f * MathF.Sign(bodyLeftX) };
-        var blocked = Ends(walled, supine, DeathShotSide.BodyLeft, faceRight, 0f);
-        var blockedWhere = Ends(walled, supine, DeathShotSide.Nearest, faceRight, 0f);
-        Check("the preferred side is walled off: the other side is taken and the note says the preference was not met",
-            MathF.Sign(bodyLeftX) > 0f && blocked.Side == 1 && blocked.Note.Contains("not met"), $"{blocked.Note}; eye x {blocked.Eye.X:F2} (Nearest: {blockedWhere.Eye.X:F2})");
-
-        // Low on the face has its sides from the face already: the preference changes nothing there but ties.
-        var faceShot = Ends(world, supine, DeathShotSide.FaceSide, faceRight, 0f, DeathShotProfile.LowFace);
-        Check("Low on the face with Face side: still a shot of the face (the preference only orders its sides)", faceShot.Note.StartsWith("face side", StringComparison.Ordinal), faceShot.Note);
-
-        // Hold: a body at rest with the head turned right is moved and comes to rest with the face nearly at the sky,
-        // a little the other way: the side stays. With the head clearly turned the other way: it changes, eased.
-        Trace Moved(Vector3 after)
-        {
-            BodyPoints At(float t)
-            {
-                var k = DeathShotMath.SmoothStep((t - 6f) / 1f);
-                return Map(supine, v => v + new Vector3(0f, 0f, 0.6f * k));
-            }
-            return Follow(world, At, (t, input) => input with { SidePreference = DeathShotSide.FaceSide, Face = t < 6f ? faceRight : after }, 16f);
-        }
-        var wavering = Moved(Vector3.Normalize(up - right * 0.2f));
-        var turnedOver = Moved(faceLeft);
-        Check("hold: the face nearly at the sky and 11 deg the other way does not send the camera across; the head clearly turned does (eased, no cut frame)",
-            wavering.Events.Count == 0 && turnedOver.Events.Count == 1 && turnedOver.CutFrames == 0 && turnedOver.MaxViewRate <= 60.5f,
-            $"wavering: {wavering.Events.Count} changes ({wavering.Last.SideNote}); turned: {string.Join("; ", turnedOver.Events)} ({turnedOver.Last.SideNote})");
-
-        // A held body: the three-quarter on the side the face is turned to.
-        var hanging = Map(Standing, v => v + new Vector3(0f, 0.45f, 0f));
-        var standingRight = Vector3.Normalize(new Vector3(BodyFrame.From(hanging, 0f).Lateral.X, 0f, 0f));
-        var lookingRight = Vector3.Normalize(BodyFrame.From(hanging, 0f).FrontHorizontal + standingRight * 0.7f);
-        var heldSides = new List<float>();
-        for (var k = 0; k < 8; k++)
-        {
-            var solver = new DeathShotSolver(world);
-            solver.Begin(hanging.Chest + DeathShotMath.OrbitDirection(k * 45f * Deg, 15f * Deg) * 5f, hanging.Chest, 0.78f);
-            DeathShotOutput o = default;
-            for (var i = 0; i < 60 * 8; i++)
-                o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = hanging, Extra = All(hanging), Profile = DeathShotProfile.LowThreeQuarter, Aspect = 16f / 9f, UserSize = 1f,
-                    Grabbed = i > 30, SidePreference = DeathShotSide.FaceSide, Face = lookingRight });
-            heldSides.Add(Vector3.Dot(o.BaseEye - o.BaseLookAt, standingRight));
-        }
-        Check("grabbed with Face side: the three-quarter on the side the head is turned to, from every start azimuth", heldSides.All(s => s > 0.2f), $"{heldSides.Min():F2}..{heldSides.Max():F2} m toward that side");
-    }
-
-    /// <summary>Where each shot sits on a body lying on its back with the head to the right of someone looking down
-    /// on it from above with the body's left side toward them: for the documentation.</summary>
+    /// <summary>Where each shot sits (distance, elevation, eye height) on the reference body in each pose: for the
+    /// documentation. The azimuth is whatever the camera had, so it is not listed.</summary>
     public static void Where()
     {
-        var world = new FlatWorld();
-        Console.WriteLine("body on its back, hips at the origin, head toward +along; 'toward the viewer' = the body's left side; metres, reference body (1.7 m)");
-        Console.WriteLine($"{"shot",-22} {"along",7} {"left",7} {"height",7} {"to subject",11} {"elevation",10} {"off axis",9}  subject");
+        Console.WriteLine("reference body (1.7 m), flat ground; the camera across the body (start azimuth 90 deg off its long axis / its front)");
+        Console.WriteLine($"{"shot",-32} {"m",5} {"elevation deg",14} {"eye height m",13}  subject");
         foreach (var pose in new (string Name, BodyPoints Body)[] { ("on the back", Lying(0f)), ("on a side", Lying(90f * Deg)), ("face down", Lying(MathF.PI)), ("standing", Standing) })
         {
             Console.WriteLine($"-- {pose.Name}");
-            var f = BodyFrame.From(pose.Body, 0f);
-            // Left of the body as seen along its long axis from above.
-            var left = Vector3.Cross(f.LongAxis, Vector3.UnitY);
-            foreach (var profile in DeathShotProfiles.Choices.Skip(1))
-            foreach (var start in new[] { 100f, -100f })
+            foreach (var below in new[] { false, true })
+            foreach (var profile in DeathShotProfiles.Choices)
             {
-                var r = RunStatic(world, pose.Body, profile, 8f, DeathShotMath.Azimuth(start > 0 ? left : -left), extra: All(pose.Body));
-                var eye = r.Out.BaseEye;
-                var away = eye - r.Out.BaseLookAt;
-                var view = -Vector3.Normalize(away);
-                var offAxis = MathF.Acos(Math.Clamp(Vector3.Dot(Vector3.Normalize(new Vector3(view.X, 0f, view.Z)), f.LongAxis), -1f, 1f)) / Deg;
-                Console.WriteLine($"{DeathShotProfiles.Label(profile) + (start > 0 ? "" : " (other side)"),-22} {Vector3.Dot(eye - pose.Body.Hips, f.LongAxis),7:F2} {Vector3.Dot(eye - pose.Body.Hips, left),7:F2} {eye.Y,7:F2} " +
-                                  $"{away.Length(),11:F2} {MathF.Asin(away.Y / away.Length()) / Deg,10:F0} {offAxis,9:F0}  {ShotRecipe.Of(r.Out.Shot).Subject}{(r.Out.Shot != profile ? " (as " + r.Out.Shot + ")" : "")}");
+                var solver = new DeathShotSolver(new SolidGroundWorld());
+                solver.Begin(pose.Body.Chest + DeathShotMath.OrbitDirection(90f * Deg, 15f * Deg) * 5f, pose.Body.Chest, 0.78f);
+                DeathShotOutput o = default;
+                for (var i = 0; i < 60 * 8; i++)
+                    o = solver.Step(new DeathShotInput { Dt = 1f / 60f, Points = pose.Body, Extra = All(pose.Body), Profile = profile, Aspect = 16f / 9f, UserSize = 1f, AllowBelowGround = below });
+                var away = o.BaseEye - o.BaseLookAt;
+                Console.WriteLine($"{DeathShotProfiles.Label(profile) + (below ? " (below ground)" : ""),-32} {away.Length(),5:F2} {MathF.Asin(away.Y / away.Length()) / Deg,14:F0} {o.BaseEye.Y,13:F2}  {ShotRecipe.Of(o.Shot).Subject}");
             }
         }
     }
@@ -778,10 +741,11 @@ internal static class UnitChecks
     {
         var body = Lying(90f * Deg);
         var extra = All(body);
+        const float start = 90f * Deg;
         DeathShotOutput Run(IDeathShotWorld world, DeathShotProfile profile, bool below, out float minEye)
         {
             var solver = new DeathShotSolver(world);
-            solver.Begin(body.Chest + DeathShotMath.OrbitDirection(0f, 15f * Deg) * 5f, body.Chest, 0.78f);
+            solver.Begin(body.Chest + DeathShotMath.OrbitDirection(start, 15f * Deg) * 5f, body.Chest, 0.78f);
             DeathShotOutput o = default;
             minEye = float.MaxValue;
             for (var i = 0; i < 60 * 12; i++)
@@ -792,52 +756,32 @@ internal static class UnitChecks
             return o;
         }
 
-        // Low three-quarter on a body on the ground: the old shots' placement, under the ground, and the ground it
-        // goes under is not "in the way" (no fallback, nothing pulled in).
+        // Low close on a body on the ground: the old shots' placement, under the ground, and the ground it goes
+        // under is not "in the way" (nothing pulled in).
         var open = new SolidGroundWorld();
-        var low = Run(open, DeathShotProfile.LowThreeQuarter, true, out _);
+        var low = Run(open, DeathShotProfile.LowClose, true, out _);
         var away = low.BaseEye - low.BaseLookAt;
         var up = -MathF.Asin(away.Y / away.Length()) / Deg;
-        Check("below ground allowed: Low three-quarter on a lying body looks up 22 deg from 1.25 m, eye under the ground, no fallback",
-            MathF.Abs(up - 22f) < 0.5f && MathF.Abs(away.Length() - 1.25f) < 0.03f && low.BaseEye.Y < -0.1f && low.Fallbacks == 0 && !low.PulledIn && low.Shot == DeathShotProfile.LowThreeQuarter,
-            $"up {up:F1} deg, {away.Length():F2} m, eye y {low.BaseEye.Y:F2}, fallbacks {low.Fallbacks}");
+        Check("below ground allowed: Low close on a lying body looks up 22 deg from 1.25 m, eye under the ground, not pulled in, on the camera's azimuth",
+            MathF.Abs(up - 22f) < 0.5f && MathF.Abs(away.Length() - 1.25f) < 0.03f && low.BaseEye.Y < -0.1f && !low.PulledIn && low.Shot == DeathShotProfile.LowClose && RenderedOff(low, start) < 0.05f,
+            $"up {up:F1} deg, {away.Length():F2} m, eye y {low.BaseEye.Y:F2}");
 
-        // The same body with the option off, every shot of the family: above the ground.
+        // The same body with the option off, every shot of the dropdown: above the ground.
         var offMin = float.MaxValue;
-        foreach (var profile in DeathShotProfiles.Choices.Skip(1))
+        foreach (var profile in DeathShotProfiles.Choices)
         {
             Run(open, profile, false, out var min);
             offMin = MathF.Min(offMin, min);
         }
-        Check("option off, all six shots: the eye never under 10 cm", offMin >= 0.0999f, $"min eye y {offMin:F3}");
+        Check("option off, all three shots: the eye never under 10 cm", offMin >= 0.0999f, $"min eye y {offMin:F3}");
 
         // A wall still blocks a below-ground shot: put where the view of the open shot crosses it above the ground
-        // (close to the body: further out the view is already under the ground, and under the wall), that side is
-        // given up and the view from where the eye ends does not cross the wall above the ground.
+        // (close to the body: further out the view is already under the ground, and under the wall). The eye comes
+        // in front of the wall on the same line; the azimuth stays.
         var wallX = low.Eye.X * 0.2f;
-        var beside = Run(new SolidGroundWorld { WallX = wallX }, DeathShotProfile.LowThreeQuarter, true, out _);
-        var walled = new SolidGroundWorld { WallX = wallX };
-        var crosses = walled.Blocked(beside.GoalLookAt, beside.GoalEye, out _, out var stoppedBy) && MathF.Abs(stoppedBy.X) > 0.5f;
-        Check("below ground allowed: a wall between still blocks (another side is taken, counted as a fallback)",
-            MathF.Abs(low.Eye.X) > 0.3f && beside.Fallbacks >= 1 && !crosses && Vector3.Distance(beside.Eye, low.Eye) > 0.2f,
-            $"eye {beside.Eye.X:F2}, {beside.Eye.Y:F2}, {beside.Eye.Z:F2} with the wall at x {wallX:F2} (without it {low.Eye.X:F2}, {low.Eye.Y:F2}, {low.Eye.Z:F2}), fallbacks {beside.Fallbacks}");
-    }
-
-    /// <summary>Flat ground between two walls at x = ±0.7.</summary>
-    private sealed class CorridorWorld : IDeathShotWorld
-    {
-        public float? GroundBelow(Vector3 from) => 0f;
-        public float? WaterBelow(Vector3 from) => null;
-        public bool Blocked(Vector3 from, Vector3 to, out float distance)
-        {
-            distance = 0f;
-            foreach (var wall in new[] { 0.7f, -0.7f })
-            {
-                if (from.X < wall == to.X < wall) continue;
-                distance = Vector3.Distance(from, to) * MathF.Abs((wall - from.X) / (to.X - from.X));
-                return true;
-            }
-            return false;
-        }
+        var beside = Run(new SolidGroundWorld { WallX = wallX }, DeathShotProfile.LowClose, true, out _);
+        Check("below ground allowed: a wall between still blocks (the eye is pulled in to its least distance, the wall being nearer than that; the azimuth stays)",
+            MathF.Abs(low.Eye.X) > 0.3f && beside.PulledIn && Vector3.Distance(beside.BaseEye, beside.BaseLookAt) < 0.5f && RenderedOff(beside, start) < 0.05f,
+            $"eye {beside.Eye.X:F2}, {beside.Eye.Y:F2}, {beside.Eye.Z:F2} with the wall at x {wallX:F2} (without it {low.Eye.X:F2}, {low.Eye.Y:F2}, {low.Eye.Z:F2}), {Vector3.Distance(beside.BaseEye, beside.BaseLookAt):F2} m from the subject");
     }
 }

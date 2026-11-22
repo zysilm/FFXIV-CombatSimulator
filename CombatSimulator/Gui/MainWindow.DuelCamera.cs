@@ -59,29 +59,12 @@ public partial class MainWindow
             config.DuelDeathShot = DeathShotProfiles.Choices[pickedShot];
             config.Save();
         }
-        HelpMarker("All of them are close, low and slow, on a narrow lens.\n" +
-                   "Auto: picks one by how the body lies and where the camera already is.\n" +
-                   "Low three-quarter: hips to chest, from the front side and from below.\n" +
-                   "Low on the face: the face, from in front of it.\n" +
-                   "Hips up to the face: from by the hips, up along the torso to the face.\n" +
-                   "Low from the feet: hips to chest, from the feet end.\n" +
-                   "Low from behind: hips to chest, from the back side.\n" +
-                   "Low full body: the whole body, lying diagonally across the picture.\n" +
-                   "Changing it while you are down moves the camera over to the new shot.");
-
-        var side = (int)config.DuelDeathShotSide;
-        ImGui.SetNextItemWidth(CameraItemWidth());
-        if (PresetCombo("Side preference##duelcam", DeathShotProfiles.SideLabels, side, out var pickedSide))
-        {
-            config.DuelDeathShotSide = (DeathShotSide)pickedSide;
-            config.Save();
-        }
-        HelpMarker("Most shots can be taken from either side of the body. Which one:\n" +
-                   "Nearest: the side nearest to where the camera already is.\n" +
-                   "Face side: the side the face is turned to, so the face is seen.\n" +
-                   "Behind the head: the side the back of the head is on.\n" +
-                   "Body's left / Body's right: always that side of the body.\n" +
-                   "With the face straight up or down, or that side blocked, the camera takes what it can.");
+        HelpMarker("Which way the camera looks from is yours: drag left or right to go round the body, as with the game's camera. " +
+                   "It stays where you leave it. The shot sets what is framed, how close and how low; the wheel changes the size.\n" +
+                   "Low close: hips to chest, close, from below.\n" +
+                   "Low on the face: the head, close, low.\n" +
+                   "Low full body: the whole body, from further back, low.\n" +
+                   "Changing it while you are down eases the camera over to the new shot.");
 
         var grabbed = (int)config.DuelDeathShotGrabbed;
         ImGui.SetNextItemWidth(CameraItemWidth());
@@ -90,8 +73,9 @@ public partial class MainWindow
             config.DuelDeathShotGrabbed = (DeathShotGrabbedFraming)pickedGrabbed;
             config.Save();
         }
-        HelpMarker("While an enemy holds your body up: the camera goes to your upper body, level with it or from slightly above, " +
-                   "and comes back to the shot above once you are let go and lie still.");
+        HelpMarker("While an enemy holds your body up: the camera frames you from the head down to mid-thigh, level with you or " +
+                   "from slightly above, and comes back to the shot above once you are let go and lie still. " +
+                   "Left and right stay yours here too.");
 
         var below = config.DuelDeathShotBelowGround;
         if (ImGui.Checkbox("Allow below ground##duelcam", ref below))

@@ -90,7 +90,7 @@
 - Camera 页签 **Camera mode = Duel**（设置 `EnableDuelCamera`，与 Follow bone、Directed 互斥）、模拟在进行、玩家活着、没有私有场景占着相机、不在游戏自己的过场 / 集体动作里。其余时候是游戏自己的相机。
 - **所有者** `CameraOwner.Duel = 16`：紧挨在 Directed 的战斗构图（15）之上、其余全部之下。理由：它和战斗构图是同一个位置上的两种选择（两者不会同时开），该让的对象相同——Enemy Control 附身的生物（20，玩家在操纵它，镜头归它）、自动死亡镜头（25）、私有场景（45）、Follow bone（50）、过场镜头（60）。位姿走 `PoseOverride`，不经协调者仲裁，所以导演自己看 `coordinator.CurrentOwner`：比它高的人占着相机时它释放并等待，对方离开后从当时的画面重新开始。
 - **位姿交接是三级的**（`CameraModule.CreateDuel`）：决斗镜头先写，自动死亡镜头覆盖它，过场镜头覆盖两者。
-- **玩家倒下**：决斗镜头在致命一击那一帧停下（不过渡），自动死亡镜头从当时的画面开始、同一帧提交 FoV（协调者里 FoV 不会回到游戏值）。Duel 模式下死亡镜头总是开着，用 Directed 页里保存的 **Death shot** 档案（默认 Auto）；`DynamicCameraController` 在 Duel 模式、玩家活着时什么都不做（不做战斗构图，也不从决斗镜头对游戏相机的写入里学缩放 / 俯仰记忆）。复活：死亡镜头 0.3 s 回到游戏相机并释放，随后决斗镜头从那里缓入。
+- **玩家倒下**：决斗镜头在致命一击那一帧停下（不过渡），自动死亡镜头从当时的画面开始、同一帧提交 FoV（协调者里 FoV 不会回到游戏值）。Duel 模式下死亡镜头总是开着，用 Duel Camera 折叠栏里的 **Duel death shot** 档案（默认 Low close）；倒下时镜头留在决斗镜头当时的方位，之后左右归玩家（[DEATH_SHOTS.md](DEATH_SHOTS.md) §5）；`DynamicCameraController` 在 Duel 模式、玩家活着时什么都不做（不做战斗构图，也不从决斗镜头对游戏相机的写入里学缩放 / 俯仰记忆）。复活：死亡镜头 0.3 s 回到游戏相机并释放，随后决斗镜头从那里缓入。
 - **过场镜头**（胜利等）：占着相机时决斗镜头等待；它开始淡出的同一帧（`HandingBack` → `DuelCameraDirector.ResumeNow`）决斗镜头从它留下的画面重新开始并提交 FoV，淡出正好落到决斗镜头的位姿上。
 - **没有对手**（没选敌人、都倒下了、都在 40 m 外）：不开始；运行中连续 2 s 没有对手（倒下的对手先停 1.4 s）→ 0.3 s 过渡回游戏相机并等待（状态行 `duel camera waits — nobody to fight`），有对手的那一帧重新开始。
 - **结束**：换模式 / 模拟停止 / 没有对手 → 0.3 s 过渡回游戏相机（位姿和 FoV 一起）；立即结束和进入等待时把游戏的俯仰写回开始时的值一次；换图、登出、卸载、游戏过场、私有场景、玩家倒下 → 立即。`Tick` 超过 0.5 s 没跑就停止写相机（`tick stalled`）。
@@ -145,7 +145,7 @@
 ### 7.5 界面与设置
 
 - Camera 页签 → **Camera mode** 下拉：Game / Follow bone / Directed / **Duel**。
-- 选 Duel 后出现折叠栏 **Duel Camera**：一行状态、一个下拉 **Framing**（Tight / Standard / Wide，默认 Standard）；下面一行说明“Duel 模式下倒地时自动死亡镜头接手”，再是自动死亡镜头的三个控件：**Duel death shot** 下拉（Auto + 六个低机位档案）、**Side preference** 下拉（Nearest / Face side / Behind the head / Body's left / Body's right，设置 `DuelDeathShotSide`）、**When grabbed** 下拉（Level / Slightly above）、**Allow below ground** 勾选。这三个只在这里出现（设置 `DuelDeathShot` / `DuelDeathShotGrabbed` / `DuelDeathShotBelowGround`）；Directed Camera 折叠栏里的 “Death shot” 是 Directed 自己的死亡构图的角度，两者无关（→ [DEATH_SHOTS.md](DEATH_SHOTS.md) §9.4、§9.5）。
+- 选 Duel 后出现折叠栏 **Duel Camera**：一行状态、一个下拉 **Framing**（Tight / Standard / Wide，默认 Standard）；下面一行说明“Duel 模式下倒地时自动死亡镜头接手”，再是自动死亡镜头的三个控件：**Duel death shot** 下拉（Low close / Low on the face / Low full body；水平方向归玩家，没有选边的选项）、**When grabbed** 下拉（Level / Slightly above）、**Allow below ground** 勾选。这三个只在这里出现（设置 `DuelDeathShot` / `DuelDeathShotGrabbed` / `DuelDeathShotBelowGround`）；Directed Camera 折叠栏里的 “Death shot” 是 Directed 自己的死亡构图的角度，两者无关（→ [DEATH_SHOTS.md](DEATH_SHOTS.md) §9.4、§9.5）。
 - 设置：`EnableDuelCamera`（默认 false）、`DuelCameraFraming`（默认 Standard）。没有改任何已有设置的默认值。
 
 ## 8. 离线检查

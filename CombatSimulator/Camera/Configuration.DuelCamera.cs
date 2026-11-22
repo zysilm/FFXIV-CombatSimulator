@@ -16,9 +16,10 @@ public partial class Configuration
     /// <summary>How close the two-shot sits.</summary>
     public Camera.Duel.DuelFraming DuelCameraFraming { get; set; } = Camera.Duel.DuelFraming.Standard;
 
-    /// <summary>"Duel death shot": the profile of the automatic death shot; Auto picks one by the body's pose.
-    /// (Named apart from the Directed camera's own "Death shot" option, which is its death framing's angle.)</summary>
-    public Camera.DeathShots.DeathShotProfile DuelDeathShot { get; set; } = Camera.DeathShots.DeathShotProfile.Auto;
+    /// <summary>"Duel death shot": what the death shot frames and from how far and how low (the horizontal direction
+    /// is the player's own). (Named apart from the Directed camera's own "Death shot" option, which is its death
+    /// framing's angle.)</summary>
+    public Camera.DeathShots.DeathShotProfile DuelDeathShot { get; set; } = Camera.DeathShots.DeathShotProfile.LowClose;
 
     /// <summary>"Allow below ground": the low shots keep their from-below placement on a body on the ground, with the
     /// eye under it looking up through the one-sided ground — the look of the old Death Cam with camera collision
@@ -28,9 +29,4 @@ public partial class Configuration
     /// <summary>"When grabbed": how a body that is held up (Enemy Control's grab, a corpse being carried off) is
     /// framed.</summary>
     public Camera.DeathShots.DeathShotGrabbedFraming DuelDeathShotGrabbed { get; set; } = Camera.DeathShots.DeathShotGrabbedFraming.Level;
-
-    /// <summary>"Side preference": which of a shot's sides the camera takes when the shot has more than one — the
-    /// nearest to the camera (as before), the side the face points to, the side behind the head, or the body's own
-    /// left or right.</summary>
-    public Camera.DeathShots.DeathShotSide DuelDeathShotSide { get; set; } = Camera.DeathShots.DeathShotSide.Nearest;
 }
