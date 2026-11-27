@@ -358,6 +358,7 @@ public partial class MainWindow : IDisposable
                 DrawPrivateEffectsSection();
                 DrawExperimentalEffects();
                 DrawEnemyControlEntrySection();
+                DrawDeathReplaySection();
                 break;
             case 2: // Camera
                 DrawActiveCamSection();

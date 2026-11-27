@@ -91,6 +91,7 @@ internal sealed class PresentationModule
         mainWindow.CutsceneShots = m.Camera.CutsceneShots;
         mainWindow.DuelCameraStatus = () => m.Camera.Duel?.Status ?? "off";
         mainWindow.ForgetDuelDeathShotAngle = () => m.Camera.DeathShots.ForgetAngle();
+        mainWindow.DeathReplay = m.Camera.DeathReplay;
         enemyControlController.GrabStarted += mainWindow.HideEnemyControlAnchorMarkers;
     }
 
@@ -168,6 +169,7 @@ internal sealed class PresentationModule
             dynamicCameraController.NotifyMouseWheel(imguiIo.MouseWheel);
             m.Camera.Duel.NotifyMouseWheel(imguiIo.MouseWheel);
             m.Camera.DeathShots.NotifyMouseWheel(imguiIo.MouseWheel);
+            m.Camera.DeathReplay.NotifyMouseWheel(imguiIo.MouseWheel);
         }
 
         if (config.ShowShortcuts)

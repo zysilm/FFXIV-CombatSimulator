@@ -25,6 +25,7 @@ internal sealed unsafe class CameraModule
     private DeathShotDirector deathShotDirector = null!;
     private CutsceneShotDirector cutsceneShotDirector = null!;
     private DuelCameraDirector duelCameraDirector = null!;
+    private Replay.DeathReplayDirector deathReplayDirector = null!;
 
     public CameraModule(PluginModules modules) => m = modules;
 
@@ -36,6 +37,7 @@ internal sealed unsafe class CameraModule
     public DynamicCameraController Dynamic => dynamicCameraController;
     public DeathShotDirector DeathShots => deathShotDirector;
     public DuelCameraDirector Duel => duelCameraDirector;
+    public Replay.DeathReplayDirector DeathReplay => deathReplayDirector;
 
     private IPluginLog log => m.Log;
     private CombatEngine combatEngine => m.Combat.Engine;
@@ -158,6 +160,39 @@ internal sealed unsafe class CameraModule
             return duel || death || cutscene;
         };
         activeCameraController.PoseOverrideActive = () => cutsceneShotDirector.IsPlaying || deathShotDirector.IsRunning || duelCameraDirector.IsRunning;
+    }
+
+    /// <summary>
+    /// The death replay (docs/DEATH_REPLAY.md): records the simulation's last 20 s and replays the end of it after the
+    /// player's death, through camera shots edited with its free camera. Its camera is written last in the pose
+    /// hand-over (a fourth level, over the cutscene shots: the replay waits for a cutscene shot to end before it
+    /// starts, and the free camera is the user's own tool). While the free camera flies on the movement keys the local
+    /// player is held where they are (the same freeze as while dead) and Enemy Control leaves those keys alone.
+    /// </summary>
+    public void CreateDeathReplay(Dalamud.Plugin.Services.IKeyState keyState, IGamepadState gamepadState, ICondition condition,
+        IClientState clientState, IFramework framework, System.Func<bool> sceneActive)
+    {
+        deathReplayDirector = new Replay.DeathReplayDirector(
+            m.Config, cameraModeCoordinator, combatEngine, npcSelector, m.Actors.Companions, boneTransformService,
+            ragdollController, m.World.MovementBlock,
+            () => m.Actors.EnemyControl.IsHoldingGrab,
+            () => cutsceneShotDirector.IsPlaying,
+            sceneActive, condition, clientState, framework, keyState, gamepadState, log);
+        m.Actors.EnemyControl.KeysTaken = () => deathReplayDirector.KeysTaken;
+        var below = activeCameraController.PoseOverride;
+        activeCameraController.PoseOverride = (ref System.Numerics.Vector3 lookAt, ref System.Numerics.Vector3 eye) =>
+        {
+            var under = below != null && below(ref lookAt, ref eye);
+            var replay = deathReplayDirector.OverridePose(ref lookAt, ref eye);
+            if (replay)
+            {
+                deathShotDirector.NotePoseSuperseded();
+                duelCameraDirector.NotePoseSuperseded();
+            }
+            return under || replay;
+        };
+        var drawn = activeCameraController.PoseOverrideActive;
+        activeCameraController.PoseOverrideActive = () => (drawn?.Invoke() ?? false) || deathReplayDirector.CameraRunning;
     }
 
     /// <summary>The ragdoll of a body: the player's, or an enemy's / ally's death ragdoll.</summary>

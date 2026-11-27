@@ -39,6 +39,14 @@ public unsafe class MovementBlockHook : IDisposable
     public bool IsBlocking { get; set; }
 
     /// <summary>
+    /// The same freeze for the death replay's free camera (docs/DEATH_REPLAY.md §6): while it flies on the movement
+    /// keys, the game's own movement of the local player through those keys is dropped here, exactly as while dead.
+    /// A flag of its own, so the simulation setting and clearing <see cref="IsBlocking"/> (death, revive, reset)
+    /// does not let the player walk off while the free camera is on.
+    /// </summary>
+    public bool HoldLocalPlayer { get; set; }
+
+    /// <summary>
     /// Addresses of NPCs whose server-driven position updates should be blocked
     /// (we control their position via SetApproachPosition/Rotation instead).
     /// </summary>
@@ -157,7 +165,7 @@ public unsafe class MovementBlockHook : IDisposable
 
     private void SetPositionDetour(GameObject* thisPtr, float x, float y, float z)
     {
-        if (IsBlocking && IsLocalPlayer(thisPtr))
+        if ((IsBlocking || HoldLocalPlayer) && IsLocalPlayer(thisPtr))
             return; // Skip — player position stays frozen
 
         if (!allowApproachUpdate && IsApproachBlocked((nint)thisPtr))
@@ -168,7 +176,7 @@ public unsafe class MovementBlockHook : IDisposable
 
     private void SetRotationDetour(GameObject* thisPtr, float value)
     {
-        if (IsBlocking && IsLocalPlayer(thisPtr))
+        if ((IsBlocking || HoldLocalPlayer) && IsLocalPlayer(thisPtr))
             return; // Skip — player rotation stays frozen
 
         if (!allowApproachUpdate && IsApproachBlocked((nint)thisPtr))
@@ -189,6 +197,7 @@ public unsafe class MovementBlockHook : IDisposable
     public void Dispose()
     {
         IsBlocking = false;
+        HoldLocalPlayer = false;
         approachBlockedAddresses.Clear();
         approachBlockOwners.Clear();
         setPositionHook?.Dispose();

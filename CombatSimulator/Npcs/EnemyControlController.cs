@@ -1104,7 +1104,11 @@ public unsafe partial class EnemyControlController : IDisposable
         return float.IsFinite(max) && max > 0f ? max : 1f;
     }
 
-    private bool Down(VirtualKey k) => keyState[k];
+    private bool Down(VirtualKey k) => !(KeysTaken?.Invoke() ?? false) && keyState[k];
+
+    /// <summary>The keyboard belongs to something else now (the death replay's free camera flies on the same keys):
+    /// the controlled creature does not move or attack on them meanwhile.</summary>
+    public Func<bool>? KeysTaken { get; set; }
 
     // True while controlledAddress still refers to a live game object. The controlled killer is a
     // real enemy the game owns and can free at any moment, leaving a dangling pointer; the object

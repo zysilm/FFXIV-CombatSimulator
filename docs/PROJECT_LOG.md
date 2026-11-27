@@ -194,6 +194,16 @@
 - 库实现相对设计的四处偏离（按离线结果）：① 保持到被碰为止（抓取立刻结束；打 / 踢 / 踩 0.3 s 内放开），不按时间放完——撤掉保持会让没躺稳的身体很久以后再塌一次；② 地面保持用有上限的速度马达（小腿和脚对世界的摩擦，0.5 × 体重），不是硬约束；③ “支撑侧取较重一边”的力矩单位关掉（蹲着的身体会像雕像一样站住）；④ 两个 Hold 档在站着启动时不起作用（同样会成雕像）。
 - 离线结论（97 份录制 × 3 个启动点 × 6 档，门槛 = 动能尖峰和静止后再动不比 Limp 多）：躺着启动 Hold the legs 过门槛且腿型、漂移都好于 Limp；跪 / 蹲启动小腿留住了（41 / 74，Limp 5）但更抖、身体向前折，不过门槛；Slow slump 保住倒向但略抖（站、正在倒不过）；Knee buckle 数值没动，站着启动仍然抖（不过）；Auto 四类起始状态里三类不过——所以默认 Limp。数值待 P3 用 `Tests/RagdollReplay --what-if` + `Tests/DeathShots guidance` 调。
 
+### 死亡回放（2026-11-27，用户批准的需求）
+
+- Effects 页签 → 折叠栏 **Death Replay**（默认关）：Enable、Replay length（3–20 s，默认 8）、Loop（默认关）、Camera shots（最多 100，Free cam / Add current view / Go to / Update / Delete / Up / Down）；设置 `DeathReplayEnabled` / `DeathReplaySeconds` / `DeathReplayLoop` / `DeathReplayShots` → [DEATH_REPLAY.md](DEATH_REPLAY.md)。
+- 录制：模拟进行且功能开着时录最近 20 s，玩家 + 30 m 内最近 16 个模拟角色（敌人、地图敌人、队友；不录观众），30 Hz，主骨架模型空间 + 骨架 / 绘制对象变换，每骨 14 B；脸 / 头发不录，回放时随身体骨刚性移动。关掉时只有一次标志判断。
+- 回放只写本地渲染状态：骨骼在 `OnFinalPoseModifiers`（回放开始才订阅，排在布娃娃之后），绘制对象在后订阅的 framework tick（`NotifyTransformChanged` 不进渲染钩子）；不写游戏对象位置、不碰动画、不发包。还原：绘制对象回到游戏对象现在的位置加原偏移；姿态只在没人刷新过时写回快照。
+- 机位相对死亡坐标系存（倒下时玩家位置 + 朝向；活着时用现在的位置 + 朝向），时长平分、按顺序硬切，循环时机位跟着循环；没有机位时保持开始时的画面。
+- 相机所有者：`DeathReplay = 55`（盖过死亡镜头 / 决斗 / Directed / Follow bone，低于过场镜头——回放等过场镜头播完才开始），`FreeCam = 70`（最上面，手动开关的编辑工具）；位姿交接第四级，在三级交接之后写。
+- 免费镜头飞行时角色不动：`MovementBlockHook.HoldLocalPlayer`（与死亡冻结同一层 SetPosition / SetRotation 钩子，标志分开，免得复活 / 重置解开它）；Enemy Control 期间让出键盘（`KeysTaken`）。
+- 退出回放：播完（不循环）、复活、重置、停止、Esc、Stop replay、关功能、换图、卸载、出错都还原；登出什么都不碰。
+
 ## 3. 教训与死路
 
 ### 流程
@@ -354,6 +364,10 @@
 - [ ] 决斗镜头（已接入，未在游戏里看过）→ [DUEL_CAMERA.md](DUEL_CAMERA.md) §10：Camera 页签 → Camera mode = Duel，折叠栏 Duel Camera（状态行 + Framing）。看：日志 `DuelCam: camera check over 60 frames`（眼位 / 注视点差毫米级、镜头差 < 1°）；**移动手感**（日志 `start` 行的 movement mode；Legacy：W 朝对手、A / D 绕对手转；Standard：A / D 原地转身、Q / E 绕圈；不按鼠标键时镜头不漂到玩家正面；屏幕正上方与 W 差约 20° 别不别扭）；没有敌人约 2 s 后镜头回到游戏相机；两人分居画面两侧、近紧远宽；穿过对手后镜头不越线、约 1 s 转回；推近（重击 / 格挡 / 大招 / 击倒）的幅度和频率；多敌人时换对手不乱跳；左右拖动回正、俯仰方向对不对、滚轮；墙边 / 背靠墙 / 坡地；倒下时死亡镜头无跳接手、过场镜头后 `DuelCam: resumes`；Follow bone 与 Directed 不变。
 - [ ] 死亡引导（库 0.1.0-beta.5，未在游戏里看过）→ [RAGDOLL_DEATH_GUIDANCE.md](RAGDOLL_DEATH_GUIDANCE.md) §6：Ragdoll 页签 → Ragdoll Trigger → **Death guidance**。旧配置载入后是 Limp、行为与以前一样，Ragdoll 页签不再有 “Guided Collapse” 折叠栏。选 Hold the legs：日志每具身体一行 `Ragdoll: guidance HoldLegs -> HoldLegs (start Lying, …): N joint(s) held, M body(ies) held to the ground`；躺下的尸体腿型保住、不再慢慢滚成俯 / 仰、不比 Limp 抖；跪 / 蹲结束的死亡动画小腿留在原地，但前折和抖是否难看（离线不过门槛）；踩 / 打 / 踢后 0.3 s 松开、抓起立刻松开；很久以后没有“第二次塌下去”。Auto：日志里每具身体选了哪一档。Knee buckle：延迟 0 时与以前的 “Knee buckle on death” 一样，延迟 3.7 s 时日志是 `-> None`。敌人、队友尸体同样生效，`FrameCost:` 无明显变化。
 - [ ] 库 0.1.0-beta.5：Limp 下布娃娃、抓取、头发、武器照常（回放三模式 97/97、扩展 6/6 已过）。
+
+### 2026-11-27 批次
+
+- [ ] **死亡回放**（Effects 页签 → 折叠栏 Death Replay，未在游戏里看过）→ [DEATH_REPLAY.md](DEATH_REPLAY.md) §10：日志 `DeathReplay: recording …` 的耗时和 MB、`FrameCost:` 无明显变化；免费镜头 W/S/A/D/E/Q 飞、Shift / Ctrl、拖动转向（上下方向对不对）、滚轮视角，**角色原地不动**（是否仍在原地播跑步动作），Esc / Leave free cam 回原相机，Enemy Control 操控时敌人不跟着动；Add / Go to / Update / Delete / Up / Down；死后身体静止时自动回放最后 N 秒、机位按顺序切；回放结束一切回原样（尸体姿势、敌人位置、相机回死亡镜头 `DeathShot: resumes`，不闪旧姿势）；Loop 与各退出路径；同一机位在不同地点 / 朝向的死亡里相对身体相同；回放中换图 / 卸载不崩。
 
 ## 5. 搁置与未完成
 
