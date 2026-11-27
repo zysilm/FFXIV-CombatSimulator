@@ -55,7 +55,7 @@
 显示方式：
 
 - 血条前缀显示个人状态，固定文字，由状态自动决定。
-- 结束时用 banner 显示结果。
+- 结束时用 banner 显示结果。标题和原因行的默认词在 `Battle/Rules/OutcomeTexts.cs`（每种结局一个键），用户可在 Settings → GUI Settings → Banner texts 里按结局改写，只存改过的部分。
 - 删除自定义 Sim Label 和 Death text 两个输入框。
 
 ### 2.4 实施顺序

@@ -72,6 +72,9 @@ public partial class Configuration : IPluginConfiguration
     public bool ShowAllBarLabels { get; set; } = false;
     // The battle's result across the screen (and why), kept until the battle is reset.
     public bool ShowResultBanner { get; set; } = true;
+    // The user's own banner words, by situation key (Battle/Rules/OutcomeTexts.cs); only overrides are kept,
+    // an empty field shows the default.
+    public Dictionary<string, Battle.Rules.OutcomeTextOverride> ResultBannerTexts { get; set; } = new();
     // Starting or resetting a battle switches the camera to the Directed camera.
     public bool DirectedCameraOnBattle { get; set; } = false;
     // Skill effects of everyone but the player: 0 all, 1 limited (those near the camera, those on the

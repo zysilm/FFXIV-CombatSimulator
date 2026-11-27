@@ -67,6 +67,8 @@ internal interface IBattleModuleSettings : IBattleRuleSettings
     float VictoryCelebrationStagger { get; }
     /// <summary>Enemy Control's "On death: Control killer".</summary>
     bool EnemyControlControlKiller { get; }
+    /// <summary>The user's banner words by situation key (only overrides; Battle/Rules/OutcomeTexts.cs).</summary>
+    System.Collections.Generic.Dictionary<string, Battle.Rules.OutcomeTextOverride> ResultBannerTexts { get; }
 }
 
 /// <summary>The presentation module: the overlays it builds and which windows, toolbars and overlays it draws.</summary>

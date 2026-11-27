@@ -113,8 +113,12 @@ public enum LethalBlow
     Capture,
 }
 
-/// <summary>The result banner's words.</summary>
-public readonly record struct OutcomeText(string Title, string Reason);
+/// <summary>The result banner's words; <see cref="Key"/> names the situation (<see cref="OutcomeTexts"/>), whose
+/// words the user may have replaced.</summary>
+public readonly record struct OutcomeText(string Title, string Reason)
+{
+    public string? Key { get; init; }
+}
 
 /// <summary>An enemy weighing one of the player's side.</summary>
 public readonly record struct EnemyTargetQuery(SimulatedNpc Enemy, uint Holder, uint CandidateId);

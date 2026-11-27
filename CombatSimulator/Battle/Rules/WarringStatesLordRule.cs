@@ -55,10 +55,10 @@ public sealed class WarringStatesLordRule : BattleRule
             return null;
         if (!playerWon)
             return BaseRule.AnyExecuted(ctx)
-                ? new OutcomeText("ROUTED", "You have fallen and your captured soldiers have been executed.")
+                ? OutcomeTexts.Default(OutcomeTexts.LordFellCaptivesExecuted)
                 : null;
         return !ctx.Engine.State.PlayerState.IsAlive
-            ? new OutcomeText("REMAINS SECURED", "You fell, but your remains are secured and will be carried back to Eorzea.")
+            ? OutcomeTexts.Default(OutcomeTexts.RemainsSecured)
             : null;
     }
 

@@ -34,11 +34,11 @@ public sealed class BaseRule : BattleRule
     {
         if (!playerWon)
             return AnyExecuted(ctx)
-                ? new OutcomeText("ROUTED", "Your party has been executed.")
-                : new OutcomeText("ANNIHILATED", "Every member of your party lies dead on the field.");
+                ? OutcomeTexts.Default(OutcomeTexts.DefeatExecuted)
+                : OutcomeTexts.Default(OutcomeTexts.DefeatAnnihilated);
         return ctx.Engine.State.PlayerState.IsAlive
-            ? new OutcomeText("VICTORY", "Every enemy has been slain. Your army is victorious.")
-            : new OutcomeText("VICTORY", "Every enemy has been slain, though you fell in the battle.");
+            ? OutcomeTexts.Default(OutcomeTexts.VictoryPlayerAlive)
+            : OutcomeTexts.Default(OutcomeTexts.VictoryPlayerFell);
     }
 
     /// <summary>The player or any ally has been executed.</summary>

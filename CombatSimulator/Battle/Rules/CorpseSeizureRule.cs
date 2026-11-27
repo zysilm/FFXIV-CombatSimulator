@@ -39,7 +39,7 @@ public sealed class CorpseSeizureRule : BattleRule
     /// <summary>The body carried off: the battle is lost in disgrace (whatever the switches say by then).</summary>
     public override OutcomeText? DescribeOutcome(BattleContext ctx, bool playerWon)
         => !playerWon && Seizure?.BodySeized == true
-            ? new OutcomeText("DISGRACED", "Your corpse has been dragged off as a trophy. Your army is executed.")
+            ? OutcomeTexts.Default(OutcomeTexts.CorpseSeized)
             : null;
 
     /// <summary>

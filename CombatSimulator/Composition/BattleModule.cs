@@ -103,7 +103,8 @@ internal sealed unsafe class BattleModule
         if (!config.ShowResultBanner)
             return;
         // The words are the battle rules' (each part that ends a fight its own way speaks for it).
-        var (title, reason) = companionManager.RuleParts.DescribeOutcome(playerWon);
+        // The user's words for that situation, where set (Settings > GUI Settings > Banner texts).
+        var (title, reason) = Battle.Rules.OutcomeTexts.Resolve(companionManager.RuleParts.DescribeOutcome(playerWon), config.ResultBannerTexts);
         warBanner.Show(title, reason, playerWon ? new Vector4(0.95f, 0.85f, 0.3f, 1f) : new Vector4(0.9f, 0.25f, 0.2f, 1f));
     }
 

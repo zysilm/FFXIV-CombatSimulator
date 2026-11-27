@@ -2710,6 +2710,77 @@ public partial class MainWindow : IDisposable
         ImGui.TextWrapped(protects);
     }
 
+    private int selectedBannerSituation;
+
+    /// <summary>
+    /// The result banner's words, per situation (Battle/Rules/OutcomeTexts.cs): the inputs show the words in
+    /// force; only what differs from the default is saved, so an untouched situation follows the defaults.
+    /// </summary>
+    private void DrawBannerTexts()
+    {
+        if (!ImGui.TreeNode("Banner texts"))
+            return;
+        var situations = Battle.Rules.OutcomeTexts.All;
+        selectedBannerSituation = Math.Clamp(selectedBannerSituation, 0, situations.Count - 1);
+        var situation = situations[selectedBannerSituation];
+        var texts = config.ResultBannerTexts;
+
+        if (ImGui.BeginCombo("Situation##bannerText", situation.Label))
+        {
+            for (var i = 0; i < situations.Count; i++)
+            {
+                var selected = i == selectedBannerSituation;
+                if (ImGui.Selectable(situations[i].Label, selected))
+                    selectedBannerSituation = i;
+                if (selected)
+                    ImGui.SetItemDefaultFocus();
+            }
+            ImGui.EndCombo();
+        }
+        situation = situations[selectedBannerSituation];
+
+        var shown = Battle.Rules.OutcomeTexts.Resolve(Battle.Rules.OutcomeTexts.Default(situation.Key), texts);
+        var title = shown.Title;
+        if (ImGui.InputText("Title##bannerText", ref title, 64))
+            SetBannerText(situation, title, null);
+        var reason = shown.Reason;
+        if (ImGui.InputText("Reason line##bannerText", ref reason, 256))
+            SetBannerText(situation, null, reason);
+
+        if (ImGui.Button("Reset##bannerText") && texts.Remove(situation.Key))
+            config.Save();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Restore this situation's default words.");
+        ImGui.SameLine();
+        if (ImGui.Button("Reset all##bannerText") && texts.Count > 0)
+        {
+            texts.Clear();
+            config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Restore the default words of every situation.");
+
+        ImGui.TreePop();
+    }
+
+    /// <summary>One field of a situation's words edited (the other null, left as it is); the default or empty
+    /// is stored as nothing.</summary>
+    private void SetBannerText(Battle.Rules.OutcomeTexts.Situation situation, string? title, string? reason)
+    {
+        var texts = config.ResultBannerTexts;
+        if (!texts.TryGetValue(situation.Key, out var entry) || entry == null)
+            entry = new Battle.Rules.OutcomeTextOverride();
+        if (title != null)
+            entry.Title = title == situation.Title ? null : title;
+        if (reason != null)
+            entry.Reason = reason == situation.Reason ? null : reason;
+        if (entry.IsEmpty)
+            texts.Remove(situation.Key);
+        else
+            texts[situation.Key] = entry;
+        config.Save();
+    }
+
     private void DrawGuiSettingsSection()
     {
         if (ImGui.CollapsingHeader("GUI Settings"))
@@ -2739,6 +2810,7 @@ public partial class MainWindow : IDisposable
                 config.Save();
             }
             HelpMarker("When a battle is won or lost, its result and the reason stay across the screen until the battle is reset.");
+            DrawBannerTexts();
 
             var damageNumbers = config.ShowDamageNumbers;
             if (ImGui.Checkbox("Show Damage Numbers", ref damageNumbers))
