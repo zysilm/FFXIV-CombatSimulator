@@ -291,11 +291,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         // it), and ended at once by a reset.
         combatEvents.BeforePlayerDeath += cameraModule.DeathShots.OnDeathAnimation;
         combatEvents.SimulationReset += cameraModule.DeathShots.OnSimulationReset;
-        // The death replay (docs/DEATH_REPLAY.md): its camera over everything in the pose hand-over; a new battle or a reset
-        // starts its recording over (and ends a replay first, before the reset despawns anyone).
-        cameraModule.CreateDeathReplay(keyState, gamepadState, condition, clientState, framework, () => PrivateDirectorActive);
-        combatEvents.SimulationStarted += cameraModule.DeathReplay.OnSimulationStarted;
-        combatEvents.SimulationReset += cameraModule.DeathReplay.OnSimulationReset;
         actorsModule.WireActorCallbacks(chatGui);
 
         // Re-register alive spawned NPCs on sim start (they're removed from
@@ -462,8 +457,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
     public void Dispose()
     {
         DisposePrivateDirectors();
-        // First: it puts the replayed characters back while they all still exist.
-        cameraModule.DeathReplay.Dispose();
         sceneProbe?.Dispose();
         Animation.BodyTypeAnimationFallback.Shutdown();
         framework.Update -= OnFrameworkUpdateTimed;
@@ -797,7 +790,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             cameraModule.DeathShots.Tick(deltaTime);
             TickPrivateDirectors(deltaTime);
             cutsceneShots.Tick(deltaTime);
-            cameraModule.DeathReplay.Tick(deltaTime);
             gameCameraUpdateHook.Tick();
             cameraModeCoordinator.Apply(deltaTime);
             activeCameraController.SetModeActive(cameraModeCoordinator.WantsOrbitHook);
@@ -905,7 +897,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
         cutsceneShots.Stop("zone change");
         duelCamera.Stop("zone change");
         cameraModule.DeathShots.Stop("zone change");
-        cameraModule.DeathReplay.Stop("zone change");
         dynamicCameraController.Reset();
 
         if (combatEngine.IsActive)
@@ -941,7 +932,6 @@ public sealed unsafe partial class CombatSimulatorPlugin : IDalamudPlugin
             cutsceneShots.Stop("logged out");
             duelCamera.Stop("logged out");
             cameraModule.DeathShots.Stop("logged out");
-            cameraModule.DeathReplay.Abandon("logged out");
             dynamicCameraController.Reset();
             npcSpawner.DespawnAll();
             companionManager.DespawnAll();

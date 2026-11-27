@@ -385,8 +385,7 @@ public unsafe class ActiveCameraController : IDisposable
         // stack the active-cam min-distance/vertical-lock overrides on top of them — the
         // vertical lock in particular would overwrite the pitch they just solved for.
         var owner = GetCurrentOwner?.Invoke() ?? CameraOwner.None;
-        var modeOwnsAngles = owner is CameraOwner.DynamicCam or CameraOwner.Duel or CameraOwner.DynamicDeath or CameraOwner.CutsceneShot or
-            CameraOwner.DeathReplay or CameraOwner.FreeCam ||
+        var modeOwnsAngles = owner is CameraOwner.DynamicCam or CameraOwner.Duel or CameraOwner.DynamicDeath or CameraOwner.CutsceneShot ||
             owner == CameraOwner.External && (ExternalOwnsAngles?.Invoke() ?? true);
 
         UpdateCollisionPolicy();

@@ -40,13 +40,6 @@ public enum CameraOwner
     /// shot hands the game its eye and look-at point inside the camera update (CutsceneShotDirector), and whoever owned the
     /// camera before gets it back when the shot ends.</summary>
     CutsceneShot = 60,
-    /// <summary>The death replay's camera shots (docs/DEATH_REPLAY.md §6), while a replay plays. Above the death shot,
-    /// the duel and Directed cameras and the user's Follow-bone camera (the user asked for the replay and set its shots); below
-    /// a cutscene shot, which the replay waits for before it starts.</summary>
-    DeathReplay = 55,
-    /// <summary>The death replay's free camera (the shot editor), while the user has it on. Above everything: it is the
-    /// user's own tool, switched on and off by hand.</summary>
-    FreeCam = 70,
 }
 
 /// <summary>
@@ -102,9 +95,7 @@ public sealed unsafe partial class CameraModeCoordinator
     // Indexed by owner; small fixed set, iterated high→low.
     private static readonly CameraOwner[] OwnersDescending =
     {
-        CameraOwner.FreeCam,
         CameraOwner.CutsceneShot,
-        CameraOwner.DeathReplay,
         CameraOwner.UserActiveCam,
         CameraOwner.External,
         CameraOwner.DynamicDeath,
