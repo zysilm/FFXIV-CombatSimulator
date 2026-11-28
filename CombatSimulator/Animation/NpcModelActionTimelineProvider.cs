@@ -5,6 +5,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using CombatSimulator.Npcs;
 using Dalamud.Plugin.Services;
 using Lumina.Excel.Sheets;
 
@@ -19,8 +20,6 @@ public readonly record struct NpcModelActionSelection(uint ActionId, ushort Time
 /// </summary>
 public sealed class NpcModelActionTimelineProvider
 {
-    private const uint ActionCategorySpell = 2;
-    private const uint ActionCategoryWeaponskill = 3;
     private const string SkeletonTemplatePrefix = "mon_sp/[SKL_ID]/mon_sp";
 
     private readonly IDataManager dataManager;
@@ -31,7 +30,19 @@ public sealed class NpcModelActionTimelineProvider
     private sealed class FamilyEntry
     {
         public HashSet<ushort> AllTimelines { get; init; } = new();
+        /// <summary>
+        /// One entry per timeline: the family's Action rows that
+        /// <see cref="MonsterKitBuilder.IsAnimationUsable"/> accepts, or every timeline (ActionId 0)
+        /// when no Action row is linked at all. Empty when linked rows exist but none is usable —
+        /// the generic auto-attack then plays.
+        /// </summary>
         public NpcModelActionSelection[] AttackPool { get; init; } = Array.Empty<NpcModelActionSelection>();
+        /// <summary>
+        /// Motion-only victory flourishes: the attack pool's timelines, or — when that is empty —
+        /// the timelines of every linked Action row, so a family whose rows are all unfit to lend
+        /// their VFX to an attack still has its own authored motions to celebrate with.
+        /// </summary>
+        public ushort[] FlourishTimelines { get; init; } = Array.Empty<ushort>();
         /// <summary>Every Action row whose AnimationEnd is one of this family's timelines.</summary>
         public uint[] LinkedActionIds { get; init; } = Array.Empty<uint>();
         public string Prefix { get; init; } = string.Empty;
@@ -46,11 +57,26 @@ public sealed class NpcModelActionTimelineProvider
 
     /// <summary>
     /// Returns an animation compatible with <paramref name="modelCharaId"/>. If an authored
-    /// action already supplied a timeline from the same family, it is preserved; otherwise an
-    /// attack candidate is selected without consulting localized action names.
+    /// action already supplied a timeline from the same family, it is preserved; otherwise a
+    /// timeline is drawn from the family's attack pool (rows fit to lend an attack animation, see
+    /// <see cref="MonsterKitBuilder.IsAnimationUsable"/>). Returns 0 when the pool is empty, so
+    /// the caller plays the generic auto-attack.
     /// </summary>
     public ushort Select(uint modelCharaId, ushort preferredTimeline = 0)
         => SelectAction(modelCharaId, preferredTimeline).TimelineId;
+
+    /// <summary>
+    /// A celebratory one-shot from the model's own family. Played as motion only (no Action id,
+    /// so no Action VFX reaches another actor); independent of whether the attack pool is empty.
+    /// Returns 0 for human models and families without timelines.
+    /// </summary>
+    public ushort SelectFlourish(uint modelCharaId)
+    {
+        if (modelCharaId == 0)
+            return 0;
+        var flourishes = GetFamily(modelCharaId).FlourishTimelines;
+        return flourishes.Length == 0 ? (ushort)0 : flourishes[Random.Shared.Next(flourishes.Length)];
+    }
 
     /// <summary>
     /// Resolves the concrete TMB behind a selected timeline. Generic <c>[SKL_ID]</c> rows are
@@ -219,6 +245,7 @@ public sealed class NpcModelActionTimelineProvider
                     {
                         AllTimelines = templateTimelines,
                         AttackPool = templatePool.ToArray(),
+                        FlourishTimelines = templateTimelines.Order().ToArray(),
                         Prefix = prefix,
                         Tier = "skeleton-template",
                     };
@@ -235,56 +262,45 @@ public sealed class NpcModelActionTimelineProvider
                                  all.Contains((ushort)action.AnimationEnd.RowId))
                 .ToArray();
 
-            // Strongest signal: the game explicitly permits a hostile target. This excludes
-            // heals/guards without relying on localized names. Self-centred hostile AoEs may not
-            // carry this flag, so progressively broader structural fallbacks follow.
-            var pool = linked
-                .Where(action => action.CanTargetHostile)
-                .GroupBy(action => (ushort)action.AnimationEnd.RowId)
-                .Select(group => new NpcModelActionSelection(group.First().RowId, group.Key))
-                .ToArray();
-            var tier = "hostile-target";
-
-            if (pool.Length == 0)
+            // The pool's Action id also picks the VFX that plays on the target, so a row is only
+            // borrowed when it is an attack (MonsterKitBuilder.IsAnimationUsable: the kit's rule plus
+            // the family's own single-target auto-attack/ability swings): escapes, buffs, heals and
+            // arena mechanics stay out. A family whose rows are all rejected gets an empty pool, and
+            // the caller falls back to the generic auto-attack.
+            NpcModelActionSelection[] pool;
+            string tier;
+            if (linked.Length > 0)
             {
                 pool = linked
-                    .Where(action => action.AttackType.RowId != 0 &&
-                                     action.DeadTargetBehaviour != 1 &&
-                                     action.ActionCategory.RowId is ActionCategorySpell or ActionCategoryWeaponskill &&
-                                     !action.CanTargetParty &&
-                                     !action.CanTargetAlliance &&
-                                     !action.CanTargetAlly &&
-                                     !action.CanTargetOwnPet &&
-                                     !action.CanTargetPartyPet)
-                    .GroupBy(action => (ushort)action.AnimationEnd.RowId)
-                    .Select(group => new NpcModelActionSelection(group.First().RowId, group.Key))
+                    .Select(static action => MonsterActionRows.ToCandidate(action))
+                    .Where(static candidate => MonsterKitBuilder.IsAnimationUsable(candidate))
+                    .GroupBy(static candidate => candidate.TimelineId)
+                    .Select(static group => new NpcModelActionSelection(group.First().ActionId, group.Key))
                     .ToArray();
-                tier = "attack-shaped";
+                tier = pool.Length > 0 ? "usable-action" : "no-usable-action";
             }
-
-            if (pool.Length == 0)
+            else
             {
-                pool = linked
-                    .GroupBy(action => (ushort)action.AnimationEnd.RowId)
-                    .Select(group => new NpcModelActionSelection(group.First().RowId, group.Key))
-                    .ToArray();
-                tier = "linked-family";
-            }
-
-            if (pool.Length == 0)
-            {
+                // No Action row authors any of these timelines, so there is no VFX to borrow
+                // (ActionId 0) and nothing to judge; any family timeline is an attack pose.
                 pool = all.Select(timeline => new NpcModelActionSelection(0, timeline)).ToArray();
                 tier = "family-fallback";
             }
 
             log.Info(
                 $"NPC model action family: ModelChara={modelCharaId}, prefix={prefix}, " +
-                $"timelines={all.Count}, attackPool={pool.Length}, tier={tier}.");
+                $"timelines={all.Count}, linkedActions={linked.Length}, attackPool={pool.Length}, tier={tier}" +
+                (pool.Length == 0 ? "; using generic attack fallback." : "."));
+
+            var flourishes = pool.Length > 0
+                ? pool.Select(static entry => entry.TimelineId)
+                : linked.Select(static action => (ushort)action.AnimationEnd.RowId);
 
             return new FamilyEntry
             {
                 AllTimelines = all,
                 AttackPool = pool,
+                FlourishTimelines = flourishes.Distinct().Order().ToArray(),
                 LinkedActionIds = linked.Select(static action => action.RowId).ToArray(),
                 Prefix = prefix,
                 Tier = tier,

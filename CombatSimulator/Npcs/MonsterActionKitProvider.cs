@@ -67,22 +67,7 @@ public sealed class MonsterActionKitProvider
             {
                 if (sheet.GetRowOrDefault(id) is not { } a)
                     continue;
-                candidates.Add(new MonsterActionCandidate(
-                    a.RowId,
-                    a.Name.ExtractText(),
-                    a.CastType,
-                    a.Range,
-                    a.EffectRange,
-                    a.XAxisModifier,
-                    a.Cast100ms * 0.1f,
-                    a.Recast100ms * 0.1f,
-                    a.ActionCategory.RowId,
-                    a.AttackType.RowId,
-                    a.CanTargetHostile,
-                    a.CanTargetParty || a.CanTargetAlly || a.CanTargetAlliance || a.CanTargetOwnPet || a.CanTargetPartyPet,
-                    a.DeadTargetBehaviour == 1,
-                    a.Omen.RowId != 0,
-                    a.AnimationEnd.RowId <= ushort.MaxValue ? (ushort)a.AnimationEnd.RowId : (ushort)0));
+                candidates.Add(MonsterActionRows.ToCandidate(a));
             }
 
             foreach (var c in MonsterKitBuilder.Select(candidates, maxSkills))

@@ -2063,10 +2063,11 @@ public unsafe class AnimationController : IDisposable
         }
     }
 
-    /// <summary>A one-shot from the creature's own model family (see PlayNpcMeleeAnimationOnly),
-    /// used as a celebratory flourish by creatures that cannot play player emotes.</summary>
+    /// <summary>A motion-only one-shot from the creature's own model family (see
+    /// NpcModelActionTimelineProvider.SelectFlourish; independent of the attack pool), used as a
+    /// celebratory flourish by creatures that cannot play player emotes.</summary>
     public ushort SelectModelFlourishTimeline(uint modelCharaId)
-        => modelCharaId == 0 ? (ushort)0 : npcModelActionTimelines.Select(modelCharaId);
+        => modelCharaId == 0 ? (ushort)0 : npcModelActionTimelines.SelectFlourish(modelCharaId);
 
     /// <summary>
     /// Play NPC auto-attack with full animation + VFX pipeline.

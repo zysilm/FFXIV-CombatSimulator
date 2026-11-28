@@ -44,8 +44,10 @@ public static class MonsterKitBuilder
     /// <summary>Casts longer than this are special mechanics (enrage timers, add phases).</summary>
     public const float MaxCastSeconds = 6f;
 
+    private const uint CategoryAutoAttack = 1;
     private const uint CategorySpell = 2;
     private const uint CategoryWeaponskill = 3;
+    private const uint CategoryAbility = 4;
 
     public static bool IsUsable(in MonsterActionCandidate c)
     {
@@ -73,6 +75,24 @@ public static class MonsterKitBuilder
         // An AoE with no attack type and no omen is a status cloud (Queasy Cloud, Slumber Cloud).
         return c.AttackType != 0 || c.HasOmen;
     }
+
+    /// <summary>
+    /// Whether a row may lend its animation (and VFX) to a monster's auto-attack. Everything the
+    /// kit accepts, plus plain single-target hostile attacks of the auto-attack (1) and ability (4)
+    /// categories: those are many families' own swing ("attack", Ink, Stun Shot) and are kept out
+    /// of the kit only because a kit skill must be a spell or weaponskill. Escapes such as Telega
+    /// (no attack type, ally flag) and area abilities stay out, so no foreign effect lands on the
+    /// target.
+    /// </summary>
+    public static bool IsAnimationUsable(in MonsterActionCandidate c)
+        => IsUsable(c) ||
+           (c.Category is (CategoryAutoAttack or CategoryAbility) &&
+            c.CastType == 1 &&
+            c.CanTargetHostile &&
+            c.AttackType != 0 &&
+            !c.DeadTargetOnly &&
+            !c.TargetsAllies &&
+            c.CastSeconds <= MaxCastSeconds);
 
     public static bool IsArea(in MonsterActionCandidate c)
         => CastTypeMapping.Map(c.CastType, c.Range, c.CanTargetHostile) != AoeShape.Single;

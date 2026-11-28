@@ -68,6 +68,19 @@ Check(MonsterKitBuilder.Cooldown(cone) == 12.5f, "cooldown floor 10 + cast");
 Check(MonsterKitBuilder.Potency(5000, 110, true, 2.5f) == 330 && MonsterKitBuilder.Potency(10, 110, true, 0) == 154, "potency band");
 Check(MonsterKitBuilder.Potency(5000, 110, false, 0) == 220, "instant ceiling 2x");
 
+// ---- Model-family attack animation pool (rows copied from the sheet) ----
+// Telega (d1012 Qiqirn escape teleport): hostile-targetable but no attack type and an ally flag.
+var telega = Row(1001, "Telega", 1, 31, 0, 0, 0, 0, cat: 2, atk: 0, hostile: true, allies: true);
+Check(!MonsterKitBuilder.IsUsable(telega) && !MonsterKitBuilder.IsAnimationUsable(telega), "Telega never borrowed");
+var autoRow = Row(27431, "attack", 1, 3, 0, 0, 0, 0, cat: 1, atk: 5, hostile: true);      // m0713 own auto-attack
+Check(!MonsterKitBuilder.IsUsable(autoRow) && MonsterKitBuilder.IsAnimationUsable(autoRow), "category-1 attack: animation only");
+var inkRow = Row(2318, "Ink", 1, 100, 0, 0, 0, 0, cat: 4, atk: 5, hostile: true);         // m0112 single-target ability
+Check(!MonsterKitBuilder.IsUsable(inkRow) && MonsterKitBuilder.IsAnimationUsable(inkRow), "category-4 single attack: animation only");
+var hydroArea = Row(28391, "Hydroshot", 2, 20, 5, 0, 3, 0, cat: 4, atk: 5, hostile: true); // d1007 area ability
+Check(!MonsterKitBuilder.IsAnimationUsable(hydroArea), "category-4 area ability stays out");
+Check(!MonsterKitBuilder.IsAnimationUsable(Row(5, "attack", 1, 3, 0, 0, 8, 0, cat: 1, atk: 5, hostile: true)), "long cast stays out");
+Check(MonsterKitBuilder.IsAnimationUsable(cone) && !MonsterKitBuilder.IsAnimationUsable(spider[0]), "kit rows keep their verdict");
+
 // ---- Telegraph snapshot: what is drawn is what hits ----
 var caster = new Vector3(10, 0, 10);
 var tgt = new Vector3(10, 0, 14);       // 4y north (+Z) of the caster
